@@ -24,6 +24,13 @@ sym-lib-table  text eol=lf
 *.pos      text eol=lf
 *.rpt      text eol=lf
 
+# Images — binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.svg   text eol=lf
+
 # PDF — binary
 *.pdf   binary
 
