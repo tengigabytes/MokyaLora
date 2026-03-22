@@ -1,7 +1,8 @@
 # Rev A Bring-Up Log
 
 **Board revision:** Rev A
-**Date started:** TBD
+**Submitted to manufacturer:** 2026-03-22
+**Date started:** Pending — board not yet received
 
 ---
 
