@@ -14,8 +14,8 @@ The device integrates a dedicated 36-key physical matrix keyboard, phone-grade C
 ## 2. Core Design Philosophy
 
 - **Dual-core AMP split:** leverages the RP2350B dual-core architecture.
-  - **Core 0:** Meshtastic protocol, LoRa radio, power management.
-  - **Core 1:** UI rendering, Input Method Engine (IME), application logic.
+  - **Core 0:** Meshtastic protocol, LoRa radio.
+  - **Core 1:** UI rendering, Input Method Engine (IME), application logic, power management.
 - **1.8 V system logic:** unified 1.8 V I/O with Dormant sleep for maximum battery life.
 - **Virtualised architecture:** software isolation keeps the standard Meshtastic firmware on Core 0, preserving upstream compatibility.
 

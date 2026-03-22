@@ -11,8 +11,8 @@
 
 | Core   | Role              | Responsibilities                                        |
 |--------|-------------------|---------------------------------------------------------|
-| Core 0 | Modem Worker      | Meshtastic protocol stack, LoRa radio, power management |
-| Core 1 | UI Host & IME     | FreeRTOS + LVGL, Input Method Engine (IME), UI rendering |
+| Core 0 | Modem Worker      | Meshtastic protocol stack, LoRa radio                              |
+| Core 1 | UI Host & IME     | FreeRTOS + LVGL, Input Method Engine (IME), UI rendering, power management |
 
 **Framework:** Arduino-Pico + FreeRTOS + LVGL
 
@@ -113,7 +113,7 @@
 
 | Source              | GPIO    |
 |---------------------|---------|
-| Power button        | GPIO 39 |
+| Power button        | GPIO 33 |
 | LoRa interrupt      | GPIO 29 (SX1262 DIO1) |
 | USB insertion       | GPIO 1  |
 
