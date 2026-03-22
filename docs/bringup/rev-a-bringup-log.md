@@ -32,7 +32,7 @@
 
 1. Connect SWD debugger (SWCLK / SWDIO / GND).
 2. Flash minimal test firmware via SWD.
-3. Confirm UART debug output on DBG_TX (GPIO 4) at 115200 baud.
+3. Confirm UART debug output on DBG_TX (GPIO 2) at 115200 baud.
 
 ### Step 3 — I2C Bus Scan
 
@@ -46,7 +46,7 @@ Run I2C scan on both buses and confirm expected addresses:
 | 0x1E    | LIS2MDL        | I2C0 |          |
 | 0x5C    | LPS22HH        | I2C0 |          |
 | 0x3A    | Teseo-LIV3FL   | I2C0 |          |
-| 0x36    | LM27965        | I2C0 |          |
+| 0x36    | LM27965        | I2C1 |          |
 
 ### Step 4 — Display
 
