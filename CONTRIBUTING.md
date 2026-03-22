@@ -49,10 +49,20 @@ you are modifying.
 
 ## AI-Assisted Development
 
-This project uses AI coding tools (Claude Code) for firmware and tooling development.
-AI-generated contributions are reviewed, tested, and accepted by the project maintainers
-before being committed. All such contributions are subject to the same license terms as
-the directory they reside in.
+This project uses [Claude Code](https://claude.ai/claude-code) as a development aid.
+The division of authorship is as follows:
+
+| Area | Authorship |
+|------|-----------|
+| System, hardware, and software requirements | Written by the project owner |
+| Hardware design (schematic, PCB layout) | Designed by the project owner |
+| Documentation — organisation, formatting, and structure | Claude Code assisted |
+| Firmware and software development | Claude Code assisted |
+
+All requirements and hardware design decisions originate with the project owner.
+AI-assisted output is reviewed and accepted by the project owner before being committed.
+All committed contributions are subject to the same license terms as the directory they
+reside in.
 
 ## Code of Conduct
 

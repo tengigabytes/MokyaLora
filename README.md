@@ -64,6 +64,19 @@ MokyaLora/
 
 See [LICENSE](LICENSE) for the full rationale. License files are also present in each component directory.
 
+## Authorship and Development Approach
+
+| Area | Author / Method |
+|------|----------------|
+| System, hardware, and software requirements | Authored by the project owner |
+| Hardware design (schematic, PCB layout) | Designed by the project owner |
+| Documentation — organisation, formatting, and structure | Assisted by [Claude Code](https://claude.ai/claude-code) |
+| Firmware and software development | Assisted by [Claude Code](https://claude.ai/claude-code) |
+
+All requirements, design decisions, and hardware choices originate with the project owner.
+Claude Code is used as a development tool; all AI-assisted output is reviewed and accepted
+by the project owner before being committed.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
