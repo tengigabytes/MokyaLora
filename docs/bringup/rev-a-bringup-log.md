@@ -40,7 +40,7 @@ Run I2C scan on both buses and confirm expected addresses:
 
 | Address | Device         | Bus  | Expected |
 |---------|----------------|------|----------|
-| 0x6B    | BQ25620        | I2C1 |          |
+| 0x6B    | BQ25622        | I2C1 |          |
 | 0x55    | BQ27441        | I2C1 |          |
 | 0x6A    | LSM6DSV16X     | I2C0 |          |
 | 0x1E    | LIS2MDL        | I2C0 |          |
