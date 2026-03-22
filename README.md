@@ -1,12 +1,31 @@
 # MokyaLora
 
-An open-hardware LoRa module/board project, licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
+An open-hardware standalone Meshtastic feature phone built around the RP2350B dual-core MCU,
+with a 36-key physical keyboard, 2.4″ IPS display, SX1262 LoRa radio, and GNSS.
+Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
+
+## Project Status
+
+| Revision | Status |
+|----------|--------|
+| Rev A | Sent to manufacturer — PCB prototype fabrication in progress |
+| Firmware | Not yet started — hardware bring-up pending Rev A delivery |
 
 ## PCB Preview (Rev A)
 
 | Front | Back |
 |:-----:|:----:|
 | ![PCB Front](hardware/kicad/plots/MokyaLora_F.png) | ![PCB Back](hardware/kicad/plots/MokyaLora_B.png) |
+
+## Design Documents
+
+| Document | Description |
+|----------|-------------|
+| [Schematic (PDF)](hardware/production/rev-a/pdf/MokyaLora.pdf) | Full schematic — all 13 sheets |
+| [Assembly Drawing (PDF)](hardware/production/rev-a/pdf/MokyaLora__Assembly.pdf) | Component placement drawing |
+| [Bill of Materials (CSV)](hardware/production/rev-a/MokyaLora.csv) | Rev A BOM |
+| [Board 3D Model (STEP)](hardware/production/rev-a/MokyaLora.step) | Full-board STEP export |
+| [Gerber Files](hardware/production/rev-a/gerber/) | Rev A fabrication outputs |
 
 ## Repository Layout
 
@@ -93,6 +112,30 @@ See [LICENSE](LICENSE) for the full rationale. License files are also present in
 All technical concepts, design decisions, and hardware choices originate with the project
 owner. Claude Code is used as a development tool; all AI-assisted output is reviewed and
 accepted by the project owner before being committed.
+
+## Disclaimer
+
+> **This project is an experimental prototype. Use at your own risk.**
+
+- **Prototype status** — Rev A is an unverified first prototype. The design has not been
+  independently tested, reviewed, or certified. Do not use this design as the sole basis
+  for a production product without thorough independent validation.
+
+- **RF and wireless regulations** — This device incorporates a LoRa radio transmitter.
+  Operation of radio transmitters is regulated by law in most jurisdictions (NCC in Taiwan,
+  CE/RED in the EU, FCC Part 15 in the US, and equivalents elsewhere). The user is solely
+  responsible for ensuring that any use of this design complies with applicable local
+  wireless regulations. No regulatory certification (CE, FCC, NCC) has been obtained for
+  this design.
+
+- **Battery and electrical safety** — This design includes a lithium-ion battery charging
+  circuit. Improper assembly, use of incorrect components, or failure to follow safe
+  lithium-ion handling practices may result in fire, injury, or damage to property.
+  Always verify the design independently before assembly.
+
+- **No warranty** — This hardware is provided "as-is" without any warranty of any kind,
+  express or implied. See [CERN-OHL-S-2.0](LICENSE-CERN-OHL-S-2.0.txt) Section 6 for the
+  full disclaimer of warranties and limitation of liability.
 
 ## Contributing
 
