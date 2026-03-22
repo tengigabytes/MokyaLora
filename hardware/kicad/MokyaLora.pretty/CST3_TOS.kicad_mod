@@ -160,7 +160,7 @@
 		(uuid "67af8ff8-8b44-4f61-9b55-ea3436b751c8")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/SSM3K56ACT_L3F/CST3_z90.stp"
+	(model "${KIPRJMOD}/packages3D/CST3_z90.stp"
 		(offset
 			(xyz 0 0 0)
 		)

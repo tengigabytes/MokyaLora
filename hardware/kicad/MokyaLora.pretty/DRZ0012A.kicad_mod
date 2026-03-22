@@ -315,7 +315,7 @@
 		(uuid "50935fa2-d751-4d20-9069-a8b427a3e4ee")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/ul_BQ27441DRZR-G1A/DRZ0012A.stp"
+	(model "${KIPRJMOD}/packages3D/DRZ0012A.stp"
 		(offset
 			(xyz 0 0 0)
 		)

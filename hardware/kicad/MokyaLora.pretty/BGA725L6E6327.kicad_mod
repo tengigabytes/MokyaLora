@@ -196,7 +196,7 @@
 		(uuid "8c082219-35a9-4566-af0b-29d444573efa")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_BGA_725L6_E6327/BGA_725L6_E6327/3D/BGA_725L6_E6327.stp"
+	(model "${KIPRJMOD}/packages3D/BGA_725L6_E6327.stp"
 		(offset
 			(xyz 0 0 0)
 		)

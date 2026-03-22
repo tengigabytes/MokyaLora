@@ -313,7 +313,7 @@
 		(uuid "594af72b-3c41-4f1d-9fa1-5737b3618181")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/CMS-131304-SMT-TR/CMS-131304-SMT-TR.step"
+	(model "${KIPRJMOD}/packages3D/CMS-131304-SMT-TR.step"
 		(offset
 			(xyz 0 0 0)
 		)

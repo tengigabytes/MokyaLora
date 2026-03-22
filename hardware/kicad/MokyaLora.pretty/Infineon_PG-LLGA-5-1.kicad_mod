@@ -496,7 +496,7 @@
 		(uuid "e13006f3-cfb9-4b89-b0f8-077e31277c74")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_IM69D130V01XTSA1/IM69D130V01XTSA1/3D/IM69D130V01XTSA1.stp"
+	(model "${KIPRJMOD}/packages3D/IM69D130V01XTSA1.stp"
 		(offset
 			(xyz 0 0 0)
 		)

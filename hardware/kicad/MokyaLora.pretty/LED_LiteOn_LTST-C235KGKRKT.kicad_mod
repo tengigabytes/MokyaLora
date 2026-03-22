@@ -348,7 +348,7 @@
 		(uuid "4dad1b0e-639c-405f-b507-1c69dbbefcc6")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_LTST-C235KGKRKT/LTST-C235KGKRKT/3D/LTST-C235KGKRKT.stp"
+	(model "${KIPRJMOD}/packages3D/LTST-C235KGKRKT.stp"
 		(offset
 			(xyz 0 0 0.3)
 		)

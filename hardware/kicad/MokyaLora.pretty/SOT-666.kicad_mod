@@ -243,7 +243,7 @@
 		(uuid "fd2a639d-7824-4a8f-8029-0dc0b76db160")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_USBLC6-2P6/USBLC6-2P6/3D/USBLC6-2P6.stp"
+	(model "${KIPRJMOD}/packages3D/USBLC6-2P6.stp"
 		(offset
 			(xyz 0 0 0.2)
 		)

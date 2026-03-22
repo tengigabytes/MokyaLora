@@ -104,7 +104,7 @@
 		(members "e88b031b-cbc1-466b-9786-8a08e7838941" "f914ef1a-ba77-45d7-aefc-95f542678b17")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/NHD-2.4-240320AF-CSXP.step"
+	(model "${KIPRJMOD}/packages3D/NHD-2.4-240320AF-CSXP.step"
 		(offset
 			(xyz -0 -0 0)
 		)

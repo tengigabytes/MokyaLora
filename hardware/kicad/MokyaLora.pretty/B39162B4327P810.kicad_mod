@@ -189,7 +189,7 @@
 		(uuid "1aceb7a8-d496-4c5e-b820-3992070a6ecb")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_B39162B4327P810/B39162B4327P810/3D/B39162B4327P810.stp"
+	(model "${KIPRJMOD}/packages3D/B39162B4327P810.stp"
 		(offset
 			(xyz 0 0 0)
 		)

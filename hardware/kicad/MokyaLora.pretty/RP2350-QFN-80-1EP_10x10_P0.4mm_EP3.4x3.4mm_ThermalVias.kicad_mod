@@ -970,7 +970,7 @@
 		(uuid "41fc936a-53b3-4535-86de-be3265aa6945")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/Minimal-KiCAD/RP-006442-DD-2-RP2350B Minimal Board Kicad archive/RP2350_QFN80.step"
+	(model "${KIPRJMOD}/packages3D/RP2350_QFN80.step"
 		(offset
 			(xyz 0 0 0)
 		)

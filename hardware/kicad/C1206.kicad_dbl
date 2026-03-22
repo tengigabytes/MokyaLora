@@ -1,0 +1,44 @@
+{
+    "meta": { "version": 0 },
+    "name": "My Resistor Database",
+    "source": {
+        "type": "odbc",
+        "dsn": "KiCad-Library",
+        "username": "",
+        "password": ""
+    },
+    "libraries": [
+        {
+            "name": "C1206_Yageo",
+            "table": "C1206",
+            "key": "Part Number",
+            "symbols": "Symbol",
+            "footprints": "Footprint",
+            "fields": [
+                { 
+				"column": "Value", 
+				"name": "Value" ,
+				"visible_on_add": true 
+				},
+                { 
+				"column": "Datasheet", 
+				"name": "Datasheet" 
+				},
+                { 
+				"column": "Description", 
+				"name": "Description" 
+				},
+                { 
+				"column": "Part Number", 
+				"name": "MPN", 
+				"visible_on_add": false 
+				},
+				{
+				"column": "Voltage", 
+				"name": "Voltage", 
+				"visible_on_add": true 
+				}
+            ]
+        }
+    ]
+}

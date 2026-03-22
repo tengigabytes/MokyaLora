@@ -441,7 +441,7 @@
 		(uuid "905f21cc-6315-447a-b24a-fb8ae05cff62")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/HD-EMB1104-SM-2--3DModel-STEP-461651/HD-EMB1104-SM-2--3DModel-STEP-461651.STEP"
+	(model "${KIPRJMOD}/packages3D/HD-EMB1104-SM-2--3DModel-STEP-461651.STEP"
 		(offset
 			(xyz 1.2 0 0.2)
 		)

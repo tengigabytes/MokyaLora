@@ -212,7 +212,7 @@
 		(uuid "4765d4f2-3f7b-4e4a-9ffc-4962b6d86fc1")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/ul_PTPS7A2012PDBVR/DBV0005A.stp"
+	(model "${KIPRJMOD}/packages3D/DBV0005A.stp"
 		(offset
 			(xyz 0 0 0)
 		)

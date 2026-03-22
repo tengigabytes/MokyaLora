@@ -227,7 +227,7 @@
 		(uuid "c3d86c77-3af8-4332-95fe-3d4d7142c49e")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/GCT_SWT0105003516JSA/SWT0105-003516JSA.stp"
+	(model "${KIPRJMOD}/packages3D/SWT0105-003516JSA.stp"
 		(offset
 			(xyz 3.7 0 0)
 		)

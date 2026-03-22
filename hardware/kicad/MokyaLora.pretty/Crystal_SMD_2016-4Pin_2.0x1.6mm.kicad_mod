@@ -137,7 +137,7 @@
 		(uuid "84793917-11ac-474c-b889-3f31a8e496b5")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/ECS-TXO-20CSMV4-250-AN-TR.step"
+	(model "${KIPRJMOD}/packages3D/ECS-TXO-20CSMV4-250-AN-TR.step"
 		(offset
 			(xyz 0 0 0)
 		)

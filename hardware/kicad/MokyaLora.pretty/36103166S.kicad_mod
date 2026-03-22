@@ -266,7 +266,7 @@
 		(uuid "9d93c1a1-79d8-4ac4-8055-b8f4c4cfcb24")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/KiCad_WE-SHC (rev25b)/3dmodels/SHIELDING_SMD_Wurth.3dshapes/H_Wurth_WE-SHC-SMT-FRAME_36103166S.step"
+	(model "${KIPRJMOD}/packages3D/H_Wurth_WE-SHC-SMT-FRAME_36103166S.step"
 		(offset
 			(xyz 0 0 0)
 		)

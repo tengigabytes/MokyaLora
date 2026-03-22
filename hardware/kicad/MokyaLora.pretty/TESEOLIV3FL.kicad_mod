@@ -309,7 +309,7 @@
 		(uuid "299efb0c-815a-441f-a230-75634a307204")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_TESEO-LIV3FL/TESEO-LIV3FL/3D/TESEO-LIV3FL.stp"
+	(model "${KIPRJMOD}/packages3D/TESEO-LIV3FL.stp"
 		(offset
 			(xyz 0 0 0)
 		)
