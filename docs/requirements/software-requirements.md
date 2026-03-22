@@ -439,10 +439,15 @@ Font glyphs remain in Flash and are accessed on demand during rendering.
 ### 5.7 MIE Development Roadmap
 
 **Phase 1 — PC environment & validation**
-- [ ] `gen_font.py`: extract 8,104 glyphs from GNU Unifont; verify output.
-- [ ] `gen_dict.py`: compile MoE word list to DAT binary; validate on PC.
-- [ ] `Trie-Searcher`: implement and unit-test DAT search in C++ on PC.
-- [ ] `IME-Logic`: implement Bopomofo de-ambiguation; test with simulated key sequences.
+- [x] `gen_font.py`: extract 8,104 glyphs from GNU Unifont; verify output.
+      Script complete; requires Unifont `.hex` + `charlist_8104.txt` to produce `.bin` assets.
+- [x] `gen_dict.py`: compile MoE word list to DAT binary; validate on PC.
+      MIED sorted-index format implemented; requires MoE CSV to produce `.bin` assets.
+- [x] `Trie-Searcher`: implement and unit-test DAT search in C++ on PC.
+      Binary search over sorted key index; 13 GoogleTest cases passing.
+- [x] `IME-Logic`: implement Bopomofo de-ambiguation; test with simulated key sequences.
+      Phase 1 skeleton: primary-phoneme key map, mode FSM, REPL integration.
+      Full disambiguation and smart correction are Phase 3 items.
 
 **Phase 2 — Hardware integration (Rev A)**
 - [ ] `hal/rp2350/`: bridge PIO+DMA key buffer to `mie::KeyEvent`.

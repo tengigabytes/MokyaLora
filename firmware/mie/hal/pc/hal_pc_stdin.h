@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #pragma once
-#include "../hal_port.h"
+#include <mie/hal_port.h>
 
 namespace mie {
 namespace pc {

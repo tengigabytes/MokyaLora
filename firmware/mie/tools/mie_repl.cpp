@@ -1,20 +1,30 @@
 // mie_repl.cpp — MokyaInput Engine interactive REPL (PC host only)
 // SPDX-License-Identifier: MIT
 //
-// Renders a virtual MokyaLora half-keyboard in the terminal and feeds
-// key events into the MIE engine (stubbed until IME-Logic is implemented).
+// Renders a virtual MokyaLora half-keyboard in the terminal and passes key
+// events through ImeLogic → TrieSearcher, displaying the current phoneme
+// input sequence and candidate words in real time.
 //
 // Build: part of the mie CMake host build (not cross-compiled for RP2350).
-// Run:   ./build/mie-host/mie_repl
+// Run:   ./build/mie-host/mie_repl [--dat dict_dat.bin] [--val dict_values.bin]
 //
-// Controls
-//   Mapped keys  — as shown in the virtual keyboard display
-//   Ctrl+C / ESC — quit
+// Without --dat / --val the REPL still runs but shows no candidates.
+//
+// Controls (mapped keys shown in the virtual keyboard display):
+//   Phoneme keys  — append Bopomofo phoneme to input sequence
+//   BACK / DEL    — remove last phoneme
+//   MODE (`)      — cycle input mode, clear input
+//   SPACE / OK    — commit first candidate (clears input)
+//   ESC / Ctrl-C  — quit
 
 #include "../hal/pc/hal_pc_stdin.h"
 #include "../hal/pc/key_map.h"
+#include <mie/ime_logic.h>
+#include <mie/trie_searcher.h>
+
 #include <cstdio>
 #include <cstring>
+
 #ifdef _WIN32
 #  include <windows.h>
 #else
@@ -26,8 +36,8 @@
 struct KeyLabel {
     uint8_t     row;
     uint8_t     col;
-    const char* pc_hint;   ///< PC key shown to the left
-    const char* label;     ///< Content label (Bopomofo or function name)
+    const char* pc_hint;
+    const char* label;
 };
 
 // clang-format off
@@ -46,125 +56,132 @@ static const KeyLabel kLabels[] = {
     {3, 3, "m",   "ㄩㄝ" }, {3, 4, "\\",  "ㄡㄥ" }, {3, 5, "Del", "DEL"  },
     // Row 4
     {4, 0, "`",   "MODE" }, {4, 1, "Tab", "TAB"  }, {4, 2, "Spc", "SPACE"},
-    {4, 3, ",",   "，SYM"}, {4, 4, ".",   "。？" }, {4, 5, "=",   "VOL+" },
+    {4, 3, ",",   "\xef\xbc\x8cSYM"}, {4, 4, ".",   "\xe3\x80\x82\xef\xbc\x9f"}, {4, 5, "=",   "VOL+" },
     // Row 5
-    {5, 0, "↑",   "UP"   }, {5, 1, "↓",   "DOWN" }, {5, 2, "←",   "LEFT" },
-    {5, 3, "→",   "RIGHT"}, {5, 4, "↵",   "OK"   }, {5, 5, "-",   "VOL-" },
+    {5, 0, "\xe2\x86\x91",   "UP"   }, {5, 1, "\xe2\x86\x93",   "DOWN" }, {5, 2, "\xe2\x86\x90",   "LEFT" },
+    {5, 3, "\xe2\x86\x92",   "RIGHT"}, {5, 4, "\xe2\x8f\x8e",   "OK"   }, {5, 5, "-",   "VOL-" },
 };
 // clang-format on
 
-// ── Input buffer ──────────────────────────────────────────────────────────
-
-static char s_input_buf[128] = {};
-static int  s_input_len      = 0;
-
-static void input_append(const char* label) {
-    int space = (int)sizeof(s_input_buf) - s_input_len - 1;
-    if (space <= 0) return;
-    int n = snprintf(s_input_buf + s_input_len, (size_t)space, "%s ", label);
-    if (n > 0) s_input_len += n;
+static const char* label_for(uint8_t row, uint8_t col) {
+    for (const auto& k : kLabels) {
+        if (k.row == row && k.col == col) return k.label;
+    }
+    return "?";
 }
 
-static void input_backspace() {
-    // Remove last space-delimited token
-    if (s_input_len == 0) return;
-    // Step back past trailing space
-    if (s_input_buf[s_input_len - 1] == ' ') s_input_len--;
-    while (s_input_len > 0 && s_input_buf[s_input_len - 1] != ' ') s_input_len--;
-    s_input_buf[s_input_len] = '\0';
-}
-
-static void input_clear() {
-    s_input_len    = 0;
-    s_input_buf[0] = '\0';
+static const char* mode_name(mie::InputMode m) {
+    switch (m) {
+        case mie::InputMode::Bopomofo:     return "注音";
+        case mie::InputMode::English:      return "EN";
+        case mie::InputMode::Alphanumeric: return "ABC";
+        case mie::InputMode::Calculator:   return "CALC";
+    }
+    return "?";
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────
 
-static void clear_screen() {
-    fputs("\033[2J\033[H", stdout);
-}
+static void clear_screen() { fputs("\033[2J\033[H", stdout); }
 
-static void render() {
+static void render(const mie::ImeLogic& ime) {
     clear_screen();
-    puts("┌─ MokyaLora Virtual Keyboard (mie_repl) ──────────────────────┐");
+    puts("\xe2\x94\x8c\xe2\x94\x80 MokyaLora Virtual Keyboard (mie_repl) \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90");
 
     for (int row = 0; row < 6; ++row) {
-        fputs("│ ", stdout);
+        fputs("\xe2\x94\x82 ", stdout);
         for (int col = 0; col < 6; ++col) {
-            // Find label for this cell
             const char* pc    = "?";
             const char* label = "?";
             for (const auto& k : kLabels) {
-                if (k.row == row && k.col == col) {
-                    pc    = k.pc_hint;
-                    label = k.label;
-                    break;
-                }
+                if (k.row == row && k.col == col) { pc = k.pc_hint; label = k.label; break; }
             }
             printf("[%2s:%-4s]", pc, label);
         }
-        puts(" │");
+        puts(" \xe2\x94\x82");
     }
 
-    puts("├────────────────────────────────────────────────────────────────┤");
-    printf("│ Input:      %-50s │\n",
-           s_input_len ? s_input_buf : "(press a mapped key)");
-    // Candidates placeholder — will be replaced by Trie-Searcher output
-    puts("│ Candidates: (IME not yet connected)                            │");
-    puts("└────────────────────────────────────────────────────────────────┘");
-    puts("  ESC or Ctrl+C to quit  |  BACK = backspace token  |  MODE = clear");
+    puts("\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4");
+
+    // Mode indicator and input line
+    printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %-4s  \xe8\xbc\xb8\xe5\x85\xa5: %-46s \xe2\x94\x82\n",
+           mode_name(ime.mode()),
+           ime.input_bytes() > 0 ? ime.input_str() : "(\xe6\x8c\x89\xe4\xb8\x8b\xe6\xb3\xa8\xe9\x9f\xb3\xe9\x8d\xb5)");
+
+    // Candidates line
+    char cand_buf[256] = {};
+    int  pos           = 0;
+    if (ime.candidate_count() > 0) {
+        for (int i = 0; i < ime.candidate_count() && pos < 200; ++i) {
+            const char* circle_nums[] = {
+                "\xe2\x91\xa0","\xe2\x91\xa1","\xe2\x91\xa2","\xe2\x91\xa3","\xe2\x91\xa4",
+                "\xe2\x91\xa5","\xe2\x91\xa6","\xe2\x91\xa7","\xe2\x91\xa8","\xe2\x91\xa9",
+            };
+            int n = snprintf(cand_buf + pos, sizeof(cand_buf) - pos - 1,
+                             "%s%s ", circle_nums[i], ime.candidate(i).word);
+            if (n > 0) pos += n;
+        }
+    } else if (ime.input_bytes() > 0) {
+        snprintf(cand_buf, sizeof(cand_buf), "(\xe6\x9c\xaa\xe6\x89\xbe\xe5\x88\xb0\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97)");
+    } else {
+        snprintf(cand_buf, sizeof(cand_buf), "(\xe7\x84\xa1\xe5\xad\x97\xe5\x85\xb8\xe6\x99\x82\xe9\xa1\xaf\xe7\xa4\xba\xe9\x8d\xb5\xe5\x90\x8d)");
+    }
+    printf("\xe2\x94\x82 \xe5\x80\x99\xe9\x81\xb8: %-55s \xe2\x94\x82\n", cand_buf);
+
+    puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
+    puts("  ESC/Ctrl-C \xe9\x9b\xa2\xe9\x96\x8b  |  BACK=\xe5\x88\xaa\xe9\x99\xa4  |  MODE=\xe5\x88\x87\xe6\xa8\xa1\xe5\xbc\x8f  |  SPACE/OK=\xe6\xa7\x8b\xe8\xa9\x9e");
     fflush(stdout);
+}
+
+// ── Argument parsing (minimal) ────────────────────────────────────────────
+
+static const char* find_arg(int argc, char** argv, const char* flag) {
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (strcmp(argv[i], flag) == 0) return argv[i + 1];
+    }
+    return nullptr;
 }
 
 // ── Main loop ────────────────────────────────────────────────────────────
 
-int main() {
-    mie::pc::HalPcStdin hal;
-    mie::KeyEvent ev;
+int main(int argc, char** argv) {
+#ifdef _WIN32
+    // Enable UTF-8 console output on Windows.
+    SetConsoleOutputCP(CP_UTF8);
+#endif
 
-    render();
+    const char* dat_path = find_arg(argc, argv, "--dat");
+    const char* val_path = find_arg(argc, argv, "--val");
+
+    mie::TrieSearcher searcher;
+    if (dat_path && val_path) {
+        if (searcher.load_from_file(dat_path, val_path)) {
+            printf("Dictionary loaded: %u keys.\n", searcher.key_count());
+        } else {
+            fprintf(stderr, "WARNING: failed to load dictionary from '%s' / '%s'.\n",
+                    dat_path, val_path);
+        }
+    }
+
+    mie::ImeLogic     ime(searcher);
+    mie::pc::HalPcStdin hal;
+    mie::KeyEvent     ev;
+
+    render(ime);
 
     while (true) {
         if (!hal.poll(ev)) {
-            // No event — sleep a bit to avoid busy-looping
 #ifdef _WIN32
             Sleep(10);
 #else
-            struct timeval tv = {0, 10000};
+            struct timeval tv = { 0, 10000 };
             select(0, nullptr, nullptr, nullptr, &tv);
 #endif
             continue;
         }
 
-        // ESC (row/col not mapped — check raw key separately)
-        // ESC arrives as pc_key 0x1B which is not in the map → ev not set,
-        // so handle via a dedicated escape check in the HAL.
-        // For now treat OK (row 5, col 4) as submit and MODE (row 4, col 0) as clear.
-
-        if (ev.row == 4 && ev.col == 0) {
-            // MODE — clear input
-            input_clear();
-        } else if (ev.row == 2 && ev.col == 5) {
-            // BACK — remove last token
-            input_backspace();
-        } else if (ev.row == 3 && ev.col == 5) {
-            // DEL — same as BACK for now
-            input_backspace();
-        } else if (ev.row == 5 && ev.col == 4) {
-            // OK / Enter — submit (no-op until IME connected)
-            input_clear();
-        } else {
-            // Find the label for this cell and append to input buffer
-            for (const auto& k : kLabels) {
-                if (k.row == ev.row && k.col == ev.col) {
-                    input_append(k.label);
-                    break;
-                }
-            }
-        }
-
-        render();
+        const bool refresh = ime.process_key(ev);
+        if (refresh) render(ime);
     }
 
     return 0;

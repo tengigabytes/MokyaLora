@@ -15,9 +15,9 @@ if(MSVC)
 endif()
 
 add_library(mie STATIC
-    src/mie_init.cpp        # placeholder; replaced by real modules as they are implemented
-    # src/trie_searcher.cpp
-    # src/ime_logic.cpp
+    src/mie_init.cpp        # keeps the library non-empty while all modules are present
+    src/trie_searcher.cpp
+    src/ime_logic.cpp
 )
 
 target_include_directories(mie PUBLIC
@@ -32,7 +32,10 @@ if(NOT CMAKE_CROSSCOMPILING)
         hal/pc/hal_pc_stdin.cpp
     )
     target_link_libraries(mie_repl PRIVATE mie)
-    target_include_directories(mie_repl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(mie_repl PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/hal
+    )
 
     # Unit tests
     enable_testing()
