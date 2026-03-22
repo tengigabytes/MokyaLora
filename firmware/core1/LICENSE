@@ -1,0 +1,31 @@
+Apache License
+Version 2.0, January 2004
+
+This directory (firmware/core1/) contains the Core 1 UI and application firmware
+for MokyaLora. This code has no source-level dependency on Meshtastic or any
+GPL-licensed library. It communicates with Core 0 exclusively through the IPC
+protocol defined in firmware/shared/ipc/, which is MIT-licensed.
+
+Copyright 2024 MokyaLora Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+LICENSING RATIONALE
+
+Core 1 is architecturally and legally separate from the GPL-3.0 Meshtastic
+stack running on Core 0. The two cores communicate at arm's length through
+a well-defined IPC protocol (see firmware/shared/ipc/), with no shared
+source-level includes or direct function calls crossing the boundary.
+This design mirrors the separation between a GPL kernel and non-GPL userspace,
+as recognised by the FSF GPL FAQ.

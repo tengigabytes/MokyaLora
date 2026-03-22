@@ -1,0 +1,54 @@
+# MokyaLora — License Overview
+
+This repository contains multiple components under different licenses.
+Each component's license file is authoritative for its directory.
+
+─────────────────────────────────────────────────────────────────────────────
+ Component                    Directory            License
+─────────────────────────────────────────────────────────────────────────────
+ Hardware design files        hardware/            CERN-OHL-S-2.0
+ Documentation                docs/                CC-BY-SA-4.0
+ Core 0 firmware (Modem)      firmware/core0/      GPL-3.0
+ Core 1 firmware (UI/App)     firmware/core1/      Apache-2.0
+ MokyaInput Engine (IME)      firmware/mie/        MIT
+ IPC protocol definition      firmware/shared/ipc/ MIT
+─────────────────────────────────────────────────────────────────────────────
+
+Full license texts:
+
+  CERN-OHL-S-2.0  →  LICENSE-CERN-OHL-S-2.0.txt
+  CC-BY-SA-4.0    →  LICENSE-CC-BY-SA-4.0.txt
+  GPL-3.0         →  https://www.gnu.org/licenses/gpl-3.0.txt
+  Apache-2.0      →  https://www.apache.org/licenses/LICENSE-2.0
+  MIT             →  firmware/mie/LICENSE  /  firmware/shared/ipc/LICENSE
+
+─────────────────────────────────────────────────────────────────────────────
+ THIRD-PARTY ASSETS — EXCLUDED FROM ALL LICENSES ABOVE
+─────────────────────────────────────────────────────────────────────────────
+
+All 3D component model files in this repository (.step / .stp / .wrl)
+are the intellectual property of their respective manufacturers or
+library providers and are NOT covered by any license declared above.
+See the NOTICE file for details.
+
+─────────────────────────────────────────────────────────────────────────────
+ LICENSING RATIONALE FOR FIRMWARE
+─────────────────────────────────────────────────────────────────────────────
+
+Core 0 and Core 1 run on physically separate processor cores (RP2350B dual-core
+Cortex-M33). They communicate exclusively through the IPC protocol defined in
+firmware/shared/ipc/ipc_protocol.h. This boundary is maintained at both the
+source level (Core 1 contains no Meshtastic #includes) and the build level
+(separate CMake targets).
+
+This design mirrors the separation between a GPL-licensed kernel and a
+non-GPL userspace recognised by the FSF GPL FAQ:
+
+  "If the modules are designed to run in the same address space and do
+   intimate things with each other they form a single combined program, ...
+   but if they communicate at arm's length through a well-defined interface
+   they can be separate programs."
+                                     — GNU GPL FAQ, fsf.org
+
+The IPC protocol header (MIT) is compatible with both GPL-3.0 and Apache-2.0,
+serving as the neutral interface between the two cores without license conflict.
