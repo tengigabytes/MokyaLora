@@ -1,0 +1,13 @@
+CERN Open Hardware Licence Version 2 - Strongly Reciprocal
+
+Preamble
+
+CERN has developed this licence to promote collaboration among hardware
+designers and to provide a legal tool which supports the freedom to use,
+study, modify, share and distribute hardware designs and products based on
+those designs. Version 2 of the CERN Open Hardware Licence comes in three
+variants: CERN-OHL-P (permissive); and two reciprocal licences: this
+licence, CERN-OHL-S (strongly reciprocal), and CERN-OHL-W (weakly
+reciprocal), provided for your convenience at https://ohwr.org/cernohl.
+
+[Full license text available at: https://ohwr.org/cern_ohl_s_v2.txt]

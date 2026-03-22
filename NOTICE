@@ -1,0 +1,40 @@
+MokyaLora — Third-Party Asset Notice
+=====================================
+
+This repository includes files that are NOT covered by the project's
+open-source licenses (CERN-OHL-S-2.0 / CC-BY-SA-4.0 / GPL-3.0 /
+Apache-2.0 / MIT). These files are provided solely to support the
+hardware design workflow and are subject to their respective
+third-party terms.
+
+─────────────────────────────────────────────────────────────────────
+ 3D COMPONENT MODELS
+─────────────────────────────────────────────────────────────────────
+
+All 3D component model files contained in this repository — including
+but not limited to files with the extensions:
+
+  .step  .stp  .wrl
+
+— are the intellectual property of their respective manufacturers or
+library providers (e.g. component manufacturers, SnapEDA, SamacSys,
+UltraLibrarian, or other EDA library services).
+
+These files are excluded from all open-source licenses declared in
+this repository. They are provided as-is for design reference only.
+
+Anyone who clones or forks this repository must:
+  1. Independently verify the licensing terms of each 3D model with
+     its original source before redistribution.
+  2. Not assume that these files are covered by any of the
+     project's open-source licenses.
+
+The project maintainers make no warranty regarding the redistribution
+rights of these third-party assets.
+
+─────────────────────────────────────────────────────────────────────
+ ALL OTHER FILES
+─────────────────────────────────────────────────────────────────────
+
+All other files in this repository are covered by the licenses
+described in the LICENSE file at the root of this repository.

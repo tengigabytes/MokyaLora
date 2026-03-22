@@ -1,0 +1,33 @@
+# KiCad auto-generated files
+*.kicad_prl
+*.kicad_dru
+*-backups/
+fp-info-cache
+_autosave-*
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor temp files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Build / firmware outputs
+build/
+*.elf
+*.bin
+*.hex
+*.map
+
+# Python byte-compiled
+__pycache__/
+*.py[cod]
+
+# MIE generated data assets (rebuilt by tools/gen_font.py and tools/gen_dict.py)
+firmware/mie/data/*.bin
+firmware/mie/data/*.json
