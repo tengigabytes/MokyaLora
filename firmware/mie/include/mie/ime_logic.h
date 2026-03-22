@@ -26,12 +26,11 @@
 
 namespace mie {
 
-/// Input modes, cycled by the MODE key.
+/// Input modes, cycled by the MODE key (three total).
 enum class InputMode : uint8_t {
-    Bopomofo     = 0,  ///< Consonant-first Bopomofo prediction (Phase 1 active)
-    English      = 1,  ///< English word prediction             (Phase 3)
-    Alphanumeric = 2,  ///< Traditional multi-tap               (Phase 3)
-    Calculator   = 3,  ///< Calculator UI                       (Phase 3)
+    Bopomofo     = 0,  ///< Bopomofo syllable prediction → Traditional Chinese (Phase 1 active)
+    English      = 1,  ///< English word prediction via half-keyboard pair expansion (Phase 1 ext.)
+    Alphanumeric = 2,  ///< Multi-tap single character — English letters and digits (Phase 1 ext.)
 };
 
 /// Maximum number of candidates returned per query.
@@ -78,12 +77,35 @@ public:
 private:
     TrieSearcher& searcher_;
 
-    InputMode mode_        = InputMode::Bopomofo;
+    InputMode mode_           = InputMode::Bopomofo;
     char      input_buf_[256] = {};
-    int       input_bytes_ = 0;
+    int       input_bytes_    = 0;
 
     Candidate candidates_[kMaxCandidates] = {};
     int       cand_count_ = 0;
+
+    /// State for Alphanumeric multi-tap mode.
+    struct MultiTapState {
+        uint8_t last_row  = 0xFF;  ///< Row of last key (0xFF = idle)
+        uint8_t last_col  = 0xFF;  ///< Col of last key (0xFF = idle)
+        int     tap_count = 0;     ///< Consecutive taps on last key
+        char    pending   = '\0';  ///< Character pending confirmation
+    } multi_tap_;
+
+    // ── Mode dispatch ─────────────────────────────────────────────────────
+
+    /// Bopomofo mode: append primary phoneme, run Trie search, handle commit.
+    bool process_bopomofo(const KeyEvent& ev);
+
+    /// English mode: accumulate half-keyboard key pairs, run prefix search.
+    /// Phase 1 extension — stub, returns false.
+    bool process_english(const KeyEvent& ev);
+
+    /// Alphanumeric mode: multi-tap single character cycling.
+    /// Phase 1 extension — stub, returns false.
+    bool process_alpha(const KeyEvent& ev);
+
+    // ── Bopomofo helpers ─────────────────────────────────────────────────
 
     /// Append a null-terminated UTF-8 phoneme string to input_buf_.
     void append_phoneme(const char* utf8);

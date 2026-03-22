@@ -75,7 +75,6 @@ static const char* mode_name(mie::InputMode m) {
         case mie::InputMode::Bopomofo:     return "注音";
         case mie::InputMode::English:      return "EN";
         case mie::InputMode::Alphanumeric: return "ABC";
-        case mie::InputMode::Calculator:   return "CALC";
     }
     return "?";
 }
