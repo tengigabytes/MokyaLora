@@ -19,6 +19,7 @@ target_include_directories(mie PUBLIC
 )
 
 # Unit tests (host build only — not included when cross-compiling for RP2350)
-if(CMAKE_CROSSCOMPILING STREQUAL "" OR NOT CMAKE_CROSSCOMPILING)
-    # add_subdirectory(tests)
+if(NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

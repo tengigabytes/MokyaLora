@@ -1,0 +1,27 @@
+name: MIE Host Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build MIE (host) and run tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure (CMake)
+        run: |
+          cmake -S firmware/mie -B build/mie-host \
+            -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build/mie-host --parallel
+
+      - name: Test
+        run: ctest --test-dir build/mie-host --output-on-failure
