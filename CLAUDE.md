@@ -139,10 +139,20 @@ Never add a Meshtastic #include to core1/ or mie/.
 ## Build Commands
 
 ```sh
-# MIE host build (PC, no Pico SDK required)
+# MIE host build — Windows (VS Build Tools 2019, from project root)
+# IMPORTANT: project must be on a local drive (not UNC/network path)
+cmake -S firmware/mie -B build/mie-host -G "Visual Studio 16 2019" -A x64
+cmake --build build/mie-host --config Debug --parallel
+cmake --build build/mie-host --config Debug --target RUN_TESTS
+
+# MIE host build — Linux / macOS
 cmake -S firmware/mie -B build/mie-host -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/mie-host
 ctest --test-dir build/mie-host
+
+# Run interactive REPL (after build)
+# Windows:  build\mie-host\Debug\mie_repl.exe
+# Linux:    ./build/mie-host/mie_repl
 
 # Full firmware build (requires Pico SDK + ARM toolchain)
 export PICO_SDK_PATH=/path/to/pico-sdk
