@@ -68,10 +68,13 @@ firmware/mie/
 ├── hal/
 │   ├── hal_port.h              # Abstract IHalPort interface (KeyEvent)
 │   ├── rp2350/                 # RP2350 PIO scan → KeyEvent adapter (future)
-│   └── pc/                     # PC stdin/keyboard stub for unit tests (future)
+│   └── pc/                     # PC virtual half-keyboard adapter
+│       ├── key_map.h           #   Static PC key → KeyEvent{row,col} table
+│       └── hal_pc_stdin.cpp    #   IHalPort impl: raw terminal input
 ├── tools/
 │   ├── gen_font.py             # Unifont → font_glyphs.bin + font_index.bin
-│   └── gen_dict.py             # MoE dict → dict_dat.bin + dict_values.bin
+│   ├── gen_dict.py             # MoE dict → dict_dat.bin + dict_values.bin
+│   └── mie_repl.cpp            # Interactive REPL: virtual keyboard + candidate bar (host only)
 ├── data/                       # Generated binary assets — NOT committed to git
 │   ├── font_glyphs.bin
 │   ├── font_index.bin
@@ -160,7 +163,80 @@ namespace mie {
 ```
 
 - RP2350 implementation (`hal/rp2350/`): reads from the DMA ring buffer populated by the PIO keypad scanner.
-- PC stub (`hal/pc/`): translates stdin or a test script into `KeyEvent` for unit tests.
+- PC implementation (`hal/pc/`): maps PC keyboard input to `KeyEvent` via a static key map table (see §7.1).
+
+### 7.1 PC Virtual Half-Keyboard
+
+The MokyaLora physical keyboard is a **half-keyboard** (ambiguous layout): each key carries
+two letters and two Bopomofo symbols. The IME disambiguates based on context. A PC QWERTY
+keyboard cannot reproduce this directly, so `hal/pc/` provides a virtual mapping.
+
+**Mapping rule:** use the first letter printed on each physical key as the PC trigger key.
+
+#### PC Key → Matrix Position Map
+
+| PC Key | MokyaLora Key | Row | Col | Bopomofo |
+|--------|--------------|-----|-----|----------|
+| `1` | 1 2 | 0 | 0 | ㄅ ㄉ |
+| `3` | 3 4 | 0 | 1 | ˇ ˋ |
+| `5` | 5 6 | 0 | 2 | ㄓ ˊ |
+| `7` | 7 8 | 0 | 3 | ˙ ㄚ |
+| `9` | 9 0 | 0 | 4 | ㄞ ㄢ ㄦ |
+| `q` | Q W | 1 | 0 | ㄆ ㄊ |
+| `e` | E R | 1 | 1 | ㄍ ㄐ |
+| `t` | T Y | 1 | 2 | ㄔ ㄗ |
+| `u` | U I | 1 | 3 | ㄧ ㄛ |
+| `o` | O P | 1 | 4 | ㄟ ㄣ |
+| `a` | A S | 2 | 0 | ㄇ ㄋ |
+| `d` | D F | 2 | 1 | ㄎ ㄑ |
+| `g` | G H | 2 | 2 | ㄕ ㄘ |
+| `j` | J K | 2 | 3 | ㄨ ㄜ |
+| `l` | L   | 2 | 4 | ㄠ ㄤ |
+| `z` | Z X | 3 | 0 | ㄈ ㄌ |
+| `c` | C V | 3 | 1 | ㄏ ㄒ |
+| `b` | B N | 3 | 2 | ㄖ ㄙ |
+| `m` | M   | 3 | 3 | ㄩ ㄝ |
+| `\` | —   | 3 | 4 | ㄡ ㄥ |
+| F1 | FUNC | 0 | 5 | — |
+| F2 | SET  | 1 | 5 | — |
+| `Backspace` | BACK | 2 | 5 | — |
+| `Delete`    | DEL  | 3 | 5 | — |
+| `` ` ``     | MODE | 4 | 0 | — |
+| `Tab`       | TAB  | 4 | 1 | — |
+| `Space`     | SPACE | 4 | 2 | — |
+| `,`         | ，SYM | 4 | 3 | — |
+| `.`         | 。.？  | 4 | 4 | — |
+| `=`         | VOL+  | 4 | 5 | — |
+| `↑`         | UP    | 5 | 0 | — |
+| `↓`         | DOWN  | 5 | 1 | — |
+| `←`         | LEFT  | 5 | 2 | — |
+| `→`         | RIGHT | 5 | 3 | — |
+| `Enter`     | OK    | 5 | 4 | — |
+| `-`         | VOL−  | 5 | 5 | — |
+
+#### Files
+
+| File | Description |
+|------|-------------|
+| `hal/pc/key_map.h` | Static `pc_key_map[]` table: `char → KeyEvent{row, col}` |
+| `hal/pc/hal_pc_stdin.cpp` | `IHalPort` implementation; sets terminal to raw mode, polls stdin |
+| `tools/mie_repl.cpp` | Interactive REPL: renders virtual keyboard layout + candidate bar in terminal |
+
+#### REPL Terminal Layout
+
+```
+┌─ MokyaLora Virtual Keyboard ──────────────────────────────────┐
+│ [1:ㄅㄉ][3:ˇˋ ][5:ㄓˊ][7:˙ㄚ][9:ㄞㄢ][F1:FUNC]             │
+│ [q:ㄆㄊ][e:ㄍㄐ][t:ㄔㄗ][u:ㄧㄛ][o:ㄟㄣ][F2:SET ]          │
+│ [a:ㄇㄋ][d:ㄎㄑ][g:ㄕㄘ][j:ㄨㄜ][l:ㄠㄤ][BS:BACK]          │
+│ [z:ㄈㄌ][c:ㄏㄒ][b:ㄖㄙ][m:ㄩㄝ][\:ㄡㄥ][Del:DEL ]         │
+│ [`:MODE][Tab   ][Space      ][,:SYM][.:。？][=:VOL+]          │
+│ [↑     ][↓     ][←         ][→    ][↵:OK  ][-:VOL-]          │
+├────────────────────────────────────────────────────────────────┤
+│ 輸入序列：ㄐ ㄧ ㄣ                                             │
+│ 候選字：  ① 今  ② 金  ③ 巾  ④ 近  ⑤ 盡                       │
+└────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
