@@ -1,0 +1,118 @@
+(footprint "NHD-2.4-240320AF-CSXP"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(property "Reference" "REF**"
+		(at 8.9 -15.1 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "f7428a5e-db67-407e-b632-f2bdf551c88a")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.1)
+			)
+		)
+	)
+	(property "Value" "NHD-2.4-240320AF-CSXP"
+		(at 8.9 -13.6 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "c24cbd99-f416-4e75-8e2b-5431d9454e28")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "57324cb0-4d49-4ab0-a130-4f6a6485bdbc")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "0459d50b-5d7a-4a1b-b1c6-25844e268db1")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_rect
+		(start -21.4 -27.5)
+		(end 21.4 32.41)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "e88b031b-cbc1-466b-9786-8a08e7838941")
+	)
+	(fp_rect
+		(start -19.46 -25.58)
+		(end 19.46 25.58)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "f914ef1a-ba77-45d7-aefc-95f542678b17")
+	)
+	(fp_rect
+		(start -21.4 -27.5)
+		(end 21.4 32.4)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "c31cb231-cd9e-41ed-92e9-32e8f828e8f8")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 8.9 -12.1 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "fbbf88e1-ed22-490e-a3a2-548283dd1a68")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(group ""
+		(uuid "225d598c-0aab-4ebf-b48d-6ad541a35663")
+		(members "e88b031b-cbc1-466b-9786-8a08e7838941" "f914ef1a-ba77-45d7-aefc-95f542678b17")
+	)
+	(embedded_fonts no)
+	(model "C:/Users/user/Downloads/NHD-2.4-240320AF-CSXP.step"
+		(offset
+			(xyz -0 -0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz -0 -0 -0)
+		)
+	)
+)

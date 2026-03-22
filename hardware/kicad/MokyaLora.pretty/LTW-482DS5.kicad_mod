@@ -1,0 +1,183 @@
+(footprint "LTW-482DS5"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(descr "LTW-482DS5")
+	(tags "LTW-482DS5")
+	(property "Reference" "REF**"
+		(at -1.2 0 90)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "42991a74-b2fd-41fd-bbfd-8414cc77c212")
+		(effects
+			(font
+				(size 0.6 0.6)
+				(thickness 0.1)
+			)
+		)
+	)
+	(property "Value" "LTW-482DS5"
+		(at 8.7 -8.6 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "dd999006-f35e-4a01-b064-706bb2f51f5f")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "4fec74de-c7f1-4e9d-873c-561b303afd4b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "d4604d4a-dadb-4e4a-a2f2-3c6d9e79267e")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_line
+		(start -0.3 -0.3)
+		(end 0.3 -0.3)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "80e0d902-ff69-4976-be28-91105c02608f")
+	)
+	(fp_line
+		(start -0.3 0.2)
+		(end 0.3 0.2)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "714e83d7-09db-4d83-a993-a427c51f56d9")
+	)
+	(fp_line
+		(start 0 -0.3)
+		(end -0.3 0.2)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "e80f9263-f0d1-4529-ad8b-6e647ebfafa2")
+	)
+	(fp_line
+		(start 0.3 0.2)
+		(end 0 -0.3)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(layer "F.SilkS")
+		(uuid "a2eb5049-c777-493c-99ce-4e8fb6ca8b18")
+	)
+	(fp_rect
+		(start -0.6 -1.35)
+		(end 0.6 1.35)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "75e8a07b-5df3-46f2-b5fc-e79c9feff66d")
+	)
+	(fp_rect
+		(start 0.6 -0.6)
+		(end 1 0.5)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "3deafada-81e8-4d0c-af3a-e2e257f1101a")
+	)
+	(fp_rect
+		(start -0.6 -1.35)
+		(end 0.95 1.35)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "02dd3d2c-fc29-49e0-84fa-40bb33c50600")
+	)
+	(fp_rect
+		(start -0.6 -1.35)
+		(end 0.95 1.35)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "100b225d-0c41-48bb-8c6e-52c65612afcb")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 90)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "5040e0da-d9c0-432d-b127-22d0ae7020cf")
+		(effects
+			(font
+				(size 0.3 0.3)
+				(thickness 0.05)
+				(bold yes)
+			)
+		)
+	)
+	(pad "A" smd roundrect
+		(at 0 0.85)
+		(size 1 0.8)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.15)
+		(uuid "17fe6ce0-424d-4650-84d8-d5024f713023")
+	)
+	(pad "C" smd roundrect
+		(at 0 -0.85)
+		(size 1 0.8)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.15)
+		(uuid "0b9e6a19-29df-4762-8ed6-efa7b032f123")
+	)
+	(embedded_fonts no)
+	(model "C:/Users/user/Downloads/LTW-482DS5.step"
+		(offset
+			(xyz 0.16 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz -0 -0 -180)
+		)
+	)
+)

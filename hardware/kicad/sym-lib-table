@@ -1,0 +1,12 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "MokyaLora")(type "KiCad")(uri "${KIPRJMOD}/MokyaLora.kicad_sym")(options "")(descr ""))
+  (lib (name "R0402")(type "Database")(uri "${KIPRJMOD}/R0402.kicad_dbl")(options "")(descr ""))
+  (lib (name "C0402")(type "Database")(uri "${KIPRJMOD}/C0402.kicad_dbl")(options "")(descr ""))
+  (lib (name "C0603")(type "Database")(uri "${KIPRJMOD}/C0603.kicad_dbl")(options "")(descr ""))
+  (lib (name "C0805")(type "Database")(uri "${KIPRJMOD}/C0805.kicad_dbl")(options "")(descr ""))
+  (lib (name "B0402")(type "Database")(uri "${KIPRJMOD}/B0402.kicad_dbl")(options "")(descr ""))
+  (lib (name "RF_IND")(type "KiCad")(uri "${KIPRJMOD}/RF_IND.kicad_sym")(options "")(descr ""))
+  (lib (name "IND_Pwr")(type "KiCad")(uri "${KIPRJMOD}/IND_Pwr.kicad_sym")(options "")(descr ""))
+  (lib (name "C1206")(type "Database")(uri "${KIPRJMOD}/C1206.kicad_dbl")(options "")(descr ""))
+)

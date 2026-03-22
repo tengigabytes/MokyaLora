@@ -1,0 +1,32 @@
+Drill report for MokyaLora.kicad_pcb
+Created on 2026-03-22T15:50:34+0800
+
+Copper Layer Stackup:
+    =============================================================
+    L1 :  F.Cu                      front
+    L2 :  In1.Cu                    in1
+    L3 :  In2.Cu                    in2
+    L4 :  In3.Cu                    in3
+    L5 :  In4.Cu                    in4
+    L6 :  B.Cu                      back
+
+
+Drill file 'MokyaLora.drl' contains
+    plated through holes:
+    =============================================================
+    T1  0.200mm  0.0079"  (836 holes)
+    T2  0.500mm  0.0197"  (16 holes)
+    T3  0.600mm  0.0236"  (4 holes)  (with 4 slots)
+    T4  2.700mm  0.1063"  (2 holes)
+
+    Total plated holes count 858
+
+
+Not plated through holes are merged with plated holes
+    unplated through holes:
+    =============================================================
+    T5  0.650mm  0.0256"  (2 holes)
+    T6  0.800mm  0.0315"  (1 hole)
+    T7  1.900mm  0.0748"  (2 holes)  (with 2 slots)
+
+    Total unplated holes count 5

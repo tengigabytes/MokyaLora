@@ -1,0 +1,323 @@
+(footprint "TESEOLIV3FL"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(descr "TESEO-LIV3FL-7")
+	(tags "Integrated Circuit")
+	(property "Reference" "IC**"
+		(at 0 -6.2 0)
+		(layer "F.SilkS")
+		(uuid "931f6502-6d83-4138-8d48-f055e52ae248")
+		(effects
+			(font
+				(size 0.6 0.6)
+				(thickness 0.1)
+				(bold yes)
+			)
+		)
+	)
+	(property "Value" "TESEOLIV3FL"
+		(at 0 0 0)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "885b13d1-57d4-41c7-a842-a541839aa34f")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.254)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "38f44ee1-ffaf-44a8-939c-2996f03a75da")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "730ce1e7-613b-48b0-b852-f34cd18f10b3")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_line
+		(start -5.05 -3.4)
+		(end -5.05 3.4)
+		(stroke
+			(width 0.2)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "98a01793-49d7-4848-98cf-a1684e6735ee")
+	)
+	(fp_line
+		(start 4.4 -6)
+		(end 4.4 -6)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "570678e1-4b18-46a9-9fad-44bfc795bc84")
+	)
+	(fp_line
+		(start 4.4 -6)
+		(end 4.4 -6)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "cdfae005-1dab-4561-8ce2-9b0fc1e68a04")
+	)
+	(fp_line
+		(start 4.4 -5.9)
+		(end 4.4 -5.9)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "2aa764e1-ef6b-4913-93bc-60e74befefe4")
+	)
+	(fp_line
+		(start 5.05 3.4)
+		(end 5.05 -3.4)
+		(stroke
+			(width 0.2)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "bb723a24-f586-4947-a9e9-5f5b0369d2b3")
+	)
+	(fp_arc
+		(start 4.4 -6)
+		(mid 4.45 -5.95)
+		(end 4.4 -5.9)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "2035a671-90a8-4471-8215-202afaecd417")
+	)
+	(fp_arc
+		(start 4.4 -5.9)
+		(mid 4.35 -5.95)
+		(end 4.4 -6)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "c11ebb89-767d-476d-9d9c-2b89810cff1c")
+	)
+	(fp_arc
+		(start 4.4 -5.9)
+		(mid 4.35 -5.95)
+		(end 4.4 -6)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "e3e226a2-1abe-4f02-bafc-4600bc00dfbb")
+	)
+	(fp_rect
+		(start -5.5 -5.5)
+		(end 5.5 5.5)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "a5a25cca-5eb5-4218-81bb-e1df07378bd6")
+	)
+	(fp_line
+		(start -5.05 -4.85)
+		(end -5.05 4.85)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "30807b5f-5273-4e2b-9438-e0998805c9f3")
+	)
+	(fp_line
+		(start -5.05 4.85)
+		(end 5.05 4.85)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "cf36e8dc-d37b-4b2a-9b34-28addbd20734")
+	)
+	(fp_line
+		(start 5.05 -4.85)
+		(end -5.05 -4.85)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "67bd7ff4-4c32-4e8b-808d-d098f50c424a")
+	)
+	(fp_line
+		(start 5.05 4.85)
+		(end 5.05 -4.85)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "97a21146-1bfe-45a9-9def-71bfdc92bc2d")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "7edefea8-016a-4a4b-9c94-cdae1a07d103")
+		(effects
+			(font
+				(size 0.6 0.6)
+				(thickness 0.1)
+				(bold yes)
+			)
+		)
+	)
+	(pad "1" smd rect
+		(at 4.4 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "05f66d4b-d6ca-4c99-9ed0-701dcc7a6f73")
+	)
+	(pad "2" smd rect
+		(at 3.3 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "ea7abc9f-e612-4b0f-911e-e925ee159219")
+	)
+	(pad "3" smd rect
+		(at 2.2 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "794163fb-600d-4c3a-bf71-fb5b8a33367c")
+	)
+	(pad "4" smd rect
+		(at 1.1 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "1680ac48-8e53-4b68-89ea-2cd03bcb3548")
+	)
+	(pad "5" smd rect
+		(at 0 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "3dd20df9-7528-482a-8ae9-be4e21d33b96")
+	)
+	(pad "6" smd rect
+		(at -1.1 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "3a07b5bd-6096-4231-8f01-04dfceed7786")
+	)
+	(pad "7" smd rect
+		(at -2.2 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "e570f79c-224e-4e55-8610-87ba2f3356f1")
+	)
+	(pad "8" smd rect
+		(at -3.3 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "04c114f1-6b35-4e1e-be32-f9413d1427ab")
+	)
+	(pad "9" smd rect
+		(at -4.4 -4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "f6dfb1b6-3c8a-430b-9755-1767fdf3e3a0")
+	)
+	(pad "10" smd rect
+		(at -4.4 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "89995274-e907-47d7-b556-f343a666a852")
+	)
+	(pad "11" smd rect
+		(at -3.3 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "bba82f9c-914b-44e5-857b-7c207694b92a")
+	)
+	(pad "12" smd rect
+		(at -2.2 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "af91805f-53e1-4fa3-9466-6131c53ec4e1")
+	)
+	(pad "13" smd rect
+		(at -1.1 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "12ca06e5-374c-4255-8bc3-b004b62bf93e")
+	)
+	(pad "14" smd rect
+		(at 0 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "3e8ed43c-26a8-46b6-ad50-800b7cffdca9")
+	)
+	(pad "15" smd rect
+		(at 1.1 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "a7e47f42-278e-4595-8f07-ca8366eca3bb")
+	)
+	(pad "16" smd rect
+		(at 2.2 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "295e106c-023e-4ad9-af8e-6970f53a02fc")
+	)
+	(pad "17" smd rect
+		(at 3.3 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "bec88701-a4af-424f-a02a-48fc71c8f490")
+	)
+	(pad "18" smd rect
+		(at 4.4 4.6)
+		(size 0.9 1.6)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "299efb0c-815a-441f-a230-75634a307204")
+	)
+	(embedded_fonts no)
+	(model "C:/Users/user/Downloads/LIB_TESEO-LIV3FL/TESEO-LIV3FL/3D/TESEO-LIV3FL.stp"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz -90 -0 -0)
+		)
+	)
+)
