@@ -54,8 +54,9 @@ The division of authorship is as follows:
 
 | Area | Authorship |
 |------|-----------|
-| System, hardware, and software requirements | Written by the project owner |
-| Hardware design (schematic, PCB layout) | Designed by the project owner |
+| Requirements — technical concepts and design decisions | Project owner |
+| Requirements — document writing and formatting | Claude Code assisted |
+| Hardware design (schematic, PCB layout) | Project owner |
 | Documentation — organisation, formatting, and structure | Claude Code assisted |
 | Firmware and software development | Claude Code assisted |
 
