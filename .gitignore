@@ -1,9 +1,11 @@
 # KiCad auto-generated files
 *.kicad_prl
-*.kicad_dru
 *-backups/
 fp-info-cache
 _autosave-*
+
+# Claude Code local settings
+.claude/
 
 # OS metadata
 .DS_Store

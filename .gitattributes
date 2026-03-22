@@ -1,0 +1,40 @@
+# Default: normalize text line endings
+* text=auto
+
+# KiCad design files — text, LF canonical
+*.kicad_sch    text eol=lf
+*.kicad_pcb    text eol=lf
+*.kicad_pro    text eol=lf
+*.kicad_sym    text eol=lf
+*.kicad_mod    text eol=lf
+*.kicad_dru    text eol=lf
+fp-lib-table   text eol=lf
+sym-lib-table  text eol=lf
+
+# 3D model files — binary
+*.step  binary
+*.stp   binary
+*.wrl   binary
+
+# Gerber / fabrication outputs — text, LF canonical
+*.gbr      text eol=lf
+*.gbrjob   text eol=lf
+*.drl      text eol=lf
+*.d356     text eol=lf
+*.pos      text eol=lf
+*.rpt      text eol=lf
+
+# PDF — binary
+*.pdf   binary
+
+# Firmware / code
+*.c     text eol=lf
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.py    text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+
+# Documentation
+*.md    text eol=lf
+*.txt   text eol=lf

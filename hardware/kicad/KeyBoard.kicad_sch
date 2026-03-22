@@ -1,0 +1,9978 @@
+(kicad_sch
+	(version 20250114)
+	(generator "eeschema")
+	(generator_version "9.0")
+	(uuid "86b522e6-8d8d-4cff-beae-22f8ac3ca76f")
+	(paper "A4")
+	(title_block
+		(date "2026-03-22")
+		(rev "A")
+		(comment 1 "https://github.com/tengigabytes/MokyaLora")
+		(comment 2 "CERN-OHL-S v2 © 2026 Terry Wang")
+	)
+	(lib_symbols
+		(symbol "MokyaLora:SDM03U40"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "D"
+				(at -2.286 2.286 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" ""
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Footprint" "MokyaLora:D_SOD-523"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "MPN" "SDM03U40"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "DIODE SCHOTTKY 30V 30MA SOD523"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "SDM03U40_0_1"
+				(polyline
+					(pts
+						(xy -0.762 -3.048) (xy 0.762 -3.048)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -0.762 -3.048) (xy -0.762 -2.794) (xy -0.508 -2.794)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0 -1.27) (xy 0 -3.81)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 0.762 -3.048) (xy 0.762 -3.302) (xy 0.508 -3.302)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "SDM03U40_1_1"
+				(polyline
+					(pts
+						(xy 0 -3.048) (xy -0.762 -1.778) (xy 0.762 -1.778) (xy 0 -3.048)
+					)
+					(stroke
+						(width 0)
+						(type solid)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(pin input line
+					(at 0 0 270)
+					(length 1.27)
+					(name "A"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "A"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin input line
+					(at 0 -5.08 90)
+					(length 1.27)
+					(name "C"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "C"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+		(symbol "MokyaLora:SWT0105-003516JSA"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "SW"
+				(at -0.254 1.524 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "SWT0105-003516JSA"
+				(at -1.524 7.112 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Footprint" "MokyaLora:SWT0105"
+				(at 0 7.112 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+				(at -1.524 7.112 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+				(at -1.524 7.112 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "SWT0105-003516JSA_0_0"
+				(pin passive line
+					(at 0 -2.54 0)
+					(length 2.54)
+					(name "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 0.635 0.635)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 0 -2.54 0)
+					(length 2.54)
+					(name "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 0.635 0.635)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 2.54 -7.62 90)
+					(length 1.905)
+					(name "3"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "3"
+						(effects
+							(font
+								(size 0.635 0.635)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 2.54 -7.62 90)
+					(length 1.905)
+					(name "4"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "4"
+						(effects
+							(font
+								(size 0.635 0.635)
+							)
+						)
+					)
+				)
+			)
+			(symbol "SWT0105-003516JSA_0_1"
+				(polyline
+					(pts
+						(xy 1.27 -4.064) (xy 1.27 -6.096)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 -5.08) (xy 0.508 -5.08)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 2.54 -2.54) (xy 2.54 -4.445)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "SWT0105-003516JSA_1_1"
+				(circle
+					(center 2.54 -4.445)
+					(radius 0.284)
+					(stroke
+						(width 0)
+						(type solid)
+					)
+					(fill
+						(type outline)
+					)
+				)
+				(circle
+					(center 2.54 -5.715)
+					(radius 0.284)
+					(stroke
+						(width 0)
+						(type solid)
+					)
+					(fill
+						(type outline)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+		(symbol "MokyaLora:TestPoint_Small"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 0.762)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom no)
+			(on_board yes)
+			(property "Reference" "TP"
+				(at 0 0.762 0)
+				(effects
+					(font
+						(size 0.508 0.508)
+					)
+				)
+			)
+			(property "Value" "TestPoint_Small"
+				(at 0 5.842 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+				(at 5.08 3.81 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "~"
+				(at 5.08 3.81 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "test point"
+				(at 0 3.81 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "MPN" "test point"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "test point tp"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "Pin* Test*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "TestPoint_Small_0_1"
+				(circle
+					(center 0 0)
+					(radius 0.508)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "TestPoint_Small_1_1"
+				(pin passive line
+					(at 0 0 90)
+					(length 0)
+					(name "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
+	)
+	(junction
+		(at 78.74 35.56)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "03b53097-cb90-4f32-a058-b73318c59098")
+	)
+	(junction
+		(at 190.5 134.62)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "0765542e-8cfb-46e7-989a-444f8954c861")
+	)
+	(junction
+		(at 114.3 43.18)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "095dcc0d-bad7-4f36-844d-e015523566b8")
+	)
+	(junction
+		(at 99.06 81.28)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "0d589e08-ab55-4510-9b3f-83ce5a0ee537")
+	)
+	(junction
+		(at 134.62 66.04)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "12ab1614-7438-413e-b738-d8e7e367d7ed")
+	)
+	(junction
+		(at 180.34 35.56)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "12e6f09f-9a91-4782-8fe2-6cf1b141af92")
+	)
+	(junction
+		(at 154.94 43.18)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "158f2cda-1f4f-4eb9-ab73-9a0c5a59e7c3")
+	)
+	(junction
+		(at 175.26 134.62)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "259ab4f2-8638-4770-b056-03c523586905")
+	)
+	(junction
+		(at 154.94 111.76)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "2cde495d-d341-4f5d-a259-6335e2cdfb24")
+	)
+	(junction
+		(at 180.34 127)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "2eea8afd-0da3-46ec-8015-e205f60c0c8d")
+	)
+	(junction
+		(at 93.98 111.76)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "3118c423-eac4-49da-ab48-58f9b26e6022")
+	)
+	(junction
+		(at 78.74 58.42)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "349c0c3a-bf4b-409d-bd47-d16b6b9155ab")
+	)
+	(junction
+		(at 134.62 88.9)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "3e469f2a-2eee-4f09-8b3c-aac1cdd3e80f")
+	)
+	(junction
+		(at 119.38 104.14)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "4330a9c2-7edb-4124-b152-0eabe9e53770")
+	)
+	(junction
+		(at 78.74 104.14)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "4973be8f-a10d-43e3-b634-fd951cf52986")
+	)
+	(junction
+		(at 134.62 157.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "4cd447da-8494-4666-8e38-d8b566eb9efc")
+	)
+	(junction
+		(at 190.5 157.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "4fa97258-bc27-4eed-920a-a7a1d596cef1")
+	)
+	(junction
+		(at 119.38 35.56)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "50b8f7fb-3629-45fa-810e-3f5e68b636fa")
+	)
+	(junction
+		(at 180.34 30.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "514e241e-d224-4b14-b490-4c420153fd4f")
+	)
+	(junction
+		(at 139.7 127)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "516b7b84-08c5-4d24-98ca-8680b52b42a3")
+	)
+	(junction
+		(at 154.94 66.04)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "571b68b2-4562-4a12-b334-ef2ecb6abc40")
+	)
+	(junction
+		(at 93.98 134.62)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "5d2d39f1-437d-4d70-86ec-8fb6a6d7421b")
+	)
+	(junction
+		(at 160.02 127)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "5ecb040c-7db8-409a-a030-ace5cf35b409")
+	)
+	(junction
+		(at 139.7 104.14)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "61932ccd-41ad-48d2-9110-ff8d3d736923")
+	)
+	(junction
+		(at 190.5 43.18)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "628c8ca6-bcea-423d-8b9d-68a24f28ae01")
+	)
+	(junction
+		(at 119.38 30.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "6ed93b26-d2f8-4424-92ff-5539f9de1ea3")
+	)
+	(junction
+		(at 190.5 111.76)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "75db2264-1237-453c-a779-ae3a0efc90cf")
+	)
+	(junction
+		(at 160.02 81.28)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "76c5ad8b-0856-4b64-bbc7-6f9dc1ebcd4b")
+	)
+	(junction
+		(at 119.38 127)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "77258b67-82a3-4f51-b33e-b23c14a469f0")
+	)
+	(junction
+		(at 180.34 58.42)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "78e1ad75-a333-4684-a45d-e0f93151ad47")
+	)
+	(junction
+		(at 175.26 88.9)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "7b8d44f8-6959-43a7-8475-dbbf4464f852")
+	)
+	(junction
+		(at 175.26 66.04)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "812fb907-127f-4401-b887-29c942fcdf72")
+	)
+	(junction
+		(at 154.94 157.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "8188a58c-2173-4091-aab6-a0b4db29e180")
+	)
+	(junction
+		(at 139.7 30.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "8d442a0d-d4aa-4b52-b195-112c77818a88")
+	)
+	(junction
+		(at 93.98 157.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "90191f82-dfb6-4dca-a843-3d0bf91b8b9f")
+	)
+	(junction
+		(at 93.98 43.18)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "9104d3be-c2d2-45cc-b1ff-8b6f582126ef")
+	)
+	(junction
+		(at 139.7 81.28)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "936ab7e3-4fe7-4d3e-8ce5-ecaa4f3de79b")
+	)
+	(junction
+		(at 175.26 43.18)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "9648ee30-5ce8-4d87-a611-b573a1ff5305")
+	)
+	(junction
+		(at 154.94 134.62)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "9799938e-94c4-4dc7-b294-15bd4b578127")
+	)
+	(junction
+		(at 160.02 30.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "986b951c-7121-4bf7-af37-d6fb3048a6ea")
+	)
+	(junction
+		(at 99.06 35.56)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "9d84ca82-7e53-4728-af85-5eb538c3f079")
+	)
+	(junction
+		(at 114.3 111.76)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "a3d73bf9-532a-413b-8d41-f735aabd295f")
+	)
+	(junction
+		(at 78.74 81.28)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "a624ce86-8bc7-45b9-8ee8-a1c031479213")
+	)
+	(junction
+		(at 78.74 127)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "a9df59cf-5cec-4374-869d-59230b3c9482")
+	)
+	(junction
+		(at 99.06 58.42)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "af1f120f-7dcd-488f-880b-7c29bba3afe8")
+	)
+	(junction
+		(at 93.98 88.9)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "b23c3161-dfb3-4b6a-b37b-6e9155a05547")
+	)
+	(junction
+		(at 175.26 157.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "b46b2333-27dd-4979-aac2-0d4b08942b19")
+	)
+	(junction
+		(at 134.62 134.62)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "b5e579e2-c320-4417-a11a-046b919c05b5")
+	)
+	(junction
+		(at 160.02 58.42)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "b6b05187-081e-4ada-9bbb-7b1d654b77fe")
+	)
+	(junction
+		(at 134.62 43.18)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "b87af149-6b86-42e8-b4a6-73476a216380")
+	)
+	(junction
+		(at 180.34 81.28)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "ba5b8302-997f-4ae9-ba23-59fb5df4e82f")
+	)
+	(junction
+		(at 99.06 104.14)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "bcdf4a24-1dcd-4a5a-ac77-9d4362e1bb9e")
+	)
+	(junction
+		(at 180.34 104.14)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "c083a2b4-70db-4e29-911c-d9f18048fd9d")
+	)
+	(junction
+		(at 190.5 66.04)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "c412b3e2-94ad-4482-8728-3ca8aa2f88cf")
+	)
+	(junction
+		(at 114.3 157.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "c4e0c8d9-9bfd-4736-9a8d-75559f8e8a19")
+	)
+	(junction
+		(at 190.5 88.9)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "cfdf8ea3-7da8-4882-917f-686f4186a0d6")
+	)
+	(junction
+		(at 134.62 111.76)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "d0d9edde-9ff4-4c6a-b1c2-cb8faee797fc")
+	)
+	(junction
+		(at 78.74 30.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "d519e114-5649-45ae-9549-65a65236bdda")
+	)
+	(junction
+		(at 93.98 66.04)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "d7a03550-534f-4514-945a-9d1559c8b399")
+	)
+	(junction
+		(at 99.06 30.48)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "d81b38d2-bd95-4142-a3c2-a2c2f6f94173")
+	)
+	(junction
+		(at 160.02 35.56)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "da026512-1496-4117-ad74-7a72bbcf121d")
+	)
+	(junction
+		(at 119.38 58.42)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "dac35ac5-66eb-40e7-9e86-a23a4f91a888")
+	)
+	(junction
+		(at 114.3 134.62)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e2c787ad-6fe0-40dc-824d-aebc78eb14ef")
+	)
+	(junction
+		(at 175.26 111.76)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e32dee31-f739-4af2-8c53-2cefdd70f958")
+	)
+	(junction
+		(at 139.7 35.56)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e741d437-e36e-4313-b8db-38f763e9d765")
+	)
+	(junction
+		(at 160.02 104.14)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "ea216e3d-2ad7-4ba4-9fd0-dda76f30344c")
+	)
+	(junction
+		(at 114.3 88.9)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "ecee888e-0acf-4f7d-9ea4-2069c32625f4")
+	)
+	(junction
+		(at 114.3 66.04)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "ef815399-0378-4ffd-8a10-249580f97883")
+	)
+	(junction
+		(at 119.38 81.28)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "f2a7aae5-c549-46d6-9c7b-b1fbc1f152d0")
+	)
+	(junction
+		(at 154.94 88.9)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "f94e32df-6da0-4385-a128-6bdaff5613b7")
+	)
+	(junction
+		(at 139.7 58.42)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "f9d12183-1025-46d8-9b5e-cf7c8a628c33")
+	)
+	(junction
+		(at 99.06 127)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "ff025860-58c0-4375-b14a-1b6eee2b88f7")
+	)
+	(wire
+		(pts
+			(xy 175.26 111.76) (xy 190.5 111.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "051d3cfa-4799-466c-8680-930dcfb13602")
+	)
+	(wire
+		(pts
+			(xy 99.06 104.14) (xy 99.06 127)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "06907557-a25b-4a19-8d67-eb7e443d301b")
+	)
+	(wire
+		(pts
+			(xy 78.74 35.56) (xy 78.74 58.42)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "079acaf0-c016-4426-baf0-b876c6c4405a")
+	)
+	(wire
+		(pts
+			(xy 154.94 43.18) (xy 175.26 43.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "092ec386-8a29-4afe-b107-4bc0da3a039e")
+	)
+	(wire
+		(pts
+			(xy 190.5 66.04) (xy 193.04 66.04)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1037ed8c-5af7-4bd4-8c51-3c2058c4a960")
+	)
+	(wire
+		(pts
+			(xy 160.02 25.4) (xy 160.02 30.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "14d2468d-011f-40f6-a1ba-7abc6b4a9d64")
+	)
+	(wire
+		(pts
+			(xy 134.62 43.18) (xy 154.94 43.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "19f25bdf-0134-4907-925a-c2838dff69b1")
+	)
+	(wire
+		(pts
+			(xy 139.7 35.56) (xy 139.7 58.42)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1a3c8a58-ace2-4e6b-8170-ce83123e2116")
+	)
+	(wire
+		(pts
+			(xy 180.34 81.28) (xy 180.34 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1b5fbd66-b9ca-4192-b888-cca56fdba6ac")
+	)
+	(wire
+		(pts
+			(xy 78.74 58.42) (xy 78.74 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2025b4e2-2583-44d3-99bf-7ba2c8a57039")
+	)
+	(wire
+		(pts
+			(xy 160.02 127) (xy 160.02 149.86)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "228404fc-38c5-447b-9fff-64a2d46caf99")
+	)
+	(wire
+		(pts
+			(xy 139.7 127) (xy 139.7 149.86)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2613e8ff-d750-45f5-8fdc-5a9c4fbb7932")
+	)
+	(wire
+		(pts
+			(xy 119.38 25.4) (xy 119.38 30.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "28198d54-c737-4149-a671-511d21fa9235")
+	)
+	(wire
+		(pts
+			(xy 99.06 58.42) (xy 99.06 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2867b7c0-8acf-4b21-87e6-2a61b4ebd93f")
+	)
+	(wire
+		(pts
+			(xy 114.3 43.18) (xy 134.62 43.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2ae2b32c-2c91-4839-834e-e82c5ce2d12a")
+	)
+	(wire
+		(pts
+			(xy 93.98 66.04) (xy 114.3 66.04)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2be5b71a-a099-4791-816b-2cc240cf72f1")
+	)
+	(wire
+		(pts
+			(xy 93.98 157.48) (xy 114.3 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "32846851-1887-4292-a6f3-d27faf1ad069")
+	)
+	(wire
+		(pts
+			(xy 93.98 43.18) (xy 114.3 43.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "33377ae8-fca1-4836-95cc-a94a74917412")
+	)
+	(wire
+		(pts
+			(xy 73.66 66.04) (xy 93.98 66.04)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "345bfd2a-ad6b-4352-9f16-66b9962f36b1")
+	)
+	(wire
+		(pts
+			(xy 134.62 88.9) (xy 154.94 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "36f5e8ca-6ee3-4de1-9962-23a6c029ac7c")
+	)
+	(wire
+		(pts
+			(xy 154.94 88.9) (xy 175.26 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3abbe7c8-53db-46c6-afe1-bcb369aea5e1")
+	)
+	(wire
+		(pts
+			(xy 180.34 35.56) (xy 180.34 58.42)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3bee4b5e-122a-406a-8918-4ae417ce8007")
+	)
+	(wire
+		(pts
+			(xy 119.38 58.42) (xy 119.38 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "3df309b3-5e8b-4624-9ef0-f35c60ec586d")
+	)
+	(wire
+		(pts
+			(xy 162.56 25.4) (xy 160.02 25.4)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "41e923af-c453-458f-9522-12dbc637d944")
+	)
+	(wire
+		(pts
+			(xy 93.98 134.62) (xy 114.3 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "43086500-f39e-48ef-9b8a-4a2a3fd67706")
+	)
+	(wire
+		(pts
+			(xy 78.74 30.48) (xy 78.74 35.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "49754b24-7b0f-4720-b5dc-ff64b8862839")
+	)
+	(wire
+		(pts
+			(xy 139.7 81.28) (xy 139.7 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4c7a17b9-ffce-4ec2-95a9-43e311f12c4d")
+	)
+	(wire
+		(pts
+			(xy 190.5 134.62) (xy 193.04 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4e74172d-01d9-491b-af04-3479933cc601")
+	)
+	(wire
+		(pts
+			(xy 78.74 81.28) (xy 78.74 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "4fcfb34a-f009-42b3-82b0-0d550d954832")
+	)
+	(wire
+		(pts
+			(xy 175.26 157.48) (xy 190.5 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5213cf33-dd0d-43ee-bc7a-d8f597d8a3a9")
+	)
+	(wire
+		(pts
+			(xy 160.02 30.48) (xy 160.02 35.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "55e31e5a-fa67-4cf0-bc32-430785e766e5")
+	)
+	(wire
+		(pts
+			(xy 119.38 81.28) (xy 119.38 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "679b7446-f748-48de-b573-19d21449ef92")
+	)
+	(wire
+		(pts
+			(xy 73.66 43.18) (xy 93.98 43.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "692ccba0-4b4c-429f-8ba0-48aa906b6eed")
+	)
+	(wire
+		(pts
+			(xy 139.7 58.42) (xy 139.7 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "699684b8-dfab-4c6e-9949-b419b4386fc5")
+	)
+	(wire
+		(pts
+			(xy 175.26 43.18) (xy 190.5 43.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "69d90f3c-0c72-4f36-a7d7-fd8e2c2c714e")
+	)
+	(wire
+		(pts
+			(xy 160.02 104.14) (xy 160.02 127)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "6c2de410-dc9b-4bf4-a2cf-4a9efc7ddd8f")
+	)
+	(wire
+		(pts
+			(xy 134.62 157.48) (xy 154.94 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "71f08888-c885-4f73-ab17-f454409bd5f8")
+	)
+	(wire
+		(pts
+			(xy 73.66 88.9) (xy 93.98 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7317ead7-07a0-4b43-bc6a-6c7a0606034e")
+	)
+	(wire
+		(pts
+			(xy 134.62 134.62) (xy 154.94 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7477d3c5-33b7-4e35-8620-8120d485e721")
+	)
+	(wire
+		(pts
+			(xy 154.94 111.76) (xy 175.26 111.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7d3674e4-bafc-4f3d-b653-ce7b2039475e")
+	)
+	(wire
+		(pts
+			(xy 175.26 134.62) (xy 190.5 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7d7c34be-310b-44e8-9b1c-e2eeaeeea98f")
+	)
+	(wire
+		(pts
+			(xy 139.7 104.14) (xy 139.7 127)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7e5fdf2f-4f32-4bd4-a104-98cd9c1fc81e")
+	)
+	(wire
+		(pts
+			(xy 93.98 111.76) (xy 114.3 111.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "81c18f1d-75c7-4604-9e05-a11d8791da03")
+	)
+	(wire
+		(pts
+			(xy 101.6 25.4) (xy 99.06 25.4)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "8a28d717-334c-4d0a-8345-c723bb983cc5")
+	)
+	(wire
+		(pts
+			(xy 160.02 58.42) (xy 160.02 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "8bc6b2c9-24f7-4a6d-9da4-bbb9ab30b5aa")
+	)
+	(wire
+		(pts
+			(xy 93.98 88.9) (xy 114.3 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "8f67e2fa-9366-411e-a762-a66a21de32c7")
+	)
+	(wire
+		(pts
+			(xy 78.74 25.4) (xy 78.74 30.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "91d44787-ffc1-49fc-a2d4-b911575cd9a6")
+	)
+	(wire
+		(pts
+			(xy 73.66 134.62) (xy 93.98 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "92e8d7ec-7c35-476f-82ed-aa61c82fee63")
+	)
+	(wire
+		(pts
+			(xy 78.74 127) (xy 78.74 149.86)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "99118870-588d-4fe0-97a3-dbee11ce1a9d")
+	)
+	(wire
+		(pts
+			(xy 180.34 127) (xy 180.34 149.86)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9cb1354a-6f0d-4135-9110-e7907f1a1d4d")
+	)
+	(wire
+		(pts
+			(xy 114.3 157.48) (xy 134.62 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9cf3b672-ef98-4b98-807a-071a36241ce7")
+	)
+	(wire
+		(pts
+			(xy 175.26 66.04) (xy 190.5 66.04)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9ebd3bad-7da8-4e9b-96f8-4be362bc9515")
+	)
+	(wire
+		(pts
+			(xy 190.5 88.9) (xy 193.04 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a3311ca3-5bbd-4d81-99e8-2decd94a8549")
+	)
+	(wire
+		(pts
+			(xy 99.06 35.56) (xy 99.06 58.42)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "a974b5a5-6230-4aaf-b9c6-209e43189cf4")
+	)
+	(wire
+		(pts
+			(xy 154.94 157.48) (xy 175.26 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "abe58a16-955b-4566-898f-643505540255")
+	)
+	(wire
+		(pts
+			(xy 175.26 88.9) (xy 190.5 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "af5242af-17fc-4a7a-97fe-8c157ca75c20")
+	)
+	(wire
+		(pts
+			(xy 121.92 25.4) (xy 119.38 25.4)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b068bcf1-5d8a-43ee-9c1a-a7464f98e3be")
+	)
+	(wire
+		(pts
+			(xy 154.94 134.62) (xy 175.26 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b0715e26-024a-4934-9c76-faf1803c4660")
+	)
+	(wire
+		(pts
+			(xy 180.34 104.14) (xy 180.34 127)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b255665e-5a48-49a0-9eca-9b1e54a60363")
+	)
+	(wire
+		(pts
+			(xy 99.06 81.28) (xy 99.06 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b3dc95c9-7f98-4615-bdec-c8aafd00315c")
+	)
+	(wire
+		(pts
+			(xy 114.3 111.76) (xy 134.62 111.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b5d9240b-facd-4404-9080-6e808da70939")
+	)
+	(wire
+		(pts
+			(xy 134.62 66.04) (xy 154.94 66.04)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "bcbea2a4-45b5-4e44-a94b-4f19cdf2d092")
+	)
+	(wire
+		(pts
+			(xy 99.06 25.4) (xy 99.06 30.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "be805e72-f71e-4fca-a06f-8c1655ceaf69")
+	)
+	(wire
+		(pts
+			(xy 180.34 30.48) (xy 180.34 35.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "bf31c855-4e93-421d-a19e-e64a8e7accb1")
+	)
+	(wire
+		(pts
+			(xy 99.06 30.48) (xy 99.06 35.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "bf533c58-be9c-4a1f-8fe7-df464a6fe690")
+	)
+	(wire
+		(pts
+			(xy 114.3 66.04) (xy 134.62 66.04)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c58c157f-2355-4c4c-bc30-6ff5a7881538")
+	)
+	(wire
+		(pts
+			(xy 119.38 35.56) (xy 119.38 58.42)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ca43f60d-c7ce-4a4c-b921-8eae721502e8")
+	)
+	(wire
+		(pts
+			(xy 139.7 25.4) (xy 139.7 30.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "cc098bd1-dbcf-4d86-a276-8c17cfb5bb02")
+	)
+	(wire
+		(pts
+			(xy 99.06 127) (xy 99.06 149.86)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "cdc109cb-68b7-4e13-b629-e41abba344cc")
+	)
+	(wire
+		(pts
+			(xy 160.02 35.56) (xy 160.02 58.42)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "cfc28d72-78d5-42f4-ae8e-354d2231185e")
+	)
+	(wire
+		(pts
+			(xy 78.74 25.4) (xy 81.28 25.4)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "cfcc618e-2834-494b-a41f-f65da41d1964")
+	)
+	(wire
+		(pts
+			(xy 190.5 111.76) (xy 193.04 111.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d0f74aa1-ea5e-4c89-a830-233d7b347622")
+	)
+	(wire
+		(pts
+			(xy 180.34 25.4) (xy 180.34 30.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d28c7f99-2fe9-4654-a687-3ad1fe84b211")
+	)
+	(wire
+		(pts
+			(xy 142.24 25.4) (xy 139.7 25.4)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d30eb118-344e-413d-a036-e969cceb00a3")
+	)
+	(wire
+		(pts
+			(xy 114.3 88.9) (xy 134.62 88.9)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d3451e01-32a3-4864-b710-70515c5f8322")
+	)
+	(wire
+		(pts
+			(xy 119.38 127) (xy 119.38 149.86)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d3bb05b7-6f77-4648-b9b1-aae94c415586")
+	)
+	(wire
+		(pts
+			(xy 134.62 111.76) (xy 154.94 111.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "db32f9da-15c3-407b-8f38-0e75c42d7937")
+	)
+	(wire
+		(pts
+			(xy 119.38 104.14) (xy 119.38 127)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "dfef3eaf-0358-45e9-a224-c00421f67888")
+	)
+	(wire
+		(pts
+			(xy 114.3 134.62) (xy 134.62 134.62)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e042cb3e-bcc7-407f-8b38-75c44d04176f")
+	)
+	(wire
+		(pts
+			(xy 160.02 81.28) (xy 160.02 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e12f26c3-58a5-4596-aae9-1cd93718eaa3")
+	)
+	(wire
+		(pts
+			(xy 190.5 43.18) (xy 193.04 43.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e4f1168a-3a10-4817-96f9-d22d17cd6b8c")
+	)
+	(wire
+		(pts
+			(xy 180.34 58.42) (xy 180.34 81.28)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e65abcb1-3b0e-41fb-8a20-b6b1717f2467")
+	)
+	(wire
+		(pts
+			(xy 139.7 30.48) (xy 139.7 35.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ea6d9828-0dfe-4e42-9b8b-4333eec8087f")
+	)
+	(wire
+		(pts
+			(xy 73.66 111.76) (xy 93.98 111.76)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f0392a47-7431-46d1-9bce-552c02dd7889")
+	)
+	(wire
+		(pts
+			(xy 190.5 157.48) (xy 193.04 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f5608975-1c17-4dc1-b430-f9d5ef41878c")
+	)
+	(wire
+		(pts
+			(xy 78.74 104.14) (xy 78.74 127)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f9519fc3-3e96-4b67-bb10-658ca32ffbf6")
+	)
+	(wire
+		(pts
+			(xy 154.94 66.04) (xy 175.26 66.04)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "faec8cd8-5d9d-4179-a033-ce36d58d25eb")
+	)
+	(wire
+		(pts
+			(xy 73.66 157.48) (xy 93.98 157.48)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fd6267ed-7a4b-4bc3-b3ad-1ed3c8cda908")
+	)
+	(wire
+		(pts
+			(xy 182.88 25.4) (xy 180.34 25.4)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fe74a468-a0e5-488a-8950-5e8a3e75ae66")
+	)
+	(wire
+		(pts
+			(xy 119.38 30.48) (xy 119.38 35.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fe9d02b8-c2e3-4ad4-a327-327391f425b5")
+	)
+	(hierarchical_label "KEY_C0"
+		(shape output)
+		(at 81.28 25.4 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "0a842ba1-bbc5-4cbd-a1ae-c706486a98ea")
+	)
+	(hierarchical_label "KEY_C2"
+		(shape output)
+		(at 121.92 25.4 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "482aa048-452e-4642-ad32-fe275ded859a")
+	)
+	(hierarchical_label "KEY_R3"
+		(shape output)
+		(at 193.04 111.76 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "6be8280a-8f91-4af8-98a3-6ad5543c220f")
+	)
+	(hierarchical_label "KEY_C3"
+		(shape output)
+		(at 142.24 25.4 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "6f872e8a-891e-4380-8f35-335aebc9620d")
+	)
+	(hierarchical_label "KEY_C5"
+		(shape output)
+		(at 182.88 25.4 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "9257ceda-4d45-4168-8465-3b27a077c406")
+	)
+	(hierarchical_label "KEY_R4"
+		(shape output)
+		(at 193.04 134.62 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "96ac0f9e-cdc5-452a-8fb4-84d60efe49b3")
+	)
+	(hierarchical_label "KEY_R1"
+		(shape output)
+		(at 193.04 66.04 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "97b5331f-19cb-4e1e-adb0-4372fd1f23e3")
+	)
+	(hierarchical_label "KEY_C1"
+		(shape output)
+		(at 101.6 25.4 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "a655869e-c421-4e74-911d-329ebb2fec06")
+	)
+	(hierarchical_label "KEY_R5"
+		(shape output)
+		(at 193.04 157.48 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "b3b960fe-420a-495b-a32d-7e429f319657")
+	)
+	(hierarchical_label "KEY_R0"
+		(shape output)
+		(at 193.04 43.18 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "c16e97b3-8a65-4c09-8cb6-3fc0e0f8ca44")
+	)
+	(hierarchical_label "KEY_C4"
+		(shape output)
+		(at 162.56 25.4 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "c3cfde3f-202f-46fe-bd7e-376d253b3ed8")
+	)
+	(hierarchical_label "KEY_R2"
+		(shape output)
+		(at 193.04 88.9 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left)
+		)
+		(uuid "ce369e27-ae5d-4702-aa92-7dbf125c22c8")
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 172.72 152.4 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "01c97364-88ff-4ae6-9ac6-eed8dc837da8")
+		(property "Reference" "SW36"
+			(at 177.038 147.32 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 165.608 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 165.608 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 165.608 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 165.608 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 172.72 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 172.72 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 172.72 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "cb210a3e-e72a-40eb-ba13-c66a1a8944c2")
+		)
+		(pin "1"
+			(uuid "f3a99ce7-62c7-4f22-9c80-bf1cfbcea85f")
+		)
+		(pin "3"
+			(uuid "f5c86719-f13e-4db0-9106-25e1eb021ee5")
+		)
+		(pin "4"
+			(uuid "18b0361f-18e8-4e92-ae9a-9dc9c31ceb24")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW36")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 93.98 106.68 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "0d2ccb45-1033-42a6-8b73-cf40fea32ab3")
+		(property "Reference" "D10"
+			(at 96.52 109.22 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 93.98 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 93.98 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 93.98 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 93.98 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 93.98 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 93.98 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 93.98 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "962b1b3f-c91b-4def-8b07-c6846ecae402")
+		)
+		(pin "C"
+			(uuid "68704c54-1c1a-42e1-806d-25c7a670ea8e")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D10")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 175.26 38.1 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "0f7c121a-3b01-4cb8-81f0-382d2516d54b")
+		(property "Reference" "D31"
+			(at 177.8 40.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 175.26 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 175.26 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 175.26 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 175.26 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 175.26 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 175.26 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 175.26 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "e27f21d4-f512-4823-8e9d-d32d61d3da46")
+		)
+		(pin "C"
+			(uuid "661852e3-d13a-4aea-b2f9-dba54422d26f")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D31")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 111.76 83.82 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "11d30e95-5020-45e8-abce-74980882c720")
+		(property "Reference" "SW15"
+			(at 116.078 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 104.648 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 104.648 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 104.648 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 104.648 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 111.76 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 111.76 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 111.76 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "5b5e2d96-3cdd-4410-95e7-07005f4b2c88")
+		)
+		(pin "1"
+			(uuid "4a7445ab-c802-47a2-81cc-bdb5c363549a")
+		)
+		(pin "3"
+			(uuid "8c8ebdbc-1760-4030-849f-91b49e1e633a")
+		)
+		(pin "4"
+			(uuid "2a695cbe-a9dd-42f8-816b-71099db2472f")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW15")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 172.72 83.82 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "11f4857e-0045-43aa-b333-aab258da59f2")
+		(property "Reference" "SW33"
+			(at 177.038 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 165.608 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 165.608 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 165.608 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 165.608 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 172.72 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 172.72 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 172.72 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "2afa5e31-048f-4d1b-a5e3-2e85a6a9c755")
+		)
+		(pin "1"
+			(uuid "9bd1097e-51a5-43c8-9788-3d276689042b")
+		)
+		(pin "3"
+			(uuid "08f9cf42-a5cf-44ab-aeea-2575ae182ec8")
+		)
+		(pin "4"
+			(uuid "52e05c88-c79c-4437-a9bc-b22580cfd2a6")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW33")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 114.3 106.68 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "18a9c2a7-94e2-4886-b268-28409aa207d5")
+		(property "Reference" "D16"
+			(at 116.84 109.22 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 114.3 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 114.3 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 114.3 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 114.3 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 114.3 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 114.3 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 114.3 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "b64fe1b2-1ed9-4a07-8984-be157e861259")
+		)
+		(pin "C"
+			(uuid "734fd4e7-4c87-4c04-903c-0ffee9015144")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D16")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 114.3 83.82 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "1a1b4567-07ee-4a75-bd19-d75b201e1aa1")
+		(property "Reference" "D15"
+			(at 116.84 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 114.3 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 114.3 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 114.3 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 114.3 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 114.3 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 114.3 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 114.3 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "ec14cc47-e998-474e-8045-c9816aabbd4e")
+		)
+		(pin "C"
+			(uuid "7ebedeea-77dc-4514-9291-c7cd8f662db3")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D15")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 154.94 152.4 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "1f84b870-e832-44be-963e-b6c8ce9b06e3")
+		(property "Reference" "D30"
+			(at 157.48 154.94 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 154.94 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 154.94 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 154.94 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 154.94 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 154.94 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 154.94 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 154.94 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "b43ee2e1-c3fd-45cc-826f-85abd7a1c401")
+		)
+		(pin "C"
+			(uuid "f01291b5-b175-4493-b44d-c827f38d3044")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D30")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 119.38 30.48 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "20a312d8-2fa1-4b92-ae78-8b74115d95a4")
+		(property "Reference" "TP3"
+			(at 119.38 29.21 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 113.538 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 115.57 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 115.57 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 115.57 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 119.38 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "3bab7e66-8e60-4b1b-a3ee-ba5e7fe34d2a")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 114.3 38.1 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "23167bd4-0d0c-489c-aa5e-ca7b05bf1bc4")
+		(property "Reference" "D13"
+			(at 116.84 40.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 114.3 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 114.3 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 114.3 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 114.3 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 114.3 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 114.3 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 114.3 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "4b381f8b-4e9a-4040-bf8c-22bb355e07ba")
+		)
+		(pin "C"
+			(uuid "407bd394-6dd2-4d95-bd87-b37fc66b8307")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D13")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 73.66 60.96 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "240b824b-d2fa-43f9-9997-1c7b101e231b")
+		(property "Reference" "D2"
+			(at 76.2 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 73.66 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 73.66 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 73.66 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 73.66 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 73.66 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 73.66 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 73.66 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "8eb07afc-fe8f-411e-adaa-5165bcbaf203")
+		)
+		(pin "C"
+			(uuid "a287c6e9-1965-4a59-9cb8-8a13ace72977")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 134.62 129.54 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "249b5795-38ef-4cbe-ae69-37f4b5068e6a")
+		(property "Reference" "D23"
+			(at 137.16 132.08 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 134.62 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 134.62 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 134.62 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 134.62 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 134.62 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 134.62 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 134.62 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "6955afd6-ac8a-4204-8550-9dce6a48cff1")
+		)
+		(pin "C"
+			(uuid "d0d98317-0469-4340-90ea-4c7e4f935431")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D23")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 190.5 111.76 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "2527a1b4-23a6-40bc-af09-ba46ee30cbb5")
+		(property "Reference" "TP10"
+			(at 190.5 110.49 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 184.658 111.76 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 186.69 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 186.69 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 186.69 111.76 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 190.5 111.76 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "3458b5fd-0531-400f-9c80-d39ba4592d2d")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP10")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 132.08 38.1 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "281b171e-2d1f-4389-9cf6-ea4841ea35f6")
+		(property "Reference" "SW19"
+			(at 136.398 33.02 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 124.968 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 124.968 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 124.968 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 124.968 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 132.08 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 132.08 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 132.08 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "b66084ee-19ba-42e5-981b-0d9b01015f77")
+		)
+		(pin "1"
+			(uuid "ea31e6cf-04ea-45f5-9612-32c2f48ba2f9")
+		)
+		(pin "3"
+			(uuid "3ca5d41a-9f18-43b2-8d29-aca79d55f741")
+		)
+		(pin "4"
+			(uuid "cabd5eec-5025-4985-b641-4134eedc48ab")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW19")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 134.62 60.96 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "283c7ed1-e7db-4a18-beda-59e7dda30af7")
+		(property "Reference" "D20"
+			(at 137.16 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 134.62 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 134.62 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 134.62 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 134.62 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 134.62 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 134.62 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 134.62 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "f0a4591b-1c33-4677-b9c0-f9ef9c13ee74")
+		)
+		(pin "C"
+			(uuid "7fde3bf2-11a4-43e7-8635-0ab4eefa7517")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D20")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 154.94 60.96 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "2c732306-fd7b-4a72-b5db-181c1a3bb371")
+		(property "Reference" "D26"
+			(at 157.48 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 154.94 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 154.94 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 154.94 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 154.94 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 154.94 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 154.94 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 154.94 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "90551393-40c3-4c3d-8c62-2881413dd186")
+		)
+		(pin "C"
+			(uuid "83a7c319-b4fc-4bf0-a762-504d5e9a13d8")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D26")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 91.44 152.4 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "2de0640e-7b13-4ef6-8a34-7ffb4c8fa0bd")
+		(property "Reference" "SW12"
+			(at 95.758 147.32 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 84.328 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 84.328 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 84.328 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 84.328 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 91.44 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 91.44 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 91.44 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "3edd99d5-3f0f-49ea-9fac-f440eeda4bac")
+		)
+		(pin "1"
+			(uuid "a4d4bded-976a-44c6-a9ec-ab60e37c7bab")
+		)
+		(pin "3"
+			(uuid "95260eb8-fb85-4dcb-b64d-ba5cf3249d32")
+		)
+		(pin "4"
+			(uuid "799f5121-b683-4ade-94e9-1b083eaeb6de")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW12")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 114.3 129.54 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "35deb60e-fdcf-45bb-9e51-ab08ffa550d3")
+		(property "Reference" "D17"
+			(at 116.84 132.08 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 114.3 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 114.3 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 114.3 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 114.3 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 114.3 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 114.3 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 114.3 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "6a34cba7-13f3-4a6f-930b-fad9027aec73")
+		)
+		(pin "C"
+			(uuid "8ea1e0cb-4ca2-4388-9cf9-58a133467599")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D17")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 71.12 106.68 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "35f0dbbc-57cd-48df-906c-8c697156a18a")
+		(property "Reference" "SW4"
+			(at 75.438 101.6 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 64.008 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 64.008 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 64.008 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 64.008 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 71.12 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 71.12 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 71.12 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "b0fa8949-734f-4ff0-93ab-95d3c3ebcbe3")
+		)
+		(pin "1"
+			(uuid "28453ca8-e936-4072-b72e-a221693c4103")
+		)
+		(pin "3"
+			(uuid "57d0397e-2671-4aa5-8fbb-dda01e284ccd")
+		)
+		(pin "4"
+			(uuid "24bb346c-8155-4bef-b662-f30b5410efb7")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW4")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 172.72 106.68 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "38171404-de18-4f9d-bd5f-ed3da7d367e9")
+		(property "Reference" "SW34"
+			(at 177.038 101.6 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 165.608 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 165.608 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 165.608 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 165.608 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 172.72 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 172.72 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 172.72 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "7c97826b-b8e6-4c36-9ad3-2053eb506525")
+		)
+		(pin "1"
+			(uuid "a32b343c-ca53-47be-a2cb-e0416468c366")
+		)
+		(pin "3"
+			(uuid "ca78eb6a-4f26-4ee9-80e3-077eb5a1b913")
+		)
+		(pin "4"
+			(uuid "267c7cb0-9b84-4d3f-8ce5-32bfb4a1bd28")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW34")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 152.4 106.68 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "3bbef321-9183-4d56-8c64-c0b51ba628d7")
+		(property "Reference" "SW28"
+			(at 156.718 101.6 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 145.288 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 145.288 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 145.288 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 145.288 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 152.4 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 152.4 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 152.4 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "aefe84ed-afc8-4cd7-bc54-3fc0d12da0cf")
+		)
+		(pin "1"
+			(uuid "2826a5d8-20f0-4c10-857b-30541531919e")
+		)
+		(pin "3"
+			(uuid "daee2d4c-5e4c-4afa-90dd-56f730f99640")
+		)
+		(pin "4"
+			(uuid "f5769c07-a243-4507-a91b-2374245063f3")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW28")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 73.66 129.54 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "3c2e1ce3-d4f1-40eb-a809-ed67dd83a669")
+		(property "Reference" "D5"
+			(at 76.2 132.08 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 73.66 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 73.66 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 73.66 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 73.66 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 73.66 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 73.66 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 73.66 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "a9d7bac8-f3ed-44c3-ac60-67bf2077c017")
+		)
+		(pin "C"
+			(uuid "4d407471-3233-4e97-b191-aca0dfd84a3d")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D5")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 154.94 38.1 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "3c91d960-2bbb-4e83-b306-c577ebd56a8a")
+		(property "Reference" "D25"
+			(at 157.48 40.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 154.94 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 154.94 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 154.94 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 154.94 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 154.94 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 154.94 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 154.94 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "ff14d2c3-9532-4cda-a19e-9240b3284de6")
+		)
+		(pin "C"
+			(uuid "a0709d46-70b9-41ad-8766-466a52a47fc8")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D25")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 71.12 152.4 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "3da109dc-a589-45b5-bff3-58b29e360721")
+		(property "Reference" "SW6"
+			(at 75.438 147.32 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 64.008 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 64.008 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 64.008 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 64.008 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 71.12 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 71.12 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 71.12 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "2c9d8f92-41a6-4111-bb6e-b71ce351eb7c")
+		)
+		(pin "1"
+			(uuid "8d1d7337-6dcf-457d-bb01-166d1c7e4d63")
+		)
+		(pin "3"
+			(uuid "f23b7d60-c240-4bba-a120-b1ce703df4e2")
+		)
+		(pin "4"
+			(uuid "e42258e5-c63e-4332-ae48-11018232c2d7")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 93.98 129.54 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "3f895047-cc3b-4a3f-8602-6219fbcab7eb")
+		(property "Reference" "D11"
+			(at 96.52 132.08 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 93.98 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 93.98 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 93.98 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 93.98 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 93.98 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 93.98 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 93.98 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "7c163565-2181-4ae6-addb-330f7bd40e48")
+		)
+		(pin "C"
+			(uuid "4fb32e9f-155e-4017-8d26-6a1227adb6de")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D11")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 190.5 88.9 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "40269af3-3d9a-480c-ac3b-559374c8981b")
+		(property "Reference" "TP9"
+			(at 190.5 87.63 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 184.658 88.9 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 186.69 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 186.69 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 186.69 88.9 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 190.5 88.9 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "ac3a6bda-93c0-41e6-b73b-7f03a96b3de8")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP9")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 175.26 83.82 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "41c6ee2e-6430-4d34-a378-00a5a375d91c")
+		(property "Reference" "D33"
+			(at 177.8 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 175.26 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 175.26 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 175.26 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 175.26 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 175.26 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 175.26 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 175.26 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "a4235c37-5201-458b-9f65-0590501651ce")
+		)
+		(pin "C"
+			(uuid "3804ff3f-5901-4e60-8e12-b0340289b132")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D33")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 78.74 30.48 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "452a469d-76b9-4d78-8127-906480bfdcdb")
+		(property "Reference" "TP1"
+			(at 78.74 29.21 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 72.898 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 74.93 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 74.93 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 74.93 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 78.74 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "76405454-8bc3-41ca-bcf3-6ca522fe056e")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 71.12 60.96 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "46c4e8aa-bcde-4736-8ca4-ef81d7414947")
+		(property "Reference" "SW2"
+			(at 75.438 55.88 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 64.008 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 64.008 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 64.008 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 64.008 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 71.12 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 71.12 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 71.12 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "1ba1c2fe-2dce-497d-bb40-1094331d742e")
+		)
+		(pin "1"
+			(uuid "c1086ea3-188c-4a30-946f-baec4a06d7bd")
+		)
+		(pin "3"
+			(uuid "c6e907f6-32a5-465b-ad74-6efc0127a294")
+		)
+		(pin "4"
+			(uuid "9a02365f-b7bf-43e2-b600-f427c4753ee3")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 172.72 129.54 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "47b70a2e-6897-4944-a4d8-05119e0c0ee1")
+		(property "Reference" "SW35"
+			(at 177.038 124.46 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 165.608 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 165.608 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 165.608 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 165.608 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 172.72 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 172.72 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 172.72 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "01499c57-7e30-486e-aa42-bde630cddae3")
+		)
+		(pin "1"
+			(uuid "c68f2871-59ce-4865-b3d4-359fe6bbc553")
+		)
+		(pin "3"
+			(uuid "a2062b59-b788-47b6-8333-e0caf2dbb668")
+		)
+		(pin "4"
+			(uuid "77cef296-cc06-4308-b4ea-3f7c64d41856")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW35")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 190.5 157.48 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "4d9105e9-a101-4bc7-81a8-eec9f8c35311")
+		(property "Reference" "TP12"
+			(at 190.5 156.21 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 184.658 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 186.69 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 186.69 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 186.69 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 190.5 157.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "d1e8cc36-4f19-409e-9986-10ef9307ccbf")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP12")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 111.76 38.1 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "4f3343e4-5445-401d-8822-ed1b89f9c260")
+		(property "Reference" "SW13"
+			(at 116.078 33.02 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 104.648 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 104.648 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 104.648 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 104.648 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 111.76 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 111.76 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 111.76 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "3648a41f-7a4d-4fcf-b809-17edc0a4f784")
+		)
+		(pin "1"
+			(uuid "24a243fb-d2ca-42c0-836b-7a2358d03d6c")
+		)
+		(pin "3"
+			(uuid "eea82bb4-8ec9-45ac-972b-e0e6fb78e465")
+		)
+		(pin "4"
+			(uuid "aacbd568-73f2-49dc-8991-c432cb0f80e9")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW13")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 73.66 38.1 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "51635aff-6fc1-4cf5-b651-cd4ea419c88a")
+		(property "Reference" "D1"
+			(at 76.2 40.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 73.66 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 73.66 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 73.66 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 73.66 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 73.66 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 73.66 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 73.66 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "a838eebe-697d-4344-8f0e-edda35582f2a")
+		)
+		(pin "C"
+			(uuid "1110a74c-2a4a-469b-a1f1-f21aa008647c")
+		)
+		(instances
+			(project ""
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 111.76 129.54 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "5d8dab21-0641-464a-929e-2a8ad7341845")
+		(property "Reference" "SW17"
+			(at 116.078 124.46 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 104.648 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 104.648 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 104.648 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 104.648 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 111.76 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 111.76 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 111.76 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "3e934b6f-7ce8-47a6-85a7-fff94d81fd5b")
+		)
+		(pin "1"
+			(uuid "9f4aada1-03ad-45cb-a4e1-eb8eac3ce762")
+		)
+		(pin "3"
+			(uuid "95b5b407-c10e-47c8-93ca-06ce0505767d")
+		)
+		(pin "4"
+			(uuid "a1317725-cb35-4551-b2b4-15f955d9ae53")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW17")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 132.08 106.68 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "60037349-18c3-4b12-8174-7b2e732bcacb")
+		(property "Reference" "SW22"
+			(at 136.398 101.6 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 124.968 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 124.968 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 124.968 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 124.968 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 132.08 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 132.08 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 132.08 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "c04d61d0-34b2-47d2-bf7e-a89d4d377e6c")
+		)
+		(pin "1"
+			(uuid "17e293b7-c8e2-4138-90ff-d58a51c49172")
+		)
+		(pin "3"
+			(uuid "40404eb0-f020-478f-84b8-eb4825c72d09")
+		)
+		(pin "4"
+			(uuid "12b51611-afcf-49ab-942f-1acc2e3a948b")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW22")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 91.44 60.96 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "61b4578b-d1b1-4e83-aeca-cd9842b3db34")
+		(property "Reference" "SW8"
+			(at 95.758 55.88 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 84.328 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 84.328 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 84.328 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 84.328 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 91.44 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 91.44 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 91.44 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "6b62bcb4-4f28-4007-96e3-b0a9c644b01d")
+		)
+		(pin "1"
+			(uuid "39c87175-c24a-421a-9357-521a367f7ea1")
+		)
+		(pin "3"
+			(uuid "764687fd-eb4a-4154-80be-3c867e68d5ed")
+		)
+		(pin "4"
+			(uuid "643f40df-69de-4bb3-b789-de57553e1eba")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW8")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 152.4 83.82 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "65129bac-556b-428b-91bb-fd260e071082")
+		(property "Reference" "SW27"
+			(at 156.718 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 145.288 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 145.288 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 145.288 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 145.288 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 152.4 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 152.4 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 152.4 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "1835f9f3-b20a-43a6-9655-566a6b0587df")
+		)
+		(pin "1"
+			(uuid "19a22bff-5f60-4f4f-9f2d-5cbfcaf19178")
+		)
+		(pin "3"
+			(uuid "46791a1f-8189-458d-9df1-4f2096b95011")
+		)
+		(pin "4"
+			(uuid "b894c10e-4427-4687-9576-6527cb543e8e")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW27")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 154.94 129.54 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "68372a7b-749b-4ee6-9f4d-f4f1e0fc4e22")
+		(property "Reference" "D29"
+			(at 157.48 132.08 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 154.94 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 154.94 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 154.94 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 154.94 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 154.94 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 154.94 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 154.94 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "b6c1527d-e518-4196-8c9c-682fe80e3019")
+		)
+		(pin "C"
+			(uuid "cd1ca5c5-0e5d-4650-ada4-ef3bd85fa8e9")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D29")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 91.44 83.82 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "6c29f54d-a595-44c1-b034-4a7dcdfec67f")
+		(property "Reference" "SW9"
+			(at 95.758 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 84.328 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 84.328 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 84.328 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 84.328 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 91.44 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 91.44 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 91.44 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "ff15737d-4504-4cf3-bdb7-a08bca38ba75")
+		)
+		(pin "1"
+			(uuid "8d9bfeb7-b8e9-41c4-b39d-6f0ee119a02e")
+		)
+		(pin "3"
+			(uuid "68e46bf3-46f2-4891-bdcf-816b8b0b27a5")
+		)
+		(pin "4"
+			(uuid "bf92dfc2-c2c2-475b-9e55-42cb0ffbaf22")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW9")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 132.08 60.96 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "6e264c57-a082-4a49-8972-162092a2e828")
+		(property "Reference" "SW20"
+			(at 136.398 55.88 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 124.968 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 124.968 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 124.968 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 124.968 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 132.08 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 132.08 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 132.08 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "ea0bf3d4-882c-454a-acb8-5dd65b7078fc")
+		)
+		(pin "1"
+			(uuid "76b94d38-9ca2-4eab-953e-8a0139e0ede0")
+		)
+		(pin "3"
+			(uuid "e0c61e4f-582a-4b5d-9bf1-66104ad6c418")
+		)
+		(pin "4"
+			(uuid "0ea4aee6-1f97-4f97-896c-25fb0000accf")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW20")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 172.72 38.1 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "734ae96f-72e9-4353-a27c-ddec0d1a643f")
+		(property "Reference" "SW31"
+			(at 177.038 33.02 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 165.608 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 165.608 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 165.608 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 165.608 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 172.72 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 172.72 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 172.72 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "18ccc87e-90ad-4be9-a736-53bafe8e97a6")
+		)
+		(pin "1"
+			(uuid "66199e77-436f-4698-bde9-47fde67c1dac")
+		)
+		(pin "3"
+			(uuid "c2431640-87e8-4503-91c9-1ae15a1e0ebe")
+		)
+		(pin "4"
+			(uuid "375d9c85-aa4d-40e7-9cbf-a7b8696ae2d9")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW31")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 139.7 30.48 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "7462f2ff-24e3-4f64-8c36-512283a095a6")
+		(property "Reference" "TP4"
+			(at 139.7 29.21 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 133.858 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 135.89 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 135.89 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 135.89 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 139.7 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "c77f0f18-b60f-4bd1-a3cf-62cbfb181c3c")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP4")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 134.62 38.1 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "78eabd32-10e1-4381-8ff7-168ded40ff9e")
+		(property "Reference" "D19"
+			(at 137.16 40.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 134.62 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 134.62 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 134.62 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 134.62 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 134.62 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 134.62 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 134.62 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "fd739e17-a6ad-4128-a20e-695dbfd6d2ad")
+		)
+		(pin "C"
+			(uuid "596c2bcf-2afe-4510-bc95-ad4c881f6760")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D19")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 99.06 30.48 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "7a144bd5-3f60-4469-803d-f3091de02789")
+		(property "Reference" "TP2"
+			(at 99.06 29.21 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 93.218 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 95.25 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 95.25 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 95.25 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 99.06 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "e07ecb06-0d03-40cf-84b6-56cb42245203")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 152.4 60.96 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "7c66ce57-1636-4a8c-9504-2b48d8619a21")
+		(property "Reference" "SW26"
+			(at 156.718 55.88 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 145.288 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 145.288 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 145.288 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 145.288 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 152.4 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 152.4 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 152.4 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "a53e01d3-53ba-4a98-b5a3-8dd35d72ca1f")
+		)
+		(pin "1"
+			(uuid "e43d303e-125a-4954-8099-3246be6f11d7")
+		)
+		(pin "3"
+			(uuid "2d1b86f4-32fc-4831-8f87-19d0e51d612a")
+		)
+		(pin "4"
+			(uuid "2a7f1b23-5bb9-4f58-971f-d77dfd491548")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW26")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 175.26 106.68 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "818ac773-33b8-4fb2-8bf3-841bb4c19b21")
+		(property "Reference" "D34"
+			(at 177.8 109.22 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 175.26 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 175.26 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 175.26 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 175.26 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 175.26 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 175.26 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 175.26 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "6b7d4933-4c89-46e8-a99d-809280a6d5ab")
+		)
+		(pin "C"
+			(uuid "9fe86a24-aef2-4af7-9bc0-4e5b1a2b8940")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D34")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 134.62 106.68 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "81e10451-7510-4c56-93b7-c1c24423fe8e")
+		(property "Reference" "D22"
+			(at 137.16 109.22 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 134.62 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 134.62 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 134.62 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 134.62 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 134.62 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 134.62 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 134.62 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "95447d79-481e-4153-a558-27991229bb0a")
+		)
+		(pin "C"
+			(uuid "d0987689-e4a6-4a5e-8b63-42c837936d1a")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D22")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 111.76 106.68 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "8212a35b-9b90-4e84-a7ac-b2eb3010b826")
+		(property "Reference" "SW16"
+			(at 116.078 101.6 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 104.648 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 104.648 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 104.648 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 104.648 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 111.76 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 111.76 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 111.76 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "47c91899-885e-4d87-b27b-d157e951547a")
+		)
+		(pin "1"
+			(uuid "f0051d0d-2cea-476b-8300-cd954c6beaa0")
+		)
+		(pin "3"
+			(uuid "042045a1-c5f4-477a-8f4c-a416f9d7e5b4")
+		)
+		(pin "4"
+			(uuid "3dabf975-ad5b-491b-98e0-d227bbc26001")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW16")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 71.12 83.82 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "89496e7f-2704-41f9-8993-e4f2aadf89aa")
+		(property "Reference" "SW3"
+			(at 75.438 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 64.008 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 64.008 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 64.008 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 64.008 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 71.12 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 71.12 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 71.12 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "e049a736-6980-4a37-a175-704a505b1afc")
+		)
+		(pin "1"
+			(uuid "d8a10dfe-ae11-41b0-8d43-128f3640af03")
+		)
+		(pin "3"
+			(uuid "b8837271-e48d-497a-a56d-19a15cf78c88")
+		)
+		(pin "4"
+			(uuid "268b6ea5-be3a-4738-9c28-005a74d7213b")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 132.08 83.82 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "94f2e457-723b-4b1d-9245-31d668fd6a63")
+		(property "Reference" "SW21"
+			(at 136.398 78.74 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 124.968 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 124.968 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 124.968 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 124.968 85.344 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 132.08 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 132.08 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 132.08 83.82 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "bfe53dd8-c9d3-4982-abc8-f331019c3939")
+		)
+		(pin "1"
+			(uuid "382f2b01-1188-4a04-a8e0-898d7b25cad8")
+		)
+		(pin "3"
+			(uuid "cf826cac-06ef-4280-af88-a83926316560")
+		)
+		(pin "4"
+			(uuid "025f6662-92e6-4b20-94cc-646d8d641f87")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW21")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 180.34 30.48 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "998d471d-8732-4c84-8aa5-8b38b1cae06f")
+		(property "Reference" "TP6"
+			(at 180.34 29.21 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 174.498 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 176.53 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 176.53 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 176.53 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 180.34 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "e97145bd-450c-4c75-981e-f4e13c0f07b7")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 114.3 152.4 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "9ba08ca0-b75d-4946-a63d-a23d39d922cc")
+		(property "Reference" "D18"
+			(at 116.84 154.94 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 114.3 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 114.3 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 114.3 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 114.3 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 114.3 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 114.3 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 114.3 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "418464c9-b22f-4b75-80f4-f29c4773530f")
+		)
+		(pin "C"
+			(uuid "36075035-42b8-48dd-aee3-cee13903da01")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D18")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 154.94 83.82 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "9c7487c1-86a5-4178-94a3-2ee244f1c51b")
+		(property "Reference" "D27"
+			(at 157.48 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 154.94 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 154.94 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 154.94 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 154.94 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 154.94 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 154.94 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 154.94 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "be41bdd7-e82d-4d04-bf11-f84b7fa0a361")
+		)
+		(pin "C"
+			(uuid "66da80ea-2bc1-4257-be7f-627650c85c3b")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D27")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 73.66 106.68 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "adf2f717-889f-4263-9702-4f2a4ac0a05f")
+		(property "Reference" "D4"
+			(at 76.2 109.22 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 73.66 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 73.66 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 73.66 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 73.66 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 73.66 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 73.66 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 73.66 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "cb9e2158-e0e1-429c-ad51-964cb3bc372a")
+		)
+		(pin "C"
+			(uuid "2831e7c7-51e5-4228-9227-bfb4be907868")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D4")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 111.76 152.4 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "aee4bcc4-f921-499c-bb90-666f5d98173c")
+		(property "Reference" "SW18"
+			(at 116.078 147.32 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 104.648 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 104.648 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 104.648 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 104.648 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 111.76 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 111.76 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 111.76 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "c4bd0c7b-42a3-4269-93ff-13c5ab6f8bfe")
+		)
+		(pin "1"
+			(uuid "e15695b6-5809-46de-9f65-6484b682b54e")
+		)
+		(pin "3"
+			(uuid "19b0d15a-5331-4717-b567-e973c9d37f63")
+		)
+		(pin "4"
+			(uuid "3c5cefcf-3d98-418a-9cca-03ba1cdd7088")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW18")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 71.12 129.54 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "af32126f-bb8e-4b9a-88f8-4a3d4409e422")
+		(property "Reference" "SW5"
+			(at 75.438 124.46 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 64.008 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 64.008 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 64.008 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 64.008 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 71.12 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 71.12 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 71.12 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "bc8453e6-cfba-48bc-a2c3-14ddc7f49c2c")
+		)
+		(pin "1"
+			(uuid "5888c27c-9940-4fd7-a707-01f9f6085345")
+		)
+		(pin "3"
+			(uuid "1b72a37f-4388-41e9-ab01-1063e5345172")
+		)
+		(pin "4"
+			(uuid "5ee1d660-5e82-4f27-8704-7bd6ad58c6fd")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW5")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 190.5 43.18 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "b118ea38-0068-4940-b1ed-61973992ceba")
+		(property "Reference" "TP7"
+			(at 190.5 41.91 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 184.658 43.18 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 186.69 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 186.69 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 186.69 43.18 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 190.5 43.18 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "0246355e-de55-493f-81e8-06785cc6eca3")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP7")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 114.3 60.96 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "b3323596-f8e5-4de4-8b9c-80cdb2419397")
+		(property "Reference" "D14"
+			(at 116.84 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 114.3 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 114.3 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 114.3 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 114.3 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 114.3 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 114.3 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 114.3 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "aa2b23f1-9d02-489e-a1b2-f3ce53d752eb")
+		)
+		(pin "C"
+			(uuid "559b945a-ea82-40f0-b5d6-1d447f5cbaef")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D14")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 172.72 60.96 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "b50f60fa-e28e-4adf-af1a-b88c96231bf3")
+		(property "Reference" "SW32"
+			(at 177.038 55.88 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 165.608 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 165.608 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 165.608 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 165.608 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 172.72 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 172.72 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 172.72 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "a93cf7a2-9383-4827-97dc-ec13198107ac")
+		)
+		(pin "1"
+			(uuid "2dbbf48e-e874-46c3-8997-302a1998f87e")
+		)
+		(pin "3"
+			(uuid "c2e66e37-bd29-4aba-8b66-26b54ff0db38")
+		)
+		(pin "4"
+			(uuid "adb1eed5-21d5-43f8-b634-3c6f877dfc9a")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW32")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 93.98 152.4 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "b91a45a0-db7e-4593-90d7-02552cae4529")
+		(property "Reference" "D12"
+			(at 96.52 154.94 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 93.98 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 93.98 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 93.98 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 93.98 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 93.98 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 93.98 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 93.98 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "97ea2cb6-89a8-4c76-bf7c-f900a04ec1e3")
+		)
+		(pin "C"
+			(uuid "1a0bb8ee-0f92-4e0f-a6c5-3db2f3f3a047")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D12")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 152.4 152.4 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "bafe38ae-de87-46c8-b82b-a0fbd100947b")
+		(property "Reference" "SW30"
+			(at 156.718 147.32 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 145.288 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 145.288 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 145.288 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 145.288 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 152.4 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 152.4 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 152.4 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "08f6c79a-d6bc-4fe0-ab59-a9f737a5da54")
+		)
+		(pin "1"
+			(uuid "1616c7c2-037a-44a1-aaa3-9bfc01c127cf")
+		)
+		(pin "3"
+			(uuid "ab3e1f60-2952-41d6-a3eb-a5d6c63f6946")
+		)
+		(pin "4"
+			(uuid "2a905c7a-ca17-4b5f-a2c0-f950fc5eaadb")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW30")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 134.62 83.82 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "bd74bfe2-b68b-4fc0-b5ee-4fc756b96dd8")
+		(property "Reference" "D21"
+			(at 137.16 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 134.62 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 134.62 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 134.62 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 134.62 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 134.62 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 134.62 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 134.62 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "06c894b2-b6d2-4ea9-901d-a54c72f2a9ff")
+		)
+		(pin "C"
+			(uuid "d7ccb94c-1bbf-4467-8e06-0a2a8ceccdce")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D21")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 91.44 38.1 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "bd88b5ce-c6b4-42c1-9fa6-9950669c2bbf")
+		(property "Reference" "SW7"
+			(at 95.758 33.02 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 84.328 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 84.328 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 84.328 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 84.328 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 91.44 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 91.44 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 91.44 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "71cd33fd-d027-490e-9f33-2031cef5f55f")
+		)
+		(pin "1"
+			(uuid "f8fc593c-4c42-4ac2-8060-badfe6cf56a4")
+		)
+		(pin "3"
+			(uuid "66cee9a8-984a-41a7-b04a-2d73b8ed42bc")
+		)
+		(pin "4"
+			(uuid "b8ce9e36-0d5b-4f87-83f6-906b0cfd45c6")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW7")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 73.66 152.4 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "bdfe3f69-6d85-4be2-b3f4-ec5f70d8a850")
+		(property "Reference" "D6"
+			(at 76.2 154.94 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 73.66 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 73.66 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 73.66 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 73.66 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 73.66 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 73.66 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 73.66 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "7ebb5300-2d2d-4f9e-92b2-65730e28020b")
+		)
+		(pin "C"
+			(uuid "f6a19399-8269-4d4c-af8c-fba1b425f65e")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D6")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 175.26 129.54 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "c2017331-c71c-4c3f-b912-687783101c3e")
+		(property "Reference" "D35"
+			(at 177.8 132.08 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 175.26 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 175.26 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 175.26 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 175.26 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 175.26 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 175.26 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 175.26 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "1994fe38-5cdb-4d3a-ba24-946b15c28ceb")
+		)
+		(pin "C"
+			(uuid "f0e8d1e9-7bed-4f9f-a1ec-31d195f522c7")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D35")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 175.26 60.96 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "c21419d0-db41-4393-9c19-ed8db10e2e4d")
+		(property "Reference" "D32"
+			(at 177.8 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 175.26 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 175.26 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 175.26 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 175.26 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 175.26 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 175.26 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 175.26 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "6f024de3-0662-4c7b-b7d5-06ccbe60d783")
+		)
+		(pin "C"
+			(uuid "34db3ebc-4ba1-4a16-a1d2-1c930d2cf52c")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D32")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 190.5 134.62 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "c542193c-b585-4e7d-a7bf-2429d5ec1f97")
+		(property "Reference" "TP11"
+			(at 190.5 133.35 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 184.658 134.62 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 186.69 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 186.69 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 186.69 134.62 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 190.5 134.62 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "3db870bd-abe4-4771-83b2-fee34597139e")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP11")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 132.08 129.54 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "c96b41c9-c075-418b-b14a-ebddbe3b6d7b")
+		(property "Reference" "SW23"
+			(at 136.398 124.46 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 124.968 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 124.968 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 124.968 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 124.968 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 132.08 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 132.08 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 132.08 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "d983916b-e84f-49cd-be51-cac034203f09")
+		)
+		(pin "1"
+			(uuid "26994602-3728-408c-b599-051903f8403f")
+		)
+		(pin "3"
+			(uuid "e8db0021-9548-42f4-b74a-4f1ca7e1d75a")
+		)
+		(pin "4"
+			(uuid "1ac366cc-5fff-4787-9cc1-0c601d63e209")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW23")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 91.44 106.68 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "c9b8ea3c-0813-449c-9c2b-c32a40bef70b")
+		(property "Reference" "SW10"
+			(at 95.758 101.6 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 84.328 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 84.328 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 84.328 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 84.328 108.204 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 91.44 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 91.44 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 91.44 106.68 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "4df6a7c3-b36b-4972-9024-22350815e122")
+		)
+		(pin "1"
+			(uuid "c9668c78-8270-4c06-8979-b49b238708d8")
+		)
+		(pin "3"
+			(uuid "975d41fc-fd17-4034-add8-51f60c4e9e2c")
+		)
+		(pin "4"
+			(uuid "4d3266de-0527-41ce-9791-7262d9308b07")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW10")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 93.98 38.1 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "ca2d5b66-0ce8-4cba-bdc9-b457820f04a5")
+		(property "Reference" "D7"
+			(at 96.52 40.64 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 93.98 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 93.98 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 93.98 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 93.98 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 93.98 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 93.98 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 93.98 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "2db9c241-7afd-4c9e-9945-748421c9e8d2")
+		)
+		(pin "C"
+			(uuid "8973115d-0faa-41ef-af27-240fc56715be")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D7")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 73.66 83.82 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "d37b2ed5-ab7f-47a6-9014-6a8559c67929")
+		(property "Reference" "D3"
+			(at 76.2 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 73.66 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 73.66 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 73.66 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 73.66 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 73.66 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 73.66 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 73.66 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "d7d9b0ff-6869-42d8-ba06-3fa9331d1e97")
+		)
+		(pin "C"
+			(uuid "841a2112-916f-4b80-b50e-5ce5ceff66e3")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 132.08 152.4 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "d471f602-b536-440f-86d1-7485b7d05cab")
+		(property "Reference" "SW24"
+			(at 136.398 147.32 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 124.968 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 124.968 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 124.968 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 124.968 153.924 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 132.08 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 132.08 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 132.08 152.4 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "81f5add6-5957-4b1d-9c77-b4694c1a2f50")
+		)
+		(pin "1"
+			(uuid "72acdf41-403b-4481-96d5-29f8dae79c4e")
+		)
+		(pin "3"
+			(uuid "6b020a4e-c92c-468e-ae3c-7762714543b3")
+		)
+		(pin "4"
+			(uuid "9d0dce75-29f9-4375-9d8a-ef5bd73f6dce")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW24")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 160.02 30.48 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "d612f161-52a3-4e85-8148-81ad44876c47")
+		(property "Reference" "TP5"
+			(at 160.02 29.21 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 154.178 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 156.21 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 156.21 25.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 156.21 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 160.02 30.48 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "28c8be63-5db1-4379-aa2d-37b7c0355b41")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP5")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 111.76 60.96 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "d7c2ba2d-b246-4c78-99d9-b244b5091f5d")
+		(property "Reference" "SW14"
+			(at 116.078 55.88 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 104.648 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 104.648 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 104.648 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 104.648 62.484 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 111.76 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 111.76 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 111.76 60.96 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "642637b2-a200-4604-a5d6-47c6437cd255")
+		)
+		(pin "1"
+			(uuid "591250c2-e9c8-483a-ab05-6066497f266c")
+		)
+		(pin "3"
+			(uuid "459b0e02-d047-43ae-9fba-34b09ccde6ee")
+		)
+		(pin "4"
+			(uuid "d6531a00-5fb3-454f-b4b5-1e604e275fba")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW14")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 154.94 106.68 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "d95868f2-c8ff-4366-931d-43ddcdc199a1")
+		(property "Reference" "D28"
+			(at 157.48 109.22 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 154.94 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 154.94 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 154.94 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 154.94 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 154.94 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 154.94 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 154.94 106.68 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "59504ee2-cd63-4369-8bb5-7b06a8122c85")
+		)
+		(pin "C"
+			(uuid "3753f3c4-d569-4f6d-812e-38b889392ca4")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D28")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 71.12 38.1 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "db5ed681-d241-4a36-a5e0-8cb9d3f43f29")
+		(property "Reference" "SW1"
+			(at 75.438 33.02 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 64.008 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 64.008 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 64.008 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 64.008 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 71.12 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 71.12 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 71.12 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "43d212e8-3f94-4223-8929-bfd64fcc0d04")
+		)
+		(pin "1"
+			(uuid "4ee106a3-31a1-48c1-9205-18574575a77c")
+		)
+		(pin "3"
+			(uuid "94bf22ec-a2a3-45e1-8057-50ead3062f4c")
+		)
+		(pin "4"
+			(uuid "2e2aad32-ee3e-4ed2-a847-c3ce2e316910")
+		)
+		(instances
+			(project ""
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:TestPoint_Small")
+		(at 190.5 66.04 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom no)
+		(on_board yes)
+		(dnp no)
+		(uuid "db601f99-3e6b-4f85-8503-82291364b396")
+		(property "Reference" "TP8"
+			(at 190.5 64.77 90)
+			(effects
+				(font
+					(size 0.508 0.508)
+				)
+			)
+		)
+		(property "Value" "TestPoint_Small"
+			(at 184.658 66.04 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:TestPoint_Pad_D1.0mm"
+			(at 186.69 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 186.69 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "test point"
+			(at 186.69 66.04 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "test point"
+			(at 190.5 66.04 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "fdb7480b-9210-4a68-a955-337759bcd626")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "TP8")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 91.44 129.54 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "e0bce789-edf8-472d-8bde-1c879e79dc02")
+		(property "Reference" "SW11"
+			(at 95.758 124.46 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 84.328 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 84.328 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 84.328 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 84.328 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 91.44 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 91.44 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 91.44 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "3706de5c-5da5-4778-a44d-7c67ea0178a6")
+		)
+		(pin "1"
+			(uuid "def32f5a-d765-4348-bddf-41eb916d2c08")
+		)
+		(pin "3"
+			(uuid "857288d0-607e-4ce7-b635-f1a239a8cc3a")
+		)
+		(pin "4"
+			(uuid "79992465-ff05-404e-ae08-2960d5f9fc99")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW11")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 93.98 83.82 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "e62f6e52-e504-4abf-9581-4602d39051e6")
+		(property "Reference" "D9"
+			(at 96.52 86.36 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 93.98 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 93.98 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 93.98 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 93.98 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 93.98 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 93.98 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 93.98 83.82 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "7452fa36-a85d-459e-a4f9-897bfa2b1b4b")
+		)
+		(pin "C"
+			(uuid "b4bab16d-688d-41fa-aee5-173f612da3f2")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D9")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 152.4 38.1 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "f16891fc-91c9-4de8-b0cb-b0fb3f16e1a7")
+		(property "Reference" "SW25"
+			(at 156.718 33.02 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 145.288 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 145.288 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 145.288 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 145.288 39.624 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 152.4 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 152.4 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 152.4 38.1 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "b15996e2-4a0a-44fe-b985-1b6d1919cbe5")
+		)
+		(pin "1"
+			(uuid "0305a0a7-9c58-4c48-ba82-917512e89d37")
+		)
+		(pin "3"
+			(uuid "9b9ce61d-53bb-4523-9b08-04feb5d4ddb4")
+		)
+		(pin "4"
+			(uuid "5ca0c7cb-c87b-421f-a5a9-f96af9ed671d")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW25")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 93.98 60.96 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "f622076e-f913-4b9d-837a-8b4ae28b4f5a")
+		(property "Reference" "D8"
+			(at 96.52 63.5 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 93.98 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 93.98 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 93.98 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 93.98 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 93.98 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 93.98 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 93.98 60.96 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "2a33340e-bb76-4217-8a2f-83c6e33c8f66")
+		)
+		(pin "C"
+			(uuid "39d82704-1ad1-4054-8c2e-7d810404bf41")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D8")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SWT0105-003516JSA")
+		(at 152.4 129.54 90)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "fa1583cf-c146-4bc6-a8f6-721ce244d979")
+		(property "Reference" "SW29"
+			(at 156.718 124.46 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SWT0105-003516JSA"
+			(at 145.288 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:SWT0105"
+			(at 145.288 129.54 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://gct.co/pdfjs/web/viewer.html?file=/files/drawings/SWT0105.pdf"
+			(at 145.288 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Tactile Switch, SPST-NO, 3.7 x 3.7mm, Top act 0.35mm high, 160g, J Lead"
+			(at 145.288 131.064 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" ""
+			(at 152.4 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SWT0105-003516JSA"
+			(at 152.4 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "GCT"
+			(at 152.4 129.54 90)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "6a8cddd4-f988-4816-8ebc-2f7b15ad2484")
+		)
+		(pin "1"
+			(uuid "62e91a3d-56d9-4c8a-8b7e-e1184c24392e")
+		)
+		(pin "3"
+			(uuid "d8308b51-40fc-48e8-9ca1-c5855a7ca1ab")
+		)
+		(pin "4"
+			(uuid "d52cc055-f2c7-4af8-bd5b-8317987f9fd6")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "SW29")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 175.26 152.4 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "ff7fa400-b5ec-46ac-ac7d-658b3a6204fa")
+		(property "Reference" "D36"
+			(at 177.8 154.94 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 175.26 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 175.26 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 175.26 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 175.26 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 175.26 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 175.26 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 175.26 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "5ebb107e-07a0-4c10-b885-bffbe503ccdb")
+		)
+		(pin "C"
+			(uuid "3804396f-fa3f-47c8-9221-ebf9e3caf448")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D36")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MokyaLora:SDM03U40")
+		(at 134.62 152.4 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "ffcef25d-4fcf-415b-9f8f-50ec414e522b")
+		(property "Reference" "D24"
+			(at 137.16 154.94 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "~"
+			(at 134.62 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Footprint" "MokyaLora:D_SOD-523"
+			(at 134.62 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+			(at 134.62 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "DIODE SCHOTTKY 30V 30MA SOD523"
+			(at 134.62 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "MPN" "SDM03U40"
+			(at 134.62 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "LCSC" "C151333"
+			(at 134.62 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Manufacturer" "Diodes"
+			(at 134.62 152.4 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "A"
+			(uuid "4aec5dd3-532a-48ef-82cb-58e717bf1d78")
+		)
+		(pin "C"
+			(uuid "4969eede-94bf-4c9b-87f2-1be49ddd0aad")
+		)
+		(instances
+			(project "MokyaLora"
+				(path "/f16406d4-9256-4081-92f6-ee56448777ee/ee3b4638-2235-49cf-adf6-86ee8cd82515"
+					(reference "D24")
+					(unit 1)
+				)
+			)
+		)
+	)
+)

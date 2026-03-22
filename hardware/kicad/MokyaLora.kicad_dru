@@ -1,0 +1,7 @@
+(version 1)
+(rule Shrink_Clearance_In_MCU
+    (constraint clearance (min 0.085mm))
+    (condition "A.intersectsArea('MCU_ZONE')"))
+(rule TFT_ZONE_2W_Clearance
+    (constraint clearance (min 0.25mm))
+    (condition "A.Type == 'Track' && B.Type == 'Track' && A.intersectsArea('TFT_ZONE') && B.intersectsArea('TFT_ZONE')"))

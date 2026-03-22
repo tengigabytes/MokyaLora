@@ -1,0 +1,294 @@
+(footprint "LGA-14_3x2.5mm_P0.5mm_LayoutBorder3x4y"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(descr "LGA, 14 Pin (https://www.st.com/resource/en/datasheet/lsm6ds3tr-c.pdf), generated with kicad-footprint-generator ipc_noLead_generator.py")
+	(tags "LGA NoLead")
+	(property "Reference" "REF**"
+		(at 0 -2.2 0)
+		(layer "F.SilkS")
+		(uuid "b1d4585e-9438-41f0-b981-7a7ec5de4e78")
+		(effects
+			(font
+				(size 0.6 0.6)
+				(thickness 0.1)
+				(bold yes)
+			)
+		)
+	)
+	(property "Value" "LGA-14_3x2.5mm_P0.5mm_LayoutBorder3x4y"
+		(at 0 2.2 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "04de59ac-2507-46df-ba31-cb6987583639")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "6ed088f4-eaa0-4058-9495-3872467f24f1")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "2f8f75a1-729e-4a1b-96cc-7b18ceea338e")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_line
+		(start -1.61 -1.36)
+		(end -0.935 -1.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "07ac8cad-867a-4d59-bae3-09c017cfe24d")
+	)
+	(fp_line
+		(start -1.61 -1.185)
+		(end -1.61 -1.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "0e59a23a-71d6-495b-82b7-75b9b697b2e9")
+	)
+	(fp_line
+		(start -1.61 1.36)
+		(end -1.61 1.185)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "b27aae84-a4ed-47d2-b8a4-8b73cf6d57a8")
+	)
+	(fp_line
+		(start -0.935 1.36)
+		(end -1.61 1.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "a3371eb3-fce6-4484-926b-b7ad6012c95c")
+	)
+	(fp_line
+		(start 0.935 -1.36)
+		(end 1.61 -1.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "50ac576c-0d68-4211-a861-2c25c6c1b2fa")
+	)
+	(fp_line
+		(start 1.61 -1.36)
+		(end 1.61 -1.185)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "7e8fbadc-e0d6-4ebf-96ea-c05fe1c1f42f")
+	)
+	(fp_line
+		(start 1.61 1.185)
+		(end 1.61 1.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "6b96d35f-82d9-4198-97d8-390f8abb6dd6")
+	)
+	(fp_line
+		(start 1.61 1.36)
+		(end 0.935 1.36)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "c4186e39-7a83-420c-8496-f8c9ec7b78ed")
+	)
+	(fp_poly
+		(pts
+			(xy -1.74 -0.75) (xy -2.07 -0.51) (xy -2.07 -0.99)
+		)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(fill yes)
+		(layer "F.SilkS")
+		(uuid "68e63d15-c84c-499e-bb73-1864bd9e080e")
+	)
+	(fp_rect
+		(start -1.75 -1.5)
+		(end 1.75 1.5)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "ee3080d2-ce5d-4ec7-aa85-a2c107564491")
+	)
+	(fp_poly
+		(pts
+			(xy -0.875 -1.25) (xy 1.5 -1.25) (xy 1.5 1.25) (xy -1.5 1.25) (xy -1.5 -0.625)
+		)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.Fab")
+		(uuid "7e49257e-6123-4316-816b-354504b94caa")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 0)
+		(layer "F.Fab")
+		(uuid "f9e5d4b2-1eb9-4d98-b3bc-7732fd47bd9d")
+		(effects
+			(font
+				(size 0.3 0.3)
+				(thickness 0.05)
+				(bold yes)
+			)
+		)
+	)
+	(pad "1" smd roundrect
+		(at -1.1625 -0.75)
+		(size 0.625 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "fe8e7048-f0f2-4297-8573-34e7d0f73194")
+	)
+	(pad "2" smd roundrect
+		(at -1.1625 -0.25)
+		(size 0.625 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "e9d1b71c-fdb1-4fba-a2d1-017bb5904a7c")
+	)
+	(pad "3" smd roundrect
+		(at -1.1625 0.25)
+		(size 0.625 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "e719867b-7685-4f30-a746-fc743fa9fbb3")
+	)
+	(pad "4" smd roundrect
+		(at -1.1625 0.75)
+		(size 0.625 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "cb27e3fe-955c-4e07-b08a-d2563925d2bd")
+	)
+	(pad "5" smd roundrect
+		(at -0.5 0.9125)
+		(size 0.35 0.625)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "cef31875-7c93-42b0-b95c-8c7dbb215ce0")
+	)
+	(pad "6" smd roundrect
+		(at 0 0.9125)
+		(size 0.35 0.625)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "ac862c7e-1c24-4a45-9de5-2993ebe15252")
+	)
+	(pad "7" smd roundrect
+		(at 0.5 0.9125)
+		(size 0.35 0.625)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "44e0eac7-2c5a-458b-a97b-8508c3925355")
+	)
+	(pad "8" smd roundrect
+		(at 1.1625 0.75)
+		(size 0.625 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "863cdebd-d62e-498e-9fc8-584ddd527613")
+	)
+	(pad "9" smd roundrect
+		(at 1.1625 0.25)
+		(size 0.625 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "93d28c25-d387-48ce-b99c-32cde89406be")
+	)
+	(pad "10" smd roundrect
+		(at 1.1625 -0.25)
+		(size 0.625 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "57b463af-025c-4983-ae0b-6ac5a67cc29e")
+	)
+	(pad "11" smd roundrect
+		(at 1.1625 -0.75)
+		(size 0.625 0.35)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "51999d50-7c1a-47d4-a34b-fd4bd0f7b38d")
+	)
+	(pad "12" smd roundrect
+		(at 0.5 -0.9125)
+		(size 0.35 0.625)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "4c4c8924-5247-49a8-95a8-f721e97bf932")
+	)
+	(pad "13" smd roundrect
+		(at 0 -0.9125)
+		(size 0.35 0.625)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "b89f2938-8049-4a64-9ea1-a68a07034f13")
+	)
+	(pad "14" smd roundrect
+		(at -0.5 -0.9125)
+		(size 0.35 0.625)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.25)
+		(uuid "63dc1571-8f3a-4b3c-bccd-f40ff031e536")
+	)
+	(embedded_fonts no)
+	(model "${KICAD9_3DMODEL_DIR}/Package_LGA.3dshapes/LGA-14_3x2.5mm_P0.5mm_LayoutBorder3x4y.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)

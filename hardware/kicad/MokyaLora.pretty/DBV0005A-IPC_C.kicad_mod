@@ -1,0 +1,226 @@
+(footprint "DBV0005A-IPC_C"
+	(version 20241229)
+	(generator "pcbnew")
+	(generator_version "9.0")
+	(layer "F.Cu")
+	(tags "PTPS7A2012PDBVR ")
+	(property "Reference" "REF**"
+		(at 0.1 -2.25 0)
+		(unlocked yes)
+		(layer "F.SilkS")
+		(uuid "1aadbf0f-bfe7-4c93-8e89-be5736b9aa5d")
+		(effects
+			(font
+				(size 0.6 0.6)
+				(thickness 0.1)
+				(bold yes)
+			)
+		)
+	)
+	(property "Value" "DBV0005A-IPC_C"
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "5b592c1a-8c9d-4dd3-8bd4-2af81854773e")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "230ad8ec-f924-4262-b793-ddd9801740d2")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Description" ""
+		(at 0 0 0)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "19264f85-0dc6-427b-8489-cd5976dc0a7b")
+		(effects
+			(font
+				(size 1.27 1.27)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr smd)
+	(fp_line
+		(start -0.052136 -1.45)
+		(end 0.052136 -1.45)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "befb9794-acd1-48ea-8445-0f845c46fcef")
+	)
+	(fp_line
+		(start -0.052136 1.45)
+		(end -0.052136 -1.45)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "0fb567d5-b1cf-4680-b587-cdbabc4e0875")
+	)
+	(fp_line
+		(start -0.052136 1.45)
+		(end 0.052136 1.45)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "2e30e098-5446-455c-8e0c-94a384305b2d")
+	)
+	(fp_line
+		(start 0.052136 1.45)
+		(end 0.052136 -1.45)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "bb5ecd35-8549-46a1-8d6d-acd8af02be1e")
+	)
+	(fp_rect
+		(start -1.8 -1.6)
+		(end 1.8 1.5)
+		(stroke
+			(width 0.1)
+			(type default)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "1a42a1dc-2077-4524-800a-4916e7d68251")
+	)
+	(fp_circle
+		(center -2.3281 -0.974999)
+		(end -2.203099 -0.974999)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.SilkS")
+		(uuid "5770c908-4125-46a7-a1d3-f42e80adf15e")
+	)
+	(fp_rect
+		(start -1.8 -1.6)
+		(end 1.8 1.5)
+		(stroke
+			(width 0.05)
+			(type default)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "12c9fb03-28df-4fe3-8e42-bbbb34016de9")
+	)
+	(fp_line
+		(start -0.800001 -1.45)
+		(end 0.800001 -1.45)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "cd0b4acb-ae46-4948-8fe3-2e32788cf097")
+	)
+	(fp_line
+		(start -0.800001 1.45)
+		(end -0.800001 -1.45)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "24f28bd6-6a5c-46ea-b608-83c6496eb9aa")
+	)
+	(fp_line
+		(start -0.800001 1.45)
+		(end 0.800001 1.45)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "2e8e9904-0784-4f0a-9fda-bd81ec01de13")
+	)
+	(fp_line
+		(start 0.800001 1.45)
+		(end 0.800001 -1.45)
+		(stroke
+			(width 0.15)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "3a2b1da2-827e-4a3a-ad9d-dbf533557f7b")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 90)
+		(unlocked yes)
+		(layer "F.Fab")
+		(uuid "1df18df6-3d14-4649-8072-85c61802d4df")
+		(effects
+			(font
+				(size 0.3 0.3)
+				(thickness 0.06)
+				(bold yes)
+			)
+		)
+	)
+	(pad "1" smd rect
+		(at -1.050483 -0.950001)
+		(size 1.205235 0.532133)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "16b944cc-8a96-4974-847e-99ad0c8da777")
+	)
+	(pad "2" smd rect
+		(at -1.050483 0)
+		(size 1.205235 0.532133)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "61610834-57b4-4d60-a879-f3c234643760")
+	)
+	(pad "3" smd rect
+		(at -1.050483 0.950001)
+		(size 1.205235 0.532133)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "88e0e1c9-914e-443a-b56c-ef6c3c23fbc5")
+	)
+	(pad "4" smd rect
+		(at 1.050483 0.950001)
+		(size 1.205235 0.532133)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "095eddcb-98bf-4a18-8ca1-6b0ab6e24b38")
+	)
+	(pad "5" smd rect
+		(at 1.050483 -0.950001)
+		(size 1.205235 0.532133)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(uuid "4765d4f2-3f7b-4e4a-9ffc-4962b6d86fc1")
+	)
+	(embedded_fonts no)
+	(model "C:/Users/user/Downloads/ul_PTPS7A2012PDBVR/DBV0005A.stp"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)
