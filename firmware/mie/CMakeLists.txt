@@ -7,9 +7,15 @@ cmake_minimum_required(VERSION 3.20)
 
 project(mie C CXX)
 set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# MSVC: treat all source files as UTF-8 and suppress code-page warnings
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
 
 add_library(mie STATIC
-    # Core layer — add source files here as they are created
+    src/mie_init.cpp        # placeholder; replaced by real modules as they are implemented
     # src/trie_searcher.cpp
     # src/ime_logic.cpp
 )

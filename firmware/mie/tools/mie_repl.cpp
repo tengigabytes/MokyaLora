@@ -15,6 +15,11 @@
 #include "../hal/pc/key_map.h"
 #include <cstdio>
 #include <cstring>
+#ifdef _WIN32
+#  include <windows.h>
+#else
+#  include <sys/select.h>
+#endif
 
 // ── Virtual keyboard label table ─────────────────────────────────────────
 
