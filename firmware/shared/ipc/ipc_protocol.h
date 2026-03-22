@@ -38,6 +38,15 @@ typedef enum {
     IPC_CMD_SET_TX_POWER   = 0x83,  ///< Set LoRa TX power (dBm)
     IPC_CMD_REQUEST_STATUS = 0x84,  ///< Request an immediate IPC_MSG_DEVICE_STATUS
     IPC_CMD_SET_NODE_ALIAS = 0x85,  ///< Assign a user-defined alias to a node ID
+    IPC_CMD_POWER_STATE    = 0x86,  ///< Notify Core 0 of a power state transition
+    IPC_CMD_REBOOT         = 0x87,  ///< Request system reboot
+    IPC_CMD_FACTORY_RESET  = 0x88,  ///< Request factory reset (wipes persistent config)
+
+    /* Bidirectional (debug) */
+    IPC_MSG_LOG_LINE       = 0xF0,  ///< Debug log line (either core → other core)
+
+    /* Boot handshake */
+    IPC_BOOT_READY         = 0xFF,  ///< Sent by each core when its init is complete
 } IpcMsgId;
 
 /* ── Common header (every message starts with this) ───────────────────────── */
@@ -104,6 +113,44 @@ typedef struct {
     uint8_t  alias_len;
     uint8_t  alias[];               ///< UTF-8 string
 } IpcPayloadSetNodeAlias;
+
+/** IPC_CMD_POWER_STATE — Core 1 informs Core 0 of a power state change */
+typedef enum {
+    IPC_POWER_ACTIVE    = 0,        ///< Normal operation
+    IPC_POWER_IDLE      = 1,        ///< Screen off, CPU at reduced rate
+    IPC_POWER_SLEEP     = 2,        ///< Deep sleep — Core 1 suspending FreeRTOS tasks
+    IPC_POWER_SHIPPING  = 3,        ///< Factory shipping mode — all peripherals off
+} IpcPowerState;
+
+typedef struct {
+    uint8_t state;                  ///< IpcPowerState
+} IpcPayloadPowerState;
+
+/** IPC_MSG_LOG_LINE — debug log forwarded across cores (either direction) */
+typedef struct {
+    uint8_t  level;                 ///< 0=DEBUG 1=INFO 2=WARN 3=ERROR
+    uint8_t  core;                  ///< Originating core: 0 or 1
+    uint16_t text_len;              ///< Byte length of text[] (no null terminator)
+    uint8_t  text[];                ///< UTF-8 log message (flexible array)
+} IpcPayloadLogLine;
+
+/* ── GPS bridge (shared SRAM, not FIFO) ──────────────────────────────────── */
+
+/**
+ * IpcGpsBuf — double-buffer for NMEA sentences written by Core 1, read by Core 0.
+ *
+ * Core 1 owns the Teseo-LIV3FL over I2C0. It writes complete NMEA sentences into
+ * buf[write_idx ^ 0] while Core 0 reads from buf[read_idx]. Ownership swaps are
+ * signalled via IPC_CMD_REQUEST_STATUS or a dedicated FIFO word (upper bit set).
+ *
+ * Each slot holds one NMEA sentence (max 82 bytes per NMEA spec, padded to 128).
+ */
+typedef struct {
+    uint8_t  buf[2][128];           ///< Double buffer: [0] and [1] slots
+    uint8_t  write_idx;             ///< Index Core 1 is currently writing into (0 or 1)
+    uint8_t  len[2];                ///< Valid byte count in each slot
+    uint8_t  _pad[2];
+} IpcGpsBuf;                        /* 260 bytes, place in shared SRAM */
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,4 @@
+[submodule "firmware/core0/meshtastic"]
+	path = firmware/core0/meshtastic
+	url = https://github.com/tengigabytes/firmware
+	branch = feat/rp2350b-mokya
