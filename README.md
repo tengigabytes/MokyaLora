@@ -6,10 +6,19 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 
 ## Project Status
 
+### Hardware
+
 | Revision | Status |
 |----------|--------|
 | Rev A | Sent to manufacturer — PCB prototype fabrication in progress |
-| Firmware | Not yet started — hardware bring-up pending Rev A delivery |
+
+### Firmware
+
+| Component | Status |
+|-----------|--------|
+| Core 0 — Meshtastic modem | Not yet started — pending Rev A hardware bring-up |
+| Core 1 — UI / application | Not yet started — pending Rev A hardware bring-up |
+| MokyaInput Engine (MIE) | Not yet started |
 
 ## PCB Preview (Rev A)
 
@@ -117,6 +126,8 @@ accepted by the project owner before being committed.
 
 > **This project is an experimental prototype. Use at your own risk.**
 
+### Hardware
+
 - **Prototype status** — Rev A is an unverified first prototype. The design has not been
   independently tested, reviewed, or certified. Do not use this design as the sole basis
   for a production product without thorough independent validation.
@@ -136,6 +147,16 @@ accepted by the project owner before being committed.
 - **No warranty** — This hardware is provided "as-is" without any warranty of any kind,
   express or implied. See [CERN-OHL-S-2.0](LICENSE-CERN-OHL-S-2.0.txt) Section 6 for the
   full disclaimer of warranties and limitation of liability.
+
+### Firmware
+
+- **No firmware provided** — Firmware development has not yet started. No firmware is
+  available in this repository at this time. This notice will be updated when firmware
+  is released.
+
+- **No warranty** — When firmware is released, it will be provided "as-is" under its
+  respective open-source licence (GPL-3.0 for Core 0, Apache-2.0 for Core 1, MIT for MIE)
+  without any warranty of fitness for a particular purpose.
 
 ## Contributing
 
