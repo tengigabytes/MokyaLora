@@ -27,6 +27,9 @@ sym-lib-table  text eol=lf
 # PDF — binary
 *.pdf   binary
 
+# BOM / data exports
+*.csv   text eol=lf
+
 # Firmware / code
 *.c     text eol=lf
 *.cpp   text eol=lf
