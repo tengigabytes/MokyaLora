@@ -2,6 +2,12 @@
 
 An open-hardware LoRa module/board project, licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 
+## PCB Preview (Rev A)
+
+| Front | Back |
+|:-----:|:----:|
+| ![PCB Front](hardware/kicad/plots/MokyaLora_F.png) | ![PCB Back](hardware/kicad/plots/MokyaLora_B.png) |
+
 ## Repository Layout
 
 ```
