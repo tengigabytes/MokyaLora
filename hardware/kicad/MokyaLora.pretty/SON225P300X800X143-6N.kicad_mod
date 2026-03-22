@@ -244,7 +244,7 @@
 		(uuid "86f1fe7b-9392-42b7-88c0-1cfa8929a79b")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/M830120_ME_fit/M830120_ME_fit.stp"
+	(model "${KIPRJMOD}/packages3D/M830120_ME_fit.stp"
 		(offset
 			(xyz 0 0 1.3)
 		)

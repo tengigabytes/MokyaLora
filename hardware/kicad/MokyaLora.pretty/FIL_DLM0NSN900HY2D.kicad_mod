@@ -239,7 +239,7 @@
 		(uuid "cc79ab7c-d22b-48b0-963a-d0e25308664f")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/DLM0NSN900HY2D--3DModel-STEP-1/DLM0NSN900HY2D--3DModel-STEP-1.STEP"
+	(model "${KIPRJMOD}/packages3D/DLM0NSN900HY2D--3DModel-STEP-1.STEP"
 		(offset
 			(xyz 0 0 0)
 		)

@@ -233,7 +233,7 @@
 		(uuid "b8d0bcb9-d9a0-4da3-99ac-41c7f22ba4cc")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_ABM8-32.000MHz-10-D1G-T/ABM8-32.000MHz-10-D1G-T/3D/ABM8-32.000MHz-10-D1G-T.stp"
+	(model "${KIPRJMOD}/packages3D/ABM8-32.000MHz-10-D1G-T.stp"
 		(offset
 			(xyz 0 0 0)
 		)

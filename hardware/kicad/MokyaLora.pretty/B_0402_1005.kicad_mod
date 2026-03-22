@@ -102,7 +102,7 @@
 		(uuid "923a4504-c2ac-46d8-ba22-c5e5b5b8c252")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_BLM15PX181SN1D/BLM15PX181SN1D/3D/BLM15PX181SN1D.stp"
+	(model "${KIPRJMOD}/packages3D/BLM15PX181SN1D.stp"
 		(offset
 			(xyz 0.25 0 0.25)
 		)

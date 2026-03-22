@@ -4150,7 +4150,7 @@
 		)
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_009155003301006/009155003301006/3D/009155003301006.stp"
+	(model "${KIPRJMOD}/packages3D/009155003301006.stp"
 		(offset
 			(xyz -4.449999742 -1.109999998 0.09999999999)
 		)

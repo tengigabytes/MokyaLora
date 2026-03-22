@@ -1786,7 +1786,7 @@
 		(uuid "a956c668-7442-41df-b446-2b15927b248d")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/ul_LM27965SQ-M-NOPB/RTW0024A.stp"
+	(model "${KIPRJMOD}/packages3D/RTW0024A.stp"
 		(offset
 			(xyz 0 0 0)
 		)

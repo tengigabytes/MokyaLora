@@ -329,7 +329,7 @@
 		(uuid "f0a3dd53-d0e5-4e88-98bc-50a112727fe8")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/KiCad_WE-SHC (rev25b)/3dmodels/SHIELDING_SMD_Wurth.3dshapes/H_Wurth_WE-SHC-ONE-PIECE_36903205S.step"
+	(model "${KIPRJMOD}/packages3D/H_Wurth_WE-SHC-ONE-PIECE_36903205S.step"
 		(offset
 			(xyz 0 0 0)
 		)

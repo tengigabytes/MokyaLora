@@ -169,7 +169,7 @@
 		(uuid "0b9e6a19-29df-4762-8ed6-efa7b032f123")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LTW-482DS5.step"
+	(model "${KIPRJMOD}/packages3D/LTW-482DS5.step"
 		(offset
 			(xyz 0.16 0 0)
 		)

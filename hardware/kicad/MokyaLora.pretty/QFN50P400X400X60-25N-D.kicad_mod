@@ -318,7 +318,7 @@
 		(uuid "328d8ee4-9907-4f9a-938b-89d7b21583a3")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_CY7C65223-24LTXI/CY7C65223-24LTXI/3D/CY7C65223-24LTXI.stp"
+	(model "${KIPRJMOD}/packages3D/CY7C65223-24LTXI.stp"
 		(offset
 			(xyz 0 0 0)
 		)

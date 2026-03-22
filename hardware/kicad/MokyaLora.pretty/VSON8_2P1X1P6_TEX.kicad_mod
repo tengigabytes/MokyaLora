@@ -330,7 +330,7 @@
 		(uuid "1362aee0-64ae-4c71-b909-bf172f9695eb")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/ul_TPS62840DLCR/DLC0008B.stp"
+	(model "${KIPRJMOD}/packages3D/DLC0008B.stp"
 		(offset
 			(xyz 0 0 0)
 		)

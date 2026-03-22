@@ -122,7 +122,7 @@
 		(uuid "dca0a852-7aa2-4380-b3f8-dc38a4fb4179")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/DFE201612E_2R2M_P2/INDC2016X120N.step"
+	(model "${KIPRJMOD}/packages3D/INDC2016X120N.step"
 		(offset
 			(xyz 0 0 0)
 		)

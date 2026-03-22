@@ -228,7 +228,7 @@
 		(uuid "a9c54d1d-e94f-4923-aaee-f15c908bb0e4")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_M620720/M620720/3D/M620720.stp"
+	(model "${KIPRJMOD}/packages3D/M620720.stp"
 		(offset
 			(xyz 0 0.01 0.5)
 		)

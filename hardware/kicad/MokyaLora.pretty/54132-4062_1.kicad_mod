@@ -500,7 +500,7 @@
 		(uuid "b3125ff0-1af3-436a-b390-41f847af58e1")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LIB_54132-4062/54132-4062/3D/54132-4062.stp"
+	(model "${KIPRJMOD}/packages3D/54132-4062.stp"
 		(offset
 			(xyz 0 6.5 0.05)
 		)

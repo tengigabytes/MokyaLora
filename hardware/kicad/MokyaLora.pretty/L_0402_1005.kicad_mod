@@ -103,7 +103,7 @@
 		(uuid "39943f77-efa4-4c48-99c4-c563c9489ebd")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/LQW15AN9N1H00D/INDC1006X60N.step"
+	(model "${KIPRJMOD}/packages3D/INDC1006X60N.step"
 		(offset
 			(xyz 0 0 0)
 		)

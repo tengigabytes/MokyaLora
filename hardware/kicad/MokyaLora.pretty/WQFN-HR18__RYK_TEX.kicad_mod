@@ -712,7 +712,7 @@
 		(uuid "2e4435cb-8cfe-4c92-b086-333abc7e68a3")
 	)
 	(embedded_fonts no)
-	(model "C:/Users/user/Downloads/ul_BQ25622RYKR (1)/RYK0018A.stp"
+	(model "${KIPRJMOD}/packages3D/RYK0018A.stp"
 		(offset
 			(xyz 0 0 0)
 		)
