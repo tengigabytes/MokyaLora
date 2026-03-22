@@ -12,12 +12,12 @@
 |------|--------------|-------------------------------------------------|-------------|
 | 0    | PSRAM_nCS    | PSRAM Chip Select                               | QMI CS1n    |
 | 1    | USB_VBUS_DET | USB VBUS Voltage Detection                      | SIO / ADC   |
-| 2    | MIC_CLK      | PDM Microphone Clock                            | PIO         |
-| 3    | MIC_DATA     | PDM Microphone Data                             | PIO         |
-| 4    | DBG_TX       | Debug UART TX                                   | UART1 F2    |
-| 5    | DBG_RX       | Debug UART RX                                   | UART1 F2    |
-| 6    | PWR_SDA      | I2C1 SDA — Charger / Fuel Gauge bus             | I2C1        |
-| 7    | PWR_SCL      | I2C1 SCL — Charger / Fuel Gauge bus             | I2C1        |
+| 2    | DBG_TX       | Debug UART TX                                   | UART        |
+| 3    | DBG_RX       | Debug UART RX                                   | UART        |
+| 4    | MIC_CLK      | PDM Microphone Clock                            | PIO         |
+| 5    | MIC_DATA     | PDM Microphone Data                             | PIO         |
+| 6    | PWR_SDA      | I2C1 SDA — Power + Backlight bus                | I2C1        |
+| 7    | PWR_SCL      | I2C1 SCL — Power + Backlight bus                | I2C1        |
 | 8    | PWR_INT      | Power Management Interrupt (open-drain, 1.8 V pull-up) | SIO  |
 | 9    | MTR_PWM      | Vibration Motor PWM (drives low-side MOSFET)    | PWM4_B      |
 | 10   | TFT_nCS      | LCD Chip Select                                 | SIO         |
@@ -40,18 +40,18 @@
 | 27   | LORA_MOSI    | SX1262 SPI MOSI                                 | SPI1        |
 | 28   | LORA_BUSY    | SX1262 Busy Status                              | SIO         |
 | 29   | LORA_DIO1    | SX1262 Interrupt / Wakeup Source                | SIO         |
-| 30   | KEY_C0       | Keypad Column 0                                 | PIO         |
-| 31   | KEY_C1       | Keypad Column 1                                 | PIO         |
-| 32   | KEY_C2       | Keypad Column 2                                 | PIO         |
-| 33   | KEY_C3       | Keypad Column 3                                 | PIO         |
-| 34   | KEY_C4       | Keypad Column 4                                 | PIO         |
-| 35   | KEY_C5       | Keypad Column 5                                 | PIO         |
-| 36   | AMP_BCLK     | Audio I2S Bit Clock                             | PIO         |
-| 37   | AMP_FSR      | Audio I2S Frame Sync                            | PIO         |
-| 38   | AMP_DAC      | Audio I2S Data Out                              | PIO         |
-| 39   | PWR_BTN      | Power / Wakeup Button — wakeup source from DORMANT | SIO      |
-| 40   | IMU_SDA      | I2C0 SDA — Sensor bus                          | I2C0        |
-| 41   | IMU_SCL      | I2C0 SCL — Sensor bus                          | I2C0        |
+| 30   | AMP_BCLK     | Audio I2S Bit Clock                             | PIO         |
+| 31   | AMP_FSR      | Audio I2S Frame Sync                            | PIO         |
+| 32   | AMP_DAC      | Audio I2S Data Out                              | PIO         |
+| 33   | PWR_BTN      | Power / Wakeup Button — wakeup source from DORMANT | SIO      |
+| 34   | IMU_SDA      | I2C0 SDA — Sensor bus                          | I2C0        |
+| 35   | IMU_SCL      | I2C0 SCL — Sensor bus                          | I2C0        |
+| 36   | KEY_C0       | Keypad Column 0                                 | PIO         |
+| 37   | KEY_C1       | Keypad Column 1                                 | PIO         |
+| 38   | KEY_C2       | Keypad Column 2                                 | PIO         |
+| 39   | KEY_C3       | Keypad Column 3                                 | PIO         |
+| 40   | KEY_C4       | Keypad Column 4                                 | PIO         |
+| 41   | KEY_C5       | Keypad Column 5                                 | PIO         |
 | 42   | KEY_R0       | Keypad Row 0                                    | PIO         |
 | 43   | KEY_R1       | Keypad Row 1                                    | PIO         |
 | 44   | KEY_R2       | Keypad Row 2                                    | PIO         |
@@ -67,7 +67,7 @@
 
 ## I2C Bus Allocation
 
-### I2C0 (GPIO 40 / 41) — Sensor bus
+### I2C0 (GPIO 34 / 35) — Sensor bus
 
 | Device        | Part           | 7-bit Address | Note                                    |
 |---------------|----------------|---------------|-----------------------------------------|
@@ -75,16 +75,16 @@
 | Magnetometer  | LIS2MDL        | 0x1E          | Fixed address                           |
 | Barometer     | LPS22HH        | 0x5C          | SA0 tied to GND                         |
 | GPS           | Teseo-LIV3FL   | 0x3A          | Fixed address                           |
-| LED Driver    | LM27965        | 0x36          | Controls LCD BL (Bank A) + KB BL (Bank B) |
 
-### I2C1 (GPIO 6 / 7) — Power bus
+### I2C1 (GPIO 6 / 7) — Power + Backlight bus
 
 | Device        | Part           | 7-bit Address | Note                                    |
 |---------------|----------------|---------------|-----------------------------------------|
 | Charger       | BQ25620        | 0x6B          | Fixed address                           |
 | Fuel Gauge    | BQ27441-G1A    | 0x55          | Fixed address                           |
+| LED Driver    | LM27965        | 0x36          | Controls LCD BL (Bank A) + KB BL (Bank B); nets BKLT_SCL / BKLT_SDA |
 
-**Pull-up:** I2C0 requires 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL.
+**Pull-up:** Both buses require 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL.
 
 ---
 
