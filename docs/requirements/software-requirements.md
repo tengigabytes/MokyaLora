@@ -408,12 +408,23 @@ Font glyphs remain in Flash and are accessed on demand during rendering.
 
 ### 5.3 Input Modes (cycled via MODE key)
 
-| Mode                | Description                                                           |
-|---------------------|-----------------------------------------------------------------------|
-| Bopomofo Auto       | Consonant-first prediction — type `ㄐ ㄊ`, IME predicts 「今天」     |
-| English Auto        | Word-prediction based on English vocabulary                          |
-| Alphanumeric Manual | Traditional multi-tap — for passwords and exact commands             |
-| Calculator          | Full calculator UI; OK key acts as `=`; supports floats, brackets    |
+Three modes cycle in order: Bopomofo → English → Alphanumeric → (back to Bopomofo).
+
+| # | Mode | Description |
+|---|------|-------------|
+| 0 | Bopomofo | Bopomofo syllable accumulation; IME predicts Traditional Chinese — type `ㄐ ㄊ` → 「今天」 |
+| 1 | English Auto | Half-keyboard letter-pair expansion → frequency-ranked English word prediction |
+| 2 | Alphanumeric | Multi-tap single character — consecutive presses of same key cycle primary/secondary character |
+
+**Bopomofo disambiguation:** syllable position state machine (initial → medial → final → tone)
+constrains which of the two phonemes on an ambiguous key is valid. Phase 1 uses the primary
+phoneme only; full disambiguation is Phase 3.
+
+**English prediction:** each key press produces two candidate letters; all valid prefix
+combinations are searched against an English MIED dictionary; results are merged by frequency.
+
+**Alphanumeric:** no dictionary lookup; `MultiTapState` tracks last key + consecutive tap count;
+a different key (or timeout in Phase 2+) confirms the pending character.
 
 ### 5.4 Smart Correction
 
@@ -434,7 +445,7 @@ Font glyphs remain in Flash and are accessed on demand during rendering.
 | Long-press `0`               | Flashlight toggle                   |
 | Long-press `1`               | Speed dial                          |
 | FUNC + OK (hold 5 s)         | Send SOS distress signal            |
-| Long-press MODE (in text field) | Pop-up calculator widget          |
+| Long-press MODE (in text field) | Quick symbol picker               |
 
 ### 5.7 MIE Development Roadmap
 
@@ -448,6 +459,14 @@ Font glyphs remain in Flash and are accessed on demand during rendering.
 - [x] `IME-Logic`: implement Bopomofo de-ambiguation; test with simulated key sequences.
       Phase 1 skeleton: primary-phoneme key map, mode FSM, REPL integration.
       Full disambiguation and smart correction are Phase 3 items.
+- [x] Phase 1 wrap-up: three-mode design (Bopomofo / English / Alphanumeric); `Calculator`
+      mode removed; MODE cycles `% 3`; mode-dispatch skeleton with stubs for English and
+      Alphanumeric; `MultiTapState` struct added; all 14 unit tests passing.
+- [ ] Phase 1 extension — Alphanumeric multi-tap: implement `process_alpha()`; consecutive
+      same-key presses cycle primary/secondary character; confirm on different key.
+- [ ] Phase 1 extension — English word prediction: `gen_en_dict.py` + English MIED dictionary;
+      `ImeLogic` accepts second `TrieSearcher`; `process_english()` expands key pairs and
+      merges prefix-search results by frequency.
 
 **Phase 2 — Hardware integration (Rev A)**
 - [ ] `hal/rp2350/`: bridge PIO+DMA key buffer to `mie::KeyEvent`.

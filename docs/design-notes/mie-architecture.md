@@ -60,28 +60,35 @@ firmware/mie/
 ├── CMakeLists.txt              # Builds as static library; no Pico SDK dependency
 ├── include/
 │   └── mie/                    # All public headers — consumers include <mie/...>
-│       ├── trie_searcher.h     # (future)
-│       └── ime_logic.h         # (future)
+│       ├── hal_port.h          # IHalPort interface + KeyEvent struct
+│       ├── trie_searcher.h     # TrieSearcher public API
+│       └── ime_logic.h         # ImeLogic public API
 ├── src/
-│   ├── trie_searcher.cpp       # DAT search implementation (future)
-│   └── ime_logic.cpp           # De-ambiguation & mode FSM (future)
+│   ├── mie_init.cpp            # Placeholder TU (keeps library target non-empty)
+│   ├── trie_searcher.cpp       # Sorted-index binary search implementation
+│   └── ime_logic.cpp           # Bopomofo primary-phoneme map + mode FSM
 ├── hal/
-│   ├── hal_port.h              # Abstract IHalPort interface (KeyEvent)
-│   ├── rp2350/                 # RP2350 PIO scan → KeyEvent adapter (future)
-│   └── pc/                     # PC virtual half-keyboard adapter
+│   ├── hal_port.h              # Shim → redirects to include/mie/hal_port.h
+│   ├── rp2350/                 # RP2350 PIO scan → KeyEvent adapter (Phase 2)
+│   └── pc/                     # PC keyboard adapters (host build only)
 │       ├── key_map.h           #   Static PC key → KeyEvent{row,col} table
-│       └── hal_pc_stdin.cpp    #   IHalPort impl: raw terminal input
+│       ├── hal_pc_stdin.h      #   HalPcStdin class declaration
+│       └── hal_pc_stdin.cpp    #   IHalPort impl: raw terminal + non-blocking stdin
 ├── tools/
 │   ├── gen_font.py             # Unifont → font_glyphs.bin + font_index.bin
-│   ├── gen_dict.py             # MoE dict → dict_dat.bin + dict_values.bin
-│   └── mie_repl.cpp            # Interactive REPL: virtual keyboard + candidate bar (host only)
+│   ├── gen_dict.py             # MoE CSV → dict_dat.bin + dict_values.bin (MIED format)
+│   ├── mie_repl.cpp            # Terminal REPL: IME-connected, keyboard + candidate bar
+│   └── mie_gui.cpp             # GUI test tool: graphical keyboard + IME display (planned)
 ├── data/                       # Generated binary assets — NOT committed to git
 │   ├── font_glyphs.bin
 │   ├── font_index.bin
 │   ├── dict_dat.bin
 │   ├── dict_values.bin
 │   └── dict_meta.json
-└── tests/                      # C++ unit tests, host-only build (future)
+└── tests/                      # GoogleTest unit tests (host-only build)
+    ├── CMakeLists.txt
+    ├── test_trie_stub.cpp       # Build-environment smoke test
+    └── test_trie_searcher.cpp   # TrieSearcher unit tests (14 cases)
 ```
 
 ---
@@ -104,10 +111,9 @@ firmware/mie/
 
 **Input:**
 - MoE standard word list CSV (cleaned, Taiwan-standard Bopomofo readings)
-- `datrie` Python package for Double-Array Trie construction
 
 **Output:**
-- `dict_dat.bin` — DAT base[] and check[] arrays
+- `dict_dat.bin` — MIED-format header + sorted key index + key-string data
 - `dict_values.bin` — per-key word list with frequency weights
 - `dict_meta.json` — build metadata (source version, entry count, build date)
 
@@ -127,14 +133,48 @@ Font glyphs remain in Flash and are read on demand (cache-friendly sequential ac
 
 ## 5. Input Modes
 
-| Mode                  | Key             | Description                                              |
-|-----------------------|-----------------|----------------------------------------------------------|
-| Bopomofo Auto         | consonant-first | Initial consonant prediction — type `ㄐ ㄊ` → predict 「今天」 |
-| English Auto          | QWERTY          | Word prediction from English vocabulary                  |
-| Alphanumeric Manual   | multi-tap       | Traditional T9-style; for passwords and exact input      |
-| Calculator            | numeric         | Full calculator UI; `OK` = `=`; supports floats, brackets|
+The MODE key cycles through three modes in order.
 
-Mode switching: `MODE` key cycles through the four modes; status bar icon updates.
+| # | Mode | `InputMode` | Description |
+|---|------|-------------|-------------|
+| 0 | Bopomofo | `Bopomofo` | Bopomofo syllable accumulation → Traditional Chinese candidate prediction |
+| 1 | English | `English` | Half-keyboard letter-pair expansion → English word prediction |
+| 2 | Alphanumeric | `Alphanumeric` | Multi-tap single character — English letters and digits |
+
+### 5.1 Bopomofo Mode
+
+Bopomofo syllable structure constrains which symbol can appear at each position:
+
+```
+[ 聲母 (initial) ] → [ 介音 (medial) ] → [ 韻母 (final) ] → [ 聲調 (tone) ]
+```
+
+Each physical key carries two phonemes. Phase 1 uses only the primary (first) phoneme.
+Full disambiguation (Phase 3) will use the syllable position state machine to resolve
+ambiguity: for example, after a medial `ㄧ`, only consonants compatible with `ㄧ`
+are valid initials, eliminating half the candidates automatically.
+
+### 5.2 English Mode
+
+Each half-keyboard key carries two letters (e.g., `Q/W`, `E/R`). The search layer
+expands an n-key sequence into up to 2ⁿ letter combinations and queries a
+frequency-sorted English-language MIED dictionary (`en_dat.bin` / `en_val.bin`).
+Results from all valid prefix combinations are merged and returned in frequency order.
+
+Dictionary tool: `gen_en_dict.py` (planned) — converts a word-frequency list to MIED
+format using the same binary layout as `gen_dict.py`; no changes to `TrieSearcher`.
+
+### 5.3 Alphanumeric Mode
+
+Multi-tap cycling with no dictionary lookup:
+
+- First press of a key → primary character (e.g., `Q`).
+- Consecutive press of the same key → secondary character (e.g., `W`).
+- A different key press confirms the pending character and starts a new one.
+- Number row (Row 0): each key produces its two printed digits.
+
+State is tracked in `ImeLogic::MultiTapState {last_row, last_col, tap_count, pending}`.
+A hardware timer (Phase 2+) will add auto-confirm on timeout.
 
 ---
 
@@ -238,6 +278,87 @@ keyboard cannot reproduce this directly, so `hal/pc/` provides a virtual mapping
 └────────────────────────────────────────────────────────────────┘
 ```
 
+### 7.2 PC GUI Test Tool (`mie_gui`)
+
+`tools/mie_gui.cpp` is a host-only graphical application that provides an interactive
+virtual keyboard and IME status display. It targets developers who need to test the full
+key-input → disambiguation → candidate pipeline without physical MokyaLora hardware.
+
+#### Technology Stack
+
+| Component | Library | Rationale |
+|-----------|---------|-----------|
+| GUI framework | Dear ImGui (docking branch) | Immediate-mode, zero external styling, single-header, MIT |
+| Backend renderer | SDL2 + OpenGL 3 | Cross-platform; `imgui_impl_sdl2` + `imgui_impl_opengl3` bundled with ImGui |
+| IME integration | `mie::ImeLogic` (existing) | Pure display consumer — no changes to MIE core library |
+
+The tool is a **pure display consumer**: it calls `ImeLogic::process_key()` and reads
+`ImeLogic::input_str()` / `ImeLogic::candidate()`. No MIE source files are modified.
+
+#### UI Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  MokyaLora IME Test Tool                                            │
+├──────────────────────────────┬──────────────────────────────────────┤
+│  Virtual Keyboard            │  IME Status                          │
+│                              │                                      │
+│  [1:ㄅㄉ][3:ˇˋ][5:ㄓˊ]...  │  Mode:  Bopomofo                    │
+│  [q:ㄆㄊ][e:ㄍㄐ][t:ㄔㄗ]  │  Input: ㄐ ㄧ ㄣ                   │
+│  [a:ㄇㄋ][d:ㄎㄑ][g:ㄕㄘ]  │                                      │
+│  [z:ㄈㄌ][c:ㄏㄒ][b:ㄖㄙ]  │  ① 今   ② 金   ③ 巾               │
+│  [`][Tab ][Space    ][,][.]  │  ④ 近   ⑤ 盡                       │
+│  [↑][↓  ][←        ][→][↵]  │                                      │
+│                              │  Committed: 今天                     │
+└──────────────────────────────┴──────────────────────────────────────┘
+```
+
+- **Left panel — Virtual Keyboard:** 6×6 button grid matching MokyaLora's physical layout.
+  Each button shows its PC trigger key and both Bopomofo phonemes (or function label).
+  The active key is highlighted on press. Clicking a button fires the same `KeyEvent` as
+  the corresponding keyboard shortcut.
+- **Right panel — IME Status:** displays current mode, the accumulated input phoneme
+  string, up to 10 numbered candidates, and the committed output text.
+
+#### Architecture
+
+```
+SDL2 event loop
+    │
+    ├── keyboard / mouse event → KeyEvent{row, col, pressed}
+    │       (same mapping as hal/pc/key_map.h)
+    │
+    └── ImeLogic::process_key(event)
+            │
+            ├── ImeLogic::input_str()       → render input phoneme display
+            ├── ImeLogic::candidate_count() → render candidate list
+            └── ImeLogic::candidate(i)      → render each candidate button
+```
+
+`mie_gui` links against the `mie` static library and `HalPcStdin` is **not** used
+(events come from ImGui/SDL2 directly). The `pc_key_map[]` table from `hal/pc/key_map.h`
+is reused to convert SDL keycodes to `KeyEvent` values.
+
+#### CMake Target
+
+```cmake
+# Host-only; guarded by MIE_BUILD_GUI option (OFF by default)
+if(MIE_BUILD_GUI)
+    find_package(SDL2 REQUIRED)
+    add_executable(mie_gui tools/mie_gui.cpp ${IMGUI_SOURCES})
+    target_link_libraries(mie_gui PRIVATE mie SDL2::SDL2)
+endif()
+```
+
+#### Development Milestones
+
+| Milestone | Deliverable | Status |
+|-----------|-------------|--------|
+| A | CMake integration: `MIE_BUILD_GUI` option; FetchContent for ImGui + SDL2 | Planned |
+| B | Window opens; 6×6 keyboard grid renders with correct labels | Planned |
+| C | Keyboard input (PC keys + button clicks) fires `ImeLogic::process_key()`; IME status panel updates live | Planned |
+| D | Dict file path arguments (`--dat`, `--val`); load real dictionary; full end-to-end candidate display | Planned |
+
 ---
 
 ## 8. Development Roadmap
@@ -253,6 +374,18 @@ keyboard cannot reproduce this directly, so `hal/pc/` provides a virtual mapping
 - [x] Implement `IME-Logic` Bopomofo mode de-ambiguation; test with simulated key sequences.
       — Phase 1 skeleton: primary-phoneme mapping, mode FSM, REPL integration.
         Full disambiguation (two-alternative + fuzzy correction) deferred to Phase 3.
+- [x] **Phase 1 wrap-up:** Remove `Calculator` mode; MODE key cycles three modes (`% 3`);
+      mode-dispatch skeleton (`process_bopomofo` / `process_english` / `process_alpha`);
+      `MultiTapState` struct added; all 14 unit tests still passing.
+- [ ] **Phase 1 extension — Alphanumeric:** Implement multi-tap cycling in `process_alpha()`;
+      `MultiTapState` tracks last key + tap count; different key confirms pending character.
+- [ ] **Phase 1 extension — English dictionary:** `gen_en_dict.py` converts word-frequency
+      list to MIED format; `ImeLogic` accepts a second `TrieSearcher` for English;
+      `process_english()` expands letter pairs and queries prefix search.
+- [ ] **GUI tool — Milestone A:** CMake `MIE_BUILD_GUI` option; FetchContent for Dear ImGui + SDL2.
+- [ ] **GUI tool — Milestone B:** Window with 6×6 virtual keyboard grid (correct labels, highlight on press).
+- [ ] **GUI tool — Milestone C:** Keyboard input (PC keys + button clicks) → `ImeLogic::process_key()`; live IME status panel.
+- [ ] **GUI tool — Milestone D:** `--dat`/`--val` CLI arguments; load real dictionary; full candidate display.
 
 ### Phase 2 — Hardware Integration (MokyaLora Rev A)
 

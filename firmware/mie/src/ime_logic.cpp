@@ -1,8 +1,11 @@
 // ime_logic.cpp — ImeLogic implementation
 // SPDX-License-Identifier: MIT
 //
-// Phase 1: Bopomofo primary-phoneme mode only.
-// Each ambiguous half-keyboard key maps to one primary Bopomofo phoneme.
+// Three input modes (cycled by MODE key):
+//   Bopomofo     — primary-phoneme mapping → Trie search → Traditional Chinese candidates
+//   English      — half-keyboard letter-pair expansion → English prefix search  [stub]
+//   Alphanumeric — multi-tap single character cycling (no dictionary)            [stub]
+//
 // Full disambiguation (spatial + phonetic correction) is deferred to Phase 3.
 
 #include <mie/ime_logic.h>
@@ -82,6 +85,7 @@ void ImeLogic::clear_input() {
     input_bytes_  = 0;
     input_buf_[0] = '\0';
     cand_count_   = 0;
+    multi_tap_    = {};
 }
 
 void ImeLogic::append_phoneme(const char* utf8) {
@@ -121,17 +125,23 @@ void ImeLogic::run_search() {
 bool ImeLogic::process_key(const KeyEvent& ev) {
     if (!ev.pressed) return false;  // ignore key-up events for now
 
-    // ── MODE key (4,0): cycle mode and clear input ─────────────────────
+    // MODE key (4,0): cycle through 3 modes and clear input.
     if (ev.row == 4 && ev.col == 0) {
         mode_ = static_cast<InputMode>(
-            (static_cast<uint8_t>(mode_) + 1) % 4);
+            (static_cast<uint8_t>(mode_) + 1) % 3);
         clear_input();
         return true;
     }
 
-    // ── Phase 1: Bopomofo mode only ────────────────────────────────────
-    // Other modes fall through to the same key handling for now.
+    switch (mode_) {
+        case InputMode::Bopomofo:     return process_bopomofo(ev);
+        case InputMode::English:      return process_english(ev);
+        case InputMode::Alphanumeric: return process_alpha(ev);
+    }
+    return false;
+}
 
+bool ImeLogic::process_bopomofo(const KeyEvent& ev) {
     // BACK (2,5) and DEL (3,5): remove last phoneme
     if ((ev.row == 2 && ev.col == 5) || (ev.row == 3 && ev.col == 5)) {
         backspace_phoneme();
@@ -141,7 +151,7 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
 
     // SPACE (4,2) and OK (5,4): commit first candidate, clear input
     if ((ev.row == 4 && ev.col == 2) || (ev.row == 5 && ev.col == 4)) {
-        // Committed word could be forwarded to an output callback here.
+        // Committed word forwarded to output callback in Phase 2+.
         // For Phase 1 (REPL), we simply clear the buffer.
         clear_input();
         return true;
@@ -155,7 +165,25 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
         return true;
     }
 
-    return false;  // unhandled key — no redraw needed
+    return false;  // unhandled key
+}
+
+bool ImeLogic::process_english(const KeyEvent& ev) {
+    (void)ev;
+    // Phase 1 extension: English word prediction via half-keyboard pair expansion.
+    // Each ambiguous key carries two letters; the search layer expands all
+    // combinations and queries an English-language MIED dictionary.
+    // Not yet implemented.
+    return false;
+}
+
+bool ImeLogic::process_alpha(const KeyEvent& ev) {
+    (void)ev;
+    // Phase 1 extension: multi-tap single character input.
+    // Consecutive presses of the same key cycle through its two characters.
+    // A different key press (or timeout) confirms the pending character.
+    // Not yet implemented.
+    return false;
 }
 
 } // namespace mie
