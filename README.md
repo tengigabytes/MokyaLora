@@ -20,6 +20,10 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 | Core 1 — UI / application | Not yet started — pending Rev A hardware bring-up |
 | MokyaInput Engine (MIE) | Not yet started |
 
+## System Overview
+
+![System Block Diagram](docs/assets/system-block-diagram.png)
+
 ## PCB Preview (Rev A)
 
 | Front | Back |
@@ -41,6 +45,7 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 ```
 MokyaLora/
 ├── docs/
+│   ├── assets/                         # Documentation images (block diagrams, etc.)
 │   ├── requirements/                   # Requirements specifications
 │   │   ├── system-requirements.md      # System-level spec, BOM highlights, mandatory HW rules
 │   │   ├── hardware-requirements.md    # Full BOM, power tree, GPIO map, keypad matrix, design rules
