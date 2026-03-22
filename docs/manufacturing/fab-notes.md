@@ -4,6 +4,18 @@
 
 ---
 
+## Fabrication Status
+
+| Milestone | Date | Notes |
+|-----------|------|-------|
+| Gerber files generated | 2026-03-22 | See `production/rev-a/gerber/` |
+| BOM finalised | 2026-03-22 | See `production/rev-a/MokyaLora.csv` |
+| Submitted to manufacturer | 2026-03-22 | PCB fabrication + SMT assembly |
+| Board received | — | Pending |
+| Bring-up started | — | Pending — see `docs/bringup/rev-a-bringup-log.md` |
+
+---
+
 ## PCB Specification
 
 | Parameter            | Value                         |
