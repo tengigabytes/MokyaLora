@@ -244,10 +244,15 @@ keyboard cannot reproduce this directly, so `hal/pc/` provides a virtual mapping
 
 ### Phase 1 — Environment Setup & PC Validation
 
-- [ ] Write `gen_font.py` and verify output against a reference glyph set.
-- [ ] Write `gen_dict.py`, validate DAT search correctness on PC.
-- [ ] Implement `Trie-Searcher` in C++; unit-test with Google Test on PC.
-- [ ] Implement `IME-Logic` Bopomofo mode de-ambiguation; test with simulated key sequences.
+- [x] Write `gen_font.py` and verify output against a reference glyph set.
+      — Script complete; end-to-end run requires Unifont source + charlist_8104.txt (pending).
+- [x] Write `gen_dict.py`, validate DAT search correctness on PC.
+      — MIED binary format implemented; end-to-end run requires MoE CSV source (pending).
+- [x] Implement `Trie-Searcher` in C++; unit-test with Google Test on PC.
+      — `src/trie_searcher.cpp` complete; 13 unit tests passing.  See `docs/design-notes/mie-implementation.md`.
+- [x] Implement `IME-Logic` Bopomofo mode de-ambiguation; test with simulated key sequences.
+      — Phase 1 skeleton: primary-phoneme mapping, mode FSM, REPL integration.
+        Full disambiguation (two-alternative + fuzzy correction) deferred to Phase 3.
 
 ### Phase 2 — Hardware Integration (MokyaLora Rev A)
 
