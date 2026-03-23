@@ -382,10 +382,10 @@ endif()
 - [ ] **Phase 1 extension — English dictionary:** `gen_en_dict.py` converts word-frequency
       list to MIED format; `ImeLogic` accepts a second `TrieSearcher` for English;
       `process_english()` expands letter pairs and queries prefix search.
-- [ ] **GUI tool — Milestone A:** CMake `MIE_BUILD_GUI` option; FetchContent for Dear ImGui + SDL2.
-- [ ] **GUI tool — Milestone B:** Window with 6×6 virtual keyboard grid (correct labels, highlight on press).
-- [ ] **GUI tool — Milestone C:** Keyboard input (PC keys + button clicks) → `ImeLogic::process_key()`; live IME status panel.
-- [ ] **GUI tool — Milestone D:** `--dat`/`--val` CLI arguments; load real dictionary; full candidate display.
+- [x] **GUI tool — Milestone A:** CMake `MIE_BUILD_GUI` option; FetchContent for Dear ImGui (v1.91.6) + SDL2 (v2.26.5, static).
+- [x] **GUI tool — Milestone B:** Window with 6×6 virtual keyboard grid (correct labels, 150 ms green highlight on press).
+- [x] **GUI tool — Milestone C:** Keyboard input (PC keys + button clicks) → `ImeLogic::process_key()`; live IME status panel (mode, input, candidates, committed text).
+- [x] **GUI tool — Milestone D:** `--dat`/`--val` CLI arguments; dictionary status indicator; full candidate display with click-to-commit.
 
 ### Phase 2 — Hardware Integration (MokyaLora Rev A)
 
