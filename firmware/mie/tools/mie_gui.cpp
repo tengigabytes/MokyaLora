@@ -2,16 +2,24 @@
 // SPDX-License-Identifier: MIT
 //
 // Two-panel GUI:
-//   Left  — 6×6 virtual keyboard matching MokyaLora's physical matrix layout.
-//            Each input key (rows 0–3, cols 0–4) shows all three label layers:
-//              Line 1: English letters  (e.g. "Q  W")
-//              Line 2: Bopomofo         (e.g. "ㄆ  ㄊ")
-//              Line 3: Calculator layer (e.g. "(")
-//            Function / navigation keys show their label only.
-//            PC keyboard shortcut is shown in a tooltip on hover.
+//   Left  — virtual keyboard matching MokyaLora's physical layout (assembly drawing).
+//
+//     ┌──────────────────────── Navigation & Control ─────────────────────────┐
+//     │  [FUNC]    [    ▲    ]    [SET]  [VOL+]                               │
+//     │            [◄  OK  ►]                                                 │
+//     │  [BACK]    [    ▼    ]    [DEL]  [VOL-]                               │
+//     ├───────────────────────── Core Input (5×5) ────────────────────────────┤
+//     │  R0  1/2ㄅㄉANS  3/4ˇˋ7  5/6ㄓˊ8  7/8˙ㄚ9  9/0ㄞㄢㄦ÷            │
+//     │  R1  QWㄆㄊ(   ERㄍㄐ4  TYㄔㄗ5  UIㄧㄛ6   OPㄟㄣ×               │
+//     │  R2  ASㄇㄋ)   DFㄎㄑ1  GHㄕㄘ2  JKㄨㄜ3   Lㄠㄤ-                 │
+//     │  R3  ZXㄈㄌAC  CVㄏㄒ0  BNㄖㄙ.  Mㄩㄝx10ˣ  —ㄡㄥ+               │
+//     │  R4  [MODE] [TAB] [SPACE] [，SYM] [。.？]                            │
+//     └───────────────────────────────────────────────────────────────────────┘
+//
 //   Right — IME status: mode, phoneme input, candidates, committed output.
 //
-// Reference: docs/requirements/hardware-requirements.md §8.1
+// Reference: hardware/production/rev-a/pdf/MokyaLora__Assembly.pdf
+//            docs/requirements/hardware-requirements.md §8.1
 //
 // Build: cmake -DMIE_BUILD_GUI=ON -S firmware/mie -B build/mie-gui -G Ninja
 //        cmake --build build/mie-gui --target mie_gui
@@ -45,7 +53,6 @@ static const char* const kCircleNums[] = {
 };
 
 // ── CJK glyph ranges (must outlive font building) ─────────────────────────
-// Covers everything printed on the physical keyboard plus UI text.
 
 static const ImWchar kGlyphRanges[] = {
     0x0020, 0x00FF,  // Basic Latin + Latin-1 (×÷ etc.)
@@ -63,74 +70,83 @@ static const ImWchar kGlyphRanges[] = {
 };
 
 // ── GUI key descriptor ────────────────────────────────────────────────────
-// Each physical key carries up to three label layers.
+// (row, col) match the hardware 6×6 matrix.
 // For input keys (rows 0–3, cols 0–4):
-//   letters = English characters printed on the key  ("Q  W", "1  2")
-//   bpmf    = Bopomofo phonemes                       ("ㄆ  ㄊ", "ㄅ  ㄉ")
-//   calc    = Calculator / numeric layer               ("(", "ANS", "7")
-// For function / navigation keys: only letters is set; bpmf and calc are "".
+//   letters = English top line, bpmf = Bopomofo middle, calc = calculator bottom.
+// For nav / function keys: only letters is set; bpmf and calc are "".
 
 struct GuiKey {
     uint8_t     row, col;
-    const char* letters;   // top label line
-    const char* bpmf;      // middle label line (Bopomofo)
-    const char* calc;      // bottom label line (calculator layer)
-    const char* pc_hint;   // PC keyboard shortcut shown in tooltip
+    const char* letters;
+    const char* bpmf;
+    const char* calc;
+    const char* pc_hint;
     SDL_Keycode sdl_key;
 };
 
 // clang-format off
 static const GuiKey kGuiKeys[] = {
-    // ── Rows 0–3 : core input area (5×4 keys + col-5 function) ──────────
-    //  row,col   letters      bpmf            calc      pc    sdl
+    // ── Rows 0–3 : core input area (5 cols × 4 rows) ────────────────────
+    //  row,col   letters            bpmf            calc           pc    sdl
     // Row 0
-    { 0, 0,  "1  2",      "ㄅ  ㄉ",      "ANS",   "1",   SDLK_1        },
-    { 0, 1,  "3  4",      "ˇ    ˋ",      "7",     "3",   SDLK_3        },
-    { 0, 2,  "5  6",      "ㄓ  ˊ",       "8",     "5",   SDLK_5        },
-    { 0, 3,  "7  8",      "˙  ㄚ",       "9",     "7",   SDLK_7        },
-    { 0, 4,  "9  0",      "ㄞ ㄢ ㄦ",    "\xc3\xb7",    "9",   SDLK_9  },  // ÷
-    { 0, 5,  "FUNC",      "",             "",      "F1",  SDLK_F1       },
+    { 0, 0,  "1  2",      "ㄅ  ㄉ",      "ANS",              "1",   SDLK_1        },
+    { 0, 1,  "3  4",      "ˇ    ˋ",      "7",                "3",   SDLK_3        },
+    { 0, 2,  "5  6",      "ㄓ  ˊ",       "8",                "5",   SDLK_5        },
+    { 0, 3,  "7  8",      "˙  ㄚ",       "9",                "7",   SDLK_7        },
+    { 0, 4,  "9  0",      "ㄞ ㄢ ㄦ",    "\xc3\xb7",         "9",   SDLK_9        },  // ÷
     // Row 1
-    { 1, 0,  "Q  W",      "ㄆ  ㄊ",      "(",     "q",   SDLK_q        },
-    { 1, 1,  "E  R",      "ㄍ  ㄐ",      "4",     "e",   SDLK_e        },
-    { 1, 2,  "T  Y",      "ㄔ  ㄗ",      "5",     "t",   SDLK_t        },
-    { 1, 3,  "U  I",      "ㄧ  ㄛ",      "6",     "u",   SDLK_u        },
-    { 1, 4,  "O  P",      "ㄟ  ㄣ",      "\xc3\x97",    "o",   SDLK_o  },  // ×
-    { 1, 5,  "SET",       "",             "",      "F2",  SDLK_F2       },
+    { 1, 0,  "Q  W",      "ㄆ  ㄊ",      "(",                "q",   SDLK_q        },
+    { 1, 1,  "E  R",      "ㄍ  ㄐ",      "4",                "e",   SDLK_e        },
+    { 1, 2,  "T  Y",      "ㄔ  ㄗ",      "5",                "t",   SDLK_t        },
+    { 1, 3,  "U  I",      "ㄧ  ㄛ",      "6",                "u",   SDLK_u        },
+    { 1, 4,  "O  P",      "ㄟ  ㄣ",      "\xc3\x97",         "o",   SDLK_o        },  // ×
     // Row 2
-    { 2, 0,  "A  S",      "ㄇ  ㄋ",      ")",     "a",   SDLK_a        },
-    { 2, 1,  "D  F",      "ㄎ  ㄑ",      "1",     "d",   SDLK_d        },
-    { 2, 2,  "G  H",      "ㄕ  ㄘ",      "2",     "g",   SDLK_g        },
-    { 2, 3,  "J  K",      "ㄨ  ㄜ",      "3",     "j",   SDLK_j        },
-    { 2, 4,  "L",         "ㄠ  ㄤ",      "-",     "l",   SDLK_l        },
-    { 2, 5,  "BACK",      "",             "",      "BS",  SDLK_BACKSPACE},
+    { 2, 0,  "A  S",      "ㄇ  ㄋ",      ")",                "a",   SDLK_a        },
+    { 2, 1,  "D  F",      "ㄎ  ㄑ",      "1",                "d",   SDLK_d        },
+    { 2, 2,  "G  H",      "ㄕ  ㄘ",      "2",                "g",   SDLK_g        },
+    { 2, 3,  "J  K",      "ㄨ  ㄜ",      "3",                "j",   SDLK_j        },
+    { 2, 4,  "L",         "ㄠ  ㄤ",      "-",                "l",   SDLK_l        },
     // Row 3
-    { 3, 0,  "Z  X",      "ㄈ  ㄌ",      "AC",    "z",   SDLK_z        },
-    { 3, 1,  "C  V",      "ㄏ  ㄒ",      "0",     "c",   SDLK_c        },
-    { 3, 2,  "B  N",      "ㄖ  ㄙ",      ".",     "b",   SDLK_b        },
-    { 3, 3,  "M",         "ㄩ  ㄝ",      "x10\xcb\xa3", "m", SDLK_m   },  // x10ˣ
-    { 3, 4,  "\xe2\x80\x94", "ㄡ  ㄥ",  "+",     "\\",  SDLK_BACKSLASH},  // — em-dash
-    { 3, 5,  "DEL",       "",             "",      "Del", SDLK_DELETE   },
+    { 3, 0,  "Z  X",      "ㄈ  ㄌ",      "AC",               "z",   SDLK_z        },
+    { 3, 1,  "C  V",      "ㄏ  ㄒ",      "0",                "c",   SDLK_c        },
+    { 3, 2,  "B  N",      "ㄖ  ㄙ",      ".",                "b",   SDLK_b        },
+    { 3, 3,  "M",         "ㄩ  ㄝ",      "x10\xcb\xa3",      "m",   SDLK_m        },  // x10ˣ
+    { 3, 4,  "\xe2\x80\x94", "ㄡ  ㄥ",  "+",                "\\",  SDLK_BACKSLASH},  // —
 
-    // ── Row 4 : function bar ──────────────────────────────────────────────
-    { 4, 0,  "MODE",      "",  "",  "`",   SDLK_BACKQUOTE },
-    { 4, 1,  "TAB",       "",  "",  "Tab", SDLK_TAB       },
-    { 4, 2,  "SPACE",     "",  "",  "Spc", SDLK_SPACE     },
-    { 4, 3,  "\xef\xbc\x8c SYM", "", "", ",", SDLK_COMMA  },  // ，SYM
-    { 4, 4,  "\xe3\x80\x82 . \xef\xbc\x9f", "", "", ".", SDLK_PERIOD }, // 。.？
-    { 4, 5,  "VOL+",      "",  "",  "=",   SDLK_EQUALS    },
+    // ── Row 4 : function bar (5 keys, no col 5) ───────────────────────────
+    { 4, 0,  "MODE",                    "",  "",  "`",   SDLK_BACKQUOTE },
+    { 4, 1,  "TAB",                     "",  "",  "Tab", SDLK_TAB       },
+    { 4, 2,  "SPACE",                   "",  "",  "Spc", SDLK_SPACE     },
+    { 4, 3,  "\xef\xbc\x8c SYM",        "",  "",  ",",   SDLK_COMMA     },  // ，SYM
+    { 4, 4,  "\xe3\x80\x82 . \xef\xbc\x9f", "", "", ".", SDLK_PERIOD   },  // 。.？
 
-    // ── Row 5 : navigation / D-pad ────────────────────────────────────────
-    { 5, 0,  "\xe2\x96\xb2 UP",    "", "", "\xe2\x86\x91", SDLK_UP    }, // ▲
-    { 5, 1,  "\xe2\x96\xbc DN",    "", "", "\xe2\x86\x93", SDLK_DOWN  }, // ▼
-    { 5, 2,  "\xe2\x97\x84 LEFT",  "", "", "\xe2\x86\x90", SDLK_LEFT  }, // ◄
-    { 5, 3,  "RIGHT \xe2\x96\xba", "", "", "\xe2\x86\x92", SDLK_RIGHT }, // ►
-    { 5, 4,  "\xe2\x86\xb5 OK",    "", "", "Ent",           SDLK_RETURN}, // ↵
-    { 5, 5,  "VOL-",               "", "", "-",             SDLK_MINUS },
+    // ── Navigation & control keys (rendered in top area) ──────────────────
+    // col-5 function keys (matrix col 5)
+    { 0, 5,  "FUNC",  "", "",  "F1",  SDLK_F1        },
+    { 1, 5,  "SET",   "", "",  "F2",  SDLK_F2        },
+    { 2, 5,  "BACK",  "", "",  "BS",  SDLK_BACKSPACE },
+    { 3, 5,  "DEL",   "", "",  "Del", SDLK_DELETE    },
+    { 4, 5,  "VOL+",  "", "",  "=",   SDLK_EQUALS    },
+    { 5, 5,  "VOL-",  "", "",  "-",   SDLK_MINUS     },
+    // D-pad (matrix row 5)
+    { 5, 0,  "\xe2\x96\xb2",        "", "",  "\xe2\x86\x91", SDLK_UP    },  // ▲
+    { 5, 1,  "\xe2\x96\xbc",        "", "",  "\xe2\x86\x93", SDLK_DOWN  },  // ▼
+    { 5, 2,  "\xe2\x97\x84",        "", "",  "\xe2\x86\x90", SDLK_LEFT  },  // ◄
+    { 5, 3,  "\xe2\x96\xba",        "", "",  "\xe2\x86\x92", SDLK_RIGHT },  // ►
+    { 5, 4,  "\xe2\x86\xb5 OK",     "", "",  "Ent",          SDLK_RETURN},  // ↵ OK
 };
 // clang-format on
 
 static const int kNumGuiKeys = (int)(sizeof(kGuiKeys) / sizeof(kGuiKeys[0]));
+
+// ── Key lookup ────────────────────────────────────────────────────────────
+
+static const GuiKey* find_key(uint8_t row, uint8_t col) {
+    for (int i = 0; i < kNumGuiKeys; ++i)
+        if (kGuiKeys[i].row == row && kGuiKeys[i].col == col)
+            return &kGuiKeys[i];
+    return nullptr;
+}
 
 // ── SDL_Keycode → pc_key mapping ──────────────────────────────────────────
 
@@ -256,7 +272,7 @@ int main(int argc, char** argv) {
     SDL_Window* window = SDL_CreateWindow(
         "MIE GUI — MokyaInput Engine Test Tool",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        980, 530,
+        1000, 580,
         SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
     if (!window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); SDL_Quit(); return 1; }
 
@@ -270,12 +286,12 @@ int main(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;  // keyboard → IME only
+    io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
     ImGui::StyleColorsDark();
     ImGui_ImplSDL2_InitForOpenGL(window, gl_ctx);
     ImGui_ImplOpenGL3_Init("#version 130");
 
-    // ── CJK font ───────────────────────────────────────────────────────────
+    // ── CJK font ──────────────────────────────────────────────────────────
 
     const char* cjk_fonts[] = {
         "C:/Windows/Fonts/msjh.ttc",
@@ -313,6 +329,49 @@ int main(int argc, char** argv) {
         ime.process_key(ev);
         flash.row = row; flash.col = col; flash.until_ms = SDL_GetTicks() + 150;
     };
+
+    // ── Layout constants ──────────────────────────────────────────────────
+    //
+    // Navigation area:
+    //   [FUNC 74]  gap8  [▲ 44]  gap8  [SET 74]  gap8  [VOL+ 74]
+    //              gap8  [◄ 44][OK 50][► 44]
+    //   [BACK 74]  gap8  [▼ 44]  gap8  [DEL 74]  gap8  [VOL- 74]
+    //
+    // Input area: 5 × btn_w (74) + 4 × btn_gap (3) = 382 px
+    //
+    const float btn_w    = 74.0f;   // input key width
+    const float btn_h    = 72.0f;   // input key height (3 label lines)
+    const float bar_h    = 42.0f;   // function bar height (row 4)
+    const float btn_gap  = 3.0f;
+
+    const float nav_h    = 40.0f;   // height of every nav button
+    const float fn_w     = 74.0f;   // FUNC / BACK / SET / DEL / VOL width
+    const float dpd_s    = 44.0f;   // ▲ ▼ ◄ ► key size
+    const float ok_w     = 50.0f;   // OK key width
+    const float dp_gap   = 3.0f;    // gap inside D-pad cluster
+    const float zone_gap = 8.0f;    // gap between nav zones
+
+    // Derived X positions (relative to keyboard child window)
+    const float x_fn_L = 0.0f;
+    const float x_dL   = fn_w + zone_gap;                                           // ◄  = 82
+    const float x_dOK  = x_dL + dpd_s + dp_gap;                                    // OK = 129
+    const float x_dR   = x_dOK + ok_w + dp_gap;                                    // ►  = 182
+    // Centre ▲/▼ over the ◄ OK ► cluster
+    const float x_dUD  = x_dL + (dpd_s + dp_gap + ok_w + dp_gap + dpd_s) * 0.5f
+                         - dpd_s * 0.5f;                                             // ▲▼ = 132
+    const float x_fn_R = x_dR + dpd_s + zone_gap;                                  // SET = 234
+    const float x_vol  = x_fn_R + fn_w + zone_gap;                                 // VOL = 316
+    const float nav_w  = x_vol + fn_w;                                              //      390
+
+    const float kbd_w  = nav_w > (5.0f * btn_w + 4.0f * btn_gap)
+                         ? nav_w : (5.0f * btn_w + 4.0f * btn_gap);                // 390
+
+    // Colour zones
+    const ImVec4 col_input_bg (0.22f, 0.22f, 0.28f, 1.0f);
+    const ImVec4 col_fn_bg    (0.18f, 0.28f, 0.18f, 1.0f);
+    const ImVec4 col_bar_bg   (0.28f, 0.22f, 0.22f, 1.0f);
+    const ImVec4 col_nav_bg   (0.22f, 0.22f, 0.35f, 1.0f);
+    const ImVec4 col_flash_bg (0.15f, 0.65f, 0.15f, 1.0f);
 
     // ── Main loop ─────────────────────────────────────────────────────────
 
@@ -352,47 +411,89 @@ int main(int argc, char** argv) {
 
         // ── Left panel: virtual keyboard ──────────────────────────────────
 
-        // Button dimensions: input keys are 3-line tall; function keys are 1-line.
-        // Use uniform size so the grid aligns cleanly.
-        const float btn_w   = 74.0f;
-        const float btn_h   = 72.0f;
-        const float btn_gap = 3.0f;
-        const float kbd_w   = 6.0f * btn_w + 5.0f * btn_gap + 1.0f;  // ≈447
-
-        // Colour scheme for different key zones
-        const ImVec4 col_input_bg  (0.22f, 0.22f, 0.28f, 1.0f);  // input keys
-        const ImVec4 col_fn_bg     (0.18f, 0.28f, 0.18f, 1.0f);  // col-5 function
-        const ImVec4 col_bar_bg    (0.28f, 0.22f, 0.22f, 1.0f);  // row-4 function bar
-        const ImVec4 col_nav_bg    (0.22f, 0.22f, 0.35f, 1.0f);  // row-5 navigation
-        const ImVec4 col_flash_bg  (0.15f, 0.65f, 0.15f, 1.0f);  // active flash
-
-        ImGui::BeginChild("##kb", ImVec2(kbd_w, 0.0f), false, ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("##kb", ImVec2(kbd_w, 0.0f), false,
+                          ImGuiWindowFlags_NoScrollbar);
 
         ImGui::TextColored(ImVec4(0.6f,0.6f,0.6f,1.0f),
             "Virtual Keyboard  (click or use PC key | hover for shortcut)");
         ImGui::Spacing();
 
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(btn_gap, btn_gap));
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f, 4.0f));
 
-        for (int row = 0; row < 6; ++row) {
-            for (int col = 0; col < 6; ++col) {
+        // Helper: draw one button at absolute (x, y) inside the child window.
+        // Returns true if clicked.
+        auto draw_btn = [&](uint8_t r, uint8_t c,
+                            float x, float y, float w, float h,
+                            ImVec4 bg) -> bool {
+            const GuiKey* gk = find_key(r, c);
+            if (!gk) return false;
+            ImGui::SetCursorPos(ImVec2(x, y));
+            bool flashing = is_flashing(flash, r, c);
+            if (flashing) bg = col_flash_bg;
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                bg);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                ImVec4(bg.x+0.10f, bg.y+0.10f, bg.z+0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                ImVec4(bg.x-0.05f, bg.y-0.05f, bg.z-0.05f, 1.0f));
+            char label[192];
+            build_btn_label(label, sizeof(label), gk);
+            bool clicked = ImGui::Button(label, ImVec2(w, h));
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("PC key: %s", gk->pc_hint);
+            return clicked;
+        };
+
+        // ── Navigation & control area ─────────────────────────────────────
+        //
+        //  [FUNC]         [  ▲  ]         [SET]  [VOL+]
+        //                 [◄ OK ►]
+        //  [BACK]         [  ▼  ]         [DEL]  [VOL-]
+
+        float ny0 = ImGui::GetCursorPosY();
+        float ny1 = ny0 + nav_h + dp_gap;
+        float ny2 = ny1 + nav_h + dp_gap;
+
+        // Row 0: FUNC | ▲ | SET | VOL+
+        if (draw_btn(0,5, x_fn_L, ny0, fn_w,  nav_h, col_fn_bg))  fire_key(0,5);
+        if (draw_btn(5,0, x_dUD,  ny0, dpd_s, nav_h, col_nav_bg)) fire_key(5,0);
+        if (draw_btn(1,5, x_fn_R, ny0, fn_w,  nav_h, col_fn_bg))  fire_key(1,5);
+        if (draw_btn(4,5, x_vol,  ny0, fn_w,  nav_h, col_fn_bg))  fire_key(4,5);
+
+        // Row 1: ◄ | OK | ►  (centred under ▲)
+        if (draw_btn(5,2, x_dL,  ny1, dpd_s, nav_h, col_nav_bg)) fire_key(5,2);
+        if (draw_btn(5,4, x_dOK, ny1, ok_w,  nav_h, col_nav_bg)) fire_key(5,4);
+        if (draw_btn(5,3, x_dR,  ny1, dpd_s, nav_h, col_nav_bg)) fire_key(5,3);
+
+        // Row 2: BACK | ▼ | DEL | VOL-
+        if (draw_btn(2,5, x_fn_L, ny2, fn_w,  nav_h, col_fn_bg))  fire_key(2,5);
+        if (draw_btn(5,1, x_dUD,  ny2, dpd_s, nav_h, col_nav_bg)) fire_key(5,1);
+        if (draw_btn(3,5, x_fn_R, ny2, fn_w,  nav_h, col_fn_bg))  fire_key(3,5);
+        if (draw_btn(5,5, x_vol,  ny2, fn_w,  nav_h, col_fn_bg))  fire_key(5,5);
+
+        // Advance cursor past nav area, then draw separator
+        ImGui::SetCursorPos(ImVec2(0.0f, ny2 + nav_h + 8.0f));
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // ── Core input grid ───────────────────────────────────────────────
+        //  Rows 0–3: 5 input keys per row, 3-label (English / Bopomofo / Calc)
+        //  Row 4:    5 function-bar keys (MODE TAB SPACE SYM .)
+
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(btn_gap, btn_gap));
+
+        for (int row = 0; row <= 4; ++row) {
+            float key_h  = (row < 4) ? btn_h : bar_h;
+            ImVec4 zone  = (row < 4) ? col_input_bg : col_bar_bg;
+
+            for (int col = 0; col < 5; ++col) {
                 if (col > 0) ImGui::SameLine(0.0f, btn_gap);
 
-                const GuiKey* gk = nullptr;
-                for (int ki = 0; ki < kNumGuiKeys; ++ki)
-                    if (kGuiKeys[ki].row == row && kGuiKeys[ki].col == col) { gk = &kGuiKeys[ki]; break; }
+                const GuiKey* gk = find_key((uint8_t)row, (uint8_t)col);
 
-                if (!gk) { ImGui::Dummy(ImVec2(btn_w, btn_h)); continue; }
-
-                // Pick background colour
-                ImVec4 bg = col_input_bg;
-                if (col == 5 && row <= 3)      bg = col_fn_bg;
-                else if (row == 4)             bg = col_bar_bg;
-                else if (row == 5)             bg = col_nav_bg;
-
-                bool flashing = is_flashing(flash, (uint8_t)row, (uint8_t)col);
-                if (flashing) bg = col_flash_bg;
+                bool flashing = gk && is_flashing(flash, (uint8_t)row, (uint8_t)col);
+                ImVec4 bg = flashing ? col_flash_bg : zone;
 
                 ImGui::PushStyleColor(ImGuiCol_Button,        bg);
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
@@ -400,27 +501,29 @@ int main(int argc, char** argv) {
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive,
                     ImVec4(bg.x-0.05f, bg.y-0.05f, bg.z-0.05f, 1.0f));
 
-                char btn_label[192];
-                build_btn_label(btn_label, sizeof(btn_label), gk);
+                char label[192];
+                if (gk) build_btn_label(label, sizeof(label), gk);
+                else    snprintf(label, sizeof(label), "##%d_%d", row, col);
 
-                bool clicked = ImGui::Button(btn_label, ImVec2(btn_w, btn_h));
+                bool clicked = ImGui::Button(label, ImVec2(btn_w, key_h));
                 ImGui::PopStyleColor(3);
 
-                // Tooltip: PC keyboard shortcut
-                if (ImGui::IsItemHovered())
+                if (gk && ImGui::IsItemHovered())
                     ImGui::SetTooltip("PC key: %s", gk->pc_hint);
 
-                if (clicked) fire_key((uint8_t)row, (uint8_t)col);
+                if (clicked && gk) fire_key((uint8_t)row, (uint8_t)col);
             }
         }
 
-        ImGui::PopStyleVar(2);  // ItemSpacing + FramePadding
-        ImGui::EndChild();      // ##kb
+        ImGui::PopStyleVar();  // ItemSpacing
+        ImGui::PopStyleVar();  // FramePadding
+        ImGui::EndChild();     // ##kb
 
         // ── Right panel: IME status ───────────────────────────────────────
 
         ImGui::SameLine(0.0f, 14.0f);
-        ImGui::BeginChild("##ime", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_NoScrollbar);
+        ImGui::BeginChild("##ime", ImVec2(0.0f, 0.0f), false,
+                          ImGuiWindowFlags_NoScrollbar);
 
         ImGui::TextColored(ImVec4(0.6f,0.6f,0.6f,1.0f), "IME Status");
         ImGui::Separator();
