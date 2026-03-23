@@ -78,7 +78,7 @@ firmware/mie/
 │   ├── gen_font.py             # Unifont → font_glyphs.bin + font_index.bin
 │   ├── gen_dict.py             # MoE CSV → dict_dat.bin + dict_values.bin (MIED format)
 │   ├── mie_repl.cpp            # Terminal REPL: IME-connected, keyboard + candidate bar
-│   └── mie_gui.cpp             # GUI test tool: graphical keyboard + IME display (planned)
+│   └── mie_gui.cpp             # GUI test tool: graphical keyboard + IME display
 ├── data/                       # Generated binary assets — NOT committed to git
 │   ├── font_glyphs.bin
 │   ├── font_index.bin
@@ -297,28 +297,52 @@ The tool is a **pure display consumer**: it calls `ImeLogic::process_key()` and 
 
 #### UI Layout
 
+The keyboard panel mirrors the physical PCB layout from the assembly drawing:
+
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  MokyaLora IME Test Tool                                            │
-├──────────────────────────────┬──────────────────────────────────────┤
-│  Virtual Keyboard            │  IME Status                          │
-│                              │                                      │
-│  [1:ㄅㄉ][3:ˇˋ][5:ㄓˊ]...  │  Mode:  Bopomofo                    │
-│  [q:ㄆㄊ][e:ㄍㄐ][t:ㄔㄗ]  │  Input: ㄐ ㄧ ㄣ                   │
-│  [a:ㄇㄋ][d:ㄎㄑ][g:ㄕㄘ]  │                                      │
-│  [z:ㄈㄌ][c:ㄏㄒ][b:ㄖㄙ]  │  ① 今   ② 金   ③ 巾               │
-│  [`][Tab ][Space    ][,][.]  │  ④ 近   ⑤ 盡                       │
-│  [↑][↓  ][←        ][→][↵]  │                                      │
-│                              │  Committed: 今天                     │
-└──────────────────────────────┴──────────────────────────────────────┘
+┌────────────────────────────────────────────────┬──────────────────────────┐
+│  Virtual Keyboard                              │  IME Status              │
+│                                                │                          │
+│  Navigation & Control                          │  Mode:  注音             │
+│  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐       │  Input: ㄐ ㄧ ㄣ        │
+│  │ FUNC │  │  ▲   │  │ SET  │  │ VOL+ │       │                          │
+│  └──────┘  ├──────┤  └──────┘  └──────┘       │  ① 今  ② 金  ③ 巾      │
+│            │◄ OK ►│                            │  ④ 近  ⑤ 盡             │
+│  ┌──────┐  ├──────┤  ┌──────┐  ┌──────┐       │                          │
+│  │ BACK │  │  ▼   │  │ DEL  │  │ VOL- │       │  Committed: 今天         │
+│  └──────┘  └──────┘  └──────┘  └──────┘       │                          │
+│  Core Input (5×4)                              │                          │
+│  ┌──────┬──────┬──────┬──────┬──────┐          │                          │
+│  │1/2   │3/4   │5/6   │7/8   │9/0   │          │                          │
+│  │ㄅ ㄉ │ˇ ˋ  │ㄓ ˊ │˙ ㄚ │ㄞㄢㄦ│          │                          │
+│  │[ANS] │[7]   │[8]   │[9]   │[÷]   │          │                          │
+│  ├──────┼──────┼──────┼──────┼──────┤          │                          │
+│  │ Q/W  │ E/R  │ T/Y  │ U/I  │ O/P  │          │                          │
+│  │ㄆ ㄊ │ㄍ ㄐ │ㄔ ㄗ │ㄧ ㄛ │ㄟ ㄣ │          │                          │
+│  │[(]   │[4]   │[5]   │[6]   │[×]   │          │                          │
+│  ├──────┼──────┼──────┼──────┼──────┤          │                          │
+│  │ A/S  │ D/F  │ G/H  │ J/K  │  L   │          │                          │
+│  │ㄇ ㄋ │ㄎ ㄑ │ㄕ ㄘ │ㄨ ㄜ │ㄠ ㄤ │          │                          │
+│  │[)]   │[1]   │[2]   │[3]   │[-]   │          │                          │
+│  ├──────┼──────┼──────┼──────┼──────┤          │                          │
+│  │ Z/X  │ C/V  │ B/N  │  M   │  —   │          │                          │
+│  │ㄈ ㄌ │ㄏ ㄒ │ㄖ ㄙ │ㄩ ㄝ │ㄡ ㄥ │          │                          │
+│  │[AC]  │[0]   │[.]   │[x10ˣ]│[+]   │          │                          │
+│  ├──────┼──────┼──────┼──────┼──────┤          │                          │
+│  │ MODE │ TAB  │SPACE │，SYM │。.？ │          │                          │
+│  └──────┴──────┴──────┴──────┴──────┘          │                          │
+└────────────────────────────────────────────────┴──────────────────────────┘
 ```
 
-- **Left panel — Virtual Keyboard:** 6×6 button grid matching MokyaLora's physical layout.
-  Each button shows its PC trigger key and both Bopomofo phonemes (or function label).
-  The active key is highlighted on press. Clicking a button fires the same `KeyEvent` as
-  the corresponding keyboard shortcut.
+- **Left panel — Virtual Keyboard:** matches the physical PCB assembly layout.
+  - *Navigation & Control area (top):* FUNC and BACK on the left; D-pad cluster
+    (▲ / ◄ OK ► / ▼) in the centre; SET and DEL on the right; VOL+ and VOL- far right.
+  - *Core Input area (below):* 5×4 grid where each key shows three label lines
+    (English letters / Bopomofo phonemes / Calculator layer), plus a 5-key function bar
+    (MODE TAB SPACE ，SYM 。.？). Keys flash green for 150 ms on press.
+    Hovering shows the PC keyboard shortcut in a tooltip.
 - **Right panel — IME Status:** displays current mode, the accumulated input phoneme
-  string, up to 10 numbered candidates, and the committed output text.
+  string, up to 10 numbered candidates (click to commit), and the committed output text.
 
 #### Architecture
 
@@ -343,21 +367,27 @@ is reused to convert SDL keycodes to `KeyEvent` values.
 
 ```cmake
 # Host-only; guarded by MIE_BUILD_GUI option (OFF by default)
-if(MIE_BUILD_GUI)
-    find_package(SDL2 REQUIRED)
-    add_executable(mie_gui tools/mie_gui.cpp ${IMGUI_SOURCES})
-    target_link_libraries(mie_gui PRIVATE mie SDL2::SDL2)
+# FetchContent pulls Dear ImGui v1.91.6 and SDL2 v2.26.5 (static).
+option(MIE_BUILD_GUI "Build mie_gui graphical test tool" OFF)
+if(MIE_BUILD_GUI AND NOT CMAKE_CROSSCOMPILING)
+    # imgui_lib static target built manually (ImGui has no CMakeLists.txt)
+    add_executable(mie_gui tools/mie_gui.cpp)
+    target_compile_definitions(mie_gui PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(mie_gui PRIVATE mie imgui_lib)
 endif()
 ```
+
+Build helper: `build_mie_gui.bat` (Windows) — configures with `-DMIE_BUILD_GUI=ON` and
+builds the `mie_gui` target using the MSVC/Ninja toolchain.
 
 #### Development Milestones
 
 | Milestone | Deliverable | Status |
 |-----------|-------------|--------|
-| A | CMake integration: `MIE_BUILD_GUI` option; FetchContent for ImGui + SDL2 | Planned |
-| B | Window opens; 6×6 keyboard grid renders with correct labels | Planned |
-| C | Keyboard input (PC keys + button clicks) fires `ImeLogic::process_key()`; IME status panel updates live | Planned |
-| D | Dict file path arguments (`--dat`, `--val`); load real dictionary; full end-to-end candidate display | Planned |
+| A | CMake `MIE_BUILD_GUI` option; FetchContent for Dear ImGui v1.91.6 + SDL2 v2.26.5 (static) | Done |
+| B | Hardware-accurate virtual keyboard: nav cluster at top (FUNC/BACK/D-pad/SET/DEL/VOL), 5×4 input grid + function bar below; 3-layer key labels (English / Bopomofo / Calc) | Done |
+| C | Keyboard input (PC keys + button clicks) → `ImeLogic::process_key()`; live IME status panel (mode, input, candidates, committed text) | Done |
+| D | `--dat`/`--val` CLI arguments; dictionary status indicator; full candidate display with click-to-commit | Done |
 
 ---
 
@@ -383,9 +413,10 @@ endif()
       list to MIED format; `ImeLogic` accepts a second `TrieSearcher` for English;
       `process_english()` expands letter pairs and queries prefix search.
 - [x] **GUI tool — Milestone A:** CMake `MIE_BUILD_GUI` option; FetchContent for Dear ImGui (v1.91.6) + SDL2 (v2.26.5, static).
-- [x] **GUI tool — Milestone B:** Window with 6×6 virtual keyboard grid (correct labels, 150 ms green highlight on press).
+- [x] **GUI tool — Milestone B:** Window with virtual keyboard; 3-layer key labels (English / Bopomofo / Calc); 150 ms green highlight on press.
 - [x] **GUI tool — Milestone C:** Keyboard input (PC keys + button clicks) → `ImeLogic::process_key()`; live IME status panel (mode, input, candidates, committed text).
 - [x] **GUI tool — Milestone D:** `--dat`/`--val` CLI arguments; dictionary status indicator; full candidate display with click-to-commit.
+- [x] **GUI tool — layout accuracy:** Keyboard panel restructured to match PCB assembly drawing — navigation cluster (FUNC/BACK/D-pad/SET/DEL/VOL+/VOL-) at top; 5×4 input grid + function bar below.
 
 ### Phase 2 — Hardware Integration (MokyaLora Rev A)
 
