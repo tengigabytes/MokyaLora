@@ -2,84 +2,294 @@
 """
 gen_font.py — MokyaInput Engine Font Compiler
 ==============================================
-Extracts 16×16 bitmap glyphs from GNU Unifont for the 8,104 standard
-Traditional Chinese characters defined by the Taiwan Ministry of Education.
+Subsets GNU Unifont TTF to specified Unicode ranges using fonttools,
+renders each glyph at 16 px with Pillow, outputs mie_unifont_16.bin
+in MIEF v1 binary format (1 bpp, MSB-first, variable bbox).
 
-Output files (written to ../data/):
-  font_glyphs.bin   — packed 16×16 bit-per-pixel glyph data (32 bytes/glyph)
-  font_index.bin    — uint32 offset table indexed by Unicode code point
+MIEF v1 format
+--------------
+Header (12 bytes, little-endian):
+  magic[4]     b'MIEF'
+  version      uint8  = 1
+  px_height    uint8  = 16
+  bpp          uint8  = 1
+  flags        uint8  (bit 0 = RLE enabled)
+  num_glyphs   uint32
 
-Usage:
-  python gen_font.py --unifont unifont-15.1.04.hex --charlist charlist_8104.txt
+Index (num_glyphs × 8 bytes, sorted ascending by codepoint):
+  codepoint    uint32
+  data_offset  uint32   byte offset into glyph-data section
 
-Dependencies:
-  pip install requests  (optional, for automatic Unifont download)
+Glyph-data section (variable-length, pointed to by index):
+  adv_w  uint8   advance width in pixels (capped at 255)
+  box_w  uint8   bitmap width  (0 = empty / whitespace glyph)
+  box_h  uint8   bitmap height (0 = empty / whitespace glyph)
+  ofs_x  int8    left bearing from origin
+  ofs_y  int8    bottom bearing from baseline (positive = up)
+  bitmap bytes   1 bpp, MSB first; each row padded to full byte.
+                 Present only when box_w > 0 and box_h > 0.
+
+LVGL integration (Phase 2)
+--------------------------
+A custom lv_font_t driver (firmware/core1/src/mie_font_driver.c) implements
+get_glyph_dsc / get_glyph_bitmap callbacks that binary-search the MIEF index
+and DMA-read bitmap data directly from Flash — no PSRAM copy required.
+
+License notice
+--------------
+GNU Unifont © Roman Czyborra, Paul Hardy, Qianqian Fang et al.
+Distributed under the SIL Open Font License 1.1 and the GNU General
+Public License v2+ with font exception.
+Source: https://unifoundry.com/unifont/
+
+Requires
+--------
+  pip install fonttools Pillow
+
+Usage
+-----
+  python gen_font.py [--unifont unifont.ttf] [--out path/to/mie_unifont_16.bin]
+                     [--rle] [--no-subset]
 """
 
 import argparse
+import io
 import struct
 import sys
 from pathlib import Path
 
-OUTPUT_DIR = Path(__file__).parent.parent / "data"
-GLYPH_BYTES = 32  # 16×16 pixels, 1 bit per pixel = 32 bytes
+try:
+    from fonttools.ttLib import TTFont
+    from fonttools.subset import Subsetter
+    from fonttools.subset import Options as SubOptions
+    from PIL import ImageFont, Image, ImageDraw
+except ImportError as exc:
+    print(f"ERROR: missing dependency — {exc}\n"
+          "Run: pip install fonttools Pillow", file=sys.stderr)
+    sys.exit(1)
 
+# ── Constants ─────────────────────────────────────────────────────────────
+
+MAGIC       = b"MIEF"
+VERSION     = 1
+PX_SIZE     = 16
+BPP         = 1
+FLAG_RLE    = 0x01
+
+DEFAULT_UNIFONT = "unifont.ttf"
+DEFAULT_OUT     = Path(__file__).parent.parent / "data" / "mie_unifont_16.bin"
+
+# Unicode ranges — must match kGlyphRanges in mie_gui.cpp and LVGL driver.
+CODEPOINT_RANGES = [
+    (0x0020, 0x007F),   # ASCII (printable)
+    (0x00A0, 0x00FF),   # Latin-1 Supplement (×÷ etc.)
+    (0x2000, 0x206F),   # General Punctuation (— … ↵ etc.)
+    (0x3000, 0x303F),   # CJK Symbols & Punctuation (。、「」)
+    (0x3100, 0x312F),   # Bopomofo (ㄅ–ㄩ + tone marks ˊˇˋ˙)
+    (0x4E00, 0x9FFF),   # CJK Unified Ideographs (common traditional Chinese)
+]
+
+# ── Codepoint enumeration ─────────────────────────────────────────────────
+
+def all_codepoints() -> list:
+    cps = []
+    for lo, hi in CODEPOINT_RANGES:
+        cps.extend(range(lo, hi + 1))
+    return cps
+
+# ── fonttools subsetting ──────────────────────────────────────────────────
+
+def subset_ttf_bytes(src_path: str, codepoints: list) -> bytes:
+    """Return a subsetted TTF as an in-memory bytes object."""
+    font = TTFont(src_path)
+    opts = SubOptions()
+    opts.layout_features = ['*']
+    sub = Subsetter(opts)
+    sub.populate(unicodes=set(codepoints))
+    sub.subset(font)
+    buf = io.BytesIO()
+    font.save(buf)
+    return buf.getvalue()
+
+# ── Glyph rendering ───────────────────────────────────────────────────────
+
+# Baseline offset from the top of a PX_SIZE cell.
+# Pillow's truetype coordinate origin is the top-left of the cell;
+# the baseline sits ~3 px above the bottom for a 16 px font.
+_DESCENDER_PX = 3
+
+def render_glyph(pil_font, ch: str):
+    """
+    Render a single character using Pillow.
+
+    Returns:
+        (adv_w, ofs_x, ofs_y, box_w, box_h, bitmap_bytes)
+        For whitespace or empty glyphs: box_w = box_h = 0, bitmap_bytes = b''.
+    """
+    try:
+        adv_w = int(pil_font.getlength(ch))
+    except Exception:
+        adv_w = PX_SIZE
+
+    try:
+        bbox = pil_font.getbbox(ch)
+    except Exception:
+        bbox = None
+
+    if bbox is None:
+        return (adv_w, 0, 0, 0, 0, b'')
+
+    left, top, right, bottom = bbox
+    box_w = right - left
+    box_h = bottom - top
+
+    if box_w <= 0 or box_h <= 0:
+        return (adv_w, 0, 0, 0, 0, b'')
+
+    # Render to L (greyscale) image — Pillow renders at sub-pixel quality;
+    # threshold at 128 to produce clean 1-bpp output for Unifont's pixel font.
+    img = Image.new('L', (box_w, box_h), 0)
+    draw = ImageDraw.Draw(img)
+    draw.text((-left, -top), ch, fill=255, font=pil_font)
+
+    # Pack to 1 bpp (MSB first, each row padded to a full byte)
+    pixels    = img.load()
+    row_bytes = (box_w + 7) // 8
+    bitmap    = bytearray(box_h * row_bytes)
+    for y in range(box_h):
+        for x in range(box_w):
+            if pixels[x, y] >= 128:
+                bitmap[y * row_bytes + x // 8] |= 0x80 >> (x % 8)
+
+    # ofs_x : pixels to the right of the origin (left bearing)
+    ofs_x = left
+
+    # ofs_y : signed offset, positive = glyph sits above baseline.
+    # Pillow 'bottom' is the number of px below the cell's top edge.
+    # Baseline is at cell_top + (PX_SIZE - _DESCENDER_PX).
+    baseline_from_top = PX_SIZE - _DESCENDER_PX
+    ofs_y = baseline_from_top - bottom   # positive when glyph is above baseline
+
+    return (min(adv_w, 255), ofs_x, ofs_y, box_w, box_h, bytes(bitmap))
+
+# ── RLE compression ───────────────────────────────────────────────────────
+
+def rle_encode(data: bytes) -> bytes:
+    """
+    Simple byte-level run-length encoding.
+    Format: (count: uint8, value: uint8) pairs.
+    Applied per-glyph bitmap; always prefix-safe (decoder knows original length
+    from box_w × box_h).
+    """
+    if not data:
+        return b''
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        val   = data[i]
+        count = 1
+        while i + count < len(data) and data[i + count] == val and count < 255:
+            count += 1
+        out += struct.pack('BB', count, val)
+        i += count
+    return bytes(out)
+
+# ── MIEF binary builder ───────────────────────────────────────────────────
+
+def build_mief(pil_font, codepoints: list, use_rle: bool) -> bytes:
+    index      = []        # (codepoint, data_offset)
+    glyph_data = bytearray()
+    total      = len(codepoints)
+
+    print(f"Rendering {total:,} glyphs ...", flush=True)
+    for i, cp in enumerate(codepoints):
+        if i % 2000 == 0:
+            print(f"  {i:6,} / {total:,}\r", end='', flush=True)
+
+        try:
+            ch = chr(cp)
+        except (ValueError, OverflowError):
+            continue
+
+        adv_w, ofs_x, ofs_y, box_w, box_h, bitmap = render_glyph(pil_font, ch)
+
+        bmp_out = rle_encode(bitmap) if (use_rle and bitmap) else bitmap
+
+        offset = len(glyph_data)
+        index.append((cp, offset))
+
+        # 5-byte glyph descriptor, then optional bitmap
+        glyph_data += struct.pack('BBBbb',
+                                  adv_w & 0xFF, box_w, box_h,
+                                  max(-128, min(127, ofs_x)),
+                                  max(-128, min(127, ofs_y)))
+        glyph_data += bmp_out
+
+    print(f"  {total:,} / {total:,}  done.")
+
+    flags      = FLAG_RLE if use_rle else 0
+    num_glyphs = len(index)
+
+    # Header (12 bytes)
+    header = MAGIC + struct.pack('<BBBBI', VERSION, PX_SIZE, BPP, flags, num_glyphs)
+
+    # Index table
+    idx_bytes = bytearray()
+    for cp, off in index:
+        idx_bytes += struct.pack('<II', cp, off)
+
+    return header + bytes(idx_bytes) + bytes(glyph_data)
+
+# ── Argument parsing ──────────────────────────────────────────────────────
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Compile Unifont glyphs to MIE binary format")
-    p.add_argument("--unifont", required=True, help="Path to unifont .hex file")
-    p.add_argument("--charlist", required=True, help="Path to newline-separated Unicode code points (hex)")
-    p.add_argument("--output-dir", default=str(OUTPUT_DIR), help="Output directory")
+    p = argparse.ArgumentParser(
+        description="Compile GNU Unifont TTF to MIEF binary font for MokyaLora Core 1.")
+    p.add_argument('--unifont',   default=DEFAULT_UNIFONT,
+                   help=f'GNU Unifont .ttf path  [default: {DEFAULT_UNIFONT}]')
+    p.add_argument('--out',       default=str(DEFAULT_OUT),
+                   help=f'Output .bin path  [default: {DEFAULT_OUT}]')
+    p.add_argument('--rle',       action='store_true',
+                   help='Enable per-glyph RLE compression')
+    p.add_argument('--no-subset', action='store_true',
+                   help='Skip fonttools subsetting (uses full font; slower)')
     return p.parse_args()
 
-
-def load_unifont(hex_path: str) -> dict:
-    """Parse a Unifont .hex file into {codepoint: bytes} for 16-wide glyphs."""
-    glyphs = {}
-    with open(hex_path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            cp_str, bitmap_str = line.split(":")
-            cp = int(cp_str, 16)
-            bitmap = bytes.fromhex(bitmap_str)
-            if len(bitmap) == GLYPH_BYTES:  # 16×16 only
-                glyphs[cp] = bitmap
-    return glyphs
-
+# ── Main ──────────────────────────────────────────────────────────────────
 
 def main():
-    args = parse_args()
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    args     = parse_args()
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"Loading Unifont from {args.unifont} ...")
-    glyphs = load_unifont(args.unifont)
+    codepoints = all_codepoints()
+    print(f"Codepoint ranges : {len(CODEPOINT_RANGES)}")
+    print(f"Total codepoints : {len(codepoints):,}")
+    print(f"RLE compression  : {'on' if args.rle else 'off'}")
+    print()
 
-    with open(args.charlist, "r", encoding="utf-8") as f:
-        charlist = [int(line.strip(), 16) for line in f if line.strip()]
+    if not args.no_subset:
+        print(f"Subsetting {args.unifont} via fonttools ...")
+        ttf_bytes = subset_ttf_bytes(args.unifont, codepoints)
+        pil_font  = ImageFont.truetype(io.BytesIO(ttf_bytes), PX_SIZE)
+        print(f"  Subsetted TTF : {len(ttf_bytes):,} bytes")
+    else:
+        print(f"Loading {args.unifont} (no subset) ...")
+        pil_font = ImageFont.truetype(args.unifont, PX_SIZE)
 
-    print(f"Compiling {len(charlist)} glyphs ...")
-    glyph_data = bytearray()
-    index_data = bytearray()  # (codepoint: uint32, offset: uint32) pairs
+    mief = build_mief(pil_font, codepoints, use_rle=args.rle)
+    out_path.write_bytes(mief)
 
-    for cp in charlist:
-        if cp not in glyphs:
-            print(f"  WARNING: U+{cp:04X} not found in Unifont, using blank glyph", file=sys.stderr)
-            bitmap = bytes(GLYPH_BYTES)
-        else:
-            bitmap = glyphs[cp]
-        offset = len(glyph_data)
-        index_data += struct.pack("<II", cp, offset)
-        glyph_data += bitmap
-
-    (output_dir / "font_glyphs.bin").write_bytes(glyph_data)
-    (output_dir / "font_index.bin").write_bytes(index_data)
-
-    print(f"Done. Glyph data: {len(glyph_data):,} bytes, Index: {len(index_data):,} bytes")
-    print(f"Output written to {output_dir}/")
+    print()
+    print(f"Output           : {out_path}")
+    print(f"File size        : {len(mief):,} bytes  "
+          f"({len(mief)/1024:.1f} KB)")
+    print()
+    print("License notice:")
+    print("  GNU Unifont © Roman Czyborra, Paul Hardy, Qianqian Fang et al.")
+    print("  SIL Open Font License 1.1 + GNU GPL v2+ with font exception.")
+    print("  https://unifoundry.com/unifont/")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -2,53 +2,81 @@
 """
 gen_dict.py — MokyaInput Engine Dictionary Compiler
 ====================================================
-Processes the Taiwan Ministry of Education (MoE) standard character/word list
-and compiles a sorted binary dictionary for the MIE Trie-Searcher.
+Nokia-style prefix prediction for the MokyaLora 5×5 half-keyboard.
 
-Output files (written to ../data/ by default):
-  dict_dat.bin    — MIED header + sorted key index + keys data
-  dict_values.bin — ValueRecord sequences (word lists per key)
-  dict_meta.json  — Build metadata
+Design
+------
+Each physical key carries 2–3 Bopomofo phonemes (or 1–2 English letters).
+The user presses a sequence of keys; the engine returns candidate words
+in real time without requiring the user to mentally resolve ambiguity.
 
-Binary format — dict_dat.bin
-─────────────────────────────
-Header (16 bytes, little-endian):
-  Offset  Size  Field
-   0       4    magic = "MIED"
-   4       2    version = 1
-   6       2    flags = 0
-   8       4    key_count      — number of unique Bopomofo keys
-  12       4    keys_data_off  — byte offset to keys-data section
+Key encoding
+------------
+  key_index = row * 5 + col   (0–19, matching the 4×5 input grid)
+  key_byte  = key_index + 0x21  → ASCII range '!'–'4' (no null bytes)
 
-Index table (immediately after header, key_count × 8 bytes each):
-  Offset  Size  Field
-   0       4    key_data_off  — byte offset relative to keys-data section start
-   4       4    val_data_off  — byte offset in dict_values.bin
+The resulting key-sequence byte string is used directly as the MIED lookup
+key in TrieSearcher (binary prefix search on a sorted index).
 
-Keys-data section (variable-length records, sorted lexicographically):
-  Offset  Size  Field
-   0       1    key_len    — byte length of UTF-8 Bopomofo key
-   1      N     key_utf8   — key_len bytes (NOT null-terminated)
+KEYMAP (matches hardware-requirements.md §8.1 / kGuiKeys in mie_gui.cpp)
+-------------------------------------------------------------------------
+  idx  key   Bopomofo phonemes    English letters
+   0  (0,0)  ㄅ ㄉ
+   1  (0,1)  ˇ ˋ               (tone keys 3 & 4 — no letter)
+   2  (0,2)  ㄓ ˊ              (+ tone 2)
+   3  (0,3)  ˙ ㄚ              (tone 5 + vowel)
+   4  (0,4)  ㄞ ㄢ ㄦ
+   5  (1,0)  ㄆ ㄊ              Q W
+   6  (1,1)  ㄍ ㄐ              E R
+   7  (1,2)  ㄔ ㄗ              T Y
+   8  (1,3)  ㄧ ㄛ              U I
+   9  (1,4)  ㄟ ㄣ              O P
+  10  (2,0)  ㄇ ㄋ              A S
+  11  (2,1)  ㄎ ㄑ              D F
+  12  (2,2)  ㄕ ㄘ              G H
+  13  (2,3)  ㄨ ㄜ              J K
+  14  (2,4)  ㄠ ㄤ              L
+  15  (3,0)  ㄈ ㄌ              Z X
+  16  (3,1)  ㄏ ㄒ              C V
+  17  (3,2)  ㄖ ㄙ              B N
+  18  (3,3)  ㄩ ㄝ              M
+  19  (3,4)  ㄡ ㄥ              (— em-dash, no letter)
 
-Binary format — dict_values.bin
-────────────────────────────────
-Sequence of ValueRecords at arbitrary offsets (pointed to by index table):
-  Offset  Size  Field
-   0       2    word_count
-  For each word (sorted by frequency descending):
-   0       2    freq
-   2       1    word_len
-   3      N     word_utf8   — word_len bytes (NOT null-terminated)
+Tone 1 (陰平, no mark) has no physical key → skipped in key sequence.
 
-Usage:
-  python gen_dict.py --moe-csv moe_dict.csv [--output-dir ../data]
+Outputs
+-------
+  dict_dat.bin    Chinese key-sequence MIED index
+  dict_values.bin Chinese word pool
+  en_dat.bin      English key-sequence MIED index  (if --en-wordlist given)
+  en_values.bin   English word pool
+  dict_meta.json  Build metadata + license notices
 
-CSV columns expected (UTF-8 with BOM):
-  注音   — Bopomofo reading (may contain multiple syllables)
-  詞語   — Word (Traditional Chinese UTF-8)
-  頻率   — Frequency weight (integer; defaults to 1 if missing/invalid)
+MIED binary format (same as before, key changed from phoneme string to key-seq bytes)
+---------------------
+  dict_dat.bin:
+    Header (16 bytes LE): magic="MIED" version=1 flags=0 key_count keys_data_off
+    Index  (key_count × 8 bytes): (key_data_off: uint32, val_data_off: uint32)
+    Keys   (variable): (key_len: uint8, key_bytes: bytes)  — sorted ascending
+  dict_values.bin:
+    ValueRecord: (word_count: uint16, (freq: uint16, word_len: uint8, word_utf8)...)
 
-Dependencies: none (standard library only)
+License notices
+---------------
+  libchewing-data © LibChewing contributors, LGPL-2.1
+    https://github.com/chewing/libchewing-data
+  MoE dictionary  © Republic of China Ministry of Education
+    https://dict.revised.moe.edu.tw/ (public domain for educational use)
+  English wordlist: credit varies by source — see --en-license argument.
+
+Requires: Python ≥ 3.8, standard library only.
+
+Usage
+-----
+  python gen_dict.py [--libchewing tsi.src]
+                     [--moe-csv moe_dict.csv]
+                     [--en-wordlist en_wordlist.txt]
+                     [--output-dir firmware/mie/data]
 """
 
 import argparse
@@ -61,121 +89,322 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 OUTPUT_DIR = Path(__file__).parent.parent / "data"
+MAGIC      = b"MIED"
+VERSION    = 1
 
-MAGIC   = b"MIED"
-VERSION = 1
+# ── 5×5 KEYMAP ────────────────────────────────────────────────────────────
+# key_index (0–19) → list of Bopomofo phonemes on that physical key.
+# Constructed as (row, col) pairs where key_index = row*5+col.
 
+_BPMF_KEYMAP_RAW = [
+    # idx  (row,col)  phonemes
+    (  0,  'ㄅ', 'ㄉ'),
+    (  1,  'ˇ',  'ˋ'),           # tone 3, tone 4
+    (  2,  'ㄓ', 'ˊ'),           # consonant + tone 2
+    (  3,  '˙',  'ㄚ'),          # tone 5 + vowel
+    (  4,  'ㄞ', 'ㄢ', 'ㄦ'),
+    (  5,  'ㄆ', 'ㄊ'),
+    (  6,  'ㄍ', 'ㄐ'),
+    (  7,  'ㄔ', 'ㄗ'),
+    (  8,  'ㄧ', 'ㄛ'),
+    (  9,  'ㄟ', 'ㄣ'),
+    ( 10,  'ㄇ', 'ㄋ'),
+    ( 11,  'ㄎ', 'ㄑ'),
+    ( 12,  'ㄕ', 'ㄘ'),
+    ( 13,  'ㄨ', 'ㄜ'),
+    ( 14,  'ㄠ', 'ㄤ'),
+    ( 15,  'ㄈ', 'ㄌ'),
+    ( 16,  'ㄏ', 'ㄒ'),
+    ( 17,  'ㄖ', 'ㄙ'),
+    ( 18,  'ㄩ', 'ㄝ'),
+    ( 19,  'ㄡ', 'ㄥ'),
+]
 
-# ── Argument parsing ──────────────────────────────────────────────────────
+# Reverse map: phoneme → key_index
+PHONEME_TO_KEY: dict = {}
+for _entry in _BPMF_KEYMAP_RAW:
+    _idx = _entry[0]
+    for _ph in _entry[1:]:
+        PHONEME_TO_KEY[_ph] = _idx
 
-def parse_args():
-    p = argparse.ArgumentParser(description="Compile MoE dictionary to MIE binary format")
-    p.add_argument("--moe-csv",    required=True, help="Path to MoE word list CSV")
-    p.add_argument("--output-dir", default=str(OUTPUT_DIR), help="Output directory")
-    return p.parse_args()
+# English letter → key_index (rows 1–3 of the input grid)
+_ENG_KEYMAP_RAW = [
+    (5,  'q', 'w'),
+    (6,  'e', 'r'),
+    (7,  't', 'y'),
+    (8,  'u', 'i'),
+    (9,  'o', 'p'),
+    (10, 'a', 's'),
+    (11, 'd', 'f'),
+    (12, 'g', 'h'),
+    (13, 'j', 'k'),
+    (14, 'l'),
+    (15, 'z', 'x'),
+    (16, 'c', 'v'),
+    (17, 'b', 'n'),
+    (18, 'm'),
+]
+ENG_LETTER_TO_KEY: dict = {}
+for _entry in _ENG_KEYMAP_RAW:
+    _idx = _entry[0]
+    for _ch in _entry[1:]:
+        ENG_LETTER_TO_KEY[_ch] = _idx
 
+KEY_OFFSET = 0x21   # key_byte = key_index + KEY_OFFSET  → printable ASCII, no NULLs
 
-# ── Bopomofo normalisation ────────────────────────────────────────────────
+# ── Key-sequence encoding ─────────────────────────────────────────────────
 
-def normalise_bopomofo(reading: str) -> str:
+def phonemes_to_keyseq(phoneme_list: list) -> bytes:
     """
-    Strip whitespace and normalise tone marks to standard positions.
-    Full normalisation (variant syllable correction) is deferred to Phase 3.
+    Convert a list of individual Bopomofo phonemes to a key-sequence byte string.
+
+    Tone 1 (陰平) has no physical key and is skipped.
+    Returns b'' if no phoneme maps to a key (e.g., pure punctuation).
     """
-    return reading.strip()
+    seq = bytearray()
+    for ph in phoneme_list:
+        if ph in PHONEME_TO_KEY:
+            seq.append(PHONEME_TO_KEY[ph] + KEY_OFFSET)
+    return bytes(seq)
 
 
-# ── CSV loading ───────────────────────────────────────────────────────────
-
-def load_moe_csv(csv_path: str) -> list:
+def word_to_eng_keyseq(word: str) -> bytes:
     """
-    Load MoE CSV and return list of (bopomofo_key: str, word: str, freq: int).
-    Skips rows with empty reading or word.
+    Convert an English word to a key-sequence byte string (lowercase only).
+    Returns b'' if any letter is not mappable (punctuation, digits, etc.).
+    """
+    seq = bytearray()
+    for ch in word.lower():
+        if ch not in ENG_LETTER_TO_KEY:
+            return b''      # unmappable character — skip entire word
+        seq.append(ENG_LETTER_TO_KEY[ch] + KEY_OFFSET)
+    return bytes(seq)
+
+# ── Phoneme parsing ───────────────────────────────────────────────────────
+
+# Digit → tone mark conversion (some sources use digit suffixes)
+_DIGIT_TONE = {'2': 'ˊ', '3': 'ˇ', '4': 'ˋ', '5': '˙'}
+
+def parse_syllable(syllable: str) -> list:
+    """
+    Split a single Bopomofo syllable string into individual phonemes.
+
+    Handles:
+    - Standard Bopomofo Unicode characters (U+3100–U+312F, U+31A0–U+31BF)
+    - Spacing modifier tone marks (U+02CA ˊ, U+02C7 ˇ, U+02CB ˋ, U+02D9 ˙)
+    - Digit tone suffixes 2–5 (converted to tone marks); '1' = tone 1 → skipped
+    """
+    phonemes = []
+    for ch in syllable:
+        cp = ord(ch)
+        if 0x3100 <= cp <= 0x312F or 0x31A0 <= cp <= 0x31BF:
+            phonemes.append(ch)
+        elif ch in ('ˊ', 'ˇ', 'ˋ', '˙'):
+            phonemes.append(ch)
+        elif ch in _DIGIT_TONE:
+            phonemes.append(_DIGIT_TONE[ch])
+        # '1' = tone 1, no mark, no key → silently skip
+    return phonemes
+
+
+def parse_reading(reading: str) -> list:
+    """
+    Convert a full Bopomofo reading string (one or more syllables) to a flat
+    list of individual phonemes.
+
+    Syllables are typically space-separated; the function also handles
+    unseparated syllable streams.
+    """
+    phonemes = []
+    syllables = reading.split() if ' ' in reading else [reading]
+    for syl in syllables:
+        phonemes.extend(parse_syllable(syl.strip()))
+    return phonemes
+
+# ── libchewing tsi.src loader ─────────────────────────────────────────────
+
+def load_libchewing(path: str) -> list:
+    """
+    Parse libchewing tsi.src (tab-separated: word \\t reading \\t [frequency]).
+
+    Returns list of (keyseq: bytes, word: str, freq: int).
+    Lines starting with '#' are treated as comments.
     """
     entries = []
-    with open(csv_path, newline="", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            reading = normalise_bopomofo(row.get("注音", ""))
-            word    = row.get("詞語", "").strip()
-            try:
-                freq = int(row.get("頻率", 1))
-            except (ValueError, TypeError):
-                freq = 1
-            if reading and word:
-                entries.append((reading, word, freq))
+    skipped = 0
+    with open(path, encoding='utf-8', errors='replace') as f:
+        for lineno, raw in enumerate(f, 1):
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split('\t')
+            if len(parts) < 2:
+                continue
+            word    = parts[0].strip()
+            reading = parts[1].strip()
+            freq    = 1
+            if len(parts) >= 3:
+                try:
+                    freq = max(1, int(parts[2].strip()))
+                except ValueError:
+                    pass
+
+            phonemes = parse_reading(reading)
+            keyseq   = phonemes_to_keyseq(phonemes)
+            if keyseq and word:
+                entries.append((keyseq, word, freq))
+            else:
+                skipped += 1
+
+    if skipped:
+        print(f"  libchewing: {skipped:,} entries skipped (unmappable phonemes)",
+              file=sys.stderr)
     return entries
 
+# ── MoE CSV loader ────────────────────────────────────────────────────────
 
-# ── Binary serialisation ──────────────────────────────────────────────────
+def load_moe_csv(path: str) -> list:
+    """
+    Parse MoE dictionary CSV (UTF-8 with BOM).
+    Expected columns: 注音 / 詞語 / 頻率
+
+    Returns list of (keyseq: bytes, word: str, freq: int).
+    """
+    entries = []
+    skipped = 0
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            reading = row.get('注音', '').strip()
+            word    = row.get('詞語', '').strip()
+            try:
+                freq = max(1, int(row.get('頻率', 1)))
+            except (ValueError, TypeError):
+                freq = 1
+
+            if not reading or not word:
+                continue
+
+            phonemes = parse_reading(reading)
+            keyseq   = phonemes_to_keyseq(phonemes)
+            if keyseq:
+                entries.append((keyseq, word, freq))
+            else:
+                skipped += 1
+
+    if skipped:
+        print(f"  MoE CSV: {skipped:,} entries skipped (unmappable phonemes)",
+              file=sys.stderr)
+    return entries
+
+# ── English wordlist loader ───────────────────────────────────────────────
+
+def load_en_wordlist(path: str) -> list:
+    """
+    Parse an English word list — one word (+ optional TAB frequency) per line.
+
+    Returns list of (keyseq: bytes, word: str, freq: int).
+    Words with unmappable characters (digits, punctuation except apostrophe-less)
+    are silently dropped.
+    """
+    entries = []
+    with open(path, encoding='utf-8', errors='replace') as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split('\t', 1)
+            word  = parts[0].strip().lower()
+            freq  = 1
+            if len(parts) == 2:
+                try:
+                    freq = max(1, int(parts[1].strip()))
+                except ValueError:
+                    pass
+
+            keyseq = word_to_eng_keyseq(word)
+            if keyseq:
+                entries.append((keyseq, word, freq))
+
+    return entries
+
+# ── MIED binary builder ───────────────────────────────────────────────────
 
 def build_value_record(word_list: list) -> bytes:
-    """
-    Serialise a list of (word, freq) pairs into a ValueRecord binary blob.
-    Words are sorted by frequency descending.
-    """
+    """Serialise [(word, freq)] into a ValueRecord blob (freq-descending)."""
     sorted_words = sorted(word_list, key=lambda x: -x[1])
-    data = struct.pack("<H", len(sorted_words))
+    data = struct.pack('<H', len(sorted_words))
     for word, freq in sorted_words:
-        wb = word.encode("utf-8")
-        data += struct.pack("<HB", min(freq, 0xFFFF), len(wb)) + wb
+        wb = word.encode('utf-8')
+        data += struct.pack('<HB', min(freq, 0xFFFF), len(wb)) + wb
     return data
 
 
-def build_outputs(entries: list) -> tuple:
+def build_mied(entries: list) -> tuple:
     """
-    Build dict_dat.bin and dict_values.bin byte strings.
+    Build MIED binary from a list of (keyseq: bytes, word: str, freq: int).
 
-    Returns (dat_bytes: bytes, val_bytes: bytes, stats: dict).
+    Returns (dat_bytes, val_bytes, stats_dict).
     """
-    # Aggregate: bopomofo_key → [(word, freq)]
+    # Aggregate: keyseq → [(word, freq)]
     key_to_words = defaultdict(list)
-    for reading, word, freq in entries:
-        key_to_words[reading].append((word, freq))
+    for keyseq, word, freq in entries:
+        key_to_words[keyseq].append((word, freq))
 
     sorted_keys = sorted(key_to_words.keys())
     key_count   = len(sorted_keys)
 
-    # --- Build dict_values.bin and collect val_data_off per key ---
-    val_data   = bytearray()
-    val_offsets = {}          # key → byte offset in val_data
-    for key in sorted_keys:
-        val_offsets[key] = len(val_data)
-        val_data += build_value_record(key_to_words[key])
+    # --- dict_values.bin ---
+    val_data    = bytearray()
+    val_offsets = {}
+    for ks in sorted_keys:
+        val_offsets[ks] = len(val_data)
+        val_data += build_value_record(key_to_words[ks])
 
-    # --- Build keys-data section ---
-    keys_section      = bytearray()
-    key_data_off_map  = {}    # key → byte offset within keys_section
-    for key in sorted_keys:
-        key_data_off_map[key] = len(keys_section)
-        kb = key.encode("utf-8")
-        keys_section += struct.pack("B", len(kb)) + kb
+    # --- Keys section ---
+    keys_section     = bytearray()
+    key_data_off_map = {}
+    for ks in sorted_keys:
+        key_data_off_map[ks] = len(keys_section)
+        keys_section += struct.pack('B', len(ks)) + ks
 
-    # --- Layout ---
-    header_size    = 16
-    index_size     = key_count * 8
-    keys_data_off  = header_size + index_size    # absolute offset in dat file
+    # --- dict_dat.bin layout ---
+    header_size   = 16
+    index_size    = key_count * 8
+    keys_data_off = header_size + index_size
 
-    # --- Header ---
     header = MAGIC
-    header += struct.pack("<HH", VERSION, 0)            # version, flags
-    header += struct.pack("<II", key_count, keys_data_off)
+    header += struct.pack('<HH', VERSION, 0)               # version, flags
+    header += struct.pack('<II', key_count, keys_data_off)
 
-    # --- Index table ---
     index = bytearray()
-    for key in sorted_keys:
-        index += struct.pack("<II", key_data_off_map[key], val_offsets[key])
+    for ks in sorted_keys:
+        index += struct.pack('<II', key_data_off_map[ks], val_offsets[ks])
 
-    dat_data = header + bytes(index) + bytes(keys_section)
+    dat_bytes = header + bytes(index) + bytes(keys_section)
 
     stats = {
-        "key_count":    key_count,
-        "entry_count":  len(entries),
-        "dat_bytes":    len(dat_data),
-        "val_bytes":    len(val_data),
+        'key_count':   key_count,
+        'entry_count': len(entries),
+        'dat_bytes':   len(dat_bytes),
+        'val_bytes':   len(val_data),
     }
-    return bytes(dat_data), bytes(val_data), stats
+    return bytes(dat_bytes), bytes(val_data), stats
 
+# ── Argument parsing ──────────────────────────────────────────────────────
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description='Compile Nokia-style key-sequence dictionary for MokyaLora MIE.')
+    p.add_argument('--libchewing',  metavar='TSI',
+                   help='libchewing-data tsi.src path')
+    p.add_argument('--moe-csv',     metavar='CSV',
+                   help='MoE word list CSV path (注音/詞語/頻率 columns, UTF-8 BOM)')
+    p.add_argument('--en-wordlist', metavar='TXT',
+                   help='English word list (one word per line, optional TAB freq)')
+    p.add_argument('--output-dir',  default=str(OUTPUT_DIR),
+                   help=f'Output directory  [default: {OUTPUT_DIR}]')
+    return p.parse_args()
 
 # ── Main ──────────────────────────────────────────────────────────────────
 
@@ -184,35 +413,82 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Loading MoE dictionary from {args.moe_csv} ...")
-    entries = load_moe_csv(args.moe_csv)
-    if not entries:
-        print("ERROR: no entries loaded — check CSV format and column names.", file=sys.stderr)
+    if not args.libchewing and not args.moe_csv and not args.en_wordlist:
+        print('ERROR: supply at least one of --libchewing / --moe-csv / --en-wordlist',
+              file=sys.stderr)
         sys.exit(1)
-    print(f"Loaded {len(entries):,} entries.")
 
-    print("Building binary outputs ...")
-    dat_bytes, val_bytes, stats = build_outputs(entries)
+    # ── Chinese dictionary ─────────────────────────────────────────────────
+    zh_entries: list = []
 
-    (output_dir / "dict_dat.bin").write_bytes(dat_bytes)
-    (output_dir / "dict_values.bin").write_bytes(val_bytes)
-    print(f"  dict_dat.bin:    {stats['dat_bytes']:,} bytes  ({stats['key_count']:,} unique keys)")
-    print(f"  dict_values.bin: {stats['val_bytes']:,} bytes")
+    if args.libchewing:
+        print(f'Loading libchewing  {args.libchewing} ...')
+        loaded = load_libchewing(args.libchewing)
+        zh_entries.extend(loaded)
+        print(f'  {len(loaded):,} entries')
 
+    if args.moe_csv:
+        print(f'Loading MoE CSV     {args.moe_csv} ...')
+        loaded = load_moe_csv(args.moe_csv)
+        zh_entries.extend(loaded)
+        print(f'  {len(loaded):,} entries')
+
+    zh_stats = None
+    if zh_entries:
+        print(f'Building Chinese MIED  ({len(zh_entries):,} total entries) ...')
+        dat, val, zh_stats = build_mied(zh_entries)
+        (output_dir / 'dict_dat.bin').write_bytes(dat)
+        (output_dir / 'dict_values.bin').write_bytes(val)
+        print(f'  dict_dat.bin    : {zh_stats["dat_bytes"]:>9,} bytes  '
+              f'({zh_stats["key_count"]:,} unique key sequences)')
+        print(f'  dict_values.bin : {zh_stats["val_bytes"]:>9,} bytes')
+
+    # ── English dictionary ────────────────────────────────────────────────
+    en_stats = None
+    if args.en_wordlist:
+        print(f'Loading English     {args.en_wordlist} ...')
+        en_entries = load_en_wordlist(args.en_wordlist)
+        print(f'  {len(en_entries):,} entries')
+        print(f'Building English MIED ...')
+        dat, val, en_stats = build_mied(en_entries)
+        (output_dir / 'en_dat.bin').write_bytes(dat)
+        (output_dir / 'en_values.bin').write_bytes(val)
+        print(f'  en_dat.bin      : {en_stats["dat_bytes"]:>9,} bytes  '
+              f'({en_stats["key_count"]:,} unique key sequences)')
+        print(f'  en_values.bin   : {en_stats["val_bytes"]:>9,} bytes')
+
+    # ── Metadata ──────────────────────────────────────────────────────────
     meta = {
-        "format_version": VERSION,
-        "source":         args.moe_csv,
-        "entry_count":    stats["entry_count"],
-        "unique_keys":    stats["key_count"],
-        "dat_bytes":      stats["dat_bytes"],
-        "val_bytes":      stats["val_bytes"],
-        "built_at":       datetime.now(timezone.utc).isoformat(),
+        'format_version': VERSION,
+        'key_offset':     KEY_OFFSET,
+        'key_encoding':   'key_byte = key_index + 0x21 (printable ASCII, no NULLs)',
+        'sources': {
+            'libchewing': args.libchewing,
+            'moe_csv':    args.moe_csv,
+            'en_wordlist': args.en_wordlist,
+        },
+        'chinese': zh_stats,
+        'english': en_stats,
+        'built_at': datetime.now(timezone.utc).isoformat(),
+        'license_notices': [
+            'libchewing-data: © LibChewing contributors, LGPL-2.1 '
+            '(https://github.com/chewing/libchewing-data)',
+            'MoE dictionary: © Republic of China Ministry of Education, '
+            'public domain for educational use '
+            '(https://dict.revised.moe.edu.tw/)',
+            'English wordlist: credit per source file; see --en-wordlist provenance.',
+        ],
     }
-    (output_dir / "dict_meta.json").write_text(
-        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    print("Done.")
+    (output_dir / 'dict_meta.json').write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    print()
+    print('Done. Files written to', output_dir)
+    print()
+    print('License notices:')
+    for notice in meta['license_notices']:
+        print(' ', notice)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

@@ -97,27 +97,171 @@ firmware/mie/
 
 ### 4.1 Font Compiler — `tools/gen_font.py`
 
-**Input:**
-- GNU Unifont `.hex` file (source: https://unifoundry.com/unifont/)
-- `charlist_8104.txt` — Unicode code points for the 8,104 Taiwan MoE standard characters
+#### Inputs
+| Source | Notes |
+|--------|-------|
+| GNU Unifont latest `.ttf` | https://unifoundry.com/unifont/ — OFL 1.1 + GPL v2+ with font exception |
 
-**Output:**
-- `font_glyphs.bin` — packed 16×16 monochrome glyph data (32 bytes / glyph)
-- `font_index.bin` — `(codepoint: uint32, offset: uint32)` lookup table
+#### Processing
+1. **Subset** the TTF via `fonttools` to only the specified Unicode ranges (reduces memory
+   for the render step):
 
-**Flash budget:** 8,104 glyphs × 32 bytes = ~260 KB
+   | Range | Block |
+   |-------|-------|
+   | U+0020–U+007F | ASCII |
+   | U+00A0–U+00FF | Latin-1 Supplement (×÷ etc.) |
+   | U+2000–U+206F | General Punctuation (— …) |
+   | U+3000–U+303F | CJK Symbols & Punctuation |
+   | U+3100–U+312F | Bopomofo |
+   | U+4E00–U+9FFF | CJK Unified Ideographs (繁體) |
+
+2. **Render** each codepoint at **16 px** with `Pillow` (`ImageFont.truetype`).
+3. **Threshold** to **1 bpp** (MSB-first, each row padded to full byte).
+4. **Optional RLE** compression pass (flag `--rle`).
+
+#### Output format — MIEF v1 (`mie_unifont_16.bin`)
+
+```
+Header (12 bytes, little-endian):
+  magic[4]     = b'MIEF'
+  version      = uint8  (= 1)
+  px_height    = uint8  (= 16)
+  bpp          = uint8  (= 1)
+  flags        = uint8  (bit 0 = RLE enabled)
+  num_glyphs   = uint32
+
+Index (num_glyphs × 8 bytes, sorted by codepoint):
+  codepoint    = uint32
+  data_offset  = uint32   (byte offset into glyph-data section)
+
+Glyph data (variable-length, pointed to by index):
+  adv_w  = uint8   (advance width in pixels)
+  box_w  = uint8   (bitmap width;  0 = empty/whitespace glyph)
+  box_h  = uint8   (bitmap height; 0 = empty/whitespace glyph)
+  ofs_x  = int8    (left bearing from origin)
+  ofs_y  = int8    (bottom bearing from baseline, positive = up)
+  bitmap = bytes   (1 bpp, MSB first; present only when box_w > 0)
+```
+
+#### LVGL integration (Phase 2)
+A custom `lv_font_t` driver (`firmware/core1/src/mie_font_driver.c`) will implement
+`get_glyph_dsc` / `get_glyph_bitmap` callbacks that binary-search the MIEF index and
+read bitmap data directly from Flash (no PSRAM copy needed).
+
+#### Dependency & build
+```
+pip install fonttools Pillow
+python firmware/mie/tools/gen_font.py \
+    --unifont unifont.ttf \
+    --out firmware/mie/data/mie_unifont_16.bin
+```
+
+**Flash budget:** ~28,000 codepoints × ~35 bytes avg ≈ ~1 MB
+
+---
 
 ### 4.2 Dictionary Compiler — `tools/gen_dict.py`
 
-**Input:**
-- MoE standard word list CSV (cleaned, Taiwan-standard Bopomofo readings)
+#### Design goals (Nokia-style prefix prediction)
+- Press any key → candidates narrow in real time as keys are pressed.
+- No phoneme disambiguation in the user's head: the engine resolves ambiguity.
+- Same TrieSearcher binary-search engine for Chinese **and** English.
+- O(log N) prefix lookup at runtime; O(1) hash fast-path for short sequences (Phase 3).
 
-**Output:**
-- `dict_dat.bin` — MIED-format header + sorted key index + key-string data
-- `dict_values.bin` — per-key word list with frequency weights
-- `dict_meta.json` — build metadata (source version, entry count, build date)
+#### Half-keyboard KEYMAP (`firmware/mie/tools/gen_dict.py`)
 
-**PSRAM budget:** target ≤ 4 MB total for DAT + values loaded at runtime
+Each physical key (row 0–3, col 0–4) carries 2–3 Bopomofo phonemes.
+The compiler pre-computes: **phoneme → key index** (0–19, one per physical key).
+
+```
+Key index = row × 5 + col
+
+  (0,0) idx=0  ㄅ ㄉ      (0,1) idx=1  ˇ ˋ      (0,2) idx=2  ㄓ ˊ
+  (0,3) idx=3  ˙ ㄚ       (0,4) idx=4  ㄞ ㄢ ㄦ
+
+  (1,0) idx=5  ㄆ ㄊ      (1,1) idx=6  ㄍ ㄐ     (1,2) idx=7  ㄔ ㄗ
+  (1,3) idx=8  ㄧ ㄛ      (1,4) idx=9  ㄟ ㄣ
+
+  (2,0) idx=10 ㄇ ㄋ      (2,1) idx=11 ㄎ ㄑ     (2,2) idx=12 ㄕ ㄘ
+  (2,3) idx=13 ㄨ ㄜ      (2,4) idx=14 ㄠ ㄤ
+
+  (3,0) idx=15 ㄈ ㄌ      (3,1) idx=16 ㄏ ㄒ     (3,2) idx=17 ㄖ ㄙ
+  (3,3) idx=18 ㄩ ㄝ      (3,4) idx=19 ㄡ ㄥ
+```
+
+Key sequence encoding: `byte = key_index + 0x21` (maps 0–19 → ASCII `!`–`4`,
+avoids null bytes, directly usable as a `std::string` key in TrieSearcher).
+
+#### Data sources
+
+| Input | Format | Content |
+|-------|--------|---------|
+| `--libchewing tsi.src` | libchewing-data tab-separated | Traditional Chinese word list with Bopomofo + frequency |
+| `--moe-csv moe.csv` | MoE CSV (BOM UTF-8) | 注音 / 詞語 / 頻率 columns |
+| `--en-wordlist wordlist.txt` | one word per line (optional freq) | English words ≥ 50,000 entries |
+
+#### Processing — Chinese
+
+1. Parse each entry → `(word, phoneme_list, freq)`.
+2. For each phoneme, look up `PHONEME_TO_KEY[ph]` → `key_index`.
+   Tone 1 (no mark) is skipped (it has no physical key).
+3. Encode key sequence: `bytes(k + 0x21 for k in key_indices)`.
+4. Multiple words can share a key sequence (ambiguity) — they are merged
+   into the same value record, sorted by frequency descending.
+5. Output sorted by key sequence → MIED format.
+
+Example — "百年" (ㄅㄞˇ ㄋㄧㄢˊ):
+```
+ㄅ(0) ㄞ(4) ˇ(1)  ㄋ(10) ㄧ(8) ㄢ(4) ˊ(2)
+→ key seq bytes: [33,37,34, 43,41,37,35]
+→ key seq str:   "!%\"  +)%#"
+```
+All words sharing these physical key presses appear together in the candidate list.
+
+#### Processing — English
+
+English KEYMAP: letter → key index (rows 1–3 only; row 0 = numeric layer).
+
+```
+Q/W → 5   E/R → 6   T/Y → 7   U/I → 8   O/P → 9
+A/S → 10  D/F → 11  G/H → 12  J/K → 13  L → 14
+Z/X → 15  C/V → 16  B/N → 17  M → 18
+```
+
+Same key-sequence encoding (+0x21). Each word's key sequence is built letter by letter.
+Stored separately in `en_dat.bin` / `en_values.bin` (same MIED format, second
+TrieSearcher instance in ImeLogic).
+
+#### Outputs
+
+| File | Contents |
+|------|----------|
+| `dict_dat.bin` | Chinese key-sequence MIED index |
+| `dict_values.bin` | Chinese word pool |
+| `en_dat.bin` | English key-sequence MIED index |
+| `en_values.bin` | English word pool |
+| `dict_meta.json` | Build metadata + license notices |
+
+**PSRAM budget:** Chinese dict ≤ 3 MB, English dict ≤ 0.5 MB, total ≤ 4 MB.
+
+#### Runtime query (ImeLogic → TrieSearcher)
+```cpp
+// Bopomofo mode: after pressing key indices [0, 4, 1]
+std::string ks;
+for (uint8_t k : pressed_keys) ks += char(k + 0x21);
+auto results = zh_searcher_.search(ks, /*max=*/10);  // prefix match
+```
+
+#### Dependency & build
+```
+pip install (none — stdlib only)
+python firmware/mie/tools/gen_dict.py \
+    --libchewing tsi.src \
+    --moe-csv    moe_dict.csv \
+    --en-wordlist en_wordlist.txt
+```
+
+---
 
 ### 4.3 Asset Loading at Runtime
 
