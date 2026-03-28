@@ -626,8 +626,9 @@ TEST(ZeroMatchAutoCommit, AutoCommitsBestOnNoMatch) {
     EXPECT_STREQ(ime.input_str(), "ㄅ");
 }
 
-TEST(ZeroMatchAutoCommit, NoAutoCommitWithOnlyOneKey) {
-    // If only 1 key has been typed and it matches nothing, do NOT auto-commit.
+TEST(ZeroMatchAutoCommit, NoAutoCommitWhenPreviousAlsoHadNoCandidates) {
+    // With an empty dict, typing multiple keys should NOT trigger auto-commit
+    // because the previous sequence also has 0 candidates.  Keys accumulate.
     mie::TrieSearcher ts;  // empty dict
     mie::ImeLogic ime(ts);
 
@@ -636,12 +637,34 @@ TEST(ZeroMatchAutoCommit, NoAutoCommitWithOnlyOneKey) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));  // 1 key, no candidates
-    ime.process_key(kev(1, 1));  // 2 keys now, but 1 key was there before — auto-commit rule:
-                                  // key_seq_len AFTER append == 2, so >= 2; but prev was 1
-                                  // and prev also had 0 candidates → commits input_buf_ "ㄅ"
-    // Even with empty dict, auto-commit fires when key_seq_len >= 2 after append
-    EXPECT_EQ(committed, "ㄅ");  // committed raw display of first key
+    ime.process_key(kev(0, 0));  // seq "\x21", 0 candidates
+    ime.process_key(kev(1, 1));  // seq "\x21\x27", still 0 candidates — previous also had 0
+                                  // → NO auto-commit; keys keep accumulating
+    EXPECT_TRUE(committed.empty());
+    // Both phonemes should be visible in the display buffer.
+    EXPECT_GT(ime.input_bytes(), 0);
+}
+
+TEST(ZeroMatchAutoCommit, AutoCommitsOnlyWhenPreviousHadCandidates) {
+    // Dict has an entry for key "\x21" (ㄅ) but not for "\x21\x27".
+    // Pressing (0,0) gives candidates.  Then pressing (1,1) (no combined match)
+    // should auto-commit the best candidate for "\x21" and restart with "\x27".
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "巴", 1 } }, dat, val);
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    ime.process_key(kev(0, 0));  // seq "\x21" → candidate 巴
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    ime.process_key(kev(1, 1));  // seq "\x21\x27" → 0 candidates; prev "\x21" had 巴
+    EXPECT_EQ(committed, "巴");  // auto-committed the previous best
+    EXPECT_GT(ime.input_bytes(), 0);  // new sequence started with (1,1)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -726,6 +749,150 @@ TEST(ModeSwitch, ModeIndicatorString) {
     EXPECT_STREQ(ime.mode_indicator(), "[智慧]");
     ime.process_key(kMODE);
     EXPECT_STREQ(ime.mode_indicator(), "[直接]");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Mixed prediction — auto group selection and merged view
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(MixedPrediction, AutoSelectsENGroupWhenNoZH) {
+    // EN dict has a match; ZH dict is unloaded (no Chinese candidates).
+    // After run_search() the active group should auto-select EN (group=1).
+    std::vector<uint8_t> en_dat, en_val;
+    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
+
+    mie::TrieSearcher zh_ts;  // unloaded — will yield 0 zh candidates
+    mie::TrieSearcher en_ts;
+    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
+
+    mie::ImeLogic ime(zh_ts, &en_ts);
+    ime.process_key(kev(0, 0));
+
+    EXPECT_EQ(ime.zh_candidate_count(), 0);
+    EXPECT_GT(ime.en_candidate_count(), 0);
+    // Auto-selected group should be EN.
+    EXPECT_EQ(ime.candidate_group(), 1);
+}
+
+TEST(MixedPrediction, DefaultsToZHGroupWhenBothHaveCandidates) {
+    std::vector<uint8_t> zh_dat, zh_val, en_dat, en_val;
+    build_single({ { "\x21", 1, "巴", 1 } }, zh_dat, zh_val);
+    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
+
+    mie::TrieSearcher zh_ts, en_ts;
+    ASSERT_TRUE(zh_ts.load_from_memory(zh_dat.data(), zh_dat.size(), zh_val.data(), zh_val.size()));
+    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
+
+    mie::ImeLogic ime(zh_ts, &en_ts);
+    ime.process_key(kev(0, 0));
+
+    EXPECT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_GT(ime.en_candidate_count(), 0);
+    // Default group should remain ZH when both have results.
+    EXPECT_EQ(ime.candidate_group(), 0);
+}
+
+TEST(MixedPrediction, MergedViewInterleaves) {
+    // Both ZH and EN have 2 candidates for the same key.
+    // Merged view should interleave: ZH[0], EN[0], ZH[1], EN[1].
+    std::vector<uint8_t> zh_dat, zh_val, en_dat, en_val;
+
+    // Build ZH dict with two candidates for "\x21"
+    {
+        std::vector<uint32_t> v_off, k_off;
+        std::vector<uint8_t> ks;
+        // One key with two words in the value record.
+        v_off.push_back(0);
+        // value record: word_count=2, (freq,len,word)*2
+        push_u16(zh_val, 2);
+        push_u16(zh_val, 2); push_u8(zh_val, 3); push_str(zh_val, "\xe5\xb7\xb4");  // 巴
+        push_u16(zh_val, 1); push_u8(zh_val, 3); push_str(zh_val, "\xe6\x8a\x8a");  // 把
+        k_off.push_back(0);
+        push_u8(ks, 1); push_u8(ks, 0x21);
+        uint32_t kc = 1, kdo = 16 + kc * 8;
+        push_str(zh_dat, "MIED");
+        push_u16(zh_dat, 1); push_u16(zh_dat, 0);
+        push_u32(zh_dat, kc); push_u32(zh_dat, kdo);
+        push_u32(zh_dat, k_off[0]); push_u32(zh_dat, v_off[0]);
+        zh_dat.insert(zh_dat.end(), ks.begin(), ks.end());
+    }
+    // EN dict with two words for "\x21"
+    {
+        std::vector<uint32_t> v_off, k_off;
+        std::vector<uint8_t> ks;
+        v_off.push_back(0);
+        push_u16(en_val, 2);
+        push_u16(en_val, 2); push_u8(en_val, 3); push_str(en_val, "abc");
+        push_u16(en_val, 1); push_u8(en_val, 3); push_str(en_val, "abd");
+        k_off.push_back(0);
+        push_u8(ks, 1); push_u8(ks, 0x21);
+        uint32_t kc = 1, kdo = 16 + kc * 8;
+        push_str(en_dat, "MIED");
+        push_u16(en_dat, 1); push_u16(en_dat, 0);
+        push_u32(en_dat, kc); push_u32(en_dat, kdo);
+        push_u32(en_dat, k_off[0]); push_u32(en_dat, v_off[0]);
+        en_dat.insert(en_dat.end(), ks.begin(), ks.end());
+    }
+
+    mie::TrieSearcher zh_ts, en_ts;
+    ASSERT_TRUE(zh_ts.load_from_memory(zh_dat.data(), zh_dat.size(), zh_val.data(), zh_val.size()));
+    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
+
+    mie::ImeLogic ime(zh_ts, &en_ts);
+    ime.process_key(kev(0, 0));
+
+    EXPECT_GE(ime.zh_candidate_count(), 2);
+    EXPECT_GE(ime.en_candidate_count(), 2);
+
+    int mc = ime.merged_candidate_count();
+    EXPECT_GE(mc, 4);
+    // Interleaved: ZH, EN, ZH, EN
+    EXPECT_EQ(ime.merged_candidate_lang(0), 0);  // ZH
+    EXPECT_EQ(ime.merged_candidate_lang(1), 1);  // EN
+    EXPECT_EQ(ime.merged_candidate_lang(2), 0);  // ZH
+    EXPECT_EQ(ime.merged_candidate_lang(3), 1);  // EN
+    EXPECT_STREQ(ime.merged_candidate(0).word, "\xe5\xb7\xb4");  // 巴
+    EXPECT_STREQ(ime.merged_candidate(1).word, "abc");
+}
+
+TEST(MixedPrediction, MergedViewZHOnly) {
+    // When only ZH has candidates, merged view equals ZH candidates.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "巴", 1 } }, dat, val);
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    ime.process_key(kev(0, 0));
+
+    EXPECT_EQ(ime.zh_candidate_count(), 1);
+    EXPECT_EQ(ime.en_candidate_count(), 0);
+    EXPECT_EQ(ime.merged_candidate_count(), 1);
+    EXPECT_EQ(ime.merged_candidate_lang(0), 0);
+    EXPECT_STREQ(ime.merged_candidate(0).word, "\xe5\xb7\xb4");  // 巴
+}
+
+TEST(MixedPrediction, SpaceCommitsAutoSelectedGroup) {
+    // When only EN has candidates and SPACE is pressed, EN candidate is committed.
+    std::vector<uint8_t> en_dat, en_val;
+    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
+
+    mie::TrieSearcher zh_ts;  // unloaded
+    mie::TrieSearcher en_ts;
+    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
+
+    mie::ImeLogic ime(zh_ts, &en_ts);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    ime.process_key(kev(0, 0));
+    ASSERT_EQ(ime.candidate_group(), 1);  // auto-selected EN
+    ime.process_key(kSPACE);
+
+    EXPECT_EQ(committed, "abc");
 }
 
 } // namespace

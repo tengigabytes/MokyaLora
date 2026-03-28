@@ -171,6 +171,7 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
     , input_len_(0)
     , zh_cand_count_(0)
     , en_cand_count_(0)
+    , merged_count_(0)
     , commit_cb_(nullptr)
     , commit_ctx_(nullptr)
 {
@@ -233,6 +234,7 @@ void ImeLogic::clear_input() {
     input_buf_[0]   = '\0';
     zh_cand_count_  = 0;
     en_cand_count_  = 0;
+    merged_count_   = 0;
     direct_         = { 0xFF, 0xFF, 0 };
     sym_pending_    = { 0xFF, 0 };
     cand_sel_       = { 0, 0 };
@@ -245,6 +247,7 @@ void ImeLogic::clear_input() {
 void ImeLogic::run_search() {
     zh_cand_count_ = 0;
     en_cand_count_ = 0;
+    merged_count_  = 0;
     cand_sel_      = { 0, 0 };
     if (key_seq_len_ == 0) return;
 
@@ -253,6 +256,23 @@ void ImeLogic::run_search() {
 
     if (en_searcher_ && en_searcher_->is_loaded())
         en_cand_count_ = en_searcher_->search(key_seq_buf_, en_candidates_, kMaxCandidates);
+
+    // Auto-select the group that has results; prefer ZH unless only EN matches.
+    if (zh_cand_count_ == 0 && en_cand_count_ > 0)
+        cand_sel_.group = 1;
+
+    build_merged();
+}
+
+void ImeLogic::build_merged() {
+    merged_count_ = 0;
+    int zi = 0, ei = 0;
+    while (merged_count_ < kMaxMerged && (zi < zh_cand_count_ || ei < en_cand_count_)) {
+        if (zi < zh_cand_count_)
+            merged_[merged_count_++] = { &zh_candidates_[zi++], 0 };
+        if (merged_count_ < kMaxMerged && ei < en_cand_count_)
+            merged_[merged_count_++] = { &en_candidates_[ei++], 1 };
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -476,32 +496,41 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
             run_search();
 
             if (zh_cand_count_ == 0 && en_cand_count_ == 0 && key_seq_len_ >= 2) {
-                // Roll back the new key.
+                // Roll back the new key and check if previous sequence had candidates.
                 --key_seq_len_;
                 key_seq_buf_[key_seq_len_] = '\0';
                 backspace_display();
-                run_search();  // restore previous candidates
+                run_search();  // restore previous state
 
-                // Commit best previous candidate.
-                if (cand_sel_.group == 0 && zh_cand_count_ > 0) {
-                    int i = cand_sel_.index < zh_cand_count_ ? cand_sel_.index : 0;
-                    do_commit(zh_candidates_[i].word, 0);
-                } else if (cand_sel_.group == 1 && en_cand_count_ > 0) {
-                    int i = cand_sel_.index < en_cand_count_ ? cand_sel_.index : 0;
-                    do_commit(en_candidates_[i].word, 1);
-                } else if (zh_cand_count_ > 0) {
-                    do_commit(zh_candidates_[0].word, 0);
-                } else if (en_cand_count_ > 0) {
-                    do_commit(en_candidates_[0].word, 1);
+                if (zh_cand_count_ > 0 || en_cand_count_ > 0) {
+                    // Previous sequence had candidates — commit the best one, then
+                    // restart with the new key (T9-style word break).
+                    if (cand_sel_.group == 0 && zh_cand_count_ > 0) {
+                        int i = cand_sel_.index < zh_cand_count_ ? cand_sel_.index : 0;
+                        do_commit(zh_candidates_[i].word, 0);
+                    } else if (cand_sel_.group == 1 && en_cand_count_ > 0) {
+                        int i = cand_sel_.index < en_cand_count_ ? cand_sel_.index : 0;
+                        do_commit(en_candidates_[i].word, 1);
+                    } else if (zh_cand_count_ > 0) {
+                        do_commit(zh_candidates_[0].word, 0);
+                    } else {
+                        do_commit(en_candidates_[0].word, 1);
+                    }
+
+                    // Start fresh with the new key.
+                    key_seq_buf_[key_seq_len_++] = new_byte;
+                    key_seq_buf_[key_seq_len_]   = '\0';
+                    if (ph) append_to_display(ph);
+                    run_search();
                 } else {
-                    do_commit(input_buf_, 2);
+                    // Previous sequence also had no candidates (e.g. building an
+                    // English word with only a Chinese dict loaded) — restore the
+                    // new key and keep accumulating without committing anything.
+                    key_seq_buf_[key_seq_len_++] = new_byte;
+                    key_seq_buf_[key_seq_len_]   = '\0';
+                    if (ph) append_to_display(ph);
+                    run_search();
                 }
-
-                // Start fresh with the new key.
-                key_seq_buf_[key_seq_len_++] = new_byte;
-                key_seq_buf_[key_seq_len_]   = '\0';
-                if (ph) append_to_display(ph);
-                run_search();
             }
         }
         return true;
