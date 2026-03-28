@@ -34,7 +34,25 @@
 #  include <sys/select.h>
 #endif
 
-// ── Virtual keyboard label table ─────────────────────────────────────────
+// ── Simple file logger (writes to mie_repl.log beside the executable) ────────
+// Helps diagnose crashes: if the program crashes the log shows the last entry.
+
+static FILE* g_log = nullptr;
+
+static void log_open() {
+    g_log = fopen("mie_repl.log", "w");
+    if (g_log) { fputs("[mie_repl] log opened\n", g_log); fflush(g_log); }
+}
+
+static void log_close() {
+    if (g_log) { fputs("[mie_repl] log closed\n", g_log); fclose(g_log); g_log = nullptr; }
+}
+
+// LOG(fmt, ...) — only active when g_log is open; always flushes so the last
+// entry is visible even if the process crashes immediately after.
+#define LOG(fmt, ...) \
+    do { if (g_log) { fprintf(g_log, fmt, ##__VA_ARGS__); fflush(g_log); } } while(0)
+
 
 struct KeyLabel { uint8_t row; uint8_t col; const char* pc_hint; const char* label; };
 
@@ -72,8 +90,12 @@ static void clear_screen() { fputs("\033[2J\033[H", stdout); }
 static const char* kCircle[] = {
     "\xe2\x91\xa0","\xe2\x91\xa1","\xe2\x91\xa2","\xe2\x91\xa3","\xe2\x91\xa4",
 };
+static constexpr int kNumCircles = 5;  // kCircle array size — never index beyond this
 
 static void render(const mie::ImeLogic& ime) {
+    LOG("render: mode=%d zh=%d en=%d merged=%d input_bytes=%d\n",
+        (int)ime.mode(), ime.zh_candidate_count(), ime.en_candidate_count(),
+        ime.merged_candidate_count(), ime.input_bytes());
     clear_screen();
 
     // ── Keyboard grid ──────────────────────────────────────────────────────
@@ -109,9 +131,12 @@ static void render(const mie::ImeLogic& ime) {
         int en_n = ime.en_candidate_count();
 
         if (zh_n > 0 && en_n > 0) {
-            // Mixed: show interleaved merged view.
+            // Mixed: show interleaved merged view (capped at kNumCircles entries).
             char mix_buf[512] = {}; int pos = 0;
-            for (int i = 0; i < ime.merged_candidate_count() && pos < 460; ++i) {
+            int mc = ime.merged_candidate_count();
+            if (mc > kNumCircles) mc = kNumCircles;  // kCircle[] has only kNumCircles entries
+            LOG("render: mixed view mc=%d (raw=%d)\n", mc, ime.merged_candidate_count());
+            for (int i = 0; i < mc && pos < 460; ++i) {
                 int   lang = ime.merged_candidate_lang(i);
                 // highlight: check if this merged slot is the currently selected one
                 bool  sel  = (lang == cg) &&
@@ -179,8 +204,12 @@ static const char* find_arg(int argc, char** argv, const char* flag) {
 // ── Main ─────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
+    log_open();
+    LOG("main: startup\n");
+
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
+    LOG("main: SetConsoleOutputCP(CP_UTF8) done\n");
 #endif
 
     const char* zh_dat = find_arg(argc, argv, "--dat");
@@ -209,11 +238,14 @@ int main(int argc, char** argv) {
 
     mie::ImeLogic ime(zh_searcher, en_loaded ? &en_searcher : nullptr);
     ime.set_commit_callback(on_commit, nullptr);
+    LOG("main: ImeLogic created\n");
 
     mie::pc::HalPcStdin hal;
     mie::KeyEvent ev;
+    LOG("main: HalPcStdin created, entering render\n");
 
     render(ime);
+    LOG("main: initial render done, entering event loop\n");
 
     while (true) {
         if (!hal.poll(ev)) {
@@ -229,9 +261,15 @@ int main(int argc, char** argv) {
         // ESC to quit (HalPcStdin maps ESC to row=0xFF signal)
         if (ev.row == 0xFF) break;
 
+        LOG("key: row=%u col=%u\n", (unsigned)ev.row, (unsigned)ev.col);
         const bool refresh = ime.process_key(ev);
+        LOG("key: process_key -> refresh=%d zh=%d en=%d merged=%d\n",
+            refresh, ime.zh_candidate_count(), ime.en_candidate_count(),
+            ime.merged_candidate_count());
         if (refresh) render(ime);
     }
 
+    LOG("main: exit\n");
+    log_close();
     return 0;
 }
