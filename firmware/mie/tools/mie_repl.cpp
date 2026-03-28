@@ -2,20 +2,22 @@
 // SPDX-License-Identifier: MIT
 //
 // Renders a virtual MokyaLora half-keyboard in the terminal and passes key
-// events through ImeLogic → TrieSearcher, displaying the current phoneme
-// input sequence and candidate words in real time.
+// events through ImeLogic → TrieSearcher, displaying candidates in real time.
 //
-// Build: part of the mie CMake host build (not cross-compiled for RP2350).
-// Run:   ./build/mie-host/mie_repl [--dat dict_dat.bin] [--val dict_values.bin]
+// Usage:
+//   ./mie_repl [--dat dict_dat.bin] [--val dict_values.bin]
+//              [--en-dat en_dat.bin] [--en-val en_values.bin]
 //
-// Without --dat / --val the REPL still runs but shows no candidates.
+// Without dictionary arguments the REPL runs but shows no candidates.
 //
-// Controls (mapped keys shown in the virtual keyboard display):
-//   Phoneme keys  — append Bopomofo phoneme to input sequence
-//   BACK / DEL    — remove last phoneme
-//   MODE (`)      — cycle input mode, clear input
-//   SPACE / OK    — commit first candidate (clears input)
-//   ESC / Ctrl-C  — quit
+// Controls (PC keys shown in the virtual keyboard grid):
+//   Input keys  — append to key sequence (Smart) / cycle label (Direct)
+//   BACK (BS)   — backspace (Smart) / cancel pending (Direct)
+//   MODE  (`)   — toggle Smart ↔ Direct, clear input
+//   ，SYM (,)   — cycle Chinese/English comma/punctuation group
+//   。.？ (.)   — cycle Chinese/English period/punctuation group
+//   SPACE / OK  — commit
+//   ESC         — quit
 
 #include "../hal/pc/hal_pc_stdin.h"
 #include "../hal/pc/key_map.h"
@@ -24,6 +26,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #ifdef _WIN32
 #  include <windows.h>
@@ -33,138 +36,159 @@
 
 // ── Virtual keyboard label table ─────────────────────────────────────────
 
-struct KeyLabel {
-    uint8_t     row;
-    uint8_t     col;
-    const char* pc_hint;
-    const char* label;
-};
+struct KeyLabel { uint8_t row; uint8_t col; const char* pc_hint; const char* label; };
 
 // clang-format off
 static const KeyLabel kLabels[] = {
-    // Row 0
-    {0, 0, "1",   "ㄅㄉ"  }, {0, 1, "3",   "ˇˋ"   }, {0, 2, "5",   "ㄓˊ"  },
-    {0, 3, "7",   "˙ㄚ"  }, {0, 4, "9",   "ㄞㄢ" }, {0, 5, "F1",  "FUNC" },
-    // Row 1
-    {1, 0, "q",   "ㄆㄊ"  }, {1, 1, "e",   "ㄍㄐ" }, {1, 2, "t",   "ㄔㄗ" },
-    {1, 3, "u",   "ㄧㄛ" }, {1, 4, "o",   "ㄟㄣ" }, {1, 5, "F2",  "SET"  },
-    // Row 2
-    {2, 0, "a",   "ㄇㄋ"  }, {2, 1, "d",   "ㄎㄑ" }, {2, 2, "g",   "ㄕㄘ" },
-    {2, 3, "j",   "ㄨㄜ" }, {2, 4, "l",   "ㄠㄤ" }, {2, 5, "BS",  "BACK" },
-    // Row 3
-    {3, 0, "z",   "ㄈㄌ"  }, {3, 1, "c",   "ㄏㄒ" }, {3, 2, "b",   "ㄖㄙ" },
-    {3, 3, "m",   "ㄩㄝ" }, {3, 4, "\\",  "ㄡㄥ" }, {3, 5, "Del", "DEL"  },
-    // Row 4
-    {4, 0, "`",   "MODE" }, {4, 1, "Tab", "TAB"  }, {4, 2, "Spc", "SPACE"},
-    {4, 3, ",",   "\xef\xbc\x8cSYM"}, {4, 4, ".",   "\xe3\x80\x82\xef\xbc\x9f"}, {4, 5, "=",   "VOL+" },
-    // Row 5
-    {5, 0, "\xe2\x86\x91",   "UP"   }, {5, 1, "\xe2\x86\x93",   "DOWN" }, {5, 2, "\xe2\x86\x90",   "LEFT" },
-    {5, 3, "\xe2\x86\x92",   "RIGHT"}, {5, 4, "\xe2\x8f\x8e",   "OK"   }, {5, 5, "-",   "VOL-" },
+    {0,0,"1",  "ㄅㄉ"},{0,1,"3",  "ˇˋ" },{0,2,"5",  "ㄓˊ" },
+    {0,3,"7",  "˙ㄚ" },{0,4,"9",  "ㄞㄢ"},{0,5,"F1", "FUNC"},
+    {1,0,"q",  "ㄆㄊ"},{1,1,"e",  "ㄍㄐ"},{1,2,"t",  "ㄔㄗ"},
+    {1,3,"u",  "ㄧㄛ"},{1,4,"o",  "ㄟㄣ"},{1,5,"F2", "SET" },
+    {2,0,"a",  "ㄇㄋ"},{2,1,"d",  "ㄎㄑ"},{2,2,"g",  "ㄕㄘ"},
+    {2,3,"j",  "ㄨㄜ"},{2,4,"l",  "ㄠㄤ"},{2,5,"BS", "BACK"},
+    {3,0,"z",  "ㄈㄌ"},{3,1,"c",  "ㄏㄒ"},{3,2,"b",  "ㄖㄙ"},
+    {3,3,"m",  "ㄩㄝ"},{3,4,"\\", "ㄡㄥ"},{3,5,"Del","DEL" },
+    {4,0,"`",  "MODE"},{4,1,"Tab","TAB" },{4,2,"Spc","SPACE"},
+    {4,3,",",  "，SYM"},{4,4,".", "。？"},{4,5,"=",  "VOL+"},
+    {5,0,"\xe2\x86\x91","UP"  },{5,1,"\xe2\x86\x93","DOWN"},
+    {5,2,"\xe2\x86\x90","LEFT"},{5,3,"\xe2\x86\x92","RIGHT"},
+    {5,4,"\xe2\x8f\x8e","OK"  },{5,5,"-",  "VOL-"},
 };
 // clang-format on
 
-static const char* label_for(uint8_t row, uint8_t col) {
-    for (const auto& k : kLabels) {
-        if (k.row == row && k.col == col) return k.label;
+static const char* mode_name(mie::InputMode m) {
+    switch (m) {
+        case mie::InputMode::Smart:  return "\xe6\x99\xba\xe6\x85\xa7";  // 智慧
+        case mie::InputMode::Direct: return "\xe7\x9b\xb4\xe6\x8e\xa5";  // 直接
     }
     return "?";
 }
 
-static const char* mode_name(mie::InputMode m) {
-    switch (m) {
-        case mie::InputMode::Bopomofo:     return "注音";
-        case mie::InputMode::English:      return "EN";
-        case mie::InputMode::Alphanumeric: return "ABC";
-    }
-    return "?";
+// ── Committed output buffer ───────────────────────────────────────────────
+
+static std::string g_committed;
+
+static void on_commit(const char* utf8, void* /*ctx*/) {
+    if (utf8 && *utf8) g_committed += utf8;
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────
 
 static void clear_screen() { fputs("\033[2J\033[H", stdout); }
 
+static const char* kCircle[] = {
+    "\xe2\x91\xa0","\xe2\x91\xa1","\xe2\x91\xa2","\xe2\x91\xa3","\xe2\x91\xa4",
+};
+
 static void render(const mie::ImeLogic& ime) {
     clear_screen();
-    puts("\xe2\x94\x8c\xe2\x94\x80 MokyaLora Virtual Keyboard (mie_repl) \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90");
 
+    // ── Keyboard grid ──────────────────────────────────────────────────────
+    puts("\xe2\x94\x8c\xe2\x94\x80 MokyaLora REPL \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90");
     for (int row = 0; row < 6; ++row) {
         fputs("\xe2\x94\x82 ", stdout);
         for (int col = 0; col < 6; ++col) {
-            const char* pc    = "?";
-            const char* label = "?";
-            for (const auto& k : kLabels) {
-                if (k.row == row && k.col == col) { pc = k.pc_hint; label = k.label; break; }
-            }
-            printf("[%2s:%-4s]", pc, label);
+            const char* pc = "?"; const char* lb = "?";
+            for (const auto& k : kLabels)
+                if (k.row == row && k.col == col) { pc = k.pc_hint; lb = k.label; break; }
+            printf("[%3s:%-5s]", pc, lb);
         }
         puts(" \xe2\x94\x82");
     }
+    puts("\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4");
 
-    puts("\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4");
+    // ── Mode & input ───────────────────────────────────────────────────────
+    const char* input_display = ime.input_bytes() > 0
+        ? ime.input_str()
+        : "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)";  // (按下鍵入)
+    printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-40s \xe2\x94\x82\n",
+           mode_name(ime.mode()), input_display);
 
-    // Mode indicator and input line
-    printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %-4s  \xe8\xbc\xb8\xe5\x85\xa5: %-46s \xe2\x94\x82\n",
-           mode_name(ime.mode()),
-           ime.input_bytes() > 0 ? ime.input_str() : "(\xe6\x8c\x89\xe4\xb8\x8b\xe6\xb3\xa8\xe9\x9f\xb3\xe9\x8d\xb5)");
-
-    // Candidates line
-    char cand_buf[256] = {};
-    int  pos           = 0;
-    if (ime.candidate_count() > 0) {
-        for (int i = 0; i < ime.candidate_count() && pos < 200; ++i) {
-            const char* circle_nums[] = {
-                "\xe2\x91\xa0","\xe2\x91\xa1","\xe2\x91\xa2","\xe2\x91\xa3","\xe2\x91\xa4",
-                "\xe2\x91\xa5","\xe2\x91\xa6","\xe2\x91\xa7","\xe2\x91\xa8","\xe2\x91\xa9",
-            };
-            int n = snprintf(cand_buf + pos, sizeof(cand_buf) - pos - 1,
-                             "%s%s ", circle_nums[i], ime.candidate(i).word);
-            if (n > 0) pos += n;
+    // ── Candidates — grouped ──────────────────────────────────────────────
+    // Chinese group
+    char zh_buf[256] = {}; int zh_pos = 0;
+    if (ime.zh_candidate_count() > 0) {
+        for (int i = 0; i < ime.zh_candidate_count() && zh_pos < 200; ++i) {
+            int n = snprintf(zh_buf + zh_pos, 256 - zh_pos, "%s%s ",
+                             kCircle[i], ime.zh_candidate(i).word);
+            if (n > 0) zh_pos += n;
         }
-    } else if (ime.input_bytes() > 0) {
-        snprintf(cand_buf, sizeof(cand_buf), "(\xe6\x9c\xaa\xe6\x89\xbe\xe5\x88\xb0\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97)");
-    } else {
-        snprintf(cand_buf, sizeof(cand_buf), "(\xe7\x84\xa1\xe5\xad\x97\xe5\x85\xb8\xe6\x99\x82\xe9\xa1\xaf\xe7\xa4\xba\xe9\x8d\xb5\xe5\x90\x8d)");
+    } else if (ime.input_bytes() > 0 && ime.mode() == mie::InputMode::Smart) {
+        snprintf(zh_buf, sizeof(zh_buf), "(\xe7\x84\xa1)");  // (無)
     }
-    printf("\xe2\x94\x82 \xe5\x80\x99\xe9\x81\xb8: %-55s \xe2\x94\x82\n", cand_buf);
 
-    puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
-    puts("  ESC/Ctrl-C \xe9\x9b\xa2\xe9\x96\x8b  |  BACK=\xe5\x88\xaa\xe9\x99\xa4  |  MODE=\xe5\x88\x87\xe6\xa8\xa1\xe5\xbc\x8f  |  SPACE/OK=\xe6\xa7\x8b\xe8\xa9\x9e");
+    // English group
+    char en_buf[256] = {}; int en_pos = 0;
+    if (ime.en_candidate_count() > 0) {
+        for (int i = 0; i < ime.en_candidate_count() && en_pos < 200; ++i) {
+            int n = snprintf(en_buf + en_pos, 256 - en_pos, "%s%s ",
+                             kCircle[i], ime.en_candidate(i).word);
+            if (n > 0) en_pos += n;
+        }
+    }
+
+    if (ime.mode() == mie::InputMode::Smart) {
+        printf("\xe2\x94\x82 [\xe4\xb8\xad\xe6\x96\x87] %-45s \xe2\x94\x82\n", zh_buf);  // [中文]
+        printf("\xe2\x94\x82 [English] %-44s \xe2\x94\x82\n", en_buf[0] ? en_buf : "(none)");
+    } else {
+        printf("\xe2\x94\x82 \xe7\x9b\xb4\xe6\x8e\xa5\xe8\xbc\xb8\xe5\x85\xa5: %-48s \xe2\x94\x82\n",  // 直接輸入:
+               ime.input_bytes() > 0 ? ime.input_str() : "");
+    }
+
+    // ── Committed output ──────────────────────────────────────────────────
+    printf("\xe2\x94\x82 \xe5\xb7\xb2\xe7\xa2\xba\xe8\xaa\x8d: %-50s \xe2\x94\x82\n",   // 已確認:
+           g_committed.empty() ? "" : g_committed.c_str());
+
+    puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
+    puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  BS=\xe5\x88\xaa\xe9\x99\xa4  |  `=MODE  |  ,/. =\xe6\xa8\x99\xe9\xbb\x9e  |  Spc/\xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d");
+    // ESC離開 | BS=刪除 | `=MODE | ,/. =標點 | Spc/↩=確認
     fflush(stdout);
 }
 
-// ── Argument parsing (minimal) ────────────────────────────────────────────
+// ── Argument parsing ─────────────────────────────────────────────────────
 
 static const char* find_arg(int argc, char** argv, const char* flag) {
-    for (int i = 1; i + 1 < argc; ++i) {
+    for (int i = 1; i + 1 < argc; ++i)
         if (strcmp(argv[i], flag) == 0) return argv[i + 1];
-    }
     return nullptr;
 }
 
-// ── Main loop ────────────────────────────────────────────────────────────
+// ── Main ─────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
 #ifdef _WIN32
-    // Enable UTF-8 console output on Windows.
     SetConsoleOutputCP(CP_UTF8);
 #endif
 
-    const char* dat_path = find_arg(argc, argv, "--dat");
-    const char* val_path = find_arg(argc, argv, "--val");
+    const char* zh_dat = find_arg(argc, argv, "--dat");
+    const char* zh_val = find_arg(argc, argv, "--val");
+    const char* en_dat = find_arg(argc, argv, "--en-dat");
+    const char* en_val = find_arg(argc, argv, "--en-val");
 
-    mie::TrieSearcher searcher;
-    if (dat_path && val_path) {
-        if (searcher.load_from_file(dat_path, val_path)) {
-            printf("Dictionary loaded: %u keys.\n", searcher.key_count());
+    mie::TrieSearcher zh_searcher;
+    if (zh_dat && zh_val) {
+        if (zh_searcher.load_from_file(zh_dat, zh_val))
+            printf("\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe5\x85\xb8: %u keys\n", zh_searcher.key_count());
+        else
+            fprintf(stderr, "WARNING: failed to load Chinese dict '%s'/'%s'\n", zh_dat, zh_val);
+    }
+
+    mie::TrieSearcher en_searcher;
+    bool en_loaded = false;
+    if (en_dat && en_val) {
+        if (en_searcher.load_from_file(en_dat, en_val)) {
+            printf("English dict: %u keys\n", en_searcher.key_count());
+            en_loaded = true;
         } else {
-            fprintf(stderr, "WARNING: failed to load dictionary from '%s' / '%s'.\n",
-                    dat_path, val_path);
+            fprintf(stderr, "WARNING: failed to load English dict '%s'/'%s'\n", en_dat, en_val);
         }
     }
 
-    mie::ImeLogic     ime(searcher);
+    mie::ImeLogic ime(zh_searcher, en_loaded ? &en_searcher : nullptr);
+    ime.set_commit_callback(on_commit, nullptr);
+
     mie::pc::HalPcStdin hal;
-    mie::KeyEvent     ev;
+    mie::KeyEvent ev;
 
     render(ime);
 
@@ -178,6 +202,9 @@ int main(int argc, char** argv) {
 #endif
             continue;
         }
+
+        // ESC to quit (HalPcStdin maps ESC to row=0xFF signal)
+        if (ev.row == 0xFF) break;
 
         const bool refresh = ime.process_key(ev);
         if (refresh) render(ime);

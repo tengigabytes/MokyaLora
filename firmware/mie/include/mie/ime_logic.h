@@ -1,125 +1,155 @@
-// ime_logic.h — MokyaInput Engine IME-Logic public API
 // SPDX-License-Identifier: MIT
+// MokyaInput Engine — IME Logic public API
 //
-// IME-Logic sits between the HAL key events and the TrieSearcher.
-// It maintains:
-//   - Current input mode (Bopomofo / English / Alphanumeric / Calculator)
-//   - Accumulated phoneme sequence (UTF-8, Bopomofo mode)
-//   - Candidate list produced by the last TrieSearcher query
+// ImeLogic sits between HAL key events and TrieSearcher.
+// Two input modes (cycled by MODE key at row 4, col 0):
 //
-// Phase 1: Bopomofo primary-phoneme mapping.
-//   Each ambiguous physical key is mapped to its first (primary) Bopomofo
-//   phoneme.  Full disambiguation and smart correction are Phase 3 work.
+//   Smart Mode  — half-keyboard unified Chinese (Bopomofo) + English prediction.
+//                 Same key sequence is searched against both zh and en dictionaries.
+//                 Candidates displayed in two groups: [中文] and [English].
 //
-// Key event handling in Bopomofo mode:
-//   Phoneme key  → append primary phoneme to input buffer, run search
-//   BACK (2,5)   → remove last UTF-8 character from input buffer, run search
-//   DEL  (3,5)   → same as BACK
-//   MODE (4,0)   → cycle to next input mode, clear input
-//   SPACE(4,2)   → commit first candidate (clears input buffer)
-//   OK   (5,4)   → commit first candidate (clears input buffer)
-//   Other keys   → ignored in this phase
+//   Direct Mode — each input key cycles through all its labels
+//                 (phonemes then letters).  OK confirms the pending character.
+//                 Used for passwords / account names.
+//
+// Symbol keys (row 4, col 3 = ，SYM ; row 4, col 4 = 。.？):
+//   In Smart Mode: cycle context-sensitive punctuation list (ZH or EN set),
+//                  confirming on OK or on press of a different key.
+//   In Direct Mode: cycle a combined symbol list.
 
 #pragma once
+#include <stdint.h>
 #include <mie/hal_port.h>
 #include <mie/trie_searcher.h>
 
 namespace mie {
 
-/// Input modes, cycled by the MODE key (three total).
+// ── Input modes ──────────────────────────────────────────────────────────────
 enum class InputMode : uint8_t {
-    Bopomofo     = 0,  ///< Bopomofo syllable prediction → Traditional Chinese (Phase 1 active)
-    English      = 1,  ///< English word prediction via half-keyboard pair expansion (Phase 1 ext.)
-    Alphanumeric = 2,  ///< Multi-tap single character — English letters and digits (Phase 1 ext.)
+    Smart  = 0,  // Unified Chinese + English prediction (half-keyboard)
+    Direct = 1,  // Direct character input — cycle key labels (password mode)
 };
 
-/// Maximum number of candidates returned per query.
-static constexpr int kMaxCandidates = 10;
-
-/// IME-Logic: stateful input method engine.
-///
-/// Typical usage:
-///   TrieSearcher searcher;
-///   searcher.load_from_file("dict_dat.bin", "dict_values.bin");
-///   ImeLogic ime(searcher);
-///   while (...) {
-///       KeyEvent ev;
-///       if (hal.poll(ev)) {
-///           bool refresh = ime.process_key(ev);
-///           if (refresh) redraw(ime.input_str(), ime.candidate_count(), ...);
-///       }
-///   }
+// ── ImeLogic ─────────────────────────────────────────────────────────────────
 class ImeLogic {
 public:
-    explicit ImeLogic(TrieSearcher& searcher);
+    // CommitCallback: called whenever text is confirmed.
+    // utf8 — null-terminated UTF-8 string to append to the output.
+    // ctx  — opaque pointer provided to set_commit_callback().
+    typedef void (*CommitCallback)(const char* utf8, void* ctx);
 
-    /// Feed one key event from the HAL.
-    /// @return true if the display should be refreshed.
+    // zh_searcher: required Chinese dictionary.
+    // en_searcher: optional English dictionary; nullptr disables English candidates.
+    explicit ImeLogic(TrieSearcher& zh_searcher,
+                      TrieSearcher* en_searcher = nullptr);
+
+    // Register a commit callback.
+    void set_commit_callback(CommitCallback cb, void* ctx);
+
+    // Feed one key event.  Returns true if the display should be refreshed.
     bool process_key(const KeyEvent& ev);
 
-    /// Current input mode.
+    // ── Query ─────────────────────────────────────────────────────────────
     InputMode mode() const { return mode_; }
 
-    /// Accumulated phoneme input (null-terminated UTF-8, may be empty).
-    const char* input_str()      const { return input_buf_; }
-    int         input_bytes()    const { return input_bytes_; }
+    // Display string (UTF-8, null-terminated):
+    //   Smart Mode  — accumulated primary phonemes, e.g. "ㄆㄍㄔ"
+    //   Direct Mode — current pending label, e.g. "ㄊ" or "W"
+    //   Symbol pending — current symbol, e.g. "、"
+    const char* input_str()   const { return input_buf_; }
+    int         input_bytes() const { return input_len_; }
 
-    /// Number of valid candidates after the last search (0 if input is empty
-    /// or no dictionary is loaded).
-    int candidate_count() const { return cand_count_; }
+    // Chinese candidates (Smart Mode; always 0 in Direct Mode).
+    int              zh_candidate_count() const { return zh_cand_count_; }
+    const Candidate& zh_candidate(int i)  const { return zh_candidates_[i]; }
 
-    /// Access candidate i (0-based).  Caller must ensure i < candidate_count().
-    const Candidate& candidate(int i) const { return candidates_[i]; }
+    // English candidates (Smart Mode; requires en_searcher != nullptr).
+    int              en_candidate_count() const { return en_cand_count_; }
+    const Candidate& en_candidate(int i)  const { return en_candidates_[i]; }
 
-    /// Clear the input buffer and candidate list.
+    // Clear all input state.
     void clear_input();
 
 private:
-    TrieSearcher& searcher_;
+    // ── Mode handlers ─────────────────────────────────────────────────────
+    bool process_smart(const KeyEvent& ev);
+    bool process_direct(const KeyEvent& ev);
 
-    InputMode mode_           = InputMode::Bopomofo;
-    char      input_buf_[256] = {};
-    int       input_bytes_    = 0;
+    // ── Symbol key handler (row 4 col 3/4, used in both modes) ───────────
+    // Returns true if the event was consumed.
+    bool process_sym_key(uint8_t col);
 
-    Candidate candidates_[kMaxCandidates] = {};
-    int       cand_count_ = 0;
+    // Commit current pending symbol (if any).
+    void commit_sym_pending();
 
-    /// State for Alphanumeric multi-tap mode.
-    struct MultiTapState {
-        uint8_t last_row  = 0xFF;  ///< Row of last key (0xFF = idle)
-        uint8_t last_col  = 0xFF;  ///< Col of last key (0xFF = idle)
-        int     tap_count = 0;     ///< Consecutive taps on last key
-        char    pending   = '\0';  ///< Character pending confirmation
-    } multi_tap_;
-
-    // ── Mode dispatch ─────────────────────────────────────────────────────
-
-    /// Bopomofo mode: append primary phoneme, run Trie search, handle commit.
-    bool process_bopomofo(const KeyEvent& ev);
-
-    /// English mode: accumulate half-keyboard key pairs, run prefix search.
-    /// Phase 1 extension — stub, returns false.
-    bool process_english(const KeyEvent& ev);
-
-    /// Alphanumeric mode: multi-tap single character cycling.
-    /// Phase 1 extension — stub, returns false.
-    bool process_alpha(const KeyEvent& ev);
-
-    // ── Bopomofo helpers ─────────────────────────────────────────────────
-
-    /// Append a null-terminated UTF-8 phoneme string to input_buf_.
-    void append_phoneme(const char* utf8);
-
-    /// Remove the last complete UTF-8 code point from input_buf_.
-    void backspace_phoneme();
-
-    /// Query the TrieSearcher with the current input_buf_ and update candidates_.
+    // ── Search & commit ───────────────────────────────────────────────────
+    // Search both dictionaries using key_seq_buf_; update candidate arrays.
     void run_search();
 
-    /// Map a physical key (row, col) to its primary Bopomofo phoneme
-    /// (null-terminated UTF-8 literal, static storage).
-    /// Returns nullptr for non-phoneme keys (control, navigation, etc.).
+    // Commit utf8: invoke callback, update context_lang_, clear input.
+    // lang_hint: 0=ZH, 1=EN, 2=neutral (Direct/symbol, no lang update).
+    void do_commit(const char* utf8, int lang_hint = 2);
+
+    // ── Display buffer helpers ─────────────────────────────────────────────
+    void append_to_display(const char* utf8);
+    void backspace_display();           // remove last UTF-8 codepoint
+    void set_display(const char* utf8); // replace entire display string
+
+    // ── Static key tables ─────────────────────────────────────────────────
+    // Primary Bopomofo phoneme for (row 0-3, col 0-4). nullptr = not a phoneme key.
     static const char* key_to_phoneme(uint8_t row, uint8_t col);
+
+    // idx-th cycle label for Direct Mode (phoneme[0], phoneme[1], letter[0], letter[1]).
+    // nullptr when idx >= label count.
+    static const char* key_to_direct_label(uint8_t row, uint8_t col, int idx);
+    static int         direct_label_count(uint8_t row, uint8_t col);
+
+    // idx-th symbol for sym key at col (3 or 4), given current context_lang_.
+    const char* sym_label(uint8_t col, int idx) const;
+    int         sym_label_count(uint8_t col)    const;
+
+    // ── Members ───────────────────────────────────────────────────────────
+    TrieSearcher&  zh_searcher_;
+    TrieSearcher*  en_searcher_;
+
+    InputMode mode_;
+
+    // Context language: updated on each commit; controls punctuation set.
+    enum Lang : uint8_t { ZH = 0, EN = 1 } context_lang_;
+
+    // Smart Mode: key-index byte sequence for dictionary search.
+    static constexpr int kMaxKeySeq = 64;
+    char key_seq_buf_[kMaxKeySeq + 1];
+    int  key_seq_len_;
+
+    // Display buffer.
+    static constexpr int kMaxDisplayBytes = 256;
+    char input_buf_[kMaxDisplayBytes + 1];
+    int  input_len_;
+
+    // Candidate arrays (grouped).
+    static constexpr int kMaxCandidates = 5;
+    Candidate zh_candidates_[kMaxCandidates];
+    int       zh_cand_count_;
+    Candidate en_candidates_[kMaxCandidates];
+    int       en_cand_count_;
+
+    // Direct Mode cycle state.
+    struct DirectState {
+        uint8_t row;        // 0xFF = idle
+        uint8_t col;
+        int     label_idx;
+    } direct_;
+
+    // Symbol key pending state (row 4, col 3 or 4).
+    struct SymPendingState {
+        uint8_t key_col;    // 3 or 4; 0xFF = idle
+        int     sym_idx;
+    } sym_pending_;
+
+    // Commit callback.
+    CommitCallback commit_cb_;
+    void*          commit_ctx_;
 };
 
 } // namespace mie

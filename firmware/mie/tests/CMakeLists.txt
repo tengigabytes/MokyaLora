@@ -13,6 +13,7 @@ FetchContent_MakeAvailable(googletest)
 add_executable(mie_tests
     test_trie_stub.cpp
     test_trie_searcher.cpp
+    test_ime_logic.cpp
 )
 
 target_link_libraries(mie_tests
