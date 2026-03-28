@@ -125,7 +125,7 @@ static void render(const mie::ImeLogic& ime) {
             // Active group indicator for navigation reference
             const char* zh_act = (cg == 0) ? "\xe2\x96\xb6" : " ";
             const char* en_act = (cg == 1) ? "\xe2\x96\xb6" : " ";
-            printf("\xe2\x94\x82 %s\xe2\x86\x90\xe4\xb8\xad  %s\xe2\x86\x92En  [\xe6\xb7\xb7\xe5\x90\x88] %-32s \xe2\x94\x82\n",  // ←中  →En  [混合]
+            printf("\xe2\x94\x82 %s\xe2\x86\x90\xe4\xb8\xad  %s\xe2\x86\x92" "En  [\xe6\xb7\xb7\xe5\x90\x88] %-32s \xe2\x94\x82\n",  // ←中  →En  [混合]
                    zh_act, en_act, mix_buf);
         } else if (zh_n > 0) {
             // ZH only
