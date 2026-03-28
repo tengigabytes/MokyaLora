@@ -400,13 +400,23 @@ def load_moe_csv(path: str,
 
 # ── English wordlist loader ───────────────────────────────────────────────
 
-def load_en_wordlist(path: str) -> list:
+def load_en_wordlist(path: str, min_freq: int = 0) -> list:
     """
-    Parse an English word list — one word (+ optional TAB frequency) per line.
+    Parse an English word list — one word (+ optional frequency) per line.
+
+    Supported formats:
+      word               — no frequency; assigned freq = 1
+      word<TAB>freq      — tab-separated (original format)
+      word<SPACE>freq    — space-separated (hermitdave/FrequencyWords format)
+
+    Both tab and space separators are handled by splitting on any whitespace.
+
+    min_freq: skip words whose frequency is below this threshold (0 = no filter).
+    Frequencies from hermitdave are raw corpus counts (can exceed 10^10); they
+    are stored as min(freq, 65535) in the MIED binary, preserving relative order.
 
     Returns list of (keyseq: bytes, word: str, freq: int).
-    Words with unmappable characters (digits, punctuation except apostrophe-less)
-    are silently dropped.
+    Words with unmappable characters (digits, punctuation) are silently dropped.
     """
     entries = []
     with open(path, encoding='utf-8', errors='replace') as f:
@@ -414,7 +424,8 @@ def load_en_wordlist(path: str) -> list:
             line = raw.strip()
             if not line or line.startswith('#'):
                 continue
-            parts = line.split('\t', 1)
+            # Split on any whitespace — handles both TAB and SPACE separators.
+            parts = line.split(None, 1)
             word  = parts[0].strip().lower()
             freq  = 1
             if len(parts) == 2:
@@ -422,6 +433,9 @@ def load_en_wordlist(path: str) -> list:
                     freq = max(1, int(parts[1].strip()))
                 except ValueError:
                     pass
+
+            if min_freq > 0 and freq < min_freq:
+                continue
 
             keyseq = word_to_eng_keyseq(word)
             if keyseq:
@@ -455,21 +469,43 @@ def build_value_record(word_list: list) -> bytes:
     return data
 
 
-def build_mied(entries: list) -> tuple:
+def build_mied(entries: list, max_per_key: int = 0) -> tuple:
     """
     Build MIED binary from a list of (keyseq: bytes, word: str, freq: int).
 
+    max_per_key: collision pruning — keep only the top N words per key sequence
+                 (sorted by frequency descending) and discard the rest.
+                 0 = no limit (default).  Recommended value: 5 (matches the
+                 runtime kMaxCandidates limit in TrieSearcher / ImeLogic).
+
     Returns (dat_bytes, val_bytes, stats_dict, key_to_words).
-    key_to_words is the deduplicated dict (keyseq → [(word, freq)]) needed by
+    key_to_words is the post-pruning dict (keyseq → [(word, freq)]) needed by
     callers that want to emit a charlist.
     """
     global _OVERSIZED_WORDS
     _OVERSIZED_WORDS = 0
 
     # Aggregate: keyseq → [(word, freq)]
-    key_to_words = defaultdict(list)
+    key_to_words: dict = defaultdict(list)
     for keyseq, word, freq in entries:
         key_to_words[keyseq].append((word, freq))
+
+    # ── Collision pruning ─────────────────────────────────────────────────
+    # For keys that resolve to more words than max_per_key, keep only the top-N
+    # most frequent ones.  This bounds en_values.bin size and removes long-tail
+    # words that the runtime would never return anyway (kMaxCandidates = 5).
+    pruned_total = 0
+    if max_per_key > 0:
+        for ks in key_to_words:
+            wlist = key_to_words[ks]
+            if len(wlist) > max_per_key:
+                key_to_words[ks] = sorted(wlist, key=lambda x: -x[1])[:max_per_key]
+                pruned_total += len(wlist) - max_per_key
+
+    if pruned_total:
+        print(f"  Collision pruning (max_per_key={max_per_key}): "
+              f"{pruned_total:,} low-frequency words removed",
+              file=sys.stderr)
 
     sorted_keys = sorted(key_to_words.keys())
     key_count   = len(sorted_keys)
@@ -507,13 +543,16 @@ def build_mied(entries: list) -> tuple:
         print(f"  WARNING: {_OVERSIZED_WORDS:,} words skipped (UTF-8 length >= 31 bytes)",
               file=sys.stderr)
 
+    stored_entries = sum(len(v) for v in key_to_words.values())
     stats = {
-        'key_count':   key_count,
-        'entry_count': len(entries),
-        'dat_bytes':   len(dat_bytes),
-        'val_bytes':   len(val_data),
+        'key_count':          key_count,
+        'entry_count_in':     len(entries),     # raw input before pruning
+        'entry_count':        stored_entries,   # words actually stored
+        'pruned_count':       len(entries) - stored_entries,
+        'dat_bytes':          len(dat_bytes),
+        'val_bytes':          len(val_data),
     }
-    return bytes(dat_bytes), bytes(val_data), stats, key_to_words
+    return bytes(dat_bytes), bytes(val_data), stats, dict(key_to_words)
 
 # ── Argument parsing ──────────────────────────────────────────────────────
 
@@ -533,10 +572,20 @@ def parse_args():
                         'syllables (0 = no limit; default: 4).  Words longer than N '
                         'syllables are stored under their full key sequence only.')
     p.add_argument('--en-wordlist',    metavar='TXT',
-                   help='English word list (one word per line, optional TAB freq)')
+                   help='English word list — one word per line, optional space or TAB '
+                        'frequency.  Supports hermitdave/FrequencyWords (space-separated) '
+                        'and the original TAB-separated format.')
     p.add_argument('--en-max-words',   metavar='N', type=int, default=0,
                    help='Limit English word list to first N words before deduplication '
                         '(0 = no limit, default)')
+    p.add_argument('--en-min-freq',    metavar='N', type=int, default=0,
+                   help='Skip English words whose frequency is below N  '
+                        '(0 = no filter, default).  Useful with hermitdave/FrequencyWords '
+                        'to drop very rare words and keep en_dat+en_values under 1 MB.')
+    p.add_argument('--en-max-per-key', metavar='N', type=int, default=5,
+                   help='Collision pruning: keep only the top N words per key sequence '
+                        '(default: 5, matching the runtime kMaxCandidates limit).  '
+                        '0 = no limit.')
     p.add_argument('--emit-charlist',  metavar='PATH',
                    help='Write unique output characters (one per line) to PATH '
                         '(small-font charlist; derived from Chinese dict only)')
@@ -609,19 +658,30 @@ def main():
     # ── English dictionary ────────────────────────────────────────────────
     en_stats = None
     if args.en_wordlist:
+        freq_label = f'>= {args.en_min_freq}' if args.en_min_freq else '不限'
+        key_label  = str(args.en_max_per_key) if args.en_max_per_key else '無限制'
+        print(f'EN filter: 最低頻率={freq_label}  每鍵上限={key_label}')
         print(f'Loading English     {args.en_wordlist} ...')
-        en_entries = load_en_wordlist(args.en_wordlist)
+        en_entries = load_en_wordlist(args.en_wordlist, min_freq=args.en_min_freq)
         if args.en_max_words and args.en_max_words > 0:
             en_entries = en_entries[:args.en_max_words]
             print(f'  truncated to {args.en_max_words:,} words (--en-max-words)')
-        print(f'  {len(en_entries):,} entries')
+        print(f'  {len(en_entries):,} entries loaded')
         print(f'Building English MIED ...')
-        dat, val, en_stats, _ = build_mied(en_entries)
+        dat, val, en_stats, _ = build_mied(en_entries, max_per_key=args.en_max_per_key)
         (output_dir / 'en_dat.bin').write_bytes(dat)
         (output_dir / 'en_values.bin').write_bytes(val)
+        total_en  = en_stats['dat_bytes'] + en_stats['val_bytes']
+        budget_mb = total_en / (1024 * 1024)
+        budget_ok = '\u2713 OK' if total_en < 1024 * 1024 else '\u26a0 OVER BUDGET'
         print(f'  en_dat.bin      : {en_stats["dat_bytes"]:>9,} bytes  '
               f'({en_stats["key_count"]:,} unique key sequences)')
-        print(f'  en_values.bin   : {en_stats["val_bytes"]:>9,} bytes')
+        pruned_note = (f', {en_stats["pruned_count"]:,} pruned'
+                       if en_stats['pruned_count'] else '')
+        print(f'  en_values.bin   : {en_stats["val_bytes"]:>9,} bytes  '
+              f'({en_stats["entry_count"]:,} words stored{pruned_note})')
+        print(f'  EN total        : {total_en:>9,} bytes  '
+              f'({budget_mb:.2f} MB / 1.00 MB budget)  {budget_ok}')
 
     # ── Metadata ──────────────────────────────────────────────────────────
     meta = {
@@ -630,10 +690,12 @@ def main():
         'key_encoding':   'key_byte = key_index + 0x21 (printable ASCII, no NULLs)',
         'variant':        'sm' if args.emit_charlist else 'lg',
         'sources': {
-            'libchewing':  args.libchewing,
-            'moe_csv':     args.moe_csv,
-            'en_wordlist': args.en_wordlist,
-            'en_max_words': args.en_max_words if args.en_max_words else None,
+            'libchewing':    args.libchewing,
+            'moe_csv':       args.moe_csv,
+            'en_wordlist':   args.en_wordlist,
+            'en_max_words':  args.en_max_words  if args.en_max_words  else None,
+            'en_min_freq':   args.en_min_freq   if args.en_min_freq   else None,
+            'en_max_per_key': args.en_max_per_key if args.en_max_per_key else None,
         },
         'charlist_path':  args.emit_charlist,
         'chinese': zh_stats,

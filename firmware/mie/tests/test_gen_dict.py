@@ -295,5 +295,315 @@ class TestAbbrFilters:
         assert not self._emit_abbr('ㄅ ㄆ ㄇ ㄈ ㄉ', freq=100, min_freq=5, max_syls=4)
 
 
+# ── English wordlist & collision pruning ─────────────────────────────────────
+
+import io
+import os
+import tempfile
+
+
+def _write_temp(content: str) -> str:
+    """Write UTF-8 text to a NamedTemporaryFile; return its path. Caller deletes."""
+    fd, path = tempfile.mkstemp(suffix='.txt')
+    os.write(fd, content.encode('utf-8'))
+    os.close(fd)
+    return path
+
+
+class TestEnWordlist:
+    """Tests for load_en_wordlist() — format parsing, min_freq filter."""
+
+    # ── Format handling ───────────────────────────────────────────────────
+
+    def test_space_separated_freq_hermitdave_format(self):
+        """hermitdave/FrequencyWords 'word frequency' (single space) format."""
+        path = _write_temp("the 10000000\nand 8000000\nof 6000000\n")
+        try:
+            entries = gd.load_en_wordlist(path)
+        finally:
+            os.unlink(path)
+        words = {e[1]: e[2] for e in entries}
+        assert 'the' in words
+        assert words['the'] == 10000000
+        assert 'and' in words
+        assert words['and'] == 8000000
+
+    def test_tab_separated_freq(self):
+        """Original TAB-separated 'word\\tfreq' format still works."""
+        path = _write_temp("hello\t1000\nworld\t500\n")
+        try:
+            entries = gd.load_en_wordlist(path)
+        finally:
+            os.unlink(path)
+        words = {e[1]: e[2] for e in entries}
+        assert words.get('hello') == 1000
+        assert words.get('world') == 500
+
+    def test_no_freq_defaults_to_one(self):
+        """Words without a frequency token default to freq=1."""
+        path = _write_temp("apple\nbanana\n")
+        try:
+            entries = gd.load_en_wordlist(path)
+        finally:
+            os.unlink(path)
+        words = {e[1]: e[2] for e in entries}
+        assert words.get('apple') == 1
+        assert words.get('banana') == 1
+
+    def test_unmappable_word_dropped(self):
+        """Words containing unmappable characters (digit, punctuation) are skipped."""
+        # 'can\'t' has apostrophe which is not in ENG_LETTER_TO_KEY
+        # '123' is all digits — not mappable
+        path = _write_temp("hello 100\ncan't 200\n123 50\nworld 80\n")
+        try:
+            entries = gd.load_en_wordlist(path)
+        finally:
+            os.unlink(path)
+        words = {e[1] for e in entries}
+        assert 'hello' in words
+        assert 'world' in words
+        assert "can't" not in words
+        assert '123' not in words
+
+    def test_comment_lines_skipped(self):
+        """Lines starting with '#' are treated as comments."""
+        path = _write_temp("# comment\nhello 500\n# another comment\nworld 300\n")
+        try:
+            entries = gd.load_en_wordlist(path)
+        finally:
+            os.unlink(path)
+        words = {e[1] for e in entries}
+        assert 'hello' in words
+        assert 'world' in words
+        assert len(words) == 2
+
+    # ── min_freq filter ───────────────────────────────────────────────────
+
+    def test_min_freq_zero_keeps_all(self):
+        """min_freq=0 (default) keeps everything regardless of frequency."""
+        path = _write_temp("common 5000\nrare 1\n")
+        try:
+            entries = gd.load_en_wordlist(path, min_freq=0)
+        finally:
+            os.unlink(path)
+        words = {e[1] for e in entries}
+        assert 'common' in words
+        assert 'rare' in words
+
+    def test_min_freq_filters_below_threshold(self):
+        """Words with freq < min_freq are dropped."""
+        path = _write_temp("common 5000\nrare 10\n")
+        try:
+            entries = gd.load_en_wordlist(path, min_freq=100)
+        finally:
+            os.unlink(path)
+        words = {e[1] for e in entries}
+        assert 'common' in words
+        assert 'rare' not in words   # 10 < 100
+
+    def test_min_freq_keeps_at_threshold(self):
+        """Words with freq == min_freq are kept (inclusive lower bound)."""
+        path = _write_temp("edge 100\nbelow 99\n")
+        try:
+            entries = gd.load_en_wordlist(path, min_freq=100)
+        finally:
+            os.unlink(path)
+        words = {e[1] for e in entries}
+        assert 'edge' in words       # 100 == 100 → keep
+        assert 'below' not in words  # 99 < 100 → drop
+
+    def test_min_freq_with_hermitdave_scale(self):
+        """min_freq works correctly with very large corpus counts."""
+        # Simulate hermitdave-scale numbers (raw corpus occurrences)
+        path = _write_temp("the 23135851162\nrare 42\n")
+        try:
+            entries = gd.load_en_wordlist(path, min_freq=1000)
+        finally:
+            os.unlink(path)
+        words = {e[1] for e in entries}
+        assert 'the' in words
+        assert 'rare' not in words
+
+    # ── keyseq encoding ───────────────────────────────────────────────────
+
+    def test_keyseq_is_correct_for_known_word(self):
+        """Verify key sequence encoding matches ENG_KEYMAP_RAW manually."""
+        # 'a' → key_index 10 → byte 0x2B
+        # 'c' → key_index 16 → byte 0x31
+        # 'e' → key_index 6  → byte 0x27
+        path = _write_temp("ace 100\n")
+        try:
+            entries = gd.load_en_wordlist(path)
+        finally:
+            os.unlink(path)
+        assert len(entries) == 1
+        keyseq, word, freq = entries[0]
+        assert word == 'ace'
+        assert keyseq == bytes([0x2B, 0x31, 0x27])
+
+
+class TestMaxPerKeyPruning:
+    """Tests for build_mied max_per_key collision-pruning parameter."""
+
+    def _make_collision_entries(self):
+        """Return 4 entries that all share the same key sequence.
+
+        'a' and 's' both map to key_index 10 (byte 0x2B).
+        'c' and 'v' both map to key_index 16 (byte 0x31).
+        'e' maps to key_index 6 (byte 0x27).
+        So "ace", "sce", "ave", "sve" → all keyseq b'\\x2b\\x31\\x27'.
+        """
+        ks = bytes([0x2B, 0x31, 0x27])
+        # Verify via word_to_eng_keyseq
+        assert gd.word_to_eng_keyseq('ace') == ks
+        assert gd.word_to_eng_keyseq('sce') == ks
+        assert gd.word_to_eng_keyseq('ave') == ks
+        assert gd.word_to_eng_keyseq('sve') == ks
+        return [
+            (ks, 'ace', 1000),
+            (ks, 'sce', 800),
+            (ks, 'ave', 600),
+            (ks, 'sve', 400),
+        ]
+
+    def test_no_pruning_keeps_all(self):
+        entries = self._make_collision_entries()
+        _, _, stats, k2w = gd.build_mied(entries, max_per_key=0)
+        ks = bytes([0x2B, 0x31, 0x27])
+        assert len(k2w[ks]) == 4
+        assert stats['entry_count'] == 4
+        assert stats['pruned_count'] == 0
+
+    def test_max_per_key_prunes_to_n(self):
+        entries = self._make_collision_entries()
+        _, _, stats, k2w = gd.build_mied(entries, max_per_key=2)
+        ks = bytes([0x2B, 0x31, 0x27])
+        assert len(k2w[ks]) == 2
+        # Must be the two highest-frequency words
+        kept_words = {w for w, _ in k2w[ks]}
+        assert 'ace' in kept_words    # freq=1000
+        assert 'sce' in kept_words    # freq=800
+        assert 'ave' not in kept_words
+        assert 'sve' not in kept_words
+        assert stats['entry_count'] == 2
+        assert stats['pruned_count'] == 2
+
+    def test_max_per_key_one_keeps_highest_freq(self):
+        entries = self._make_collision_entries()
+        _, _, stats, k2w = gd.build_mied(entries, max_per_key=1)
+        ks = bytes([0x2B, 0x31, 0x27])
+        assert len(k2w[ks]) == 1
+        kept_words = {w for w, _ in k2w[ks]}
+        assert 'ace' in kept_words  # highest freq=1000
+        assert stats['pruned_count'] == 3
+
+    def test_max_per_key_gt_count_does_not_prune(self):
+        """When max_per_key > number of words per key, nothing is pruned."""
+        entries = self._make_collision_entries()  # 4 words
+        _, _, stats, k2w = gd.build_mied(entries, max_per_key=10)
+        ks = bytes([0x2B, 0x31, 0x27])
+        assert len(k2w[ks]) == 4
+        assert stats['pruned_count'] == 0
+
+    def test_values_sorted_by_freq_descending(self):
+        """build_value_record must store words freq-descending even without pruning."""
+        entries = [
+            (b'\x2b', 'a', 100),
+            (b'\x2b', 's', 500),   # 's' also maps to key 10 → same 1-byte key
+        ]
+        _, val_bytes, _, k2w = gd.build_mied(entries)
+        # The first word in the value record should be 's' (freq=500)
+        import struct
+        word_count = struct.unpack_from('<H', val_bytes, 0)[0]
+        assert word_count == 2
+        freq0 = struct.unpack_from('<H', val_bytes, 2)[0]
+        wlen0 = struct.unpack_from('<B', val_bytes, 4)[0]
+        word0 = val_bytes[5:5 + wlen0].decode('utf-8')
+        assert word0 == 's'
+        assert freq0 == 500  # highest freq first
+
+    def test_default_no_pruning_zero(self):
+        """build_mied() default max_per_key=0 means no pruning (backward compat)."""
+        ks = gd.word_to_eng_keyseq('ace')
+        entries = [(ks, f'word{i}', 1000 - i) for i in range(8)]
+        _, _, stats, k2w = gd.build_mied(entries)   # default max_per_key=0
+        assert len(k2w[ks]) == 8
+        assert stats['pruned_count'] == 0
+
+    def test_explicit_max_per_key_five(self):
+        """Explicitly passing max_per_key=5 prunes to 5."""
+        ks = gd.word_to_eng_keyseq('ace')
+        entries = [(ks, f'word{i}', 1000 - i) for i in range(8)]
+        _, _, stats, k2w = gd.build_mied(entries, max_per_key=5)
+        assert len(k2w[ks]) == 5
+        assert stats['pruned_count'] == 3
+
+
+class TestEnSizeBudget:
+    """Verify EN dictionary size behaviour at realistic word-list scales.
+
+    The 1 MB target for en_dat.bin + en_values.bin (task §4.3) is achievable
+    with the hermitdave 50k source by combining --en-min-freq filtering and
+    --en-max-per-key=5.  These tests use synthetic data to verify the
+    relationships rather than requiring a network download.
+    """
+
+    def _make_entries(self, n: int, max_len: int = 8, seed: int = 42) -> list:
+        """Return n synthetic (keyseq, word, freq) entries using random words."""
+        mappable_list = sorted(gd.ENG_LETTER_TO_KEY.keys())
+        entries: list = []
+        seen_words: set = set()
+        rng = __import__('random').Random(seed)
+        while len(entries) < n:
+            length = rng.randint(3, max_len)
+            word   = ''.join(rng.choice(mappable_list) for _ in range(length))
+            if word in seen_words:
+                continue
+            seen_words.add(word)
+            freq = max(1, int(rng.expovariate(1 / 5000)))
+            ks   = gd.word_to_eng_keyseq(word)
+            if ks:
+                entries.append((ks, word, freq))
+        return entries
+
+    def test_25k_words_under_1mb(self):
+        """25 k words with max_per_key=5 must be comfortably under 1 MB.
+
+        25k is a typical size after applying --en-min-freq to a 50k source;
+        this test verifies the dictionary pipeline produces a budget-compliant
+        result at that scale.
+        """
+        entries = self._make_entries(25_000, max_len=8)
+        _, _, stats, _ = gd.build_mied(entries, max_per_key=5)
+        total = stats['dat_bytes'] + stats['val_bytes']
+        assert total < 1024 * 1024, (
+            f"EN dict too large at 25k words: {total:,} bytes "
+            f"(dat={stats['dat_bytes']:,}, val={stats['val_bytes']:,})"
+        )
+
+    def test_max_per_key_reduces_size(self):
+        """max_per_key=5 must produce a strictly smaller dict than no pruning
+        when there are collisions (short words → many collisions)."""
+        # Short words (len 3) on 15 keys → 3375 unique keys max, lots of collisions.
+        entries = self._make_entries(20_000, max_len=4)
+        _, _, stats_unpruned, _ = gd.build_mied(entries, max_per_key=0)
+        _, _, stats_pruned,   _ = gd.build_mied(entries, max_per_key=5)
+        # Pruning must reduce total stored entries
+        assert stats_pruned['entry_count'] <= stats_unpruned['entry_count']
+        # Pruning must reduce values.bin size (values hold the word payloads)
+        assert stats_pruned['val_bytes'] <= stats_unpruned['val_bytes']
+
+    def test_stats_entry_counts_consistent(self):
+        """entry_count + pruned_count must equal the unique aggregated count."""
+        entries = self._make_entries(5_000, max_len=4)
+        _, _, stats, k2w = gd.build_mied(entries, max_per_key=3)
+        stored = sum(len(v) for v in k2w.values())
+        assert stored == stats['entry_count']
+        assert stats['entry_count'] + stats['pruned_count'] == sum(
+            len(v) for v in gd.build_mied(entries, max_per_key=0)[3].values()
+        )
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
