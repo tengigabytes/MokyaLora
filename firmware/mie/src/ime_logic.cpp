@@ -172,6 +172,8 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
     , zh_cand_count_(0)
     , en_cand_count_(0)
     , merged_count_(0)
+    , merged_sel_(0)
+    , matched_prefix_len_(0)
     , commit_cb_(nullptr)
     , commit_ctx_(nullptr)
 {
@@ -179,7 +181,6 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
     input_buf_[0]   = '\0';
     direct_      = { 0xFF, 0xFF, 0 };
     sym_pending_ = { 0xFF, 0 };
-    cand_sel_    = { 0, 0 };
 }
 
 const char* ImeLogic::mode_indicator() const {
@@ -228,16 +229,17 @@ void ImeLogic::set_display(const char* utf8) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 void ImeLogic::clear_input() {
-    key_seq_len_    = 0;
-    key_seq_buf_[0] = '\0';
-    input_len_      = 0;
-    input_buf_[0]   = '\0';
-    zh_cand_count_  = 0;
-    en_cand_count_  = 0;
-    merged_count_   = 0;
-    direct_         = { 0xFF, 0xFF, 0 };
-    sym_pending_    = { 0xFF, 0 };
-    cand_sel_       = { 0, 0 };
+    key_seq_len_        = 0;
+    key_seq_buf_[0]     = '\0';
+    input_len_          = 0;
+    input_buf_[0]       = '\0';
+    zh_cand_count_      = 0;
+    en_cand_count_      = 0;
+    merged_count_       = 0;
+    merged_sel_         = 0;
+    matched_prefix_len_ = 0;
+    direct_             = { 0xFF, 0xFF, 0 };
+    sym_pending_        = { 0xFF, 0 };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -245,22 +247,38 @@ void ImeLogic::clear_input() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 void ImeLogic::run_search() {
-    zh_cand_count_ = 0;
-    en_cand_count_ = 0;
-    merged_count_  = 0;
-    cand_sel_      = { 0, 0 };
+    zh_cand_count_      = 0;
+    en_cand_count_      = 0;
+    merged_count_       = 0;
+    merged_sel_         = 0;
+    matched_prefix_len_ = 0;
     if (key_seq_len_ == 0) return;
 
-    if (zh_searcher_.is_loaded())
-        zh_cand_count_ = zh_searcher_.search(key_seq_buf_, zh_candidates_, kMaxCandidates);
+    // Greedy prefix: try decreasing prefix lengths until candidates are found.
+    // This lets the user type a long sequence (multi-word) without losing the
+    // ability to see candidates for the leading word.
+    for (int len = key_seq_len_; len >= 1; --len) {
+        char saved = key_seq_buf_[len];
+        key_seq_buf_[len] = '\0';
 
-    if (en_searcher_ && en_searcher_->is_loaded())
-        en_cand_count_ = en_searcher_->search(key_seq_buf_, en_candidates_, kMaxCandidates);
+        Candidate zh_tmp[kMaxCandidates];
+        Candidate en_tmp[kMaxCandidates];
+        int zh_n = zh_searcher_.is_loaded()
+                   ? zh_searcher_.search(key_seq_buf_, zh_tmp, kMaxCandidates) : 0;
+        int en_n = (en_searcher_ && en_searcher_->is_loaded())
+                   ? en_searcher_->search(key_seq_buf_, en_tmp, kMaxCandidates) : 0;
 
-    // Auto-select the group that has results; prefer ZH unless only EN matches.
-    if (zh_cand_count_ == 0 && en_cand_count_ > 0)
-        cand_sel_.group = 1;
+        key_seq_buf_[len] = saved;
 
+        if (zh_n > 0 || en_n > 0) {
+            zh_cand_count_ = zh_n;
+            en_cand_count_ = en_n;
+            memcpy(zh_candidates_, zh_tmp, (size_t)zh_n * sizeof(Candidate));
+            memcpy(en_candidates_, en_tmp, (size_t)en_n * sizeof(Candidate));
+            matched_prefix_len_ = len;
+            break;
+        }
+    }
     build_merged();
 }
 
@@ -285,14 +303,59 @@ void ImeLogic::do_commit(const char* utf8, int lang_hint) {
         else if (lang_hint == 1) context_lang_ = EN;
         if (commit_cb_) commit_cb_(utf8, commit_ctx_);
     }
-    // Reset input state (but not sym_pending_ — that's handled by caller)
-    key_seq_len_    = 0;
-    key_seq_buf_[0] = '\0';
+    // Full clear — reset all input state (but not sym_pending_; caller handles that).
+    key_seq_len_        = 0;
+    key_seq_buf_[0]     = '\0';
+    input_len_          = 0;
+    input_buf_[0]       = '\0';
+    zh_cand_count_      = 0;
+    en_cand_count_      = 0;
+    merged_count_       = 0;
+    merged_sel_         = 0;
+    matched_prefix_len_ = 0;
+}
+
+// Partial commit: fire the callback for utf8, then remove the first prefix_len
+// bytes from key_seq_buf_ and re-run greedy search on the remainder.
+// Used by OK and SPACE in Smart Mode for continuous multi-word input.
+void ImeLogic::do_commit_partial(const char* utf8, int lang_hint, int prefix_len) {
+    if (utf8 && *utf8) {
+        if (lang_hint == 0) context_lang_ = ZH;
+        else if (lang_hint == 1) context_lang_ = EN;
+        if (commit_cb_) commit_cb_(utf8, commit_ctx_);
+    }
+    int remove = (prefix_len > 0 && prefix_len <= key_seq_len_) ? prefix_len : key_seq_len_;
+    memmove(key_seq_buf_, key_seq_buf_ + remove, (size_t)(key_seq_len_ - remove + 1));
+    key_seq_len_ -= remove;
+    rebuild_input_buf();
+    zh_cand_count_      = 0;
+    en_cand_count_      = 0;
+    merged_count_       = 0;
+    merged_sel_         = 0;
+    matched_prefix_len_ = 0;
+    run_search();
+}
+
+// Rebuild input_buf_ (phoneme display) from key_seq_buf_ key bytes.
+void ImeLogic::rebuild_input_buf() {
     input_len_      = 0;
     input_buf_[0]   = '\0';
-    zh_cand_count_  = 0;
-    en_cand_count_  = 0;
-    cand_sel_       = { 0, 0 };
+    for (int i = 0; i < key_seq_len_; ++i) {
+        uint8_t idx = (uint8_t)key_seq_buf_[i] - 0x21;
+        const char* ph = key_to_phoneme(idx / 5, idx % 5);
+        if (ph) append_to_display(ph);
+    }
+}
+
+// Number of bytes in input_buf_ that correspond to the matched prefix keys.
+int ImeLogic::matched_prefix_display_bytes() const {
+    int bytes = 0;
+    for (int i = 0; i < matched_prefix_len_ && i < key_seq_len_; ++i) {
+        uint8_t idx = (uint8_t)key_seq_buf_[i] - 0x21;
+        const char* ph = key_to_phoneme(idx / 5, idx % 5);
+        if (ph) bytes += (int)strlen(ph);
+    }
+    return bytes;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -310,14 +373,13 @@ void ImeLogic::commit_sym_pending() {
 }
 
 bool ImeLogic::process_sym_key(uint8_t col) {
-    // In Smart Mode: if there's pending phoneme input, commit best candidate first.
+    // In Smart Mode: if there's pending phoneme input, commit the first merged
+    // candidate (partial commit: keeps any remaining keys after the matched prefix).
     if (mode_ == InputMode::Smart && key_seq_len_ > 0) {
-        if (zh_cand_count_ > 0)
-            do_commit(zh_candidates_[0].word, 0);
-        else if (en_cand_count_ > 0)
-            do_commit(en_candidates_[0].word, 1);
+        if (merged_count_ > 0)
+            do_commit_partial(merged_[0].cand->word, merged_[0].lang, matched_prefix_len_);
         else
-            do_commit(input_buf_, 2);
+            do_commit_partial(input_buf_, 2, key_seq_len_);
     }
 
     if (sym_pending_.key_col == col) {
@@ -352,18 +414,13 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
             if (sym_pending_.key_col != 0xFF) {
                 commit_sym_pending();
             } else if (key_seq_len_ > 0) {
-                int zi = cand_sel_.index;
-                int ei = cand_sel_.index;
-                if (cand_sel_.group == 0 && zh_cand_count_ > 0)
-                    do_commit(zh_candidates_[zi < zh_cand_count_ ? zi : 0].word, 0);
-                else if (cand_sel_.group == 1 && en_cand_count_ > 0)
-                    do_commit(en_candidates_[ei < en_cand_count_ ? ei : 0].word, 1);
-                else if (zh_cand_count_ > 0)
-                    do_commit(zh_candidates_[0].word, 0);
-                else if (en_cand_count_ > 0)
-                    do_commit(en_candidates_[0].word, 1);
-                else
+                // Commit the currently selected merged candidate (or fallback).
+                if (merged_count_ > 0) {
+                    int sel = (merged_sel_ < merged_count_) ? merged_sel_ : 0;
+                    do_commit(merged_[sel].cand->word, merged_[sel].lang);
+                } else {
                     do_commit(input_buf_, 2);
+                }
             }
         } else {
             // Direct Mode → Smart: commit any pending Direct character first.
@@ -415,75 +472,75 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return true;
     }
 
-    // SPACE (4,2): commit first Chinese candidate, or first English, or raw input.
+    // SPACE (4,2): quick-commit the first merged candidate (partial commit),
+    // or output a space when no input is pending.
     if (ev.row == 4 && ev.col == 2) {
         if (key_seq_len_ == 0) {
-            // No pending input: output a space in English context, 　 in Chinese
+            // No pending input: output a space in English context, 　 in Chinese.
             const char* sp = (context_lang_ == EN) ? " " : "\xe3\x80\x80"; // U+3000
             if (commit_cb_) commit_cb_(sp, commit_ctx_);
             return true;
         }
-        if (zh_cand_count_ > 0)      do_commit(zh_candidates_[0].word, 0);
-        else if (en_cand_count_ > 0) do_commit(en_candidates_[0].word, 1);
-        else                         do_commit(input_buf_, 2);
+        // Commit the first merged candidate and leave any remaining keys in buffer.
+        if (merged_count_ > 0)
+            do_commit_partial(merged_[0].cand->word, merged_[0].lang, matched_prefix_len_);
+        else
+            do_commit_partial(input_buf_, 2, key_seq_len_);
         return true;
     }
 
-    // OK (5,4): commit currently selected candidate (respects cand_sel_).
+    // OK (5,4): commit the currently navigated candidate (partial commit).
     if (ev.row == 5 && ev.col == 4) {
         if (key_seq_len_ == 0) return false;
-        if (cand_sel_.group == 0 && zh_cand_count_ > 0) {
-            int i = cand_sel_.index < zh_cand_count_ ? cand_sel_.index : 0;
-            do_commit(zh_candidates_[i].word, 0);
-        } else if (cand_sel_.group == 1 && en_cand_count_ > 0) {
-            int i = cand_sel_.index < en_cand_count_ ? cand_sel_.index : 0;
-            do_commit(en_candidates_[i].word, 1);
-        } else if (zh_cand_count_ > 0) {
-            do_commit(zh_candidates_[0].word, 0);
-        } else if (en_cand_count_ > 0) {
-            do_commit(en_candidates_[0].word, 1);
+        if (merged_count_ > 0) {
+            int sel = (merged_sel_ < merged_count_) ? merged_sel_ : 0;
+            do_commit_partial(merged_[sel].cand->word, merged_[sel].lang, matched_prefix_len_);
         } else {
-            do_commit(input_buf_, 2);
+            do_commit_partial(input_buf_, 2, key_seq_len_);
         }
         return true;
     }
 
-    // UP (5,0): previous candidate within current group.
+    // UP (5,0): previous candidate in merged list (wraps).
     if (ev.row == 5 && ev.col == 0) {
-        int count = (cand_sel_.group == 0) ? zh_cand_count_ : en_cand_count_;
-        if (count > 0) {
-            cand_sel_.index = (cand_sel_.index - 1 + count) % count;
+        if (merged_count_ > 0) {
+            merged_sel_ = (merged_sel_ - 1 + merged_count_) % merged_count_;
             return true;
         }
         return false;
     }
 
-    // DOWN (5,1): next candidate within current group.
+    // DOWN (5,1): next candidate in merged list (wraps).
     if (ev.row == 5 && ev.col == 1) {
-        int count = (cand_sel_.group == 0) ? zh_cand_count_ : en_cand_count_;
-        if (count > 0) {
-            cand_sel_.index = (cand_sel_.index + 1) % count;
+        if (merged_count_ > 0) {
+            merged_sel_ = (merged_sel_ + 1) % merged_count_;
             return true;
         }
         return false;
     }
 
-    // LEFT (5,2): switch to ZH candidate group.
+    // LEFT (5,2): previous candidate in merged list (wraps).
     if (ev.row == 5 && ev.col == 2) {
-        if (zh_cand_count_ > 0) { cand_sel_ = { 0, 0 }; return true; }
+        if (merged_count_ > 0) {
+            merged_sel_ = (merged_sel_ - 1 + merged_count_) % merged_count_;
+            return true;
+        }
         return false;
     }
 
-    // RIGHT (5,3): switch to EN candidate group.
+    // RIGHT (5,3): next candidate in merged list (wraps).
     if (ev.row == 5 && ev.col == 3) {
-        if (en_cand_count_ > 0) { cand_sel_ = { 1, 0 }; return true; }
+        if (merged_count_ > 0) {
+            merged_sel_ = (merged_sel_ + 1) % merged_count_;
+            return true;
+        }
         return false;
     }
 
-    // Input keys (rows 0-3, col 0-4): append to key sequence.
-    // Zero-match auto-commit: if adding the new key yields no candidates and the
-    // existing sequence had at least one key, commit the current best candidate
-    // and restart with the new key (T9-style word break).
+    // Input keys (rows 0-3, col 0-4): append to key sequence and re-run greedy search.
+    // The greedy prefix search handles multi-word input naturally: if the new key
+    // extends beyond any matching prefix, run_search() still finds the longest
+    // matching prefix among the leading bytes.
     if (ev.row <= 3 && ev.col <= 4) {
         if (key_seq_len_ < kMaxKeySeq) {
             uint8_t     key_index = ev.row * 5 + ev.col;
@@ -494,44 +551,6 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
             key_seq_buf_[key_seq_len_]   = '\0';
             if (ph) append_to_display(ph);
             run_search();
-
-            if (zh_cand_count_ == 0 && en_cand_count_ == 0 && key_seq_len_ >= 2) {
-                // Roll back the new key and check if previous sequence had candidates.
-                --key_seq_len_;
-                key_seq_buf_[key_seq_len_] = '\0';
-                backspace_display();
-                run_search();  // restore previous state
-
-                if (zh_cand_count_ > 0 || en_cand_count_ > 0) {
-                    // Previous sequence had candidates — commit the best one, then
-                    // restart with the new key (T9-style word break).
-                    if (cand_sel_.group == 0 && zh_cand_count_ > 0) {
-                        int i = cand_sel_.index < zh_cand_count_ ? cand_sel_.index : 0;
-                        do_commit(zh_candidates_[i].word, 0);
-                    } else if (cand_sel_.group == 1 && en_cand_count_ > 0) {
-                        int i = cand_sel_.index < en_cand_count_ ? cand_sel_.index : 0;
-                        do_commit(en_candidates_[i].word, 1);
-                    } else if (zh_cand_count_ > 0) {
-                        do_commit(zh_candidates_[0].word, 0);
-                    } else {
-                        do_commit(en_candidates_[0].word, 1);
-                    }
-
-                    // Start fresh with the new key.
-                    key_seq_buf_[key_seq_len_++] = new_byte;
-                    key_seq_buf_[key_seq_len_]   = '\0';
-                    if (ph) append_to_display(ph);
-                    run_search();
-                } else {
-                    // Previous sequence also had no candidates (e.g. building an
-                    // English word with only a Chinese dict loaded) — restore the
-                    // new key and keep accumulating without committing anything.
-                    key_seq_buf_[key_seq_len_++] = new_byte;
-                    key_seq_buf_[key_seq_len_]   = '\0';
-                    if (ph) append_to_display(ph);
-                    run_search();
-                }
-            }
         }
         return true;
     }

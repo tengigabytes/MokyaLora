@@ -81,6 +81,7 @@ Usage
 
 import argparse
 import csv
+import itertools
 import json
 import struct
 import sys
@@ -243,55 +244,49 @@ def parse_reading_syllables(reading: str) -> list:
 
 def abbreviated_keyseqs(reading: str, full_keyseq: bytes) -> list:
     """
-    Generate abbreviated key sequences for a word, enabling fast "initial-key"
-    input (聲母猜字) in addition to the standard full-phoneme key sequence.
+    Generate ALL abbreviated key sequences for a word via cartesian product
+    of per-syllable key-prefix choices.  This enables flexible abbreviated
+    input (聲母猜字) where each syllable may be typed as any prefix of its
+    full phoneme key sequence (initial-only, initial+medial, or full).
 
-    For a word with N syllables:
-      N == 1  → emit the single-syllable initial key (1 key byte).
-      N >= 2  → emit TWO variants:
-                 1. all-initials: one initial key per syllable  (N bytes)
-                 2. prefix-initials + full-last: initials of syllables
-                    0..N-2, then full phoneme of the last syllable
+    For a syllable with keys [k1, k2, k3] the prefix choices are:
+        [k1],  [k1,k2],  [k1,k2,k3]
 
-    Rationale for variant 2 (user example: `rwu0` = 今天):
-      r = initial(今=ㄐ), w+u+0 = full(天=ㄊㄧㄢ)
-      → typing the initial of all-but-the-last char plus the full phoneme
-        of the last char is a natural fast-entry style.
+    The cartesian product across all N syllables yields up to
+    max_choices_per_syllable ^ N variants.  For 臭豆腐 (3 syllables, 3 keys
+    each) that is 3^3 − 1 = 26 variants (the full key is always excluded).
 
     Returns a list of unique bytes objects, each different from full_keyseq
-    and from each other.  Returns [] when syllable data is empty.
+    and from each other.  Returns [] when syllable data is empty or any
+    syllable has no mappable phonemes.
     """
     syls = parse_reading_syllables(reading)
-    n = len(syls)
-    if n == 0:
+    if not syls:
         return []
 
     seen = {full_keyseq}
     variants: list = []
 
-    if n == 1:
-        # Single-syllable word: initial key = first phoneme of the syllable.
-        init = phonemes_to_keyseq(syls[0][:1])
-        if init and init not in seen:
-            seen.add(init)
-            variants.append(init)
-        return variants
+    # For each syllable build a list of non-empty, distinct key-prefix bytes
+    # (length 1 to len(syl)).  Duplicates from ambiguous phoneme→key mapping
+    # are collapsed so each choice is unique.
+    syl_choices = []
+    for syl in syls:
+        choices: list = []
+        for prefix_len in range(1, len(syl) + 1):
+            key = phonemes_to_keyseq(syl[:prefix_len])
+            if key and (not choices or key != choices[-1]):
+                choices.append(key)
+        if not choices:
+            return []   # unmappable syllable → emit no variants at all
+        syl_choices.append(choices)
 
-    # Multi-syllable word (n >= 2) — two variants.
-    # 1. All-initials: initial key of each syllable concatenated.
-    all_init = b''.join(phonemes_to_keyseq(s[:1]) for s in syls)
-    if all_init and all_init not in seen:
-        seen.add(all_init)
-        variants.append(all_init)
-
-    # 2. Prefix-initials + full last syllable:
-    #    initial keys of syllables 0..n-2, then full phoneme of syllable n-1.
-    prefix = b''.join(phonemes_to_keyseq(s[:1]) for s in syls[:-1])
-    last   = phonemes_to_keyseq(syls[-1])
-    mixed  = prefix + last
-    if mixed and mixed not in seen:
-        seen.add(mixed)
-        variants.append(mixed)
+    # Cartesian product: one prefix choice per syllable → concatenate → unique.
+    for combo in itertools.product(*syl_choices):
+        variant = b''.join(combo)
+        if variant not in seen:
+            seen.add(variant)
+            variants.append(variant)
 
     return variants
 

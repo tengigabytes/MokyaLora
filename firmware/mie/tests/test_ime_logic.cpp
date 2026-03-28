@@ -128,20 +128,9 @@ TEST(SmartMode, InputKeyBuildsKeySeqAndDisplay) {
 }
 
 TEST(SmartMode, MultipleKeysPhonemesAccumulate) {
-    // Need a dict with entries for each prefix so zero-match auto-commit doesn't fire.
-    // Keys: (0,0)=0x21, (1,1)=0x27, (2,3)=0x2E
-    // Build entries for "\x21", "\x21\x27", "\x21\x27\x2E"
-    static const char K1[] = "\x21";
-    static const char K2[] = "\x21\x27";
-    static const char K3[] = "\x21\x27\x2e";
-    std::vector<uint8_t> dat, val;
-    build_single({
-        { K1, 1, "巴", 1 },
-        { K2, 2, "改", 1 },
-        { K3, 3, "菊", 1 },
-    }, dat, val);
+    // With no auto-commit, phonemes always accumulate freely in the buffer.
+    // The display shows ALL phonemes (matched prefix + remaining), e.g. "ㄅㄍㄨ".
     mie::TrieSearcher ts;
-    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
     mie::ImeLogic ime(ts);
 
     ime.process_key(kev(0, 0));  // ㄅ
@@ -151,13 +140,7 @@ TEST(SmartMode, MultipleKeysPhonemesAccumulate) {
 }
 
 TEST(SmartMode, BackspaceRemovesLastPhoneme) {
-    // Need dict entries for both prefix sequences to prevent auto-commit.
-    static const char K1[] = "\x21";
-    static const char K2[] = "\x21\x27";
-    std::vector<uint8_t> dat, val;
-    build_single({ { K1, 1, "巴", 1 }, { K2, 2, "改", 1 } }, dat, val);
     mie::TrieSearcher ts;
-    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
     mie::ImeLogic ime(ts);
 
     ime.process_key(kev(0, 0));  // ㄅ
@@ -547,8 +530,8 @@ TEST(CandidateNav, OKCommitsSelectedCandidate) {
     EXPECT_EQ(committed, "把");
 }
 
-TEST(CandidateNav, RightSwitchesToENGroup) {
-    // Build one zh and one en entry for same key byte.
+TEST(CandidateNav, RightMovesToNextMergedSlot) {
+    // RIGHT navigates the merged list: slot 0 = ZH first, slot 1 = EN first.
     std::vector<uint8_t> zh_dat, zh_val, en_dat, en_val;
     build_single({ { "\x21", 1, "巴", 1 } }, zh_dat, zh_val);
     build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
@@ -563,14 +546,16 @@ TEST(CandidateNav, RightSwitchesToENGroup) {
     ime.process_key(kev(0, 0));
     ASSERT_GT(ime.zh_candidate_count(), 0);
     ASSERT_GT(ime.en_candidate_count(), 0);
-    EXPECT_EQ(ime.candidate_group(), 0);  // default ZH
+    // merged_[0] = ZH 巴, merged_[1] = EN abc
+    EXPECT_EQ(ime.candidate_index(), 0);   // initially at slot 0 (ZH)
+    EXPECT_EQ(ime.candidate_group(), 0);   // ZH
 
-    ime.process_key(kev(5, 3));  // RIGHT → switch to EN group
-    EXPECT_EQ(ime.candidate_group(), 1);
-    EXPECT_EQ(ime.candidate_index(), 0);
+    ime.process_key(kev(5, 3));  // RIGHT → merged_sel_ = 1
+    EXPECT_EQ(ime.candidate_index(), 1);   // slot 1
+    EXPECT_EQ(ime.candidate_group(), 1);   // EN
 }
 
-TEST(CandidateNav, LeftSwitchesToZHGroup) {
+TEST(CandidateNav, LeftMovesToPrevMergedSlot) {
     std::vector<uint8_t> zh_dat, zh_val, en_dat, en_val;
     build_single({ { "\x21", 1, "巴", 1 } }, zh_dat, zh_val);
     build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
@@ -583,10 +568,11 @@ TEST(CandidateNav, LeftSwitchesToZHGroup) {
     mie::ImeLogic ime(zh_ts, &en_ts);
 
     ime.process_key(kev(0, 0));
-    ime.process_key(kev(5, 3));  // RIGHT → EN group
-    EXPECT_EQ(ime.candidate_group(), 1);
+    ime.process_key(kev(5, 3));  // RIGHT → slot 1
+    EXPECT_EQ(ime.candidate_index(), 1);
 
-    ime.process_key(kev(5, 2));  // LEFT → back to ZH group
+    ime.process_key(kev(5, 2));  // LEFT → slot 0
+    EXPECT_EQ(ime.candidate_index(), 0);
     EXPECT_EQ(ime.candidate_group(), 0);
 }
 
@@ -601,11 +587,17 @@ TEST(CandidateNav, NavIgnoredWhenNoCandidates) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// HF-2: Zero-match auto-commit
+// HF-2: Greedy prefix search and partial commit
+//
+// Auto-commit is REMOVED.  Instead, run_search() greedily finds the longest
+// prefix of key_seq_buf_ that has dictionary matches.  OK/SPACE commit
+// only the matched prefix and leave the remaining keys for the next word.
 // ══════════════════════════════════════════════════════════════════════════
 
-TEST(ZeroMatchAutoCommit, AutoCommitsBestOnNoMatch) {
-    // Dict: key "\x21" → "巴", no entry for "\x21\x21"
+TEST(GreedyPrefix, ExtraKeysStillMatchPrefix) {
+    // Dict: key "\x21" → 巴.  No entry for "\x21\x27".
+    // After typing (0,0)(1,1), greedy search finds "\x21" at len=1 even though
+    // the total buffer is 2 bytes.  Candidates still show 巴.
     std::vector<uint8_t> dat, val;
     build_single({ { "\x21", 1, "巴", 1 } }, dat, val);
     mie::TrieSearcher ts;
@@ -617,19 +609,22 @@ TEST(ZeroMatchAutoCommit, AutoCommitsBestOnNoMatch) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));  // seq="\x21" → candidate 巴
+    ime.process_key(kev(0, 0));  // "\x21" → 巴
     ASSERT_GT(ime.zh_candidate_count(), 0);
-    // Press same key again → seq="\x21\x21" → 0 candidates → auto-commit 巴, restart
-    ime.process_key(kev(0, 0));
-    EXPECT_EQ(committed, "巴");
-    // Should now have 1 key in the new sequence
-    EXPECT_STREQ(ime.input_str(), "ㄅ");
+    EXPECT_EQ(ime.matched_prefix_len(), 1);
+
+    // Type an extra key that doesn't extend the match.
+    ime.process_key(kev(1, 1));  // buf="\x21\x27", greedy still finds "\x21"→巴
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "巴");
+    EXPECT_EQ(ime.matched_prefix_len(), 1);
+    // No auto-commit happened.
+    EXPECT_TRUE(committed.empty());
 }
 
-TEST(ZeroMatchAutoCommit, NoAutoCommitWhenPreviousAlsoHadNoCandidates) {
-    // With an empty dict, typing multiple keys should NOT trigger auto-commit
-    // because the previous sequence also has 0 candidates.  Keys accumulate.
-    mie::TrieSearcher ts;  // empty dict
+TEST(GreedyPrefix, NoAutoCommitWithEmptyDict) {
+    // With an empty dict, keys always accumulate without any auto-commit.
+    mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
 
     std::string committed;
@@ -637,34 +632,58 @@ TEST(ZeroMatchAutoCommit, NoAutoCommitWhenPreviousAlsoHadNoCandidates) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));  // seq "\x21", 0 candidates
-    ime.process_key(kev(1, 1));  // seq "\x21\x27", still 0 candidates — previous also had 0
-                                  // → NO auto-commit; keys keep accumulating
+    ime.process_key(kev(0, 0));
+    ime.process_key(kev(1, 1));
+    ime.process_key(kev(2, 3));
     EXPECT_TRUE(committed.empty());
-    // Both phonemes should be visible in the display buffer.
+    EXPECT_STREQ(ime.input_str(), "ㄅㄍㄨ");
+}
+
+TEST(GreedyPrefix, OKRemovesOnlyMatchedBytes) {
+    // Dict: key "\x21" → 巴.  User types (0,0)(1,1) → buffer="\x21\x27",
+    // matched_prefix_len=1.  Pressing OK commits 巴 and removes only the
+    // first byte; the second byte "\x27" stays in the buffer.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "巴", 1 } }, dat, val);
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    ime.process_key(kev(0, 0));  // matched prefix "\x21"
+    ime.process_key(kev(1, 1));  // extra key "\x27" in remaining
+    ASSERT_EQ(ime.matched_prefix_len(), 1);
+
+    ime.process_key(kOK);
+    EXPECT_EQ(committed, "巴");
+    // Remaining: "\x27" (ㄍ) still in buffer — shows as the new display.
+    EXPECT_STREQ(ime.input_str(), "ㄍ");
     EXPECT_GT(ime.input_bytes(), 0);
 }
 
-TEST(ZeroMatchAutoCommit, AutoCommitsOnlyWhenPreviousHadCandidates) {
-    // Dict has an entry for key "\x21" (ㄅ) but not for "\x21\x27".
-    // Pressing (0,0) gives candidates.  Then pressing (1,1) (no combined match)
-    // should auto-commit the best candidate for "\x21" and restart with "\x27".
+TEST(GreedyPrefix, BackspaceReducesTail) {
+    // Dict: key "\x21" → 巴.  After typing (0,0)(1,1), greedy matches "\x21".
+    // Pressing BACK removes the last byte "\x27", leaving "\x21" — still matches 巴.
     std::vector<uint8_t> dat, val;
     build_single({ { "\x21", 1, "巴", 1 } }, dat, val);
     mie::TrieSearcher ts;
     ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
     mie::ImeLogic ime(ts);
 
-    std::string committed;
-    ime.set_commit_callback([](const char* s, void* ctx) {
-        *static_cast<std::string*>(ctx) += s;
-    }, &committed);
-
-    ime.process_key(kev(0, 0));  // seq "\x21" → candidate 巴
+    ime.process_key(kev(0, 0));
+    ime.process_key(kev(1, 1));
     ASSERT_GT(ime.zh_candidate_count(), 0);
-    ime.process_key(kev(1, 1));  // seq "\x21\x27" → 0 candidates; prev "\x21" had 巴
-    EXPECT_EQ(committed, "巴");  // auto-committed the previous best
-    EXPECT_GT(ime.input_bytes(), 0);  // new sequence started with (1,1)
+    ASSERT_EQ(ime.matched_prefix_len(), 1);
+    EXPECT_STREQ(ime.input_str(), "ㄅㄍ");  // both keys visible
+
+    ime.process_key(kBACK);
+    EXPECT_STREQ(ime.input_str(), "ㄅ");
+    EXPECT_GT(ime.zh_candidate_count(), 0);   // still matches 巴
+    EXPECT_EQ(ime.matched_prefix_len(), 1);
 }
 
 // ══════════════════════════════════════════════════════════════════════════

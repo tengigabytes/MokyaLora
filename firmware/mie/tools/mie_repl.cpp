@@ -93,9 +93,10 @@ static const char* kCircle[] = {
 static constexpr int kNumCircles = 5;  // kCircle array size — never index beyond this
 
 static void render(const mie::ImeLogic& ime) {
-    LOG("render: mode=%d zh=%d en=%d merged=%d input_bytes=%d\n",
+    LOG("render: mode=%d zh=%d en=%d merged=%d mc_sel=%d prefix=%d input_bytes=%d\n",
         (int)ime.mode(), ime.zh_candidate_count(), ime.en_candidate_count(),
-        ime.merged_candidate_count(), ime.input_bytes());
+        ime.merged_candidate_count(), ime.candidate_index(),
+        ime.matched_prefix_len(), ime.input_bytes());
     clear_screen();
 
     // ── Keyboard grid ──────────────────────────────────────────────────────
@@ -112,66 +113,65 @@ static void render(const mie::ImeLogic& ime) {
     }
     puts("\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4");
 
-    // ── Mode & input ───────────────────────────────────────────────────────
-    const char* input_display = ime.input_bytes() > 0
-        ? ime.input_str()
-        : "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)";  // (按下鍵入)
+    // ── Mode & input: show [matched_prefix]remaining split ─────────────────
+    // If there's a matched prefix, bracket it so the user can see which part
+    // of the key buffer is "resolved" vs which keys still follow.
+    char input_display[320] = {};
+    if (ime.input_bytes() == 0) {
+        // (按下鍵入)
+        snprintf(input_display, sizeof(input_display), "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)");
+    } else {
+        int split = ime.matched_prefix_display_bytes();
+        const char* s = ime.input_str();
+        int total = ime.input_bytes();
+        if (split > 0 && split < total) {
+            // [matched_prefix_phonemes]remaining_phonemes
+            snprintf(input_display, sizeof(input_display), "[%.*s]%s",
+                     split, s, s + split);
+        } else if (split > 0) {
+            // All keys matched: [full_phonemes]
+            snprintf(input_display, sizeof(input_display), "[%s]", s);
+        } else {
+            // No match at all
+            snprintf(input_display, sizeof(input_display), "%s", s);
+        }
+    }
     printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-40s \xe2\x94\x82\n",
            ime.mode_indicator(), input_display);
 
-    // ── Candidates — merged interleaved view + navigation highlight ──────
-    // When both ZH and EN have results, show merged view (ZH[0], EN[0], ...).
-    // When only one group has results, show that group's label.
-    // cand_sel_: group 0=ZH, 1=EN; index = highlighted candidate (for OK/SPACE).
-    int cg = ime.candidate_group();
-    int ci = ime.candidate_index();
+    // ── Candidates — merged list with merged_sel_ highlight ──────────────
+    // candidate_index() returns merged_sel_.
+    // LEFT/RIGHT/UP/DOWN all navigate within the merged list.
+    int ci = ime.candidate_index();  // merged_sel_
 
     if (ime.mode() == mie::InputMode::Smart) {
         int zh_n = ime.zh_candidate_count();
         int en_n = ime.en_candidate_count();
+        int mc   = ime.merged_candidate_count();
 
-        if (zh_n > 0 && en_n > 0) {
-            // Mixed: show interleaved merged view (capped at kNumCircles entries).
-            char mix_buf[512] = {}; int pos = 0;
-            int mc = ime.merged_candidate_count();
-            if (mc > kNumCircles) mc = kNumCircles;  // kCircle[] has only kNumCircles entries
-            LOG("render: mixed view mc=%d (raw=%d)\n", mc, ime.merged_candidate_count());
-            for (int i = 0; i < mc && pos < 460; ++i) {
+        if (mc > 0) {
+            // Unified merged view: ZH and EN interleaved, sorted by frequency.
+            // Highlight the slot at merged_sel_ (ci) with a ">" prefix.
+            char cand_buf[512] = {}; int pos = 0;
+            int show = (mc < kNumCircles) ? mc : kNumCircles;
+            LOG("render: unified mc=%d show=%d ci=%d zh=%d en=%d\n",
+                mc, show, ci, zh_n, en_n);
+            for (int i = 0; i < show && pos < 460; ++i) {
                 int   lang = ime.merged_candidate_lang(i);
-                // highlight: check if this merged slot is the currently selected one
-                bool  sel  = (lang == cg) &&
-                             (i / 2 == ci);   // approximate: slot i maps to zh[i/2] or en[i/2]
-                const char* tag = lang == 0 ? "\xe4\xb8\xad" : "En";  // 中 / En
-                int n = snprintf(mix_buf + pos, 512 - pos, "%s%s%s(%s) ",
+                const char* tag = (lang == 0) ? "\xe4\xb8\xad" : "En";  // 中 / En
+                bool  sel  = (i == ci);
+                int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
+                                 "%s%s%s(%s) ",
                                  sel ? ">" : " ", kCircle[i],
                                  ime.merged_candidate(i).word, tag);
                 if (n > 0) pos += n;
             }
-            // Active group indicator for navigation reference
-            const char* zh_act = (cg == 0) ? "\xe2\x96\xb6" : " ";
-            const char* en_act = (cg == 1) ? "\xe2\x96\xb6" : " ";
-            printf("\xe2\x94\x82 %s\xe2\x86\x90\xe4\xb8\xad  %s\xe2\x86\x92" "En  [\xe6\xb7\xb7\xe5\x90\x88] %-32s \xe2\x94\x82\n",  // ←中  →En  [混合]
-                   zh_act, en_act, mix_buf);
-        } else if (zh_n > 0) {
-            // ZH only
-            char zh_buf[256] = {}; int zh_pos = 0;
-            for (int i = 0; i < zh_n && zh_pos < 200; ++i) {
-                const char* sel = (cg == 0 && i == ci) ? ">" : " ";
-                int n = snprintf(zh_buf + zh_pos, 256 - zh_pos, "%s%s%s ",
-                                 sel, kCircle[i], ime.zh_candidate(i).word);
-                if (n > 0) zh_pos += n;
-            }
-            printf("\xe2\x94\x82 \xe2\x96\xb6[\xe4\xb8\xad\xe6\x96\x87] %-46s \xe2\x94\x82\n", zh_buf);  // ▶[中文]
-        } else if (en_n > 0) {
-            // EN only
-            char en_buf[256] = {}; int en_pos = 0;
-            for (int i = 0; i < en_n && en_pos < 200; ++i) {
-                const char* sel = (cg == 1 && i == ci) ? ">" : " ";
-                int n = snprintf(en_buf + en_pos, 256 - en_pos, "%s%s%s ",
-                                 sel, kCircle[i], ime.en_candidate(i).word);
-                if (n > 0) en_pos += n;
-            }
-            printf("\xe2\x94\x82 \xe2\x96\xb6[English] %-46s \xe2\x94\x82\n", en_buf);  // ▶[English]
+            // Label varies by what's present
+            const char* lbl = (zh_n > 0 && en_n > 0)
+                              ? "[\xe6\xb7\xb7\xe5\x90\x88]"   // [混合]
+                              : (zh_n > 0 ? "[\xe4\xb8\xad\xe6\x96\x87]"  // [中文]
+                                          : "[English]");
+            printf("\xe2\x94\x82 %s %-46s \xe2\x94\x82\n", lbl, cand_buf);
         } else if (ime.input_bytes() > 0) {
             printf("\xe2\x94\x82   (\xe7\x84\xa1\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97) %-46s \xe2\x94\x82\n", "");  // (無候選字)
         } else {
@@ -188,8 +188,8 @@ static void render(const mie::ImeLogic& ime) {
            g_committed.empty() ? "" : g_committed.c_str());
 
     puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
-    // ESC離開 | BS=刪除 | `=MODE切換(自動提交) | ↑↓=移動候選字 | ←ZH/EN→ | Spc=最佳/↩=選中
-    puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  BS=\xe5\x88\xaa\xe9\x99\xa4  |  `=MODE(\xe8\x87\xaa\xe5\x8b\x95\xe6\x8f\x90\xe4\xba\xa4)  |  \xe2\x86\x91\xe2\x86\x93=\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97  |  \xe2\x86\x90ZH/EN\xe2\x86\x92  |  Spc/\xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d");
+    // ESC離開 | BS=刪除 | `=MODE切換 | ←↑↓→=選候選字 | Spc=快選第一/↩=確認選中
+    puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  BS=\xe5\x88\xaa\xe9\x99\xa4  |  `=MODE  |  \xe2\x86\x90\xe2\x86\x91\xe2\x86\x93\xe2\x86\x92=\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97  |  Spc=\xe5\xbf\xab\xe9\x81\xb8  |  \xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d");
     fflush(stdout);
 }
 

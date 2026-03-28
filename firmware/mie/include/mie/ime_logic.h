@@ -77,10 +77,23 @@ public:
     // Clear all input state.
     void clear_input();
 
-    // Current candidate group (0 = ZH, 1 = EN) and index within that group.
-    // Updated by UP/DOWN/LEFT/RIGHT navigation in Smart Mode.
-    int candidate_group() const { return cand_sel_.group; }
-    int candidate_index() const { return cand_sel_.index; }
+    // Current candidate group (0 = ZH, 1 = EN) derived from the highlighted
+    // position in the merged candidate list.
+    // candidate_index() returns the merged-list position (merged_sel_).
+    // Updated by LEFT/RIGHT/UP/DOWN navigation in Smart Mode.
+    int candidate_group() const {
+        return (merged_count_ > 0)
+            ? merged_[(merged_sel_ < merged_count_ ? merged_sel_ : 0)].lang : 0;
+    }
+    int candidate_index() const { return merged_sel_; }
+
+    // How many bytes of key_seq_buf_ were matched by the last run_search().
+    // Zero when no candidates found.
+    int matched_prefix_len() const { return matched_prefix_len_; }
+
+    // How many bytes of input_str() correspond to the matched prefix.
+    // Use this to split the display into "matched | remaining" in the UI.
+    int matched_prefix_display_bytes() const;
 
     // Short mode label for UI display: "[智慧]" or "[直接]".
     const char* mode_indicator() const;
@@ -98,14 +111,22 @@ private:
     void commit_sym_pending();
 
     // ── Search & commit ───────────────────────────────────────────────────
-    // Search both dictionaries using key_seq_buf_; update candidate arrays.
+    // Greedy-prefix search: tries key_seq_buf_[0..len] for decreasing len
+    // until candidates are found.  Sets matched_prefix_len_ on success.
     void run_search();
     // Rebuild merged_[] from zh_candidates_ + en_candidates_ (interleaved).
     void build_merged();
 
-    // Commit utf8: invoke callback, update context_lang_, clear input.
-    // lang_hint: 0=ZH, 1=EN, 2=neutral (Direct/symbol, no lang update).
+    // Full-clear commit (used by sym key, mode switch, Direct Mode).
+    // lang_hint: 0=ZH, 1=EN, 2=neutral.
     void do_commit(const char* utf8, int lang_hint = 2);
+
+    // Partial commit: fire callback for utf8, then remove the first
+    // prefix_len bytes from key_seq_buf_ and re-run search on the rest.
+    void do_commit_partial(const char* utf8, int lang_hint, int prefix_len);
+
+    // Rebuild input_buf_ (display phonemes) from key_seq_buf_.
+    void rebuild_input_buf();
 
     // ── Display buffer helpers ─────────────────────────────────────────────
     void append_to_display(const char* utf8);
@@ -174,12 +195,12 @@ private:
     } sym_pending_;
 
     // Candidate navigation state (Smart Mode).
-    // group: 0 = ZH, 1 = EN.  index: highlighted candidate within the group.
-    // Reset to {0, 0} on every run_search(), do_commit(), and clear_input().
-    struct CandidateSelection {
-        int group;
-        int index;
-    } cand_sel_;
+    // merged_sel_: highlighted position in merged_[] list (0..merged_count_-1).
+    // Reset to 0 on every run_search(), do_commit*(), and clear_input().
+    int merged_sel_;
+
+    // How many bytes of key_seq_buf_ were matched by the last run_search() call.
+    int matched_prefix_len_;
 
     // Commit callback.
     CommitCallback commit_cb_;
