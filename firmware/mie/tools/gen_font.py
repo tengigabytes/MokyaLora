@@ -79,7 +79,8 @@ FLAG_RLE    = 0x01
 DEFAULT_UNIFONT = "unifont.ttf"
 DEFAULT_OUT     = Path(__file__).parent.parent / "data" / "mie_unifont_16.bin"
 
-# Unicode ranges — must match kGlyphRanges in mie_gui.cpp and LVGL driver.
+# Unicode ranges — used for the large (PC) font variant.
+# Must match the LVGL driver's expected coverage.
 CODEPOINT_RANGES = [
     (0x0020, 0x007F),   # ASCII (printable)
     (0x00A0, 0x00FF),   # Latin-1 Supplement (×÷ etc.)
@@ -89,6 +90,17 @@ CODEPOINT_RANGES = [
     (0x4E00, 0x9FFF),   # CJK Unified Ideographs (common traditional Chinese)
 ]
 
+# Mandatory ranges always included in the small (embedded) font variant.
+# These cover UI chrome, Bopomofo, and CJK punctuation regardless of charlist.
+MANDATORY_RANGES = [
+    (0x0020, 0x007F),   # ASCII printable
+    (0x2000, 0x206F),   # General Punctuation (— … etc.)
+    (0x3000, 0x303F),   # CJK Symbols & Punctuation
+    (0x3100, 0x312F),   # Bopomofo
+    (0x31A0, 0x31BF),   # Bopomofo Extended
+    (0xFF00, 0xFFEF),   # Halfwidth/Fullwidth Forms
+]
+
 # ── Codepoint enumeration ─────────────────────────────────────────────────
 
 def all_codepoints() -> list:
@@ -96,6 +108,31 @@ def all_codepoints() -> list:
     for lo, hi in CODEPOINT_RANGES:
         cps.extend(range(lo, hi + 1))
     return cps
+
+
+def load_charlist(path: str) -> set:
+    """Read a charlist file (one UTF-8 character per line), return set of codepoints."""
+    cps: set = set()
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            stripped = line.rstrip('\n')
+            if stripped:
+                cps.add(ord(stripped[0]))   # take first codepoint only
+    return cps
+
+
+def small_codepoints(charlist_path: str) -> list:
+    """Return sorted codepoint list for the small font variant.
+
+    = mandatory ranges ∪ all codepoints from the charlist file.
+    Charlist codepoints outside mandatory ranges (e.g. CJK Extension A) are
+    included automatically — this ensures full dict coverage.
+    """
+    mandatory: set = set()
+    for lo, hi in MANDATORY_RANGES:
+        mandatory.update(range(lo, hi + 1))
+    extra = load_charlist(charlist_path)
+    return sorted(mandatory | extra)
 
 # ── fonttools subsetting ──────────────────────────────────────────────────
 
@@ -196,10 +233,18 @@ def rle_encode(data: bytes) -> bytes:
 
 # ── MIEF binary builder ───────────────────────────────────────────────────
 
-def build_mief(pil_font, codepoints: list, use_rle: bool) -> bytes:
+def build_mief(pil_font, codepoints: list, use_rle: bool,
+               charlist_cps: set = None) -> bytes:
+    """Build MIEF binary.
+
+    charlist_cps: optional set of codepoints from the charlist file.
+    When provided, any charlist codepoint that renders as an empty glyph
+    is counted and reported as a warning (potential font coverage gap).
+    """
     index      = []        # (codepoint, data_offset)
     glyph_data = bytearray()
     total      = len(codepoints)
+    no_glyph_count = 0
 
     print(f"Rendering {total:,} glyphs ...", flush=True)
     for i, cp in enumerate(codepoints):
@@ -212,6 +257,9 @@ def build_mief(pil_font, codepoints: list, use_rle: bool) -> bytes:
             continue
 
         adv_w, ofs_x, ofs_y, box_w, box_h, bitmap = render_glyph(pil_font, ch)
+
+        if charlist_cps and cp in charlist_cps and box_w == 0 and box_h == 0:
+            no_glyph_count += 1
 
         bmp_out = rle_encode(bitmap) if (use_rle and bitmap) else bitmap
 
@@ -226,6 +274,9 @@ def build_mief(pil_font, codepoints: list, use_rle: bool) -> bytes:
         glyph_data += bmp_out
 
     print(f"  {total:,} / {total:,}  done.")
+    if no_glyph_count:
+        print(f"WARNING: {no_glyph_count:,} charlist codepoints had no Unifont glyph "
+              f"(will render as blank)", file=sys.stderr)
 
     flags      = FLAG_RLE if use_rle else 0
     num_glyphs = len(index)
@@ -244,11 +295,14 @@ def build_mief(pil_font, codepoints: list, use_rle: bool) -> bytes:
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description="Compile GNU Unifont TTF to MIEF binary font for MokyaLora Core 1.")
+        description="Compile GNU Unifont OTF/TTF to MIEF binary font for MokyaLora Core 1.")
     p.add_argument('--unifont',   default=DEFAULT_UNIFONT,
-                   help=f'GNU Unifont .ttf path  [default: {DEFAULT_UNIFONT}]')
+                   help=f'GNU Unifont .otf/.ttf path  [default: {DEFAULT_UNIFONT}]')
     p.add_argument('--out',       default=str(DEFAULT_OUT),
                    help=f'Output .bin path  [default: {DEFAULT_OUT}]')
+    p.add_argument('--charlist',  metavar='TXT', default=None,
+                   help='Charlist file (one UTF-8 char per line) for small font variant. '
+                        'When given, only mandatory ranges + charlist codepoints are rendered.')
     p.add_argument('--rle',       action='store_true',
                    help='Enable per-glyph RLE compression')
     p.add_argument('--no-subset', action='store_true',
@@ -262,8 +316,17 @@ def main():
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    codepoints = all_codepoints()
-    print(f"Codepoint ranges : {len(CODEPOINT_RANGES)}")
+    # Choose codepoint set based on --charlist flag.
+    charlist_cps: set = None
+    if args.charlist:
+        charlist_cps = load_charlist(args.charlist)
+        codepoints   = small_codepoints(args.charlist)
+        variant      = "small (charlist-subset)"
+    else:
+        codepoints = all_codepoints()
+        variant    = "large (full ranges)"
+
+    print(f"Font variant     : {variant}")
     print(f"Total codepoints : {len(codepoints):,}")
     print(f"RLE compression  : {'on' if args.rle else 'off'}")
     print()
@@ -272,12 +335,12 @@ def main():
         print(f"Subsetting {args.unifont} via fonttools ...")
         ttf_bytes = subset_ttf_bytes(args.unifont, codepoints)
         pil_font  = ImageFont.truetype(io.BytesIO(ttf_bytes), PX_SIZE)
-        print(f"  Subsetted TTF : {len(ttf_bytes):,} bytes")
+        print(f"  Subsetted font : {len(ttf_bytes):,} bytes")
     else:
         print(f"Loading {args.unifont} (no subset) ...")
         pil_font = ImageFont.truetype(args.unifont, PX_SIZE)
 
-    mief = build_mief(pil_font, codepoints, use_rle=args.rle)
+    mief = build_mief(pil_font, codepoints, use_rle=args.rle, charlist_cps=charlist_cps)
     out_path.write_bytes(mief)
 
     print()

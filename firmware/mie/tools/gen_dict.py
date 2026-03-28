@@ -221,33 +221,31 @@ def parse_reading(reading: str) -> list:
         phonemes.extend(parse_syllable(syl.strip()))
     return phonemes
 
-# ── libchewing tsi.src loader ─────────────────────────────────────────────
+# ── libchewing tsi.csv loader ─────────────────────────────────────────────
 
 def load_libchewing(path: str) -> list:
     """
-    Parse libchewing tsi.src (tab-separated: word \\t reading \\t [frequency]).
+    Parse libchewing tsi.csv (comma-separated: word, freq, reading).
+
+    tsi.csv column order: word, freq (0 or 1), reading
+    All entries are treated as freq=1 (binary freq in tsi.csv is not useful).
 
     Returns list of (keyseq: bytes, word: str, freq: int).
     Lines starting with '#' are treated as comments.
     """
     entries = []
     skipped = 0
-    with open(path, encoding='utf-8', errors='replace') as f:
-        for lineno, raw in enumerate(f, 1):
-            line = raw.strip()
-            if not line or line.startswith('#'):
+    with open(path, newline='', encoding='utf-8', errors='strict') as f:
+        reader = csv.reader(f)
+        for lineno, row in enumerate(reader, 1):
+            if not row or row[0].startswith('#'):
                 continue
-            parts = line.split('\t')
-            if len(parts) < 2:
+            if len(row) < 3:
                 continue
-            word    = parts[0].strip()
-            reading = parts[1].strip()
-            freq    = 1
-            if len(parts) >= 3:
-                try:
-                    freq = max(1, int(parts[2].strip()))
-                except ValueError:
-                    pass
+            word    = row[0].strip()
+            # tsi.csv columns: word, freq (binary 0/1), reading
+            reading = row[2].strip()
+            freq    = 1  # treat all entries equally; tsi.csv freq is binary
 
             phonemes = parse_reading(reading)
             keyseq   = phonemes_to_keyseq(phonemes)
@@ -330,12 +328,26 @@ def load_en_wordlist(path: str) -> list:
 
 # ── MIED binary builder ───────────────────────────────────────────────────
 
+_OVERSIZED_WORDS = 0  # module-level counter reset in build_mied
+
 def build_value_record(word_list: list) -> bytes:
-    """Serialise [(word, freq)] into a ValueRecord blob (freq-descending)."""
+    """Serialise [(word, freq)] into a ValueRecord blob (freq-descending).
+
+    Words whose UTF-8 encoding exceeds 30 bytes are silently skipped
+    (kCandidateMaxBytes=32 in TrieSearcher; runtime check is >=32, so max safe=31;
+    we cap at 30 to leave room for the null terminator the runtime copies).
+    """
+    global _OVERSIZED_WORDS
     sorted_words = sorted(word_list, key=lambda x: -x[1])
-    data = struct.pack('<H', len(sorted_words))
+    valid = []
     for word, freq in sorted_words:
         wb = word.encode('utf-8')
+        if len(wb) >= 31:
+            _OVERSIZED_WORDS += 1
+            continue
+        valid.append((wb, freq))
+    data = struct.pack('<H', len(valid))
+    for wb, freq in valid:
         data += struct.pack('<HB', min(freq, 0xFFFF), len(wb)) + wb
     return data
 
@@ -344,8 +356,13 @@ def build_mied(entries: list) -> tuple:
     """
     Build MIED binary from a list of (keyseq: bytes, word: str, freq: int).
 
-    Returns (dat_bytes, val_bytes, stats_dict).
+    Returns (dat_bytes, val_bytes, stats_dict, key_to_words).
+    key_to_words is the deduplicated dict (keyseq → [(word, freq)]) needed by
+    callers that want to emit a charlist.
     """
+    global _OVERSIZED_WORDS
+    _OVERSIZED_WORDS = 0
+
     # Aggregate: keyseq → [(word, freq)]
     key_to_words = defaultdict(list)
     for keyseq, word, freq in entries:
@@ -383,26 +400,36 @@ def build_mied(entries: list) -> tuple:
 
     dat_bytes = header + bytes(index) + bytes(keys_section)
 
+    if _OVERSIZED_WORDS:
+        print(f"  WARNING: {_OVERSIZED_WORDS:,} words skipped (UTF-8 length >= 31 bytes)",
+              file=sys.stderr)
+
     stats = {
         'key_count':   key_count,
         'entry_count': len(entries),
         'dat_bytes':   len(dat_bytes),
         'val_bytes':   len(val_data),
     }
-    return bytes(dat_bytes), bytes(val_data), stats
+    return bytes(dat_bytes), bytes(val_data), stats, key_to_words
 
 # ── Argument parsing ──────────────────────────────────────────────────────
 
 def parse_args():
     p = argparse.ArgumentParser(
         description='Compile Nokia-style key-sequence dictionary for MokyaLora MIE.')
-    p.add_argument('--libchewing',  metavar='TSI',
-                   help='libchewing-data tsi.src path')
-    p.add_argument('--moe-csv',     metavar='CSV',
+    p.add_argument('--libchewing',     metavar='TSI',
+                   help='libchewing-data tsi.csv path (comma-separated: word,freq,reading)')
+    p.add_argument('--moe-csv',        metavar='CSV',
                    help='MoE word list CSV path (注音/詞語/頻率 columns, UTF-8 BOM)')
-    p.add_argument('--en-wordlist', metavar='TXT',
+    p.add_argument('--en-wordlist',    metavar='TXT',
                    help='English word list (one word per line, optional TAB freq)')
-    p.add_argument('--output-dir',  default=str(OUTPUT_DIR),
+    p.add_argument('--en-max-words',   metavar='N', type=int, default=0,
+                   help='Limit English word list to first N words before deduplication '
+                        '(0 = no limit, default)')
+    p.add_argument('--emit-charlist',  metavar='PATH',
+                   help='Write unique output characters (one per line) to PATH '
+                        '(small-font charlist; derived from Chinese dict only)')
+    p.add_argument('--output-dir',     default=str(OUTPUT_DIR),
                    help=f'Output directory  [default: {OUTPUT_DIR}]')
     return p.parse_args()
 
@@ -434,23 +461,42 @@ def main():
         print(f'  {len(loaded):,} entries')
 
     zh_stats = None
+    zh_key_to_words = None
     if zh_entries:
         print(f'Building Chinese MIED  ({len(zh_entries):,} total entries) ...')
-        dat, val, zh_stats = build_mied(zh_entries)
+        dat, val, zh_stats, zh_key_to_words = build_mied(zh_entries)
         (output_dir / 'dict_dat.bin').write_bytes(dat)
         (output_dir / 'dict_values.bin').write_bytes(val)
         print(f'  dict_dat.bin    : {zh_stats["dat_bytes"]:>9,} bytes  '
               f'({zh_stats["key_count"]:,} unique key sequences)')
         print(f'  dict_values.bin : {zh_stats["val_bytes"]:>9,} bytes')
 
+    # ── Charlist emit (small font variant) ────────────────────────────────
+    if args.emit_charlist and zh_key_to_words:
+        seen: set = set()
+        chars: list = []
+        for ks in sorted(zh_key_to_words.keys()):
+            for word, _ in zh_key_to_words[ks]:
+                for ch in word:          # iterate individual Unicode codepoints
+                    if ch not in seen:
+                        seen.add(ch)
+                        chars.append(ch)
+        charlist_path = Path(args.emit_charlist)
+        charlist_path.parent.mkdir(parents=True, exist_ok=True)
+        charlist_path.write_text('\n'.join(chars) + '\n', encoding='utf-8')
+        print(f'  charlist        : {len(chars):,} unique chars → {charlist_path}')
+
     # ── English dictionary ────────────────────────────────────────────────
     en_stats = None
     if args.en_wordlist:
         print(f'Loading English     {args.en_wordlist} ...')
         en_entries = load_en_wordlist(args.en_wordlist)
+        if args.en_max_words and args.en_max_words > 0:
+            en_entries = en_entries[:args.en_max_words]
+            print(f'  truncated to {args.en_max_words:,} words (--en-max-words)')
         print(f'  {len(en_entries):,} entries')
         print(f'Building English MIED ...')
-        dat, val, en_stats = build_mied(en_entries)
+        dat, val, en_stats, _ = build_mied(en_entries)
         (output_dir / 'en_dat.bin').write_bytes(dat)
         (output_dir / 'en_values.bin').write_bytes(val)
         print(f'  en_dat.bin      : {en_stats["dat_bytes"]:>9,} bytes  '
@@ -462,11 +508,14 @@ def main():
         'format_version': VERSION,
         'key_offset':     KEY_OFFSET,
         'key_encoding':   'key_byte = key_index + 0x21 (printable ASCII, no NULLs)',
+        'variant':        'sm' if args.emit_charlist else 'lg',
         'sources': {
-            'libchewing': args.libchewing,
-            'moe_csv':    args.moe_csv,
+            'libchewing':  args.libchewing,
+            'moe_csv':     args.moe_csv,
             'en_wordlist': args.en_wordlist,
+            'en_max_words': args.en_max_words if args.en_max_words else None,
         },
+        'charlist_path':  args.emit_charlist,
         'chinese': zh_stats,
         'english': en_stats,
         'built_at': datetime.now(timezone.utc).isoformat(),

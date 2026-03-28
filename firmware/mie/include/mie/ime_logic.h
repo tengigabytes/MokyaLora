@@ -70,6 +70,14 @@ public:
     // Clear all input state.
     void clear_input();
 
+    // Current candidate group (0 = ZH, 1 = EN) and index within that group.
+    // Updated by UP/DOWN/LEFT/RIGHT navigation in Smart Mode.
+    int candidate_group() const { return cand_sel_.group; }
+    int candidate_index() const { return cand_sel_.index; }
+
+    // Short mode label for UI display: "[智慧]" or "[直接]".
+    const char* mode_indicator() const;
+
 private:
     // ── Mode handlers ─────────────────────────────────────────────────────
     bool process_smart(const KeyEvent& ev);
@@ -146,6 +154,14 @@ private:
         uint8_t key_col;    // 3 or 4; 0xFF = idle
         int     sym_idx;
     } sym_pending_;
+
+    // Candidate navigation state (Smart Mode).
+    // group: 0 = ZH, 1 = EN.  index: highlighted candidate within the group.
+    // Reset to {0, 0} on every run_search(), do_commit(), and clear_input().
+    struct CandidateSelection {
+        int group;
+        int index;
+    } cand_sel_;
 
     // Commit callback.
     CommitCallback commit_cb_;
