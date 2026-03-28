@@ -178,6 +178,11 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
     input_buf_[0]   = '\0';
     direct_      = { 0xFF, 0xFF, 0 };
     sym_pending_ = { 0xFF, 0 };
+    cand_sel_    = { 0, 0 };
+}
+
+const char* ImeLogic::mode_indicator() const {
+    return mode_ == InputMode::Smart ? "[智慧]" : "[直接]";
 }
 
 void ImeLogic::set_commit_callback(CommitCallback cb, void* ctx) {
@@ -230,6 +235,7 @@ void ImeLogic::clear_input() {
     en_cand_count_  = 0;
     direct_         = { 0xFF, 0xFF, 0 };
     sym_pending_    = { 0xFF, 0 };
+    cand_sel_       = { 0, 0 };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -239,6 +245,7 @@ void ImeLogic::clear_input() {
 void ImeLogic::run_search() {
     zh_cand_count_ = 0;
     en_cand_count_ = 0;
+    cand_sel_      = { 0, 0 };
     if (key_seq_len_ == 0) return;
 
     if (zh_searcher_.is_loaded())
@@ -265,6 +272,7 @@ void ImeLogic::do_commit(const char* utf8, int lang_hint) {
     input_buf_[0]   = '\0';
     zh_cand_count_  = 0;
     en_cand_count_  = 0;
+    cand_sel_       = { 0, 0 };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -317,8 +325,37 @@ bool ImeLogic::process_sym_key(uint8_t col) {
 bool ImeLogic::process_key(const KeyEvent& ev) {
     if (!ev.pressed) return false;
 
-    // MODE key (4,0): toggle Smart ↔ Direct, clear all state.
+    // MODE key (4,0): toggle Smart ↔ Direct.
+    // Commit any pending input first so no text is lost on switch.
     if (ev.row == 4 && ev.col == 0) {
+        if (mode_ == InputMode::Smart) {
+            if (sym_pending_.key_col != 0xFF) {
+                commit_sym_pending();
+            } else if (key_seq_len_ > 0) {
+                int zi = cand_sel_.index;
+                int ei = cand_sel_.index;
+                if (cand_sel_.group == 0 && zh_cand_count_ > 0)
+                    do_commit(zh_candidates_[zi < zh_cand_count_ ? zi : 0].word, 0);
+                else if (cand_sel_.group == 1 && en_cand_count_ > 0)
+                    do_commit(en_candidates_[ei < en_cand_count_ ? ei : 0].word, 1);
+                else if (zh_cand_count_ > 0)
+                    do_commit(zh_candidates_[0].word, 0);
+                else if (en_cand_count_ > 0)
+                    do_commit(en_candidates_[0].word, 1);
+                else
+                    do_commit(input_buf_, 2);
+            }
+        } else {
+            // Direct Mode → Smart: commit any pending Direct character first.
+            if (sym_pending_.key_col != 0xFF) {
+                commit_sym_pending();
+            } else if (direct_.row != 0xFF) {
+                const char* lbl = key_to_direct_label(direct_.row, direct_.col, direct_.label_idx);
+                direct_ = { 0xFF, 0xFF, 0 };
+                input_len_ = 0; input_buf_[0] = '\0';
+                if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
+            }
+        }
         mode_ = (mode_ == InputMode::Smart) ? InputMode::Direct : InputMode::Smart;
         clear_input();
         return true;
@@ -372,48 +409,101 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return true;
     }
 
-    // OK (5,4): same as SPACE.
+    // OK (5,4): commit currently selected candidate (respects cand_sel_).
     if (ev.row == 5 && ev.col == 4) {
         if (key_seq_len_ == 0) return false;
-        if (zh_cand_count_ > 0)      do_commit(zh_candidates_[0].word, 0);
-        else if (en_cand_count_ > 0) do_commit(en_candidates_[0].word, 1);
-        else                         do_commit(input_buf_, 2);
+        if (cand_sel_.group == 0 && zh_cand_count_ > 0) {
+            int i = cand_sel_.index < zh_cand_count_ ? cand_sel_.index : 0;
+            do_commit(zh_candidates_[i].word, 0);
+        } else if (cand_sel_.group == 1 && en_cand_count_ > 0) {
+            int i = cand_sel_.index < en_cand_count_ ? cand_sel_.index : 0;
+            do_commit(en_candidates_[i].word, 1);
+        } else if (zh_cand_count_ > 0) {
+            do_commit(zh_candidates_[0].word, 0);
+        } else if (en_cand_count_ > 0) {
+            do_commit(en_candidates_[0].word, 1);
+        } else {
+            do_commit(input_buf_, 2);
+        }
         return true;
     }
 
-    // Number keys (row 0, col 0-4): select nth Chinese candidate (1-5).
-    // Pressed when there are active candidates.
-    if (ev.row == 0 && ev.col <= 4 && zh_cand_count_ > 0) {
-        int idx = (int)ev.col;  // col 0 = candidate 1, col 1 = candidate 2, ...
-        if (idx < zh_cand_count_) {
-            do_commit(zh_candidates_[idx].word, 0);
+    // UP (5,0): previous candidate within current group.
+    if (ev.row == 5 && ev.col == 0) {
+        int count = (cand_sel_.group == 0) ? zh_cand_count_ : en_cand_count_;
+        if (count > 0) {
+            cand_sel_.index = (cand_sel_.index - 1 + count) % count;
             return true;
         }
+        return false;
     }
 
-    // LEFT/RIGHT (5,2)/(5,3): if English candidates exist, select en candidate.
-    // LEFT selects en_candidate[0], RIGHT selects en_candidate[1] etc.
-    // (Simplified: LEFT = first en candidate, RIGHT = second en candidate)
-    if (ev.row == 5 && ev.col == 2 && en_cand_count_ > 0) {
-        do_commit(en_candidates_[0].word, 1);
-        return true;
+    // DOWN (5,1): next candidate within current group.
+    if (ev.row == 5 && ev.col == 1) {
+        int count = (cand_sel_.group == 0) ? zh_cand_count_ : en_cand_count_;
+        if (count > 0) {
+            cand_sel_.index = (cand_sel_.index + 1) % count;
+            return true;
+        }
+        return false;
     }
-    if (ev.row == 5 && ev.col == 3 && en_cand_count_ > 1) {
-        do_commit(en_candidates_[1].word, 1);
-        return true;
+
+    // LEFT (5,2): switch to ZH candidate group.
+    if (ev.row == 5 && ev.col == 2) {
+        if (zh_cand_count_ > 0) { cand_sel_ = { 0, 0 }; return true; }
+        return false;
+    }
+
+    // RIGHT (5,3): switch to EN candidate group.
+    if (ev.row == 5 && ev.col == 3) {
+        if (en_cand_count_ > 0) { cand_sel_ = { 1, 0 }; return true; }
+        return false;
     }
 
     // Input keys (rows 0-3, col 0-4): append to key sequence.
+    // Zero-match auto-commit: if adding the new key yields no candidates and the
+    // existing sequence had at least one key, commit the current best candidate
+    // and restart with the new key (T9-style word break).
     if (ev.row <= 3 && ev.col <= 4) {
         if (key_seq_len_ < kMaxKeySeq) {
-            uint8_t key_index = ev.row * 5 + ev.col;
-            key_seq_buf_[key_seq_len_++] = (char)(key_index + 0x21);
+            uint8_t     key_index = ev.row * 5 + ev.col;
+            char        new_byte  = (char)(key_index + 0x21);
+            const char* ph        = key_to_phoneme(ev.row, ev.col);
+
+            key_seq_buf_[key_seq_len_++] = new_byte;
             key_seq_buf_[key_seq_len_]   = '\0';
+            if (ph) append_to_display(ph);
+            run_search();
+
+            if (zh_cand_count_ == 0 && en_cand_count_ == 0 && key_seq_len_ >= 2) {
+                // Roll back the new key.
+                --key_seq_len_;
+                key_seq_buf_[key_seq_len_] = '\0';
+                backspace_display();
+                run_search();  // restore previous candidates
+
+                // Commit best previous candidate.
+                if (cand_sel_.group == 0 && zh_cand_count_ > 0) {
+                    int i = cand_sel_.index < zh_cand_count_ ? cand_sel_.index : 0;
+                    do_commit(zh_candidates_[i].word, 0);
+                } else if (cand_sel_.group == 1 && en_cand_count_ > 0) {
+                    int i = cand_sel_.index < en_cand_count_ ? cand_sel_.index : 0;
+                    do_commit(en_candidates_[i].word, 1);
+                } else if (zh_cand_count_ > 0) {
+                    do_commit(zh_candidates_[0].word, 0);
+                } else if (en_cand_count_ > 0) {
+                    do_commit(en_candidates_[0].word, 1);
+                } else {
+                    do_commit(input_buf_, 2);
+                }
+
+                // Start fresh with the new key.
+                key_seq_buf_[key_seq_len_++] = new_byte;
+                key_seq_buf_[key_seq_len_]   = '\0';
+                if (ph) append_to_display(ph);
+                run_search();
+            }
         }
-        // Append primary phoneme to display buffer.
-        const char* ph = key_to_phoneme(ev.row, ev.col);
-        if (ph) append_to_display(ph);
-        run_search();
         return true;
     }
 

@@ -56,13 +56,6 @@ static const KeyLabel kLabels[] = {
 };
 // clang-format on
 
-static const char* mode_name(mie::InputMode m) {
-    switch (m) {
-        case mie::InputMode::Smart:  return "\xe6\x99\xba\xe6\x85\xa7";  // 智慧
-        case mie::InputMode::Direct: return "\xe7\x9b\xb4\xe6\x8e\xa5";  // 直接
-    }
-    return "?";
-}
 
 // ── Committed output buffer ───────────────────────────────────────────────
 
@@ -102,15 +95,22 @@ static void render(const mie::ImeLogic& ime) {
         ? ime.input_str()
         : "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)";  // (按下鍵入)
     printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-40s \xe2\x94\x82\n",
-           mode_name(ime.mode()), input_display);
+           ime.mode_indicator(), input_display);
 
-    // ── Candidates — grouped ──────────────────────────────────────────────
+    // ── Candidates — grouped, with navigation highlight ───────────────────
+    // cand_sel_: group 0=ZH, 1=EN; index = highlighted candidate.
+    // Active group marker: "▶" (U+25B6, UTF-8: E2 96 B6).
+    // Selected candidate marker: ">" prefix.
+    int cg = ime.candidate_group();
+    int ci = ime.candidate_index();
+
     // Chinese group
     char zh_buf[256] = {}; int zh_pos = 0;
     if (ime.zh_candidate_count() > 0) {
         for (int i = 0; i < ime.zh_candidate_count() && zh_pos < 200; ++i) {
-            int n = snprintf(zh_buf + zh_pos, 256 - zh_pos, "%s%s ",
-                             kCircle[i], ime.zh_candidate(i).word);
+            const char* sel = (cg == 0 && i == ci) ? ">" : " ";
+            int n = snprintf(zh_buf + zh_pos, 256 - zh_pos, "%s%s%s ",
+                             sel, kCircle[i], ime.zh_candidate(i).word);
             if (n > 0) zh_pos += n;
         }
     } else if (ime.input_bytes() > 0 && ime.mode() == mie::InputMode::Smart) {
@@ -121,15 +121,19 @@ static void render(const mie::ImeLogic& ime) {
     char en_buf[256] = {}; int en_pos = 0;
     if (ime.en_candidate_count() > 0) {
         for (int i = 0; i < ime.en_candidate_count() && en_pos < 200; ++i) {
-            int n = snprintf(en_buf + en_pos, 256 - en_pos, "%s%s ",
-                             kCircle[i], ime.en_candidate(i).word);
+            const char* sel = (cg == 1 && i == ci) ? ">" : " ";
+            int n = snprintf(en_buf + en_pos, 256 - en_pos, "%s%s%s ",
+                             sel, kCircle[i], ime.en_candidate(i).word);
             if (n > 0) en_pos += n;
         }
     }
 
     if (ime.mode() == mie::InputMode::Smart) {
-        printf("\xe2\x94\x82 [\xe4\xb8\xad\xe6\x96\x87] %-45s \xe2\x94\x82\n", zh_buf);  // [中文]
-        printf("\xe2\x94\x82 [English] %-44s \xe2\x94\x82\n", en_buf[0] ? en_buf : "(none)");
+        // Active group indicator: "▶" before the active group label.
+        const char* zh_act = (cg == 0) ? "\xe2\x96\xb6" : " ";
+        const char* en_act = (cg == 1) ? "\xe2\x96\xb6" : " ";
+        printf("\xe2\x94\x82 %s[\xe4\xb8\xad\xe6\x96\x87] %-42s \xe2\x94\x82\n", zh_act, zh_buf);  // [中文]
+        printf("\xe2\x94\x82 %s[English] %-42s \xe2\x94\x82\n", en_act, en_buf[0] ? en_buf : "(none)");
     } else {
         printf("\xe2\x94\x82 \xe7\x9b\xb4\xe6\x8e\xa5\xe8\xbc\xb8\xe5\x85\xa5: %-48s \xe2\x94\x82\n",  // 直接輸入:
                ime.input_bytes() > 0 ? ime.input_str() : "");
@@ -140,8 +144,8 @@ static void render(const mie::ImeLogic& ime) {
            g_committed.empty() ? "" : g_committed.c_str());
 
     puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
-    puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  BS=\xe5\x88\xaa\xe9\x99\xa4  |  `=MODE  |  ,/. =\xe6\xa8\x99\xe9\xbb\x9e  |  Spc/\xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d");
-    // ESC離開 | BS=刪除 | `=MODE | ,/. =標點 | Spc/↩=確認
+    // ESC離開 | BS=刪除 | `=MODE切換(自動提交) | ↑↓=移動候選字 | ←ZH/EN→ | Spc=最佳/↩=選中
+    puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  BS=\xe5\x88\xaa\xe9\x99\xa4  |  `=MODE(\xe8\x87\xaa\xe5\x8b\x95\xe6\x8f\x90\xe4\xba\xa4)  |  \xe2\x86\x91\xe2\x86\x93=\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97  |  \xe2\x86\x90ZH/EN\xe2\x86\x92  |  Spc/\xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d");
     fflush(stdout);
 }
 
