@@ -584,6 +584,16 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return true;
     }
 
+    // TAB (4,1): advance to the start of the next candidate page.
+    if (ev.row == 4 && ev.col == 1) {
+        if (merged_count_ > 0) {
+            int next = (cand_page() + 1) * kCandPageSize;
+            merged_sel_ = (next >= merged_count_) ? 0 : next;
+            return true;
+        }
+        return false;
+    }
+
     // UP (5,0): previous candidate in merged list (wraps).
     if (ev.row == 5 && ev.col == 0) {
         if (merged_count_ > 0) {

@@ -215,24 +215,33 @@ static void render(const mie::ImeLogic& ime) {
     printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-40s \xe2\x94\x82\n",
            ime.mode_indicator(), input_display);
 
-    // ── Candidates — merged list with merged_sel_ highlight ──────────────
-    // candidate_index() returns merged_sel_.
-    // LEFT/RIGHT/UP/DOWN all navigate within the merged list.
-    int ci = ime.candidate_index();  // merged_sel_
-
+    // ── Candidates — paged merged list ───────────────────────────────────
+    // Shows kCandPageSize candidates per page. Tab advances to the next page.
+    // LEFT/RIGHT/UP/DOWN navigate globally; page indicator shown when >1 page.
     if (ime.mode() == mie::InputMode::SmartZh || ime.mode() == mie::InputMode::SmartEn) {
         int mc = ime.merged_candidate_count();
 
         if (mc > 0) {
+            // Show only candidates on the current page.
+            int page     = ime.cand_page();
+            int pg_total = ime.cand_page_count();
+            int pg_count = ime.page_cand_count();  // candidates on this page (≤5)
+            int sel_in_page = ime.page_sel();       // highlight within page
+            LOG("render: mc=%d page=%d/%d pg_count=%d sel=%d\n",
+                mc, page+1, pg_total, pg_count, sel_in_page);
             char cand_buf[512] = {}; int pos = 0;
-            int show = (mc < kNumCircles) ? mc : kNumCircles;
-            LOG("render: mc=%d show=%d ci=%d\n", mc, show, ci);
-            for (int i = 0; i < show && pos < 460; ++i) {
-                bool sel = (i == ci);
+            for (int i = 0; i < pg_count && i < kNumCircles && pos < 460; ++i) {
+                bool sel = (i == sel_in_page);
                 int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
                                  "%s%s%s ",
                                  sel ? ">" : " ", kCircle[i],
-                                 ime.merged_candidate(i).word);
+                                 ime.page_cand(i).word);
+                if (n > 0) pos += n;
+            }
+            // Page indicator appended if more than one page exists.
+            if (pg_total > 1) {
+                int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
+                                 " [%d/%d]", page + 1, pg_total);
                 if (n > 0) pos += n;
             }
             // Label: 中文 for SmartZh, English for SmartEn
@@ -263,7 +272,7 @@ static void render(const mie::ImeLogic& ime) {
     }
 
     puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
-    // ESC離開 | `=MODE(中→EN→ABC→abc→ㄅ) | ←→=候選/游標 | BS/Del=刪除 | Spc=快選 | ↩=確認
+    // ESC離開 | `=MODE(中→EN→ABC→abc→ㄅ) | ←→=候選/游標 | Tab=下頁 | BS/Del=刪除 | Spc=快選 | ↩=確認
     // Note: string split at \x92 boundaries to avoid hex-escape-out-of-range warnings.
     puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  `=MODE("
          "\xe4\xb8\xad\xe2\x86\x92" "EN"
@@ -271,6 +280,7 @@ static void render(const mie::ImeLogic& ime) {
          "\xe2\x86\x92" "abc"
          "\xe2\x86\x92\xe3\x84\x85)  |  \xe2\x86\x90\xe2\x86\x92="
          "\xe5\x80\x99\xe9\x81\xb8/\xe6\xb8\xb8\xe6\xa8\x99  |  "
+         "Tab=\xe4\xb8\x8b\xe9\xa0\x81  |  "   // Tab=下頁
          "BS/Del=\xe5\x88\xaa\xe9\x99\xa4  |  "
          "Spc=\xe5\xbf\xab\xe9\x81\xb8  |  \xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d");
     fflush(stdout);

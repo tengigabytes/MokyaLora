@@ -75,6 +75,36 @@ public:
     const Candidate& merged_candidate(int i)   const { return *merged_[i].cand; }
     int              merged_candidate_lang(int i) const { return merged_[i].lang; }
 
+    // ── Pagination ────────────────────────────────────────────────────────
+    // Candidates are grouped into pages of kCandPageSize.
+    // TAB (row 4, col 1) in Smart Mode advances to the next page.
+    // LEFT/RIGHT/UP/DOWN navigate globally (may cross pages).
+    static constexpr int kCandPageSize = 5;
+
+    // Current page number (0-indexed, derived from merged_sel_).
+    int cand_page() const {
+        return (merged_count_ > 0) ? merged_sel_ / kCandPageSize : 0;
+    }
+    // Total number of pages available.
+    int cand_page_count() const {
+        return (merged_count_ + kCandPageSize - 1) / kCandPageSize;
+    }
+    // Number of candidates on the current page (may be < kCandPageSize on the last page).
+    int page_cand_count() const {
+        int start = cand_page() * kCandPageSize;
+        int rem   = merged_count_ - start;
+        return (rem < kCandPageSize) ? rem : kCandPageSize;
+    }
+    // i-th candidate on the current page (0 ≤ i < page_cand_count()).
+    const Candidate& page_cand(int i) const {
+        return merged_candidate(cand_page() * kCandPageSize + i);
+    }
+    int page_cand_lang(int i) const {
+        return merged_candidate_lang(cand_page() * kCandPageSize + i);
+    }
+    // Selection index within the current page (0..kCandPageSize-1).
+    int page_sel() const { return merged_sel_ % kCandPageSize; }
+
     // Clear all input state.
     void clear_input();
 
@@ -176,7 +206,8 @@ private:
     int  input_len_;
 
     // Candidate arrays (grouped).
-    static constexpr int kMaxCandidates = 5;
+    // Up to kMaxCandidates results fetched per language; paged in groups of kCandPageSize.
+    static constexpr int kMaxCandidates = 30;
     Candidate zh_candidates_[kMaxCandidates];
     int       zh_cand_count_;
     Candidate en_candidates_[kMaxCandidates];
