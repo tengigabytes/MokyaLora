@@ -895,4 +895,133 @@ TEST(MixedPrediction, SpaceCommitsAutoSelectedGroup) {
     EXPECT_EQ(committed, "abc");
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Abbreviated input (聲母猜字) — all-initials and prefix-initials variants
+// ══════════════════════════════════════════════════════════════════════════
+//
+// These tests verify that dictionary entries generated for abbreviated key
+// sequences (as produced by gen_dict.py's abbreviated_keyseqs()) are found
+// correctly by the trie.
+//
+// Key reference (row, col) → key_byte:
+//   (1,1)=ㄍ/ㄐ → 0x27  r/e
+//   (1,0)=ㄆ/ㄊ → 0x26  q/w
+//   (1,3)=ㄧ/ㄛ → 0x29  u/i
+//   (1,4)=ㄟ/ㄣ → 0x2A  o/p
+//   (0,4)=ㄞ/ㄢ → 0x25  9/0
+//   (2,1)=ㄎ/ㄑ → 0x2C  d/f
+//   (3,3)=ㄩ/ㄝ → 0x33  m
+//   (0,1)=ˇ/ˋ  → 0x22  3/4
+//   (1,2)=ㄔ/ㄗ → 0x28  t/y
+//   (0,0)=ㄅ/ㄉ → 0x21  1/2
+//   (3,0)=ㄈ/ㄌ → 0x30  z/x
+
+// 今天 keys:
+//   full (ㄐㄧㄣ ㄊㄧㄢ):      [0x27,0x29,0x2A,0x26,0x29,0x25]
+//   all-initials (ㄐ+ㄊ):      [0x27,0x26]
+//   prefix+full-last (ㄐ+ㄊㄧㄢ): [0x27,0x26,0x29,0x25]  ← user's `rwu0`
+
+// 要去 keys:
+//   full (ㄧㄠˋ ㄑㄩˋ):        [0x29,0x2F,0x22,0x2C,0x33,0x22]
+//   all-initials (ㄧ+ㄑ):       [0x29,0x2C]
+//   prefix+full-last (ㄧ+ㄑㄩˋ): [0x29,0x2C,0x33,0x22]  ← user's `ufm4`
+
+// 臭豆腐 keys:
+//   full (ㄔㄡˋ ㄉㄡˋ ㄈㄨˋ):        [0x28,0x34,0x22,0x21,0x34,0x22,0x30,0x2E,0x22]
+//   all-initials (ㄔ+ㄉ+ㄈ):          [0x28,0x21,0x30]  ← user's `t2z`
+//   prefix+full-last (ㄔ+ㄉ+ㄈㄨˋ):   [0x28,0x21,0x30,0x2E,0x22]
+
+TEST(AbbreviatedInput, AllInitialsFindsMultiCharWord) {
+    // Dict has 今天 indexed by all-initials key [0x27,0x26].
+    // Typing r(1,1) w(1,0) should find 今天.
+    std::vector<uint8_t> dat, val;
+    // all-initials key for 今天: ㄐ→(1,1)=0x27, ㄊ→(1,0)=0x26
+    build_single({ { "\x27\x26", 2, "\xe4\xbb\x8a\xe5\xa4\xa9", 1 } }, dat, val);  // 今天
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    ime.process_key(kev(1, 1));  // r → ㄍ/ㄐ
+    ime.process_key(kev(1, 0));  // w → ㄆ/ㄊ
+
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe4\xbb\x8a\xe5\xa4\xa9");  // 今天
+}
+
+TEST(AbbreviatedInput, PrefixInitialsPlusFullLastFindsWord) {
+    // Dict has 今天 indexed by prefix-initials key [0x27,0x26,0x29,0x25].
+    // Typing r(1,1) w(1,0) u(1,3) 0(0,4) = `rwu0` should find 今天.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x27\x26\x29\x25", 4, "\xe4\xbb\x8a\xe5\xa4\xa9", 1 } }, dat, val);  // 今天
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    ime.process_key(kev(1, 1));  // r
+    ime.process_key(kev(1, 0));  // w
+    ime.process_key(kev(1, 3));  // u
+    ime.process_key(kev(0, 4));  // 0
+
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe4\xbb\x8a\xe5\xa4\xa9");  // 今天
+}
+
+TEST(AbbreviatedInput, ThreeCharAllInitialsChoudoufu) {
+    // Dict has 臭豆腐 indexed by all-initials [0x28,0x21,0x30] = t2z.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x28\x21\x30", 3,
+                     "\xe8\x87\xad\xe8\xb1\x86\xe8\x85\x90", 1 } }, dat, val);  // 臭豆腐
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    ime.process_key(kev(1, 2));  // t → ㄔ/ㄗ
+    ime.process_key(kev(0, 0));  // 2 → ㄅ/ㄉ
+    ime.process_key(kev(3, 0));  // z → ㄈ/ㄌ
+
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe8\x87\xad\xe8\xb1\x86\xe8\x85\x90");  // 臭豆腐
+}
+
+TEST(AbbreviatedInput, SingleInitialFindsTopCandidates) {
+    // Dict has both 巴 (full key [0x21,0x24]) and an initial-key entry [0x21] → 巴.
+    // Typing just 1 key should show the initial-key candidates.
+    std::vector<uint8_t> dat, val;
+    // Build entry: initial key [0x21] → 巴 (as gen_dict.py would emit for 巴(ㄅㄚ))
+    build_single({ { "\x21", 1, "\xe5\xb7\xb4", 1 } }, dat, val);  // 巴
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    ime.process_key(kev(0, 0));  // 1 → ㄅ/ㄉ
+
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe5\xb7\xb4");  // 巴
+}
+
+TEST(AbbreviatedInput, SpaceCommitsAbbreviatedCandidate) {
+    // Full flow: type abbreviated keys for 要去, press SPACE, 要去 is committed.
+    std::vector<uint8_t> dat, val;
+    // prefix-initials key of 要去: [0x29,0x2C,0x33,0x22] = ufm4
+    build_single({ { "\x29\x2C\x33\x22", 4,
+                     "\xe8\xa6\x81\xe5\x8e\xbb", 1 } }, dat, val);  // 要去
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    ime.process_key(kev(1, 3));  // u → ㄧ/ㄛ
+    ime.process_key(kev(2, 1));  // f → ㄎ/ㄑ
+    ime.process_key(kev(3, 3));  // m → ㄩ/ㄝ
+    ime.process_key(kev(0, 1));  // 4 → ˇ/ˋ
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+
+    ime.process_key(kSPACE);
+    EXPECT_EQ(committed, "\xe8\xa6\x81\xe5\x8e\xbb");  // 要去
+}
+
 } // namespace
