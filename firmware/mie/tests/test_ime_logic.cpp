@@ -102,7 +102,7 @@ TEST(SmartMode, InitialState) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
 
-    EXPECT_EQ(ime.mode(), mie::InputMode::Smart);
+    EXPECT_EQ(ime.mode(), mie::InputMode::SmartZh);
     EXPECT_EQ(ime.input_bytes(), 0);
     EXPECT_STREQ(ime.input_str(), "");
     EXPECT_EQ(ime.zh_candidate_count(), 0);
@@ -168,14 +168,16 @@ TEST(SmartMode, ClearInputResetsAll) {
 
 // ── Mode toggle ──────────────────────────────────────────────────────────
 
-TEST(SmartMode, ModeKeyTogglesToDirect) {
+TEST(SmartMode, ModeKeyCycles) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    EXPECT_EQ(ime.mode(), mie::InputMode::Smart);
+    EXPECT_EQ(ime.mode(), mie::InputMode::SmartZh);
+    ime.process_key(kMODE);
+    EXPECT_EQ(ime.mode(), mie::InputMode::SmartEn);
     ime.process_key(kMODE);
     EXPECT_EQ(ime.mode(), mie::InputMode::Direct);
     ime.process_key(kMODE);
-    EXPECT_EQ(ime.mode(), mie::InputMode::Smart);
+    EXPECT_EQ(ime.mode(), mie::InputMode::SmartZh);
 }
 
 TEST(SmartMode, ModeKeyClearsInput) {
@@ -250,7 +252,8 @@ TEST(SmartMode, CommitFirstZhCandidate) {
 TEST(DirectMode, InitialStateAfterModeSwitch) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    ime.process_key(kMODE);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → Direct
     EXPECT_EQ(ime.mode(), mie::InputMode::Direct);
     EXPECT_EQ(ime.input_bytes(), 0);
 }
@@ -258,7 +261,8 @@ TEST(DirectMode, InitialStateAfterModeSwitch) {
 TEST(DirectMode, FirstPressShouldShowFirstLabel) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    ime.process_key(kMODE);  // → Direct
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → Direct
 
     // (0,0) first label = "ㄅ"
     EXPECT_TRUE(ime.process_key(kev(0, 0)));
@@ -268,7 +272,8 @@ TEST(DirectMode, FirstPressShouldShowFirstLabel) {
 TEST(DirectMode, SameKeyPressCyclesLabels) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    ime.process_key(kMODE);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → Direct
 
     // (0,0): labels = ㄅ, ㄉ, 1, 2
     ime.process_key(kev(0, 0));  // ㄅ
@@ -286,7 +291,8 @@ TEST(DirectMode, SameKeyPressCyclesLabels) {
 TEST(DirectMode, OKConfirmsPendingChar) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    ime.process_key(kMODE);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → Direct
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
@@ -303,7 +309,8 @@ TEST(DirectMode, OKConfirmsPendingChar) {
 TEST(DirectMode, DifferentKeyAutoCommitsPrevious) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    ime.process_key(kMODE);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → Direct
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
@@ -319,7 +326,8 @@ TEST(DirectMode, DifferentKeyAutoCommitsPrevious) {
 TEST(DirectMode, BackClearsPendingWithoutCommit) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    ime.process_key(kMODE);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → Direct
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
@@ -408,7 +416,8 @@ TEST(SymbolKeys, NonSymKeyCommitsPendingSymbol) {
 TEST(SymbolKeys, DirectMode_SYM3_ShowsCombinedList) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    ime.process_key(kMODE);  // → Direct
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → Direct
     // In Direct Mode, sym key shows combined (zh+en) list; first = "，"
     ime.process_key(kSYM3);
     EXPECT_STREQ(ime.input_str(), "，");
@@ -531,41 +540,49 @@ TEST(CandidateNav, OKCommitsSelectedCandidate) {
 }
 
 TEST(CandidateNav, RightMovesToNextMergedSlot) {
-    // RIGHT navigates the merged list: slot 0 = ZH first, slot 1 = EN first.
-    std::vector<uint8_t> zh_dat, zh_val, en_dat, en_val;
-    build_single({ { "\x21", 1, "巴", 1 } }, zh_dat, zh_val);
-    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
-
-    mie::TrieSearcher zh_ts, en_ts;
-    ASSERT_TRUE(zh_ts.load_from_memory(zh_dat.data(), zh_dat.size(),
-                                        zh_val.data(), zh_val.size()));
-    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(),
-                                        en_val.data(), en_val.size()));
-    mie::ImeLogic ime(zh_ts, &en_ts);
+    // RIGHT navigates merged list forward; use a ZH dict with 2 candidates.
+    // build_single with two words for the same key.
+    std::vector<uint8_t> dat, val;
+    {
+        // Value record: 2 words for key 0x21
+        push_u16(val, 2);
+        push_u16(val, 2); push_u8(val, 3); push_str(val, "\xe5\xb7\xb4");  // 巴
+        push_u16(val, 1); push_u8(val, 3); push_str(val, "\xe6\x8a\x8a");  // 把
+        std::vector<uint8_t> ks;
+        push_u8(ks, 1); push_u8(ks, 0x21);
+        push_str(dat, "MIED"); push_u16(dat, 1); push_u16(dat, 0);
+        push_u32(dat, 1); push_u32(dat, 16 + 8);
+        push_u32(dat, 0); push_u32(dat, 0);
+        dat.insert(dat.end(), ks.begin(), ks.end());
+    }
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
 
     ime.process_key(kev(0, 0));
-    ASSERT_GT(ime.zh_candidate_count(), 0);
-    ASSERT_GT(ime.en_candidate_count(), 0);
-    // merged_[0] = ZH 巴, merged_[1] = EN abc
-    EXPECT_EQ(ime.candidate_index(), 0);   // initially at slot 0 (ZH)
-    EXPECT_EQ(ime.candidate_group(), 0);   // ZH
+    ASSERT_GE(ime.zh_candidate_count(), 2);
+    EXPECT_EQ(ime.candidate_index(), 0);   // starts at slot 0
 
-    ime.process_key(kev(5, 3));  // RIGHT → merged_sel_ = 1
-    EXPECT_EQ(ime.candidate_index(), 1);   // slot 1
-    EXPECT_EQ(ime.candidate_group(), 1);   // EN
+    ime.process_key(kev(5, 3));  // RIGHT → slot 1
+    EXPECT_EQ(ime.candidate_index(), 1);
 }
 
 TEST(CandidateNav, LeftMovesToPrevMergedSlot) {
-    std::vector<uint8_t> zh_dat, zh_val, en_dat, en_val;
-    build_single({ { "\x21", 1, "巴", 1 } }, zh_dat, zh_val);
-    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
-
-    mie::TrieSearcher zh_ts, en_ts;
-    ASSERT_TRUE(zh_ts.load_from_memory(zh_dat.data(), zh_dat.size(),
-                                        zh_val.data(), zh_val.size()));
-    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(),
-                                        en_val.data(), en_val.size()));
-    mie::ImeLogic ime(zh_ts, &en_ts);
+    std::vector<uint8_t> dat, val;
+    {
+        push_u16(val, 2);
+        push_u16(val, 2); push_u8(val, 3); push_str(val, "\xe5\xb7\xb4");  // 巴
+        push_u16(val, 1); push_u8(val, 3); push_str(val, "\xe6\x8a\x8a");  // 把
+        std::vector<uint8_t> ks;
+        push_u8(ks, 1); push_u8(ks, 0x21);
+        push_str(dat, "MIED"); push_u16(dat, 1); push_u16(dat, 0);
+        push_u32(dat, 1); push_u32(dat, 16 + 8);
+        push_u32(dat, 0); push_u32(dat, 0);
+        dat.insert(dat.end(), ks.begin(), ks.end());
+    }
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
 
     ime.process_key(kev(0, 0));
     ime.process_key(kev(5, 3));  // RIGHT → slot 1
@@ -573,7 +590,6 @@ TEST(CandidateNav, LeftMovesToPrevMergedSlot) {
 
     ime.process_key(kev(5, 2));  // LEFT → slot 0
     EXPECT_EQ(ime.candidate_index(), 0);
-    EXPECT_EQ(ime.candidate_group(), 0);
 }
 
 TEST(CandidateNav, NavIgnoredWhenNoCandidates) {
@@ -690,7 +706,7 @@ TEST(GreedyPrefix, BackspaceReducesTail) {
 // HF-3: MODE key commits before switching
 // ══════════════════════════════════════════════════════════════════════════
 
-TEST(ModeSwitch, SmartToDirectCommitsPendingInput) {
+TEST(ModeSwitch, SmartZhToSmartEnCommitsPendingInput) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
 
@@ -699,36 +715,37 @@ TEST(ModeSwitch, SmartToDirectCommitsPendingInput) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));   // pending "ㄅ" in smart mode (no dict = no candidates)
+    ime.process_key(kev(0, 0));   // pending "ㄅ" in SmartZh mode (no dict = no candidates)
     EXPECT_GT(ime.input_bytes(), 0);
 
-    ime.process_key(kMODE);       // should commit "ㄅ" then switch to Direct
+    ime.process_key(kMODE);       // SmartZh → SmartEn: should commit "ㄅ"
     EXPECT_EQ(committed, "ㄅ");   // text was preserved
-    EXPECT_EQ(ime.mode(), mie::InputMode::Direct);
+    EXPECT_EQ(ime.mode(), mie::InputMode::SmartEn);
     EXPECT_EQ(ime.input_bytes(), 0);
 }
 
-TEST(ModeSwitch, DirectToSmartCommitsPendingChar) {
+TEST(ModeSwitch, DirectToSmartZhCommitsPendingChar) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    ime.process_key(kMODE);  // → Direct
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → Direct
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));  // pending "ㄅ" in direct mode
+    ime.process_key(kev(0, 0));  // pending "ㄅ" in Direct mode
     ime.process_key(kev(0, 0));  // cycle to "ㄉ"
     EXPECT_STREQ(ime.input_str(), "ㄉ");
 
-    ime.process_key(kMODE);      // should commit "ㄉ" then switch to Smart
+    ime.process_key(kMODE);      // Direct → SmartZh: should commit "ㄉ"
     EXPECT_EQ(committed, "ㄉ");
-    EXPECT_EQ(ime.mode(), mie::InputMode::Smart);
+    EXPECT_EQ(ime.mode(), mie::InputMode::SmartZh);
     EXPECT_EQ(ime.input_bytes(), 0);
 }
 
-TEST(ModeSwitch, SmartToDirectNoCommitWhenInputEmpty) {
+TEST(ModeSwitch, SmartZhToSmartEnNoCommitWhenInputEmpty) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
 
@@ -740,10 +757,10 @@ TEST(ModeSwitch, SmartToDirectNoCommitWhenInputEmpty) {
     // No input → MODE should switch without committing anything
     ime.process_key(kMODE);
     EXPECT_EQ(committed, "");
-    EXPECT_EQ(ime.mode(), mie::InputMode::Direct);
+    EXPECT_EQ(ime.mode(), mie::InputMode::SmartEn);
 }
 
-TEST(ModeSwitch, SmartToDirectCommitsBestZhCandidate) {
+TEST(ModeSwitch, SmartZhToSmartEnCommitsBestZhCandidate) {
     std::vector<uint8_t> dat, val;
     build_single({ { "\x21", 1, "巴", 500 } }, dat, val);
     mie::TrieSearcher ts;
@@ -755,45 +772,29 @@ TEST(ModeSwitch, SmartToDirectCommitsBestZhCandidate) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));   // candidate 巴
+    ime.process_key(kev(0, 0));   // candidate 巴 in SmartZh
     ASSERT_GT(ime.zh_candidate_count(), 0);
-    ime.process_key(kMODE);       // should commit 巴
+    ime.process_key(kMODE);       // SmartZh → SmartEn: should commit 巴
     EXPECT_EQ(committed, "巴");
-    EXPECT_EQ(ime.mode(), mie::InputMode::Direct);
+    EXPECT_EQ(ime.mode(), mie::InputMode::SmartEn);
 }
 
 TEST(ModeSwitch, ModeIndicatorString) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
-    EXPECT_STREQ(ime.mode_indicator(), "[智慧]");
+    EXPECT_STREQ(ime.mode_indicator(), "\xe4\xb8\xad");  // 中
     ime.process_key(kMODE);
-    EXPECT_STREQ(ime.mode_indicator(), "[直接]");
+    EXPECT_STREQ(ime.mode_indicator(), "EN");
+    ime.process_key(kMODE);
+    EXPECT_STREQ(ime.mode_indicator(), "abc");
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// Mixed prediction — auto group selection and merged view
+// Mode separation — SmartZh sees only ZH; SmartEn sees only EN
 // ══════════════════════════════════════════════════════════════════════════
 
-TEST(MixedPrediction, AutoSelectsENGroupWhenNoZH) {
-    // EN dict has a match; ZH dict is unloaded (no Chinese candidates).
-    // After run_search() the active group should auto-select EN (group=1).
-    std::vector<uint8_t> en_dat, en_val;
-    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
-
-    mie::TrieSearcher zh_ts;  // unloaded — will yield 0 zh candidates
-    mie::TrieSearcher en_ts;
-    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
-
-    mie::ImeLogic ime(zh_ts, &en_ts);
-    ime.process_key(kev(0, 0));
-
-    EXPECT_EQ(ime.zh_candidate_count(), 0);
-    EXPECT_GT(ime.en_candidate_count(), 0);
-    // Auto-selected group should be EN.
-    EXPECT_EQ(ime.candidate_group(), 1);
-}
-
-TEST(MixedPrediction, DefaultsToZHGroupWhenBothHaveCandidates) {
+TEST(ModeSeparation, SmartZhSeesOnlyZhCandidates) {
+    // Both dicts loaded; SmartZh should return ZH candidates only.
     std::vector<uint8_t> zh_dat, zh_val, en_dat, en_val;
     build_single({ { "\x21", 1, "巴", 1 } }, zh_dat, zh_val);
     build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
@@ -803,79 +804,36 @@ TEST(MixedPrediction, DefaultsToZHGroupWhenBothHaveCandidates) {
     ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
 
     mie::ImeLogic ime(zh_ts, &en_ts);
+    // Default mode is SmartZh
     ime.process_key(kev(0, 0));
 
     EXPECT_GT(ime.zh_candidate_count(), 0);
-    EXPECT_GT(ime.en_candidate_count(), 0);
-    // Default group should remain ZH when both have results.
-    EXPECT_EQ(ime.candidate_group(), 0);
+    EXPECT_EQ(ime.en_candidate_count(), 0);  // EN dict ignored in SmartZh
+    EXPECT_STREQ(ime.merged_candidate(0).word, "\xe5\xb7\xb4");  // 巴
 }
 
-TEST(MixedPrediction, MergedViewInterleaves) {
-    // Both ZH and EN have 2 candidates for the same key.
-    // Merged view should interleave: ZH[0], EN[0], ZH[1], EN[1].
+TEST(ModeSeparation, SmartEnSeesOnlyEnCandidates) {
+    // Both dicts loaded; SmartEn should return EN candidates only.
     std::vector<uint8_t> zh_dat, zh_val, en_dat, en_val;
-
-    // Build ZH dict with two candidates for "\x21"
-    {
-        std::vector<uint32_t> v_off, k_off;
-        std::vector<uint8_t> ks;
-        // One key with two words in the value record.
-        v_off.push_back(0);
-        // value record: word_count=2, (freq,len,word)*2
-        push_u16(zh_val, 2);
-        push_u16(zh_val, 2); push_u8(zh_val, 3); push_str(zh_val, "\xe5\xb7\xb4");  // 巴
-        push_u16(zh_val, 1); push_u8(zh_val, 3); push_str(zh_val, "\xe6\x8a\x8a");  // 把
-        k_off.push_back(0);
-        push_u8(ks, 1); push_u8(ks, 0x21);
-        uint32_t kc = 1, kdo = 16 + kc * 8;
-        push_str(zh_dat, "MIED");
-        push_u16(zh_dat, 1); push_u16(zh_dat, 0);
-        push_u32(zh_dat, kc); push_u32(zh_dat, kdo);
-        push_u32(zh_dat, k_off[0]); push_u32(zh_dat, v_off[0]);
-        zh_dat.insert(zh_dat.end(), ks.begin(), ks.end());
-    }
-    // EN dict with two words for "\x21"
-    {
-        std::vector<uint32_t> v_off, k_off;
-        std::vector<uint8_t> ks;
-        v_off.push_back(0);
-        push_u16(en_val, 2);
-        push_u16(en_val, 2); push_u8(en_val, 3); push_str(en_val, "abc");
-        push_u16(en_val, 1); push_u8(en_val, 3); push_str(en_val, "abd");
-        k_off.push_back(0);
-        push_u8(ks, 1); push_u8(ks, 0x21);
-        uint32_t kc = 1, kdo = 16 + kc * 8;
-        push_str(en_dat, "MIED");
-        push_u16(en_dat, 1); push_u16(en_dat, 0);
-        push_u32(en_dat, kc); push_u32(en_dat, kdo);
-        push_u32(en_dat, k_off[0]); push_u32(en_dat, v_off[0]);
-        en_dat.insert(en_dat.end(), ks.begin(), ks.end());
-    }
+    build_single({ { "\x21", 1, "巴", 1 } }, zh_dat, zh_val);
+    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
 
     mie::TrieSearcher zh_ts, en_ts;
     ASSERT_TRUE(zh_ts.load_from_memory(zh_dat.data(), zh_dat.size(), zh_val.data(), zh_val.size()));
     ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
 
     mie::ImeLogic ime(zh_ts, &en_ts);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ASSERT_EQ(ime.mode(), mie::InputMode::SmartEn);
     ime.process_key(kev(0, 0));
 
-    EXPECT_GE(ime.zh_candidate_count(), 2);
-    EXPECT_GE(ime.en_candidate_count(), 2);
-
-    int mc = ime.merged_candidate_count();
-    EXPECT_GE(mc, 4);
-    // Interleaved: ZH, EN, ZH, EN
-    EXPECT_EQ(ime.merged_candidate_lang(0), 0);  // ZH
-    EXPECT_EQ(ime.merged_candidate_lang(1), 1);  // EN
-    EXPECT_EQ(ime.merged_candidate_lang(2), 0);  // ZH
-    EXPECT_EQ(ime.merged_candidate_lang(3), 1);  // EN
-    EXPECT_STREQ(ime.merged_candidate(0).word, "\xe5\xb7\xb4");  // 巴
-    EXPECT_STREQ(ime.merged_candidate(1).word, "abc");
+    EXPECT_EQ(ime.zh_candidate_count(), 0);  // ZH dict ignored in SmartEn
+    EXPECT_GT(ime.en_candidate_count(), 0);
+    EXPECT_STREQ(ime.merged_candidate(0).word, "abc");
 }
 
-TEST(MixedPrediction, MergedViewZHOnly) {
-    // When only ZH has candidates, merged view equals ZH candidates.
+TEST(ModeSeparation, SmartZhMergedIsZhOnly) {
+    // SmartZh, only ZH dict loaded: merged view equals ZH candidates.
     std::vector<uint8_t> dat, val;
     build_single({ { "\x21", 1, "巴", 1 } }, dat, val);
     mie::TrieSearcher ts;
@@ -891,16 +849,12 @@ TEST(MixedPrediction, MergedViewZHOnly) {
     EXPECT_STREQ(ime.merged_candidate(0).word, "\xe5\xb7\xb4");  // 巴
 }
 
-TEST(MixedPrediction, SpaceCommitsAutoSelectedGroup) {
-    // When only EN has candidates and SPACE is pressed, EN candidate is committed.
-    std::vector<uint8_t> en_dat, en_val;
-    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
-
-    mie::TrieSearcher zh_ts;  // unloaded
-    mie::TrieSearcher en_ts;
-    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
-
-    mie::ImeLogic ime(zh_ts, &en_ts);
+TEST(ModeSeparation, SmartZhSpaceCommitsZhCandidate) {
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "巴", 1 } }, dat, val);
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
@@ -908,10 +862,44 @@ TEST(MixedPrediction, SpaceCommitsAutoSelectedGroup) {
     }, &committed);
 
     ime.process_key(kev(0, 0));
-    ASSERT_EQ(ime.candidate_group(), 1);  // auto-selected EN
+    ASSERT_GT(ime.zh_candidate_count(), 0);
     ime.process_key(kSPACE);
+    EXPECT_EQ(committed, "\xe5\xb7\xb4");  // 巴
+}
 
+TEST(ModeSeparation, SmartEnSpaceCommitsEnCandidate) {
+    std::vector<uint8_t> en_dat, en_val;
+    build_single({ { "\x21", 1, "abc", 1 } }, en_dat, en_val);
+    mie::TrieSearcher zh_ts;
+    mie::TrieSearcher en_ts;
+    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
+    mie::ImeLogic ime(zh_ts, &en_ts);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ASSERT_EQ(ime.mode(), mie::InputMode::SmartEn);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    ime.process_key(kev(0, 0));
+    ASSERT_GT(ime.en_candidate_count(), 0);
+    ime.process_key(kSPACE);
     EXPECT_EQ(committed, "abc");
+}
+
+TEST(ModeSeparation, SmartEnDisplayShowsLetters) {
+    // SmartEn mode: input_str() shows primary letter labels, not phonemes.
+    mie::TrieSearcher ts;
+    mie::ImeLogic ime(ts);
+    ime.process_key(kMODE);  // → SmartEn
+    ASSERT_EQ(ime.mode(), mie::InputMode::SmartEn);
+
+    ime.process_key(kev(1, 0));  // key (1,0): primary letter = "Q"
+    EXPECT_STREQ(ime.input_str(), "Q");
+
+    ime.process_key(kev(2, 0));  // key (2,0): primary letter = "A"
+    EXPECT_STREQ(ime.input_str(), "QA");
 }
 
 // ══════════════════════════════════════════════════════════════════════════

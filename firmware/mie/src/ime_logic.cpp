@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 // MokyaInput Engine — ImeLogic implementation
 //
-// Two input modes (MODE key at row 4, col 0):
+// Three input modes (MODE key at row 4, col 0 cycles SmartZh → SmartEn → Direct → …):
 //
-//   Smart Mode  — same key-index byte sequence searched against zh + en dictionaries.
-//                 input_buf_ shows primary phonemes for display only.
-//                 Symbol keys (4,3) and (4,4) cycle context-sensitive punctuation.
+//   SmartZh Mode — key-index byte sequence searched against ZH dict only.
+//                  input_buf_ shows primary Bopomofo phonemes for display.
 //
-//   Direct Mode — each input key (rows 0-3, col 0-4) cycles through all its labels
-//                 (primary phoneme, secondary phoneme, primary letter, secondary letter).
-//                 OK / SPACE confirms the pending character.
+//   SmartEn Mode — same key encoding, searched against EN dict only.
+//                  input_buf_ shows primary letters (T9-style).
+//
+//   Direct Mode  — each input key (rows 0-3, col 0-4) cycles through all its labels
+//                  (primary phoneme, secondary phoneme, primary letter, secondary letter).
+//                  OK / SPACE confirms the pending character.
 //                 Symbol keys (4,3) and (4,4) cycle a combined symbol list.
 //
 // Key encoding (half-keyboard):
@@ -165,7 +167,7 @@ int ImeLogic::sym_label_count(uint8_t col) const {
 ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
     : zh_searcher_(zh_searcher)
     , en_searcher_(en_searcher)
-    , mode_(InputMode::Smart)
+    , mode_(InputMode::SmartZh)
     , context_lang_(ZH)
     , key_seq_len_(0)
     , input_len_(0)
@@ -184,7 +186,11 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
 }
 
 const char* ImeLogic::mode_indicator() const {
-    return mode_ == InputMode::Smart ? "[智慧]" : "[直接]";
+    switch (mode_) {
+        case InputMode::SmartZh: return "\xe4\xb8\xad";        // 中
+        case InputMode::SmartEn: return "EN";
+        default:                 return "abc";
+    }
 }
 
 void ImeLogic::set_commit_callback(CommitCallback cb, void* ctx) {
@@ -263,9 +269,9 @@ void ImeLogic::run_search() {
 
         Candidate zh_tmp[kMaxCandidates];
         Candidate en_tmp[kMaxCandidates];
-        int zh_n = zh_searcher_.is_loaded()
+        int zh_n = (mode_ == InputMode::SmartZh && zh_searcher_.is_loaded())
                    ? zh_searcher_.search(key_seq_buf_, zh_tmp, kMaxCandidates) : 0;
-        int en_n = (en_searcher_ && en_searcher_->is_loaded())
+        int en_n = (mode_ == InputMode::SmartEn && en_searcher_ && en_searcher_->is_loaded())
                    ? en_searcher_->search(key_seq_buf_, en_tmp, kMaxCandidates) : 0;
 
         key_seq_buf_[len] = saved;
@@ -336,14 +342,20 @@ void ImeLogic::do_commit_partial(const char* utf8, int lang_hint, int prefix_len
     run_search();
 }
 
-// Rebuild input_buf_ (phoneme display) from key_seq_buf_ key bytes.
+// Rebuild input_buf_ from key_seq_buf_: phonemes for SmartZh, letters for SmartEn.
 void ImeLogic::rebuild_input_buf() {
     input_len_      = 0;
     input_buf_[0]   = '\0';
     for (int i = 0; i < key_seq_len_; ++i) {
         uint8_t idx = (uint8_t)key_seq_buf_[i] - 0x21;
-        const char* ph = key_to_phoneme(idx / 5, idx % 5);
-        if (ph) append_to_display(ph);
+        uint8_t row = idx / 5, col = idx % 5;
+        if (mode_ == InputMode::SmartEn) {
+            const char* lt = key_to_direct_label(row, col, 2); // primary letter
+            if (lt) append_to_display(lt);
+        } else {
+            const char* ph = key_to_phoneme(row, col);
+            if (ph) append_to_display(ph);
+        }
     }
 }
 
@@ -352,8 +364,14 @@ int ImeLogic::matched_prefix_display_bytes() const {
     int bytes = 0;
     for (int i = 0; i < matched_prefix_len_ && i < key_seq_len_; ++i) {
         uint8_t idx = (uint8_t)key_seq_buf_[i] - 0x21;
-        const char* ph = key_to_phoneme(idx / 5, idx % 5);
-        if (ph) bytes += (int)strlen(ph);
+        uint8_t row = idx / 5, col = idx % 5;
+        if (mode_ == InputMode::SmartEn) {
+            const char* lt = key_to_direct_label(row, col, 2);
+            if (lt) bytes += (int)strlen(lt);
+        } else {
+            const char* ph = key_to_phoneme(row, col);
+            if (ph) bytes += (int)strlen(ph);
+        }
     }
     return bytes;
 }
@@ -373,9 +391,9 @@ void ImeLogic::commit_sym_pending() {
 }
 
 bool ImeLogic::process_sym_key(uint8_t col) {
-    // In Smart Mode: if there's pending phoneme input, commit the first merged
+    // In SmartZh/SmartEn: if there's pending input, commit the first merged
     // candidate (partial commit: keeps any remaining keys after the matched prefix).
-    if (mode_ == InputMode::Smart && key_seq_len_ > 0) {
+    if ((mode_ == InputMode::SmartZh || mode_ == InputMode::SmartEn) && key_seq_len_ > 0) {
         if (merged_count_ > 0)
             do_commit_partial(merged_[0].cand->word, merged_[0].lang, matched_prefix_len_);
         else
@@ -407,14 +425,14 @@ bool ImeLogic::process_sym_key(uint8_t col) {
 bool ImeLogic::process_key(const KeyEvent& ev) {
     if (!ev.pressed) return false;
 
-    // MODE key (4,0): toggle Smart ↔ Direct.
+    // MODE key (4,0): cycle SmartZh → SmartEn → Direct → SmartZh.
     // Commit any pending input first so no text is lost on switch.
     if (ev.row == 4 && ev.col == 0) {
-        if (mode_ == InputMode::Smart) {
+        if (mode_ == InputMode::SmartZh || mode_ == InputMode::SmartEn) {
             if (sym_pending_.key_col != 0xFF) {
                 commit_sym_pending();
             } else if (key_seq_len_ > 0) {
-                // Commit the currently selected merged candidate (or fallback).
+                // Commit the currently selected merged candidate (or raw input).
                 if (merged_count_ > 0) {
                     int sel = (merged_sel_ < merged_count_) ? merged_sel_ : 0;
                     do_commit(merged_[sel].cand->word, merged_[sel].lang);
@@ -423,7 +441,7 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
                 }
             }
         } else {
-            // Direct Mode → Smart: commit any pending Direct character first.
+            // Direct → SmartZh: commit any pending Direct character first.
             if (sym_pending_.key_col != 0xFF) {
                 commit_sym_pending();
             } else if (direct_.row != 0xFF) {
@@ -433,7 +451,10 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
                 if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
             }
         }
-        mode_ = (mode_ == InputMode::Smart) ? InputMode::Direct : InputMode::Smart;
+        // Cycle: SmartZh → SmartEn → Direct → SmartZh
+        if (mode_ == InputMode::SmartZh)      mode_ = InputMode::SmartEn;
+        else if (mode_ == InputMode::SmartEn) mode_ = InputMode::Direct;
+        else                                  mode_ = InputMode::SmartZh;
         clear_input();
         return true;
     }
@@ -450,8 +471,9 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
     }
 
     switch (mode_) {
-        case InputMode::Smart:  return process_smart(ev);
-        case InputMode::Direct: return process_direct(ev);
+        case InputMode::SmartZh: return process_smart(ev);
+        case InputMode::SmartEn: return process_smart(ev);
+        case InputMode::Direct:  return process_direct(ev);
     }
     return false;
 }
@@ -476,8 +498,10 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
     // or output a space when no input is pending.
     if (ev.row == 4 && ev.col == 2) {
         if (key_seq_len_ == 0) {
-            // No pending input: output a space in English context, 　 in Chinese.
-            const char* sp = (context_lang_ == EN) ? " " : "\xe3\x80\x80"; // U+3000
+            // No pending input: SmartEn always outputs ASCII space;
+            // SmartZh outputs full-width space in ZH context.
+            const char* sp = (mode_ == InputMode::SmartEn || context_lang_ == EN)
+                             ? " " : "\xe3\x80\x80"; // U+3000 ideographic space
             if (commit_cb_) commit_cb_(sp, commit_ctx_);
             return true;
         }
@@ -543,13 +567,17 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
     // matching prefix among the leading bytes.
     if (ev.row <= 3 && ev.col <= 4) {
         if (key_seq_len_ < kMaxKeySeq) {
-            uint8_t     key_index = ev.row * 5 + ev.col;
-            char        new_byte  = (char)(key_index + 0x21);
-            const char* ph        = key_to_phoneme(ev.row, ev.col);
-
+            uint8_t key_index = ev.row * 5 + ev.col;
+            char    new_byte  = (char)(key_index + 0x21);
             key_seq_buf_[key_seq_len_++] = new_byte;
             key_seq_buf_[key_seq_len_]   = '\0';
-            if (ph) append_to_display(ph);
+            if (mode_ == InputMode::SmartEn) {
+                const char* lt = key_to_direct_label(ev.row, ev.col, 2); // primary letter
+                if (lt) append_to_display(lt);
+            } else {
+                const char* ph = key_to_phoneme(ev.row, ev.col);
+                if (ph) append_to_display(ph);
+            }
             run_search();
         }
         return true;
