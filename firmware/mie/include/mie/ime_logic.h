@@ -2,19 +2,21 @@
 // MokyaInput Engine — IME Logic public API
 //
 // ImeLogic sits between HAL key events and TrieSearcher.
-// Two input modes (cycled by MODE key at row 4, col 0):
+// Three input modes (cycled by MODE key at row 4, col 0):
 //
-//   Smart Mode  — half-keyboard unified Chinese (Bopomofo) + English prediction.
-//                 Same key sequence is searched against both zh and en dictionaries.
-//                 Candidates displayed in two groups: [中文] and [English].
+//   SmartZh Mode — Bopomofo prediction: key sequence searched against ZH dict only.
+//                  Display shows accumulated phonemes, e.g. "ㄆㄍㄔ".
 //
-//   Direct Mode — each input key cycles through all its labels
-//                 (phonemes then letters).  OK confirms the pending character.
-//                 Used for passwords / account names.
+//   SmartEn Mode — English T9 prediction: same key bytes searched against EN dict only.
+//                  Display shows primary letter per key, e.g. "papaya".
+//                  Greedy prefix search finds the longest matching English word.
+//
+//   Direct Mode  — each input key cycles through all its labels
+//                  (phonemes then letters).  OK confirms the pending character.
+//                  Used for passwords / account names.
 //
 // Symbol keys (row 4, col 3 = ，SYM ; row 4, col 4 = 。.？):
-//   In Smart Mode: cycle context-sensitive punctuation list (ZH or EN set),
-//                  confirming on OK or on press of a different key.
+//   In SmartZh/SmartEn: cycle context-sensitive punctuation list (ZH or EN set).
 //   In Direct Mode: cycle a combined symbol list.
 
 #pragma once
@@ -26,8 +28,9 @@ namespace mie {
 
 // ── Input modes ──────────────────────────────────────────────────────────────
 enum class InputMode : uint8_t {
-    Smart  = 0,  // Unified Chinese + English prediction (half-keyboard)
-    Direct = 1,  // Direct character input — cycle key labels (password mode)
+    SmartZh = 0,  // Chinese prediction — ZH dict only, Bopomofo display
+    SmartEn = 1,  // English T9 prediction — EN dict only, letter display
+    Direct  = 2,  // Direct character input — cycle key labels (password mode)
 };
 
 // ── ImeLogic ─────────────────────────────────────────────────────────────────
@@ -53,17 +56,18 @@ public:
     InputMode mode() const { return mode_; }
 
     // Display string (UTF-8, null-terminated):
-    //   Smart Mode  — accumulated primary phonemes, e.g. "ㄆㄍㄔ"
-    //   Direct Mode — current pending label, e.g. "ㄊ" or "W"
+    //   SmartZh Mode — accumulated primary phonemes, e.g. "ㄆㄍㄔ"
+    //   SmartEn Mode — accumulated primary letters, e.g. "PAPAYA"
+    //   Direct Mode  — current pending label, e.g. "ㄊ" or "W"
     //   Symbol pending — current symbol, e.g. "、"
     const char* input_str()   const { return input_buf_; }
     int         input_bytes() const { return input_len_; }
 
-    // Chinese candidates (Smart Mode; always 0 in Direct Mode).
+    // Chinese candidates (SmartZh Mode only; always 0 in SmartEn / Direct).
     int              zh_candidate_count() const { return zh_cand_count_; }
     const Candidate& zh_candidate(int i)  const { return zh_candidates_[i]; }
 
-    // English candidates (Smart Mode; requires en_searcher != nullptr).
+    // English candidates (SmartEn Mode only; requires en_searcher != nullptr).
     int              en_candidate_count() const { return en_cand_count_; }
     const Candidate& en_candidate(int i)  const { return en_candidates_[i]; }
 
@@ -95,7 +99,7 @@ public:
     // Use this to split the display into "matched | remaining" in the UI.
     int matched_prefix_display_bytes() const;
 
-    // Short mode label for UI display: "[智慧]" or "[直接]".
+    // Short mode label for UI display: "中", "EN", or "abc".
     const char* mode_indicator() const;
 
 private:
@@ -125,7 +129,7 @@ private:
     // prefix_len bytes from key_seq_buf_ and re-run search on the rest.
     void do_commit_partial(const char* utf8, int lang_hint, int prefix_len);
 
-    // Rebuild input_buf_ (display phonemes) from key_seq_buf_.
+    // Rebuild input_buf_ (display phonemes or letters) from key_seq_buf_.
     void rebuild_input_buf();
 
     // ── Display buffer helpers ─────────────────────────────────────────────

@@ -11,9 +11,9 @@
 // Without dictionary arguments the REPL runs but shows no candidates.
 //
 // Controls (PC keys shown in the virtual keyboard grid):
-//   Input keys  — append to key sequence (Smart) / cycle label (Direct)
-//   BACK (BS)   — backspace (Smart) / cancel pending (Direct)
-//   MODE  (`)   — toggle Smart ↔ Direct, clear input
+//   Input keys  — append to key sequence (SmartZh/SmartEn) / cycle label (Direct)
+//   BACK (BS)   — backspace (Smart modes) / cancel pending (Direct)
+//   MODE  (`)   — cycle 中→EN→abc, clear input
 //   ，SYM (,)   — cycle Chinese/English comma/punctuation group
 //   。.？ (.)   — cycle Chinese/English period/punctuation group
 //   SPACE / OK  — commit
@@ -144,33 +144,25 @@ static void render(const mie::ImeLogic& ime) {
     // LEFT/RIGHT/UP/DOWN all navigate within the merged list.
     int ci = ime.candidate_index();  // merged_sel_
 
-    if (ime.mode() == mie::InputMode::Smart) {
-        int zh_n = ime.zh_candidate_count();
-        int en_n = ime.en_candidate_count();
-        int mc   = ime.merged_candidate_count();
+    if (ime.mode() == mie::InputMode::SmartZh || ime.mode() == mie::InputMode::SmartEn) {
+        int mc = ime.merged_candidate_count();
 
         if (mc > 0) {
-            // Unified merged view: ZH and EN interleaved, sorted by frequency.
-            // Highlight the slot at merged_sel_ (ci) with a ">" prefix.
             char cand_buf[512] = {}; int pos = 0;
             int show = (mc < kNumCircles) ? mc : kNumCircles;
-            LOG("render: unified mc=%d show=%d ci=%d zh=%d en=%d\n",
-                mc, show, ci, zh_n, en_n);
+            LOG("render: mc=%d show=%d ci=%d\n", mc, show, ci);
             for (int i = 0; i < show && pos < 460; ++i) {
-                int   lang = ime.merged_candidate_lang(i);
-                const char* tag = (lang == 0) ? "\xe4\xb8\xad" : "En";  // 中 / En
-                bool  sel  = (i == ci);
+                bool sel = (i == ci);
                 int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
-                                 "%s%s%s(%s) ",
+                                 "%s%s%s ",
                                  sel ? ">" : " ", kCircle[i],
-                                 ime.merged_candidate(i).word, tag);
+                                 ime.merged_candidate(i).word);
                 if (n > 0) pos += n;
             }
-            // Label varies by what's present
-            const char* lbl = (zh_n > 0 && en_n > 0)
-                              ? "[\xe6\xb7\xb7\xe5\x90\x88]"   // [混合]
-                              : (zh_n > 0 ? "[\xe4\xb8\xad\xe6\x96\x87]"  // [中文]
-                                          : "[English]");
+            // Label: 中文 for SmartZh, English for SmartEn
+            const char* lbl = (ime.mode() == mie::InputMode::SmartZh)
+                              ? "[\xe4\xb8\xad\xe6\x96\x87]"  // [中文]
+                              : "[English]";
             printf("\xe2\x94\x82 %s %-46s \xe2\x94\x82\n", lbl, cand_buf);
         } else if (ime.input_bytes() > 0) {
             printf("\xe2\x94\x82   (\xe7\x84\xa1\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97) %-46s \xe2\x94\x82\n", "");  // (無候選字)
