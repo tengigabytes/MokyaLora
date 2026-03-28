@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // MokyaInput Engine — ImeLogic implementation
 //
-// Three input modes (MODE key at row 4, col 0 cycles SmartZh → SmartEn → Direct → …):
+// Five input modes (MODE key at row 4, col 0 cycles 中→EN→ABC→abc→ㄅ→中):
 //
 //   SmartZh Mode — key-index byte sequence searched against ZH dict only.
 //                  input_buf_ shows primary Bopomofo phonemes for display.
@@ -111,6 +111,50 @@ int ImeLogic::direct_label_count(uint8_t row, uint8_t col) {
     return n;
 }
 
+// Number of cycling slots for the current direct mode.
+//   DirectBopomofo → phoneme slots (indices 0..1 in kDirectTable).
+//   DirectUpper/DirectLower → letter/digit slots (indices 2..3).
+int ImeLogic::direct_mode_slot_count(uint8_t row, uint8_t col) const {
+    const DirectEntry* e = find_direct_entry(row, col);
+    if (!e) return 0;
+    if (mode_ == InputMode::DirectBopomofo) {
+        int n = 0;
+        while (n < 2 && e->labels[n]) ++n;
+        return n;
+    } else {
+        int n = 0;
+        while (n < 2 && e->labels[2 + n]) ++n;
+        return n;
+    }
+}
+
+// Lowercase-conversion buffer (single-threaded use only).
+static char s_lower_buf[8];
+
+static const char* to_lower_label(const char* lbl) {
+    if (!lbl) return nullptr;
+    int i = 0;
+    while (lbl[i] && i < 7) {
+        char c = lbl[i];
+        s_lower_buf[i] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+        ++i;
+    }
+    s_lower_buf[i] = '\0';
+    return s_lower_buf;
+}
+
+// idx-th label within the current direct mode's slot range.
+// For DirectLower: converts uppercase ASCII letters to lowercase.
+const char* ImeLogic::direct_mode_slot_label(uint8_t row, uint8_t col, int idx) const {
+    const DirectEntry* e = find_direct_entry(row, col);
+    if (!e || idx < 0) return nullptr;
+    int actual = (mode_ == InputMode::DirectBopomofo) ? idx : (2 + idx);
+    if (actual < 0 || actual >= 4 || !e->labels[actual]) return nullptr;
+    if (mode_ == InputMode::DirectLower)
+        return to_lower_label(e->labels[actual]);
+    return e->labels[actual];
+}
+
 // ── Symbol tables ─────────────────────────────────────────────────────────
 //    col 3 = ，SYM key, col 4 = 。.？ key.
 //    Smart Mode: context-sensitive (ZH / EN).
@@ -132,9 +176,15 @@ static int str_arr_len(const char* const* arr) {
     int n = 0; while (arr[n]) ++n; return n;
 }
 
+static bool is_direct_mode(InputMode m) {
+    return m == InputMode::DirectUpper ||
+           m == InputMode::DirectLower ||
+           m == InputMode::DirectBopomofo;
+}
+
 const char* ImeLogic::sym_label(uint8_t col, int idx) const {
     const char* const* arr = nullptr;
-    if (mode_ == InputMode::Direct) {
+    if (is_direct_mode(mode_)) {
         arr = (col == 3) ? kSymDir3 : kSymDir4;
     } else {
         if (col == 3) arr = (context_lang_ == ZH) ? kSymZH3 : kSymEN3;
@@ -151,7 +201,7 @@ const char* ImeLogic::sym_label(uint8_t col, int idx) const {
 
 int ImeLogic::sym_label_count(uint8_t col) const {
     const char* const* arr = nullptr;
-    if (mode_ == InputMode::Direct) {
+    if (is_direct_mode(mode_)) {
         arr = (col == 3) ? kSymDir3 : kSymDir4;
     } else {
         if (col == 3) arr = (context_lang_ == ZH) ? kSymZH3 : kSymEN3;
@@ -187,9 +237,12 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
 
 const char* ImeLogic::mode_indicator() const {
     switch (mode_) {
-        case InputMode::SmartZh: return "\xe4\xb8\xad";        // 中
-        case InputMode::SmartEn: return "EN";
-        default:                 return "abc";
+        case InputMode::SmartZh:        return "\xe4\xb8\xad";  // 中
+        case InputMode::SmartEn:        return "EN";
+        case InputMode::DirectUpper:    return "ABC";
+        case InputMode::DirectLower:    return "abc";
+        case InputMode::DirectBopomofo: return "\xe3\x84\x85";  // ㄅ
+        default:                        return "?";
     }
 }
 
@@ -391,7 +444,7 @@ void ImeLogic::commit_sym_pending() {
 }
 
 bool ImeLogic::process_sym_key(uint8_t col) {
-    // In SmartZh/SmartEn: if there's pending input, commit the first merged
+    // In SmartZh/SmartEn: if there's pending key input, commit the first merged
     // candidate (partial commit: keeps any remaining keys after the matched prefix).
     if ((mode_ == InputMode::SmartZh || mode_ == InputMode::SmartEn) && key_seq_len_ > 0) {
         if (merged_count_ > 0)
@@ -425,7 +478,7 @@ bool ImeLogic::process_sym_key(uint8_t col) {
 bool ImeLogic::process_key(const KeyEvent& ev) {
     if (!ev.pressed) return false;
 
-    // MODE key (4,0): cycle SmartZh → SmartEn → Direct → SmartZh.
+    // MODE key (4,0): cycle 中→EN→ABC→abc→ㄅ→中.
     // Commit any pending input first so no text is lost on switch.
     if (ev.row == 4 && ev.col == 0) {
         if (mode_ == InputMode::SmartZh || mode_ == InputMode::SmartEn) {
@@ -441,20 +494,24 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
                 }
             }
         } else {
-            // Direct → SmartZh: commit any pending Direct character first.
+            // Direct mode → commit any pending Direct character first.
             if (sym_pending_.key_col != 0xFF) {
                 commit_sym_pending();
             } else if (direct_.row != 0xFF) {
-                const char* lbl = key_to_direct_label(direct_.row, direct_.col, direct_.label_idx);
+                const char* lbl = direct_mode_slot_label(direct_.row, direct_.col, direct_.label_idx);
                 direct_ = { 0xFF, 0xFF, 0 };
                 input_len_ = 0; input_buf_[0] = '\0';
                 if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
             }
         }
-        // Cycle: SmartZh → SmartEn → Direct → SmartZh
-        if (mode_ == InputMode::SmartZh)      mode_ = InputMode::SmartEn;
-        else if (mode_ == InputMode::SmartEn) mode_ = InputMode::Direct;
-        else                                  mode_ = InputMode::SmartZh;
+        // Cycle: 中 → EN → ABC → abc → ㄅ → 中
+        switch (mode_) {
+            case InputMode::SmartZh:        mode_ = InputMode::SmartEn;        break;
+            case InputMode::SmartEn:        mode_ = InputMode::DirectUpper;    break;
+            case InputMode::DirectUpper:    mode_ = InputMode::DirectLower;    break;
+            case InputMode::DirectLower:    mode_ = InputMode::DirectBopomofo; break;
+            default:                        mode_ = InputMode::SmartZh;        break;
+        }
         clear_input();
         return true;
     }
@@ -471,11 +528,13 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
     }
 
     switch (mode_) {
-        case InputMode::SmartZh: return process_smart(ev);
-        case InputMode::SmartEn: return process_smart(ev);
-        case InputMode::Direct:  return process_direct(ev);
+        case InputMode::SmartZh:        return process_smart(ev);
+        case InputMode::SmartEn:        return process_smart(ev);
+        case InputMode::DirectUpper:    return process_direct(ev);
+        case InputMode::DirectLower:    return process_direct(ev);
+        case InputMode::DirectBopomofo: return process_direct(ev);
+        default:                        return false;
     }
-    return false;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -601,7 +660,7 @@ bool ImeLogic::process_direct(const KeyEvent& ev) {
     // SPACE (4,2) / OK (5,4): confirm pending character.
     if ((ev.row == 4 && ev.col == 2) || (ev.row == 5 && ev.col == 4)) {
         if (direct_.row != 0xFF) {
-            const char* lbl = key_to_direct_label(direct_.row, direct_.col, direct_.label_idx);
+            const char* lbl = direct_mode_slot_label(direct_.row, direct_.col, direct_.label_idx);
             direct_ = { 0xFF, 0xFF, 0 };
             input_len_ = 0; input_buf_[0] = '\0';
             if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
@@ -609,23 +668,23 @@ bool ImeLogic::process_direct(const KeyEvent& ev) {
         return true;
     }
 
-    // Input keys (rows 0-3, col 0-4).
+    // Input keys (rows 0-3, col 0-4): mode-restricted slot cycling.
     if (ev.row <= 3 && ev.col <= 4) {
-        int count = direct_label_count(ev.row, ev.col);
+        int count = direct_mode_slot_count(ev.row, ev.col);
         if (count == 0) return false;
 
         if (direct_.row == ev.row && direct_.col == ev.col) {
-            // Same key: advance cycle.
+            // Same key: advance within the mode's slot range.
             direct_.label_idx = (direct_.label_idx + 1) % count;
         } else {
             // Different key: auto-commit previous pending, start new.
             if (direct_.row != 0xFF) {
-                const char* lbl = key_to_direct_label(direct_.row, direct_.col, direct_.label_idx);
+                const char* lbl = direct_mode_slot_label(direct_.row, direct_.col, direct_.label_idx);
                 if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
             }
             direct_ = { ev.row, ev.col, 0 };
         }
-        const char* lbl = key_to_direct_label(direct_.row, direct_.col, direct_.label_idx);
+        const char* lbl = direct_mode_slot_label(direct_.row, direct_.col, direct_.label_idx);
         set_display(lbl ? lbl : "");
         return true;
     }

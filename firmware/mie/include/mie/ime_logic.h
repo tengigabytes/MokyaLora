@@ -2,22 +2,17 @@
 // MokyaInput Engine — IME Logic public API
 //
 // ImeLogic sits between HAL key events and TrieSearcher.
-// Three input modes (cycled by MODE key at row 4, col 0):
+// Five input modes (MODE key at row 4, col 0 cycles 中→EN→ABC→abc→ㄅ→中):
 //
-//   SmartZh Mode — Bopomofo prediction: key sequence searched against ZH dict only.
-//                  Display shows accumulated phonemes, e.g. "ㄆㄍㄔ".
-//
-//   SmartEn Mode — English T9 prediction: same key bytes searched against EN dict only.
-//                  Display shows primary letter per key, e.g. "papaya".
-//                  Greedy prefix search finds the longest matching English word.
-//
-//   Direct Mode  — each input key cycles through all its labels
-//                  (phonemes then letters).  OK confirms the pending character.
-//                  Used for passwords / account names.
+//   SmartZh Mode    — Bopomofo prediction: ZH dict only, phoneme display.
+//   SmartEn Mode    — English T9 prediction: EN dict only, letter display.
+//   DirectUpper     — cycle uppercase letters/digits; OK confirms pending char.
+//   DirectLower     — cycle lowercase letters/digits; OK confirms pending char.
+//   DirectBopomofo  — cycle Bopomofo phonemes only; OK confirms pending char.
 //
 // Symbol keys (row 4, col 3 = ，SYM ; row 4, col 4 = 。.？):
 //   In SmartZh/SmartEn: cycle context-sensitive punctuation list (ZH or EN set).
-//   In Direct Mode: cycle a combined symbol list.
+//   In Direct modes:    cycle a combined symbol list.
 
 #pragma once
 #include <stdint.h>
@@ -28,9 +23,11 @@ namespace mie {
 
 // ── Input modes ──────────────────────────────────────────────────────────────
 enum class InputMode : uint8_t {
-    SmartZh = 0,  // Chinese prediction — ZH dict only, Bopomofo display
-    SmartEn = 1,  // English T9 prediction — EN dict only, letter display
-    Direct  = 2,  // Direct character input — cycle key labels (password mode)
+    SmartZh        = 0,  // Chinese prediction — ZH dict only, Bopomofo display
+    SmartEn        = 1,  // English T9 prediction — EN dict only, letter display
+    DirectUpper    = 2,  // Direct uppercase letters/digits — cycle letter slots
+    DirectLower    = 3,  // Direct lowercase letters/digits — cycle letter slots
+    DirectBopomofo = 4,  // Direct Bopomofo — cycle phoneme slots only
 };
 
 // ── ImeLogic ─────────────────────────────────────────────────────────────────
@@ -99,7 +96,7 @@ public:
     // Use this to split the display into "matched | remaining" in the UI.
     int matched_prefix_display_bytes() const;
 
-    // Short mode label for UI display: "中", "EN", or "abc".
+    // Short mode label for UI display: "中", "EN", "ABC", "abc", or "ㄅ".
     const char* mode_indicator() const;
 
 private:
@@ -145,6 +142,15 @@ private:
     // nullptr when idx >= label count.
     static const char* key_to_direct_label(uint8_t row, uint8_t col, int idx);
     static int         direct_label_count(uint8_t row, uint8_t col);
+
+    // Mode-aware Direct cycling helpers (depend on mode_).
+    // direct_mode_slot_count(): how many choices the current direct mode exposes.
+    // direct_mode_slot_label(): idx-th label within those choices (nullptr on OOB).
+    //   DirectBopomofo → phoneme slots only (idx 0 = labels[0], 1 = labels[1]).
+    //   DirectUpper    → letter/digit slots as-is (idx 0 = labels[2], 1 = labels[3]).
+    //   DirectLower    → same slots but uppercase ASCII letters converted to lowercase.
+    int         direct_mode_slot_count(uint8_t row, uint8_t col) const;
+    const char* direct_mode_slot_label(uint8_t row, uint8_t col, int idx) const;
 
     // idx-th symbol for sym key at col (3 or 4), given current context_lang_.
     const char* sym_label(uint8_t col, int idx) const;
