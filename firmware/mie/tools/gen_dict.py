@@ -292,13 +292,20 @@ def abbreviated_keyseqs(reading: str, full_keyseq: bytes) -> list:
 
 # ── libchewing tsi.csv loader ─────────────────────────────────────────────
 
-def load_libchewing(path: str) -> list:
+def load_libchewing(path: str,
+                    min_freq_for_abbr: int = 0,
+                    max_abbr_syls: int = 4) -> list:
     """
     Parse libchewing tsi.csv (comma-separated: word, freq, reading).
 
     tsi.csv column order: word, freq (0 or 1), reading
     freq is a binary flag: 1 = common word, 0 = rare character.
     Common words (freq=1) sort above rare characters (freq=0) in the candidate list.
+
+    min_freq_for_abbr: only generate abbreviated variants when freq >= this value
+                       (0 = no filter).
+    max_abbr_syls:     only generate abbreviated variants for words with at most this
+                       many syllables (0 = no limit).
 
     Returns list of (keyseq: bytes, word: str, freq: int).
     Lines starting with '#' are treated as comments.
@@ -324,8 +331,14 @@ def load_libchewing(path: str) -> list:
             keyseq   = phonemes_to_keyseq(phonemes)
             if keyseq and word:
                 entries.append((keyseq, word, freq))
-                for abbr in abbreviated_keyseqs(reading, keyseq):
-                    entries.append((abbr, word, freq))
+                n_syls = len(parse_reading_syllables(reading))
+                emit_abbr = (
+                    (min_freq_for_abbr == 0 or freq >= min_freq_for_abbr) and
+                    (max_abbr_syls == 0 or n_syls <= max_abbr_syls)
+                )
+                if emit_abbr:
+                    for abbr in abbreviated_keyseqs(reading, keyseq):
+                        entries.append((abbr, word, freq))
             else:
                 skipped += 1
 
@@ -336,10 +349,17 @@ def load_libchewing(path: str) -> list:
 
 # ── MoE CSV loader ────────────────────────────────────────────────────────
 
-def load_moe_csv(path: str) -> list:
+def load_moe_csv(path: str,
+                 min_freq_for_abbr: int = 0,
+                 max_abbr_syls: int = 4) -> list:
     """
     Parse MoE dictionary CSV (UTF-8 with BOM).
     Expected columns: 注音 / 詞語 / 頻率
+
+    min_freq_for_abbr: only generate abbreviated variants when freq >= this value
+                       (0 = no filter).
+    max_abbr_syls:     only generate abbreviated variants for words with at most this
+                       many syllables (0 = no limit).
 
     Returns list of (keyseq: bytes, word: str, freq: int).
     """
@@ -362,8 +382,14 @@ def load_moe_csv(path: str) -> list:
             keyseq   = phonemes_to_keyseq(phonemes)
             if keyseq:
                 entries.append((keyseq, word, freq))
-                for abbr in abbreviated_keyseqs(reading, keyseq):
-                    entries.append((abbr, word, freq))
+                n_syls = len(parse_reading_syllables(reading))
+                emit_abbr = (
+                    (min_freq_for_abbr == 0 or freq >= min_freq_for_abbr) and
+                    (max_abbr_syls == 0 or n_syls <= max_abbr_syls)
+                )
+                if emit_abbr:
+                    for abbr in abbreviated_keyseqs(reading, keyseq):
+                        entries.append((abbr, word, freq))
             else:
                 skipped += 1
 
@@ -498,6 +524,14 @@ def parse_args():
                    help='libchewing-data tsi.csv path (comma-separated: word,freq,reading)')
     p.add_argument('--moe-csv',        metavar='CSV',
                    help='MoE word list CSV path (注音/詞語/頻率 columns, UTF-8 BOM)')
+    p.add_argument('--zh-min-freq',     metavar='N', type=int, default=0,
+                   help='Only generate abbreviated ZH variants for words with freq >= N '
+                        '(0 = no filter, default).  libchewing freq is binary 0/1; '
+                        'MoE freq is a numeric count.')
+    p.add_argument('--zh-max-abbr-syls', metavar='N', type=int, default=4,
+                   help='Only generate abbreviated ZH variants for words with <= N '
+                        'syllables (0 = no limit; default: 4).  Words longer than N '
+                        'syllables are stored under their full key sequence only.')
     p.add_argument('--en-wordlist',    metavar='TXT',
                    help='English word list (one word per line, optional TAB freq)')
     p.add_argument('--en-max-words',   metavar='N', type=int, default=0,
@@ -523,17 +557,26 @@ def main():
         sys.exit(1)
 
     # ── Chinese dictionary ─────────────────────────────────────────────────
+    if args.libchewing or args.moe_csv:
+        abbr_syls_label = str(args.zh_max_abbr_syls) if args.zh_max_abbr_syls else '無限制'
+        freq_label      = f'>= {args.zh_min_freq}' if args.zh_min_freq else '不限'
+        print(f'ZH abbrev filter: 音節上限={abbr_syls_label}  最低頻率={freq_label}')
+
     zh_entries: list = []
 
     if args.libchewing:
         print(f'Loading libchewing  {args.libchewing} ...')
-        loaded = load_libchewing(args.libchewing)
+        loaded = load_libchewing(args.libchewing,
+                                 min_freq_for_abbr=args.zh_min_freq,
+                                 max_abbr_syls=args.zh_max_abbr_syls)
         zh_entries.extend(loaded)
         print(f'  {len(loaded):,} entries')
 
     if args.moe_csv:
         print(f'Loading MoE CSV     {args.moe_csv} ...')
-        loaded = load_moe_csv(args.moe_csv)
+        loaded = load_moe_csv(args.moe_csv,
+                              min_freq_for_abbr=args.zh_min_freq,
+                              max_abbr_syls=args.zh_max_abbr_syls)
         zh_entries.extend(loaded)
         print(f'  {len(loaded):,} entries')
 

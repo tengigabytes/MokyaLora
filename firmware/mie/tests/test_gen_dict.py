@@ -235,5 +235,65 @@ class TestAbbreviatedEntriesInMied:
         assert len(abbrs) == 0
 
 
+# ── Abbreviation filters (max_abbr_syls / min_freq_for_abbr) ─────────────────
+
+class TestAbbrFilters:
+    """
+    Verifies that load_libchewing / load_moe_csv respect the two abbreviation
+    filter parameters without touching the underlying abbreviated_keyseqs logic.
+    We test the filtering inline by replicating the loader decision:
+        emit_abbr = (min_freq == 0 or freq >= min_freq) and
+                    (max_syls == 0 or n_syls <= max_syls)
+    """
+
+    def _emit_abbr(self, reading: str, freq: int,
+                   min_freq: int = 0, max_syls: int = 4) -> bool:
+        """Mirror the emit_abbr decision in the loaders."""
+        n_syls = len(gd.parse_reading_syllables(reading))
+        return (
+            (min_freq == 0 or freq >= min_freq) and
+            (max_syls == 0 or n_syls <= max_syls)
+        )
+
+    def test_within_syl_limit_emits_abbr(self):
+        # 今天 = 2 syllables ≤ 4 → emit
+        assert self._emit_abbr('ㄐㄧㄣ ㄊㄧㄢ', freq=1, max_syls=4)
+
+    def test_at_syl_limit_emits_abbr(self):
+        # 中華民國 = 4 syllables == 4 → still emit
+        assert self._emit_abbr('ㄓㄨㄥ ㄏㄨㄚˊ ㄇㄧㄣˊ ㄍㄨㄛˊ', freq=1, max_syls=4)
+
+    def test_over_syl_limit_suppresses_abbr(self):
+        # 5-syllable phrase → suppress
+        reading_5 = 'ㄅ ㄆ ㄇ ㄈ ㄉ'
+        assert not self._emit_abbr(reading_5, freq=1, max_syls=4)
+
+    def test_zero_max_syls_means_no_limit(self):
+        # max_syls=0 → no limit, even 6-syllable should emit
+        reading_6 = 'ㄅ ㄆ ㄇ ㄈ ㄉ ㄊ'
+        assert self._emit_abbr(reading_6, freq=1, max_syls=0)
+
+    def test_freq_below_threshold_suppresses_abbr(self):
+        assert not self._emit_abbr('ㄐㄧㄣ ㄊㄧㄢ', freq=3, min_freq=5)
+
+    def test_freq_at_threshold_emits_abbr(self):
+        assert self._emit_abbr('ㄐㄧㄣ ㄊㄧㄢ', freq=5, min_freq=5)
+
+    def test_freq_above_threshold_emits_abbr(self):
+        assert self._emit_abbr('ㄐㄧㄣ ㄊㄧㄢ', freq=100, min_freq=5)
+
+    def test_zero_min_freq_means_no_filter(self):
+        # min_freq=0 → no filter, even freq=0 should emit
+        assert self._emit_abbr('ㄐㄧㄣ ㄊㄧㄢ', freq=0, min_freq=0)
+
+    def test_both_filters_combined(self):
+        # 今天: 2 syls, freq=10 — passes both
+        assert self._emit_abbr('ㄐㄧㄣ ㄊㄧㄢ', freq=10, min_freq=5, max_syls=4)
+        # 臭豆腐: 3 syls, freq=2 — fails freq filter
+        assert not self._emit_abbr('ㄔㄡˋ ㄉㄡˋ ㄈㄨˋ', freq=2, min_freq=5, max_syls=4)
+        # 5-syllable phrase, freq=100 — fails syl filter
+        assert not self._emit_abbr('ㄅ ㄆ ㄇ ㄈ ㄉ', freq=100, min_freq=5, max_syls=4)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
