@@ -2,9 +2,10 @@
 """
 fetch_data.py — Download MIE data sources to a local directory.
 
-Downloads the three pinned data files required by gen_dict.py and gen_font.py:
+Downloads the data files required by gen_dict.py and gen_font.py:
   - tsi.csv          (libchewing-data, pinned commit)
-  - google-10000-english-no-swears.txt
+  - en_50k.txt       (hermitdave/FrequencyWords — 50 k English words with frequencies)
+  - google-10000-english-no-swears.txt  (first20hours — fallback, no frequencies)
   - unifont-17.0.04.otf
 
 Usage:
@@ -20,12 +21,28 @@ from pathlib import Path
 
 # ── Pinned data sources ────────────────────────────────────────────────────
 # URLs are pinned to specific commits / releases for reproducibility.
+# Update the hermitdave commit hash when a newer snapshot is desired.
 
 SOURCES = {
     'tsi.csv': (
         'https://raw.githubusercontent.com/chewing/libchewing-data/'
         'ea74f76dd2548b1d65d0ff70c3ae66057a6ad97d/dict/chewing/tsi.csv'
     ),
+    # ── English 50k (primary) ────────────────────────────────────────────
+    # hermitdave/FrequencyWords  content/2018/en/en_50k.txt
+    # Format: "word frequency" (single space), sorted by frequency descending.
+    # Frequencies are raw corpus occurrence counts — very large numbers.
+    # See also: https://github.com/hermitdave/FrequencyWords
+    # NOTE: pin to a specific commit hash for fully reproducible builds,
+    # e.g. replace "master" with a SHA-1 once the build is validated.
+    'en_50k.txt': (
+        'https://raw.githubusercontent.com/hermitdave/FrequencyWords/'
+        'master/content/2018/en/en_50k.txt'
+    ),
+    # ── English 10k fallback (no frequencies) ───────────────────────────
+    # Useful when the 50k source is unavailable or when a smaller EN dict
+    # is preferred.  Without frequencies all words receive freq=1, so
+    # candidate ordering is not meaningful.
     'google-10000-english-no-swears.txt': (
         'https://raw.githubusercontent.com/first20hours/google-10000-english/'
         'master/google-10000-english-no-swears.txt'
@@ -110,15 +127,25 @@ def main():
     else:
         print(f"All {len(SOURCES)} files ready in {data_dir}")
         print()
-        print("Next steps:")
-        print(f"  python gen_dict.py --libchewing {data_dir}/tsi.csv \\")
-        print(f"                     --en-wordlist {data_dir}/google-10000-english-no-swears.txt \\")
-        print(f"                     --en-max-words 3000 \\")
-        print(f"                     --emit-charlist <build-dir>/data/charlist.txt \\")
-        print(f"                     --output-dir <build-dir>/data")
+        print("Next steps — recommended build (ZH + EN 50k, <4 MB total):")
+        print(f"  python gen_dict.py \\")
+        print(f"      --libchewing {data_dir}/tsi.csv \\")
+        print(f"      --zh-max-abbr-syls 4 \\")
+        print(f"      --en-wordlist {data_dir}/en_50k.txt \\")
+        print(f"      --en-max-per-key 5 \\")
+        print(f"      --emit-charlist <build-dir>/data/charlist.txt \\")
+        print(f"      --output-dir <build-dir>/data")
+        print()
+        print("Alternative — 10k fallback (no frequencies, useful for testing):")
+        print(f"  python gen_dict.py \\")
+        print(f"      --en-wordlist {data_dir}/google-10000-english-no-swears.txt \\")
+        print(f"      --en-max-per-key 5 \\")
+        print(f"      --output-dir <build-dir>/data")
+        print()
+        print("Font generation:")
         print(f"  python gen_font.py  --unifont {data_dir}/unifont-17.0.04.otf \\")
-        print(f"                     --charlist <build-dir>/data/charlist.txt \\")
-        print(f"                     --out <build-dir>/data/mie_unifont_sm_16.bin")
+        print(f"                      --charlist <build-dir>/data/charlist.txt \\")
+        print(f"                      --out <build-dir>/data/mie_unifont_sm_16.bin")
 
 
 if __name__ == '__main__':
