@@ -129,7 +129,7 @@ class TestAbbreviatedKeyseqs:
         assert expected_init  in abbrs
         assert expected_mixed in abbrs
         assert full not in abbrs
-        assert len(abbrs) == 2
+        assert len(abbrs) == 8  # cartesian product: 3 choices × 3 choices − 1 (full) = 8
 
     def test_two_syllable_yaoqu(self):
         # 要去 = ㄧㄠˋ ㄑㄩˋ
@@ -218,7 +218,7 @@ class TestAbbreviatedEntriesInMied:
         reading = 'ㄐㄧㄣ ㄊㄧㄢ'
         full_key = gd.phonemes_to_keyseq(gd.parse_reading(reading))
         abbrs = gd.abbreviated_keyseqs(reading, full_key)
-        assert len(abbrs) == 2  # all-initials + prefix-initials
+        assert len(abbrs) == 8  # cartesian product: 3×3 − 1 (full excluded) = 8
 
     def test_entry_count_single_syllable_with_medial(self):
         # 巴(ㄅㄚ): full=[0x21,0x24], initial=[0x21] → 1 abbreviated variant
