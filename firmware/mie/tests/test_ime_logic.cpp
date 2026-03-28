@@ -175,7 +175,11 @@ TEST(SmartMode, ModeKeyCycles) {
     ime.process_key(kMODE);
     EXPECT_EQ(ime.mode(), mie::InputMode::SmartEn);
     ime.process_key(kMODE);
-    EXPECT_EQ(ime.mode(), mie::InputMode::Direct);
+    EXPECT_EQ(ime.mode(), mie::InputMode::DirectUpper);
+    ime.process_key(kMODE);
+    EXPECT_EQ(ime.mode(), mie::InputMode::DirectLower);
+    ime.process_key(kMODE);
+    EXPECT_EQ(ime.mode(), mie::InputMode::DirectBopomofo);
     ime.process_key(kMODE);
     EXPECT_EQ(ime.mode(), mie::InputMode::SmartZh);
 }
@@ -253,8 +257,8 @@ TEST(DirectMode, InitialStateAfterModeSwitch) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
     ime.process_key(kMODE);  // SmartZh → SmartEn
-    ime.process_key(kMODE);  // SmartEn → Direct
-    EXPECT_EQ(ime.mode(), mie::InputMode::Direct);
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
+    EXPECT_EQ(ime.mode(), mie::InputMode::DirectUpper);
     EXPECT_EQ(ime.input_bytes(), 0);
 }
 
@@ -262,47 +266,84 @@ TEST(DirectMode, FirstPressShouldShowFirstLabel) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
     ime.process_key(kMODE);  // SmartZh → SmartEn
-    ime.process_key(kMODE);  // SmartEn → Direct
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
 
-    // (0,0) first label = "ㄅ"
-    EXPECT_TRUE(ime.process_key(kev(0, 0)));
-    EXPECT_STREQ(ime.input_str(), "ㄅ");
+    // (1,0) first letter slot = "Q"
+    EXPECT_TRUE(ime.process_key(kev(1, 0)));
+    EXPECT_STREQ(ime.input_str(), "Q");
 }
 
 TEST(DirectMode, SameKeyPressCyclesLabels) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
     ime.process_key(kMODE);  // SmartZh → SmartEn
-    ime.process_key(kMODE);  // SmartEn → Direct
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
 
-    // (0,0): labels = ㄅ, ㄉ, 1, 2
+    // (1,0) in DirectUpper: letter slots = Q, W (2 slots)
+    ime.process_key(kev(1, 0));  // Q
+    EXPECT_STREQ(ime.input_str(), "Q");
+    ime.process_key(kev(1, 0));  // W
+    EXPECT_STREQ(ime.input_str(), "W");
+    ime.process_key(kev(1, 0));  // wraps → Q
+    EXPECT_STREQ(ime.input_str(), "Q");
+}
+
+TEST(DirectMode, DirectBopomofoSameKeyPressCyclesPhonemes) {
+    mie::TrieSearcher ts;
+    mie::ImeLogic ime(ts);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
+    ime.process_key(kMODE);  // DirectUpper → DirectLower
+    ime.process_key(kMODE);  // DirectLower → DirectBopomofo
+    EXPECT_EQ(ime.mode(), mie::InputMode::DirectBopomofo);
+
+    // (0,0) in DirectBopomofo: phoneme slots = ㄅ, ㄉ
     ime.process_key(kev(0, 0));  // ㄅ
     EXPECT_STREQ(ime.input_str(), "ㄅ");
     ime.process_key(kev(0, 0));  // ㄉ
     EXPECT_STREQ(ime.input_str(), "ㄉ");
-    ime.process_key(kev(0, 0));  // 1
-    EXPECT_STREQ(ime.input_str(), "1");
-    ime.process_key(kev(0, 0));  // 2
-    EXPECT_STREQ(ime.input_str(), "2");
     ime.process_key(kev(0, 0));  // wraps → ㄅ
     EXPECT_STREQ(ime.input_str(), "ㄅ");
 }
 
-TEST(DirectMode, OKConfirmsPendingChar) {
+TEST(DirectMode, DirectLowerProducesLowercaseLetters) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
     ime.process_key(kMODE);  // SmartZh → SmartEn
-    ime.process_key(kMODE);  // SmartEn → Direct
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
+    ime.process_key(kMODE);  // DirectUpper → DirectLower
+    EXPECT_EQ(ime.mode(), mie::InputMode::DirectLower);
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));  // pending = ㄅ
-    ime.process_key(kev(0, 0));  // pending = ㄉ
+    // (1,0) in DirectLower: letter slots = q, w
+    ime.process_key(kev(1, 0));  // q
+    EXPECT_STREQ(ime.input_str(), "q");
+    ime.process_key(kev(1, 0));  // w
+    EXPECT_STREQ(ime.input_str(), "w");
     ime.process_key(kOK);
-    EXPECT_EQ(committed, "ㄉ");
+    EXPECT_EQ(committed, "w");
+}
+
+TEST(DirectMode, OKConfirmsPendingChar) {
+    mie::TrieSearcher ts;
+    mie::ImeLogic ime(ts);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    // (1,0) in DirectUpper: Q → W
+    ime.process_key(kev(1, 0));  // pending = Q
+    ime.process_key(kev(1, 0));  // pending = W
+    ime.process_key(kOK);
+    EXPECT_EQ(committed, "W");
     EXPECT_EQ(ime.input_bytes(), 0);
 }
 
@@ -310,31 +351,32 @@ TEST(DirectMode, DifferentKeyAutoCommitsPrevious) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
     ime.process_key(kMODE);  // SmartZh → SmartEn
-    ime.process_key(kMODE);  // SmartEn → Direct
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));  // pending = ㄅ (key 0,0)
-    ime.process_key(kev(1, 1));  // different key → auto-commit ㄅ, start ㄍ
-    EXPECT_EQ(committed, "ㄅ");
-    EXPECT_STREQ(ime.input_str(), "ㄍ");
+    // (1,0) pending = Q; different key (1,1) → auto-commit Q, start E
+    ime.process_key(kev(1, 0));  // pending = Q
+    ime.process_key(kev(1, 1));  // different key → auto-commit Q, start E
+    EXPECT_EQ(committed, "Q");
+    EXPECT_STREQ(ime.input_str(), "E");
 }
 
 TEST(DirectMode, BackClearsPendingWithoutCommit) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
     ime.process_key(kMODE);  // SmartZh → SmartEn
-    ime.process_key(kMODE);  // SmartEn → Direct
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));  // pending ㄅ
+    ime.process_key(kev(1, 0));  // pending Q
     ime.process_key(kBACK);
     EXPECT_EQ(committed, "");    // nothing committed
     EXPECT_EQ(ime.input_bytes(), 0);
@@ -417,8 +459,8 @@ TEST(SymbolKeys, DirectMode_SYM3_ShowsCombinedList) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
     ime.process_key(kMODE);  // SmartZh → SmartEn
-    ime.process_key(kMODE);  // SmartEn → Direct
-    // In Direct Mode, sym key shows combined (zh+en) list; first = "，"
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
+    // In any Direct mode, sym key shows combined (zh+en) list; first = "，"
     ime.process_key(kSYM3);
     EXPECT_STREQ(ime.input_str(), "，");
 }
@@ -724,22 +766,49 @@ TEST(ModeSwitch, SmartZhToSmartEnCommitsPendingInput) {
     EXPECT_EQ(ime.input_bytes(), 0);
 }
 
-TEST(ModeSwitch, DirectToSmartZhCommitsPendingChar) {
+TEST(ModeSwitch, DirectUpperToDirectLowerCommitsPendingChar) {
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
     ime.process_key(kMODE);  // SmartZh → SmartEn
-    ime.process_key(kMODE);  // SmartEn → Direct
+    ime.process_key(kMODE);  // SmartEn → DirectUpper
 
     std::string committed;
     ime.set_commit_callback([](const char* s, void* ctx) {
         *static_cast<std::string*>(ctx) += s;
     }, &committed);
 
-    ime.process_key(kev(0, 0));  // pending "ㄅ" in Direct mode
+    // (1,0) in DirectUpper: Q → W
+    ime.process_key(kev(1, 0));  // pending "Q"
+    ime.process_key(kev(1, 0));  // cycle to "W"
+    EXPECT_STREQ(ime.input_str(), "W");
+
+    ime.process_key(kMODE);      // DirectUpper → DirectLower: should commit "W"
+    EXPECT_EQ(committed, "W");
+    EXPECT_EQ(ime.mode(), mie::InputMode::DirectLower);
+    EXPECT_EQ(ime.input_bytes(), 0);
+}
+
+TEST(ModeSwitch, DirectBopomofoToSmartZhCommitsPendingChar) {
+    mie::TrieSearcher ts;
+    mie::ImeLogic ime(ts);
+    // Reach DirectBopomofo (4 MODE presses from SmartZh)
+    ime.process_key(kMODE);  // → SmartEn
+    ime.process_key(kMODE);  // → DirectUpper
+    ime.process_key(kMODE);  // → DirectLower
+    ime.process_key(kMODE);  // → DirectBopomofo
+    EXPECT_EQ(ime.mode(), mie::InputMode::DirectBopomofo);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    // (0,0) in DirectBopomofo: ㄅ → ㄉ
+    ime.process_key(kev(0, 0));  // pending "ㄅ"
     ime.process_key(kev(0, 0));  // cycle to "ㄉ"
     EXPECT_STREQ(ime.input_str(), "ㄉ");
 
-    ime.process_key(kMODE);      // Direct → SmartZh: should commit "ㄉ"
+    ime.process_key(kMODE);      // DirectBopomofo → SmartZh: should commit "ㄉ"
     EXPECT_EQ(committed, "ㄉ");
     EXPECT_EQ(ime.mode(), mie::InputMode::SmartZh);
     EXPECT_EQ(ime.input_bytes(), 0);
@@ -786,7 +855,13 @@ TEST(ModeSwitch, ModeIndicatorString) {
     ime.process_key(kMODE);
     EXPECT_STREQ(ime.mode_indicator(), "EN");
     ime.process_key(kMODE);
+    EXPECT_STREQ(ime.mode_indicator(), "ABC");
+    ime.process_key(kMODE);
     EXPECT_STREQ(ime.mode_indicator(), "abc");
+    ime.process_key(kMODE);
+    EXPECT_STREQ(ime.mode_indicator(), "\xe3\x84\x85");  // ㄅ
+    ime.process_key(kMODE);
+    EXPECT_STREQ(ime.mode_indicator(), "\xe4\xb8\xad");  // 中 (wrapped)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
