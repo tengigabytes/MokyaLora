@@ -54,23 +54,30 @@ static void log_close() {
     do { if (g_log) { fprintf(g_log, fmt, ##__VA_ARGS__); fflush(g_log); } } while(0)
 
 
-struct KeyLabel { uint8_t row; uint8_t col; const char* pc_hint; const char* label; };
+// label_zh: shown in SmartZh / Direct mode.
+// label_en: shown in SmartEn mode (nullptr = same as label_zh).
+struct KeyLabel { uint8_t row; uint8_t col; const char* pc_hint; const char* label_zh; const char* label_en; };
 
 // clang-format off
 static const KeyLabel kLabels[] = {
-    {0,0,"1",  "ㄅㄉ"},{0,1,"3",  "ˇˋ" },{0,2,"5",  "ㄓˊ" },
-    {0,3,"7",  "˙ㄚ" },{0,4,"9",  "ㄞㄢ"},{0,5,"F1", "FUNC"},
-    {1,0,"q",  "ㄆㄊ"},{1,1,"e",  "ㄍㄐ"},{1,2,"t",  "ㄔㄗ"},
-    {1,3,"u",  "ㄧㄛ"},{1,4,"o",  "ㄟㄣ"},{1,5,"F2", "SET" },
-    {2,0,"a",  "ㄇㄋ"},{2,1,"d",  "ㄎㄑ"},{2,2,"g",  "ㄕㄘ"},
-    {2,3,"j",  "ㄨㄜ"},{2,4,"l",  "ㄠㄤ"},{2,5,"BS", "BACK"},
-    {3,0,"z",  "ㄈㄌ"},{3,1,"c",  "ㄏㄒ"},{3,2,"b",  "ㄖㄙ"},
-    {3,3,"m",  "ㄩㄝ"},{3,4,"\\", "ㄡㄥ"},{3,5,"Del","DEL" },
-    {4,0,"`",  "MODE"},{4,1,"Tab","TAB" },{4,2,"Spc","SPACE"},
-    {4,3,",",  "，SYM"},{4,4,".", "。？"},{4,5,"=",  "VOL+"},
-    {5,0,"\xe2\x86\x91","UP"  },{5,1,"\xe2\x86\x93","DOWN"},
-    {5,2,"\xe2\x86\x90","LEFT"},{5,3,"\xe2\x86\x92","RIGHT"},
-    {5,4,"\xe2\x8f\x8e","OK"  },{5,5,"-",  "VOL-"},
+    // Row 0: tone/digit keys — no English letter mapping, show digits
+    {0,0,"1",  "ㄅㄉ","1/2" },{0,1,"3",  "ˇˋ", "3/4" },{0,2,"5",  "ㄓˊ","5/6" },
+    {0,3,"7",  "˙ㄚ", "7/8" },{0,4,"9",  "ㄞㄢ","9/0" },{0,5,"F1", "FUNC",nullptr},
+    // Row 1: ㄆㄊ=QW  ㄍㄐ=ER  ㄔㄗ=TY  ㄧㄛ=UI  ㄟㄣ=OP
+    {1,0,"q",  "ㄆㄊ","Q/W" },{1,1,"e",  "ㄍㄐ","E/R" },{1,2,"t",  "ㄔㄗ","T/Y" },
+    {1,3,"u",  "ㄧㄛ","U/I" },{1,4,"o",  "ㄟㄣ","O/P" },{1,5,"F2", "SET", nullptr},
+    // Row 2: ㄇㄋ=AS  ㄎㄑ=DF  ㄕㄘ=GH  ㄨㄜ=JK  ㄠㄤ=L
+    {2,0,"a",  "ㄇㄋ","A/S" },{2,1,"d",  "ㄎㄑ","D/F" },{2,2,"g",  "ㄕㄘ","G/H" },
+    {2,3,"j",  "ㄨㄜ","J/K" },{2,4,"l",  "ㄠㄤ","L"   },{2,5,"BS", "BACK",nullptr},
+    // Row 3: ㄈㄌ=ZX  ㄏㄒ=CV  ㄖㄙ=BN  ㄩㄝ=M  ㄡㄥ=—
+    {3,0,"z",  "ㄈㄌ","Z/X" },{3,1,"c",  "ㄏㄒ","C/V" },{3,2,"b",  "ㄖㄙ","B/N" },
+    {3,3,"m",  "ㄩㄝ","M"   },{3,4,"\\", "ㄡㄥ","—"   },{3,5,"Del","DEL", nullptr},
+    // Rows 4-5: same in all modes
+    {4,0,"`",  "MODE",nullptr},{4,1,"Tab","TAB", nullptr},{4,2,"Spc","SPACE",nullptr},
+    {4,3,",",  "，SYM",nullptr},{4,4,".","。？",nullptr},{4,5,"=",  "VOL+",nullptr},
+    {5,0,"\xe2\x86\x91","UP",  nullptr},{5,1,"\xe2\x86\x93","DOWN", nullptr},
+    {5,2,"\xe2\x86\x90","LEFT",nullptr},{5,3,"\xe2\x86\x92","RIGHT",nullptr},
+    {5,4,"\xe2\x8f\x8e","OK",  nullptr},{5,5,"-","VOL-",nullptr},
 };
 // clang-format on
 
@@ -105,8 +112,14 @@ static void render(const mie::ImeLogic& ime) {
         fputs("\xe2\x94\x82 ", stdout);
         for (int col = 0; col < 6; ++col) {
             const char* pc = "?"; const char* lb = "?";
-            for (const auto& k : kLabels)
-                if (k.row == row && k.col == col) { pc = k.pc_hint; lb = k.label; break; }
+            for (const auto& k : kLabels) {
+                if (k.row == row && k.col == col) {
+                    pc = k.pc_hint;
+                    lb = (ime.mode() == mie::InputMode::SmartEn && k.label_en)
+                         ? k.label_en : k.label_zh;
+                    break;
+                }
+            }
             printf("[%3s:%-5s]", pc, lb);
         }
         puts(" \xe2\x94\x82");
