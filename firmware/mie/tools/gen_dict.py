@@ -221,6 +221,80 @@ def parse_reading(reading: str) -> list:
         phonemes.extend(parse_syllable(syl.strip()))
     return phonemes
 
+
+def parse_reading_syllables(reading: str) -> list:
+    """
+    Like parse_reading() but preserves syllable boundaries.
+
+    Returns a list of per-syllable phoneme lists, e.g.:
+      [['ㄋ', 'ㄧ', 'ˇ'], ['ㄏ', 'ㄠ', 'ˇ']]
+
+    Syllables whose parse_syllable result is empty (e.g., tone-1-only) are
+    dropped.  Used by abbreviated_keyseqs() to generate initial-key variants.
+    """
+    sylls = reading.split() if ' ' in reading else [reading]
+    result = []
+    for syl in sylls:
+        phs = parse_syllable(syl.strip())
+        if phs:
+            result.append(phs)
+    return result
+
+
+def abbreviated_keyseqs(reading: str, full_keyseq: bytes) -> list:
+    """
+    Generate abbreviated key sequences for a word, enabling fast "initial-key"
+    input (聲母猜字) in addition to the standard full-phoneme key sequence.
+
+    For a word with N syllables:
+      N == 1  → emit the single-syllable initial key (1 key byte).
+      N >= 2  → emit TWO variants:
+                 1. all-initials: one initial key per syllable  (N bytes)
+                 2. prefix-initials + full-last: initials of syllables
+                    0..N-2, then full phoneme of the last syllable
+
+    Rationale for variant 2 (user example: `rwu0` = 今天):
+      r = initial(今=ㄐ), w+u+0 = full(天=ㄊㄧㄢ)
+      → typing the initial of all-but-the-last char plus the full phoneme
+        of the last char is a natural fast-entry style.
+
+    Returns a list of unique bytes objects, each different from full_keyseq
+    and from each other.  Returns [] when syllable data is empty.
+    """
+    syls = parse_reading_syllables(reading)
+    n = len(syls)
+    if n == 0:
+        return []
+
+    seen = {full_keyseq}
+    variants: list = []
+
+    if n == 1:
+        # Single-syllable word: initial key = first phoneme of the syllable.
+        init = phonemes_to_keyseq(syls[0][:1])
+        if init and init not in seen:
+            seen.add(init)
+            variants.append(init)
+        return variants
+
+    # Multi-syllable word (n >= 2) — two variants.
+    # 1. All-initials: initial key of each syllable concatenated.
+    all_init = b''.join(phonemes_to_keyseq(s[:1]) for s in syls)
+    if all_init and all_init not in seen:
+        seen.add(all_init)
+        variants.append(all_init)
+
+    # 2. Prefix-initials + full last syllable:
+    #    initial keys of syllables 0..n-2, then full phoneme of syllable n-1.
+    prefix = b''.join(phonemes_to_keyseq(s[:1]) for s in syls[:-1])
+    last   = phonemes_to_keyseq(syls[-1])
+    mixed  = prefix + last
+    if mixed and mixed not in seen:
+        seen.add(mixed)
+        variants.append(mixed)
+
+    return variants
+
 # ── libchewing tsi.csv loader ─────────────────────────────────────────────
 
 def load_libchewing(path: str) -> list:
@@ -255,6 +329,8 @@ def load_libchewing(path: str) -> list:
             keyseq   = phonemes_to_keyseq(phonemes)
             if keyseq and word:
                 entries.append((keyseq, word, freq))
+                for abbr in abbreviated_keyseqs(reading, keyseq):
+                    entries.append((abbr, word, freq))
             else:
                 skipped += 1
 
@@ -291,6 +367,8 @@ def load_moe_csv(path: str) -> list:
             keyseq   = phonemes_to_keyseq(phonemes)
             if keyseq:
                 entries.append((keyseq, word, freq))
+                for abbr in abbreviated_keyseqs(reading, keyseq):
+                    entries.append((abbr, word, freq))
             else:
                 skipped += 1
 
