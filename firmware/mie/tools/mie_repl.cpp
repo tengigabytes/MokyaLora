@@ -97,44 +97,63 @@ static void render(const mie::ImeLogic& ime) {
     printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-40s \xe2\x94\x82\n",
            ime.mode_indicator(), input_display);
 
-    // ── Candidates — grouped, with navigation highlight ───────────────────
-    // cand_sel_: group 0=ZH, 1=EN; index = highlighted candidate.
-    // Active group marker: "▶" (U+25B6, UTF-8: E2 96 B6).
-    // Selected candidate marker: ">" prefix.
+    // ── Candidates — merged interleaved view + navigation highlight ──────
+    // When both ZH and EN have results, show merged view (ZH[0], EN[0], ...).
+    // When only one group has results, show that group's label.
+    // cand_sel_: group 0=ZH, 1=EN; index = highlighted candidate (for OK/SPACE).
     int cg = ime.candidate_group();
     int ci = ime.candidate_index();
 
-    // Chinese group
-    char zh_buf[256] = {}; int zh_pos = 0;
-    if (ime.zh_candidate_count() > 0) {
-        for (int i = 0; i < ime.zh_candidate_count() && zh_pos < 200; ++i) {
-            const char* sel = (cg == 0 && i == ci) ? ">" : " ";
-            int n = snprintf(zh_buf + zh_pos, 256 - zh_pos, "%s%s%s ",
-                             sel, kCircle[i], ime.zh_candidate(i).word);
-            if (n > 0) zh_pos += n;
-        }
-    } else if (ime.input_bytes() > 0 && ime.mode() == mie::InputMode::Smart) {
-        snprintf(zh_buf, sizeof(zh_buf), "(\xe7\x84\xa1)");  // (無)
-    }
-
-    // English group
-    char en_buf[256] = {}; int en_pos = 0;
-    if (ime.en_candidate_count() > 0) {
-        for (int i = 0; i < ime.en_candidate_count() && en_pos < 200; ++i) {
-            const char* sel = (cg == 1 && i == ci) ? ">" : " ";
-            int n = snprintf(en_buf + en_pos, 256 - en_pos, "%s%s%s ",
-                             sel, kCircle[i], ime.en_candidate(i).word);
-            if (n > 0) en_pos += n;
-        }
-    }
-
     if (ime.mode() == mie::InputMode::Smart) {
-        // Active group indicator: "▶" before the active group label.
-        const char* zh_act = (cg == 0) ? "\xe2\x96\xb6" : " ";
-        const char* en_act = (cg == 1) ? "\xe2\x96\xb6" : " ";
-        printf("\xe2\x94\x82 %s[\xe4\xb8\xad\xe6\x96\x87] %-42s \xe2\x94\x82\n", zh_act, zh_buf);  // [中文]
-        printf("\xe2\x94\x82 %s[English] %-42s \xe2\x94\x82\n", en_act, en_buf[0] ? en_buf : "(none)");
+        int zh_n = ime.zh_candidate_count();
+        int en_n = ime.en_candidate_count();
+
+        if (zh_n > 0 && en_n > 0) {
+            // Mixed: show interleaved merged view.
+            char mix_buf[512] = {}; int pos = 0;
+            for (int i = 0; i < ime.merged_candidate_count() && pos < 460; ++i) {
+                int   lang = ime.merged_candidate_lang(i);
+                // highlight: check if this merged slot is the currently selected one
+                bool  sel  = (lang == cg) &&
+                             (i / 2 == ci);   // approximate: slot i maps to zh[i/2] or en[i/2]
+                const char* tag = lang == 0 ? "\xe4\xb8\xad" : "En";  // 中 / En
+                int n = snprintf(mix_buf + pos, 512 - pos, "%s%s%s(%s) ",
+                                 sel ? ">" : " ", kCircle[i],
+                                 ime.merged_candidate(i).word, tag);
+                if (n > 0) pos += n;
+            }
+            // Active group indicator for navigation reference
+            const char* zh_act = (cg == 0) ? "\xe2\x96\xb6" : " ";
+            const char* en_act = (cg == 1) ? "\xe2\x96\xb6" : " ";
+            printf("\xe2\x94\x82 %s\xe2\x86\x90\xe4\xb8\xad  %s\xe2\x86\x92En  [\xe6\xb7\xb7\xe5\x90\x88] %-32s \xe2\x94\x82\n",  // ←中  →En  [混合]
+                   zh_act, en_act, mix_buf);
+        } else if (zh_n > 0) {
+            // ZH only
+            char zh_buf[256] = {}; int zh_pos = 0;
+            for (int i = 0; i < zh_n && zh_pos < 200; ++i) {
+                const char* sel = (cg == 0 && i == ci) ? ">" : " ";
+                int n = snprintf(zh_buf + zh_pos, 256 - zh_pos, "%s%s%s ",
+                                 sel, kCircle[i], ime.zh_candidate(i).word);
+                if (n > 0) zh_pos += n;
+            }
+            printf("\xe2\x94\x82 \xe2\x96\xb6[\xe4\xb8\xad\xe6\x96\x87] %-46s \xe2\x94\x82\n", zh_buf);  // ▶[中文]
+        } else if (en_n > 0) {
+            // EN only
+            char en_buf[256] = {}; int en_pos = 0;
+            for (int i = 0; i < en_n && en_pos < 200; ++i) {
+                const char* sel = (cg == 1 && i == ci) ? ">" : " ";
+                int n = snprintf(en_buf + en_pos, 256 - en_pos, "%s%s%s ",
+                                 sel, kCircle[i], ime.en_candidate(i).word);
+                if (n > 0) en_pos += n;
+            }
+            printf("\xe2\x94\x82 \xe2\x96\xb6[English] %-46s \xe2\x94\x82\n", en_buf);  // ▶[English]
+        } else if (ime.input_bytes() > 0) {
+            printf("\xe2\x94\x82   (\xe7\x84\xa1\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97) %-46s \xe2\x94\x82\n", "");  // (無候選字)
+        } else {
+            printf("\xe2\x94\x82   %-56s \xe2\x94\x82\n", "");
+        }
     } else {
+        // Direct Mode: show pending label.
         printf("\xe2\x94\x82 \xe7\x9b\xb4\xe6\x8e\xa5\xe8\xbc\xb8\xe5\x85\xa5: %-48s \xe2\x94\x82\n",  // 直接輸入:
                ime.input_bytes() > 0 ? ime.input_str() : "");
     }

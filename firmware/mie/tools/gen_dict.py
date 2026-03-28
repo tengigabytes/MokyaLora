@@ -228,7 +228,8 @@ def load_libchewing(path: str) -> list:
     Parse libchewing tsi.csv (comma-separated: word, freq, reading).
 
     tsi.csv column order: word, freq (0 or 1), reading
-    All entries are treated as freq=1 (binary freq in tsi.csv is not useful).
+    freq is a binary flag: 1 = common word, 0 = rare character.
+    Common words (freq=1) sort above rare characters (freq=0) in the candidate list.
 
     Returns list of (keyseq: bytes, word: str, freq: int).
     Lines starting with '#' are treated as comments.
@@ -245,7 +246,10 @@ def load_libchewing(path: str) -> list:
             word    = row[0].strip()
             # tsi.csv columns: word, freq (binary 0/1), reading
             reading = row[2].strip()
-            freq    = 1  # treat all entries equally; tsi.csv freq is binary
+            try:
+                freq = int(row[1].strip())
+            except (ValueError, IndexError):
+                freq = 0
 
             phonemes = parse_reading(reading)
             keyseq   = phonemes_to_keyseq(phonemes)

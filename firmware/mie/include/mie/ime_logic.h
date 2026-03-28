@@ -67,6 +67,13 @@ public:
     int              en_candidate_count() const { return en_cand_count_; }
     const Candidate& en_candidate(int i)  const { return en_candidates_[i]; }
 
+    // Merged interleaved ZH+EN candidates (ZH[0], EN[0], ZH[1], EN[1], ...).
+    // Empty slots are skipped, so count <= zh_count + en_count.
+    // merged_candidate_lang(i): 0 = ZH, 1 = EN.
+    int              merged_candidate_count()  const { return merged_count_; }
+    const Candidate& merged_candidate(int i)   const { return *merged_[i].cand; }
+    int              merged_candidate_lang(int i) const { return merged_[i].lang; }
+
     // Clear all input state.
     void clear_input();
 
@@ -93,6 +100,8 @@ private:
     // ── Search & commit ───────────────────────────────────────────────────
     // Search both dictionaries using key_seq_buf_; update candidate arrays.
     void run_search();
+    // Rebuild merged_[] from zh_candidates_ + en_candidates_ (interleaved).
+    void build_merged();
 
     // Commit utf8: invoke callback, update context_lang_, clear input.
     // lang_hint: 0=ZH, 1=EN, 2=neutral (Direct/symbol, no lang update).
@@ -141,6 +150,15 @@ private:
     int       zh_cand_count_;
     Candidate en_candidates_[kMaxCandidates];
     int       en_cand_count_;
+
+    // Merged interleaved view (rebuilt after every run_search()).
+    struct MergedCandidate {
+        const Candidate* cand;
+        int lang;  // 0 = ZH, 1 = EN
+    };
+    static constexpr int kMaxMerged = kMaxCandidates * 2;
+    MergedCandidate merged_[kMaxMerged];
+    int             merged_count_;
 
     // Direct Mode cycle state.
     struct DirectState {
