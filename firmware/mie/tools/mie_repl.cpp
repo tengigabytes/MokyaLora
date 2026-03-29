@@ -318,7 +318,10 @@ int main(int argc, char** argv) {
     mie::TrieSearcher zh_searcher;
     if (zh_dat && zh_val) {
         if (zh_searcher.load_from_file(zh_dat, zh_val))
-            printf("\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe5\x85\xb8: %u keys\n", zh_searcher.key_count());
+            printf("\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe5\x85\xb8: %u keys  (v%u%s)\n",
+                   zh_searcher.key_count(),
+                   zh_searcher.dict_version(),
+                   zh_searcher.dict_version() < 2 ? "  WARNING: v1 dict has no tone data — rebuild with gen_dict.py" : "");
         else
             fprintf(stderr, "WARNING: failed to load Chinese dict '%s'/'%s'\n", zh_dat, zh_val);
     }
