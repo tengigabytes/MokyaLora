@@ -94,6 +94,7 @@ public:
 
     bool     is_loaded()  const { return loaded_; }
     uint32_t key_count()  const { return key_count_; }
+    uint16_t dict_version() const { return version_; }
 
 private:
     // Heap-owned buffers used when loading from files (nullptr in memory mode).
