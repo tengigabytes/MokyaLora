@@ -323,6 +323,48 @@ static int utf8_char_count(const char* s) {
     return n;
 }
 
+// ── Tone-intent extraction ────────────────────────────────────────────────
+// Returns the tone the user intended for the matched prefix, based on the
+// key bytes surrounding the match:
+//   34 = tone 3 or 4  (key 0x22: ˇ/ˋ — dedicated tone-only key)
+//    1 = tone 1        (0x20 first-tone marker immediately after prefix)
+//    0 = unspecified   (no tone context detectable)
+//
+// Keys 0x23 (ˊ/ㄓ) and 0x24 (˙/ㄚ) are ambiguous (phoneme + tone on same
+// key) so are not used for intent extraction to avoid false positives.
+static int extract_tone_intent(const char* key_buf, int seq_len, int prefix_len) {
+    if (prefix_len == 0) return 0;
+    // Last byte of matched prefix 0x22 = key(0,1) = ˇ/ˋ (no phoneme on this key).
+    if ((uint8_t)key_buf[prefix_len - 1] == 0x22) return 34;
+    // SPACE (0x20) immediately following the matched prefix → first-tone intent.
+    if (prefix_len < seq_len && (uint8_t)key_buf[prefix_len] == 0x20) return 1;
+    return 0;
+}
+
+// ── Tone-tier comparator ─────────────────────────────────────────────────
+// Returns sort tier for a candidate given the detected tone intent:
+//   0 — single char  AND tone matches   (best)
+//   1 — multi-char   AND tone matches
+//   2 — single char  AND tone no match  (fallback)
+//   3 — multi-char   AND tone no match  (fallback)
+static int tone_tier(const Candidate& c, int intent) {
+    bool single = (utf8_char_count(c.word) == 1);
+    bool match;
+    if (intent == 0) {
+        match = true;               // unspecified → treat all as matching
+    } else if (intent == 1) {
+        match = (c.tone == 1 || c.tone == 0);   // tone-1 or unknown (implicit 1)
+    } else if (intent == 34) {
+        match = (c.tone == 3 || c.tone == 4);   // ˇ/ˋ key → accept tone 3 or 4
+    } else {
+        match = (c.tone == (uint8_t)intent);
+    }
+    if ( single &&  match) return 0;
+    if (!single &&  match) return 1;
+    if ( single && !match) return 2;
+    return 3;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // run_search  (uses key_seq_buf_, NOT input_buf_)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -369,13 +411,20 @@ void ImeLogic::run_search() {
         key_seq_buf_[len] = saved;
 
         if (zh_n > 0 || en_n > 0) {
-            // Stable-sort: single-codepoint words rank before multi-codepoint words.
-            // Within each group the original frequency order is preserved.
-            auto single_first = [](const Candidate& a, const Candidate& b) {
-                return (utf8_char_count(a.word) == 1) & (utf8_char_count(b.word) != 1);
+            // 4-tier tone-aware sort:
+            //   tier 0: single char + tone matches
+            //   tier 1: multi-char word + tone matches
+            //   tier 2: single char + tone no match (fallback)
+            //   tier 3: multi-char word + tone no match (fallback)
+            // Within each tier, original frequency order (desc) is preserved.
+            int intent = extract_tone_intent(key_seq_buf_, key_seq_len_, len);
+            auto tone_sort = [intent](const Candidate& a, const Candidate& b) {
+                int ta = tone_tier(a, intent), tb = tone_tier(b, intent);
+                if (ta != tb) return ta < tb;
+                return a.freq > b.freq;
             };
-            if (zh_n > 1) std::stable_sort(zh_tmp, zh_tmp + zh_n, single_first);
-            if (en_n > 1) std::stable_sort(en_tmp, en_tmp + en_n, single_first);
+            if (zh_n > 1) std::stable_sort(zh_tmp, zh_tmp + zh_n, tone_sort);
+            if (en_n > 1) std::stable_sort(en_tmp, en_tmp + en_n, tone_sort);
             zh_cand_count_ = zh_n;
             en_cand_count_ = en_n;
             memcpy(zh_candidates_, zh_tmp, (size_t)zh_n * sizeof(Candidate));
@@ -516,10 +565,8 @@ const char* ImeLogic::compound_input_str() const {
     for (int i = 0; i < key_seq_len_ && pos < 630; ++i) {
         uint8_t b = (uint8_t)key_seq_buf_[i];
         if (b == 0x20) {
-            // First-tone marker "ˉ" (U+02C9, UTF-8: CB 89)
-            if (pos + 3 < 639) { buf[pos++] = '\xcb'; buf[pos++] = '\x89'; buf[pos++] = '\0'; --pos; }
-            // Actually write properly:
-            memcpy(buf + pos, "\xcb\x89", 2); pos += 2;
+            // First-tone marker "ˉ" (U+02C9, UTF-8: CB 89 — 2 bytes)
+            if (pos + 2 < 639) { memcpy(buf + pos, "\xcb\x89", 2); pos += 2; }
             continue;
         }
         uint8_t idx = b - 0x21;

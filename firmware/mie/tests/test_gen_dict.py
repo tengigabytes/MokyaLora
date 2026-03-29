@@ -203,12 +203,12 @@ class TestAbbreviatedEntriesInMied:
         # All-initials key
         init_key = bytes([B_GJ, B_PT])
         assert init_key in key_to_words
-        assert any(w == '今天' for w, _ in key_to_words[init_key])
+        assert any(item[0] == '今天' for item in key_to_words[init_key])
 
         # Prefix-initials key
         mixed_key = bytes([B_GJ, B_PT, B_I, B_AI])
         assert mixed_key in key_to_words
-        assert any(w == '今天' for w, _ in key_to_words[mixed_key])
+        assert any(item[0] == '今天' for item in key_to_words[mixed_key])
 
         # Full key also present
         assert full_key in key_to_words
@@ -437,7 +437,7 @@ class TestEnWordlist:
         finally:
             os.unlink(path)
         assert len(entries) == 1
-        keyseq, word, freq = entries[0]
+        keyseq, word, freq = entries[0][0], entries[0][1], entries[0][2]
         assert word == 'ace'
         assert keyseq == bytes([0x2B, 0x31, 0x27])
 
@@ -480,7 +480,7 @@ class TestMaxPerKeyPruning:
         ks = bytes([0x2B, 0x31, 0x27])
         assert len(k2w[ks]) == 2
         # Must be the two highest-frequency words
-        kept_words = {w for w, _ in k2w[ks]}
+        kept_words = {item[0] for item in k2w[ks]}
         assert 'ace' in kept_words    # freq=1000
         assert 'sce' in kept_words    # freq=800
         assert 'ave' not in kept_words
@@ -493,7 +493,7 @@ class TestMaxPerKeyPruning:
         _, _, stats, k2w = gd.build_mied(entries, max_per_key=1)
         ks = bytes([0x2B, 0x31, 0x27])
         assert len(k2w[ks]) == 1
-        kept_words = {w for w, _ in k2w[ks]}
+        kept_words = {item[0] for item in k2w[ks]}
         assert 'ace' in kept_words  # highest freq=1000
         assert stats['pruned_count'] == 3
 
@@ -516,9 +516,11 @@ class TestMaxPerKeyPruning:
         import struct
         word_count = struct.unpack_from('<H', val_bytes, 0)[0]
         assert word_count == 2
+        # v2 per-word layout: freq:u16, tone:u8, word_len:u8, word_utf8
         freq0 = struct.unpack_from('<H', val_bytes, 2)[0]
-        wlen0 = struct.unpack_from('<B', val_bytes, 4)[0]
-        word0 = val_bytes[5:5 + wlen0].decode('utf-8')
+        # tone0 is at offset 4 (u8) — skip it for this test
+        wlen0 = struct.unpack_from('<B', val_bytes, 5)[0]
+        word0 = val_bytes[6:6 + wlen0].decode('utf-8')
         assert word0 == 's'
         assert freq0 == 500  # highest freq first
 
@@ -602,6 +604,102 @@ class TestEnSizeBudget:
         assert stats['entry_count'] + stats['pruned_count'] == sum(
             len(v) for v in gd.build_mied(entries, max_per_key=0)[3].values()
         )
+
+
+# ── reading_to_tone ───────────────────────────────────────────────────────────
+
+class TestReadingToTone:
+    """Verify reading_to_tone() extracts the correct Bopomofo tone."""
+
+    def test_tone1_no_mark(self):
+        # ㄅ (no tone mark) → tone 1
+        assert gd.reading_to_tone('ㄅ') == 1
+
+    def test_tone1_digit(self):
+        # digit '1' → tone 1
+        assert gd.reading_to_tone('ㄅ1') == 1
+
+    def test_tone2_mark(self):
+        # ˊ → tone 2
+        assert gd.reading_to_tone('ㄅㄚˊ') == 2
+
+    def test_tone2_digit(self):
+        assert gd.reading_to_tone('ㄅㄚ2') == 2
+
+    def test_tone3_mark(self):
+        # ˇ → tone 3
+        assert gd.reading_to_tone('ㄅㄢˇ') == 3
+
+    def test_tone3_digit(self):
+        assert gd.reading_to_tone('ㄅㄢ3') == 3
+
+    def test_tone4_mark(self):
+        # ˋ → tone 4
+        assert gd.reading_to_tone('ㄅㄚˋ') == 4
+
+    def test_tone4_digit(self):
+        assert gd.reading_to_tone('ㄅㄚ4') == 4
+
+    def test_tone5_dot(self):
+        # ˙ → tone 5 (輕聲)
+        assert gd.reading_to_tone('ㄅㄠ˙') == 5
+
+    def test_tone5_digit(self):
+        assert gd.reading_to_tone('ㄅㄠ5') == 5
+
+    def test_multisyllable_uses_last(self):
+        # 寶寶: ㄅㄠˇ ㄅㄠ˙ → last syllable tone = 5
+        assert gd.reading_to_tone('ㄅㄠˇ ㄅㄠ˙') == 5
+
+    def test_multisyllable_tone4_last(self):
+        # 要去: ㄧㄠˋ ㄑㄩˋ → last syllable tone = 4
+        assert gd.reading_to_tone('ㄧㄠˋ ㄑㄩˋ') == 4
+
+    def test_multisyllable_tone1_last(self):
+        # 今天: ㄐㄧㄣ ㄊㄧㄢ → last syllable has no tone mark → tone 1
+        assert gd.reading_to_tone('ㄐㄧㄣ ㄊㄧㄢ') == 1
+
+    def test_empty_reading_returns_1(self):
+        assert gd.reading_to_tone('') == 1
+
+
+# ── v2 binary format: tone byte present ──────────────────────────────────────
+
+class TestV2BinaryFormat:
+    """Verify that build_value_record emits the v2 layout with tone byte."""
+
+    def test_tone_byte_present_in_value_record(self):
+        import struct as s
+        # Build a single-word ValueRecord via build_mied
+        ks = bytes([0x21])
+        entries = [(ks, '班', 200, 1)]   # word='班', freq=200, tone=1
+        _, val_bytes, _, _ = gd.build_mied(entries)
+        # v2 layout: word_count:u16, freq:u16, tone:u8, word_len:u8, word_utf8
+        wc   = s.unpack_from('<H', val_bytes, 0)[0]
+        freq = s.unpack_from('<H', val_bytes, 2)[0]
+        tone = s.unpack_from('<B', val_bytes, 4)[0]
+        wlen = s.unpack_from('<B', val_bytes, 5)[0]
+        word = val_bytes[6:6 + wlen].decode('utf-8')
+        assert wc   == 1
+        assert freq == 200
+        assert tone == 1
+        assert word == '班'
+
+    def test_tone4_word_stores_correctly(self):
+        import struct as s
+        ks = bytes([0x21, 0x24, 0x22])
+        entries = [(ks, '爸', 300, 4)]
+        _, val_bytes, _, _ = gd.build_mied(entries)
+        tone = s.unpack_from('<B', val_bytes, 4)[0]
+        assert tone == 4
+
+    def test_en_tone_zero(self):
+        import struct as s
+        ks = bytes([0x27, 0x29])
+        entries = [(ks, 'go', 100, 0)]   # English: tone=0
+        _, val_bytes, _, _ = gd.build_mied(entries)
+        tone = s.unpack_from('<B', val_bytes, 4)[0]
+        assert tone == 0
 
 
 if __name__ == '__main__':

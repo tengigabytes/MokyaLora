@@ -52,6 +52,7 @@ static constexpr int kCandidateMaxBytes = 32;
 struct Candidate {
     char     word[kCandidateMaxBytes]; ///< UTF-8, null-terminated
     uint16_t freq;                      ///< Frequency weight (higher = more common)
+    uint8_t  tone;                      ///< Bopomofo tone 1-5; 0 = unknown/unspecified
 };
 
 /// Trie-Searcher: looks up a Bopomofo phoneme sequence in the compiled
@@ -107,6 +108,7 @@ private:
 
     uint32_t key_count_     = 0;
     uint32_t keys_data_off_ = 0;
+    uint16_t version_       = 0;   ///< Dict version: 1 = no tone, 2 = tone byte per word
     bool     loaded_        = false;
 
     /// Compare the query string with the stored key at sorted index position idx.
