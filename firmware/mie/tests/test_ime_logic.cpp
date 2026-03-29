@@ -1513,4 +1513,38 @@ TEST(ToneSort, BopomofoTwosyllableExact) {
     EXPECT_STREQ(ime.zh_candidate(0).word, "\xe5\xaf\xb6\xe5\xaf\xb6");  // 寶寶
 }
 
+// Regression: committing a tone-1 word (SPACE → OK) must not leave a stray
+// 0x20 at the front of key_seq_buf_.  The next phoneme typed after commit must
+// start a clean input with no leading ˉ.
+TEST(ToneSort, SpaceCommitDoesNotLeaveStrayToneMarker) {
+    // dict: key [0x21] → 包 (tone=1, freq=500)
+    static const char kKey[] = "\x21";
+    std::vector<uint8_t> dat, val;
+    build_multi(kKey, 1,
+        { {"\xe5\x8c\x85", 500, 1} },   // 包 tone=1
+        dat, val);
+
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+
+    mie::ImeLogic ime(ts);
+    // Type (0,0) = ㄅ then SPACE (adds first-tone marker) then OK (commits 包).
+    ime.process_key(kev(0, 0));   // ㄅ  → key_seq=[0x21]
+    ime.process_key(kSPACE);       // 0x20 appended → key_seq=[0x21,0x20]
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    ime.process_key(kOK);          // commits 包, prefix_len=1; remainder=[0x20] → stripped
+
+    // After commit the buffer must be completely clean.
+    EXPECT_EQ(ime.input_bytes(), 0);
+    EXPECT_STREQ(ime.input_str(), "");
+    EXPECT_EQ(ime.zh_candidate_count(), 0);
+
+    // Type the next phoneme: no stray ˉ should appear in input_str.
+    ime.process_key(kev(0, 0));   // ㄅ again
+    const std::string is = ime.input_str();
+    // Must not start with the ˉ UTF-8 sequence (CB 89).
+    ASSERT_GE(is.size(), 1u);
+    EXPECT_NE((uint8_t)is[0], 0xCB) << "Stray first-tone marker ˉ found at start of input";
+}
+
 } // namespace

@@ -483,6 +483,12 @@ void ImeLogic::do_commit_partial(const char* utf8, int lang_hint, int prefix_len
     int remove = (prefix_len > 0 && prefix_len <= key_seq_len_) ? prefix_len : key_seq_len_;
     memmove(key_seq_buf_, key_seq_buf_ + remove, (size_t)(key_seq_len_ - remove + 1));
     key_seq_len_ -= remove;
+    // Strip a leading first-tone marker (0x20) that was appended for the
+    // now-committed word; without this it would bleed into the next phoneme.
+    if (key_seq_len_ > 0 && (uint8_t)key_seq_buf_[0] == 0x20) {
+        memmove(key_seq_buf_, key_seq_buf_ + 1, (size_t)key_seq_len_);
+        key_seq_len_--;
+    }
     rebuild_input_buf();
     zh_cand_count_      = 0;
     en_cand_count_      = 0;
