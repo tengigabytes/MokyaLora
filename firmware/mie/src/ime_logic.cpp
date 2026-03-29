@@ -5,22 +5,31 @@
 //
 //   SmartZh Mode — key-index byte sequence searched against ZH dict only.
 //                  input_buf_ shows primary Bopomofo phonemes for display.
+//                  SPACE appends a first-tone marker (0x20) to key_seq_buf_
+//                  but does NOT commit; the dict omits Tone-1 keys, so the
+//                  trie greedy-prefix falls back to the phoneme prefix and the
+//                  compound display shows the "ˉ" indicator.
 //
 //   SmartEn Mode — same key encoding, searched against EN dict only.
 //                  input_buf_ shows primary letters (T9-style).
+//                  Committing via OK/SPACE auto-appends a half-width space.
+//                  After sentence-ending punctuation (. ? !) the next word
+//                  is automatically capitalised.
 //
-//   Direct Mode  — each input key (rows 0-3, col 0-4) cycles through all its labels
-//                  (primary phoneme, secondary phoneme, primary letter, secondary letter).
+//   Direct Mode  — each input key (rows 0-3, col 0-4) cycles through all its
+//                  labels (phoneme slots 0/1/2, then letter slots 3/4).
 //                  OK / SPACE confirms the pending character.
-//                 Symbol keys (4,3) and (4,4) cycle a combined symbol list.
+//                  Symbol keys (4,3) and (4,4) cycle a combined symbol list.
 //
 // Key encoding (half-keyboard):
 //   key_index   = row × 5 + col     (rows 0-3, col 0-4 → 0-19)
 //   key_seq_byte = key_index + 0x21  (→ ASCII '!' to '4')
+//   First-tone marker = 0x20 (space, below the normal range).
 //
 // Source file must be compiled as UTF-8 (MSVC: /utf-8).
 
 #include <mie/ime_logic.h>
+#include <algorithm>
 #include <cstring>
 #include <cstdlib>
 
@@ -57,34 +66,37 @@ const char* ImeLogic::key_to_phoneme(uint8_t row, uint8_t col) {
 
 struct DirectEntry {
     uint8_t     row, col;
-    const char* labels[4];  // nullptr-terminated
+    // [0]=phoneme-primary  [1]=phoneme-secondary  [2]=phoneme-tertiary (rarely used)
+    // [3]=letter-primary   [4]=letter-secondary
+    // nullptr marks absent slots.
+    const char* labels[5];
 };
 
 // clang-format off
 static const DirectEntry kDirectTable[] = {
-    { 0, 0, { "ㄅ","ㄉ","1","2"     } },
-    { 0, 1, { "ˇ", "ˋ","3","4"     } },
-    { 0, 2, { "ㄓ","ˊ","5","6"     } },
-    { 0, 3, { "˙", "ㄚ","7","8"    } },
-    { 0, 4, { "ㄞ","ㄢ","9","0"    } },
+    { 0, 0, { "ㄅ","ㄉ",nullptr,"1","2"     } },
+    { 0, 1, { "ˇ", "ˋ",nullptr,"3","4"     } },
+    { 0, 2, { "ㄓ","ˊ",nullptr,"5","6"     } },
+    { 0, 3, { "˙", "ㄚ",nullptr,"7","8"    } },
+    { 0, 4, { "ㄞ","ㄢ","ㄦ","9","0"       } },  // ㄦ at phoneme slot 2
 
-    { 1, 0, { "ㄆ","ㄊ","Q","W"    } },
-    { 1, 1, { "ㄍ","ㄐ","E","R"    } },
-    { 1, 2, { "ㄔ","ㄗ","T","Y"    } },
-    { 1, 3, { "ㄧ","ㄛ","U","I"    } },
-    { 1, 4, { "ㄟ","ㄣ","O","P"    } },
+    { 1, 0, { "ㄆ","ㄊ",nullptr,"Q","W"    } },
+    { 1, 1, { "ㄍ","ㄐ",nullptr,"E","R"    } },
+    { 1, 2, { "ㄔ","ㄗ",nullptr,"T","Y"    } },
+    { 1, 3, { "ㄧ","ㄛ",nullptr,"U","I"    } },
+    { 1, 4, { "ㄟ","ㄣ",nullptr,"O","P"    } },
 
-    { 2, 0, { "ㄇ","ㄋ","A","S"    } },
-    { 2, 1, { "ㄎ","ㄑ","D","F"    } },
-    { 2, 2, { "ㄕ","ㄘ","G","H"    } },
-    { 2, 3, { "ㄨ","ㄜ","J","K"    } },
-    { 2, 4, { "ㄠ","ㄤ","L",nullptr} },
+    { 2, 0, { "ㄇ","ㄋ",nullptr,"A","S"    } },
+    { 2, 1, { "ㄎ","ㄑ",nullptr,"D","F"    } },
+    { 2, 2, { "ㄕ","ㄘ",nullptr,"G","H"    } },
+    { 2, 3, { "ㄨ","ㄜ",nullptr,"J","K"    } },
+    { 2, 4, { "ㄠ","ㄤ",nullptr,"L",nullptr} },
 
-    { 3, 0, { "ㄈ","ㄌ","Z","X"    } },
-    { 3, 1, { "ㄏ","ㄒ","C","V"    } },
-    { 3, 2, { "ㄖ","ㄙ","B","N"    } },
-    { 3, 3, { "ㄩ","ㄝ","M",nullptr} },
-    { 3, 4, { "ㄡ","ㄥ",nullptr,nullptr} },
+    { 3, 0, { "ㄈ","ㄌ",nullptr,"Z","X"    } },
+    { 3, 1, { "ㄏ","ㄒ",nullptr,"C","V"    } },
+    { 3, 2, { "ㄖ","ㄙ",nullptr,"B","N"    } },
+    { 3, 3, { "ㄩ","ㄝ",nullptr,"M",nullptr} },
+    { 3, 4, { "ㄡ","ㄥ",nullptr,nullptr,nullptr} },
 };
 // clang-format on
 
@@ -97,7 +109,7 @@ static const DirectEntry* find_direct_entry(uint8_t row, uint8_t col) {
 }
 
 const char* ImeLogic::key_to_direct_label(uint8_t row, uint8_t col, int idx) {
-    if (idx < 0 || idx >= 4) return nullptr;
+    if (idx < 0 || idx >= 5) return nullptr;
     const DirectEntry* e = find_direct_entry(row, col);
     if (!e) return nullptr;
     return e->labels[idx];
@@ -107,23 +119,23 @@ int ImeLogic::direct_label_count(uint8_t row, uint8_t col) {
     const DirectEntry* e = find_direct_entry(row, col);
     if (!e) return 0;
     int n = 0;
-    while (n < 4 && e->labels[n]) ++n;
+    while (n < 5 && e->labels[n]) ++n;
     return n;
 }
 
 // Number of cycling slots for the current direct mode.
-//   DirectBopomofo → phoneme slots (indices 0..1 in kDirectTable).
-//   DirectUpper/DirectLower → letter/digit slots (indices 2..3).
+//   DirectBopomofo → phoneme slots (indices 0, 1, 2 — up to 3 phonemes).
+//   DirectUpper/DirectLower → letter/digit slots (indices 3, 4).
 int ImeLogic::direct_mode_slot_count(uint8_t row, uint8_t col) const {
     const DirectEntry* e = find_direct_entry(row, col);
     if (!e) return 0;
     if (mode_ == InputMode::DirectBopomofo) {
         int n = 0;
-        while (n < 2 && e->labels[n]) ++n;
+        while (n < 3 && e->labels[n]) ++n;
         return n;
     } else {
         int n = 0;
-        while (n < 2 && e->labels[2 + n]) ++n;
+        while (n < 2 && e->labels[3 + n]) ++n;
         return n;
     }
 }
@@ -144,12 +156,14 @@ static const char* to_lower_label(const char* lbl) {
 }
 
 // idx-th label within the current direct mode's slot range.
+// DirectBopomofo: idx 0/1/2 map to phoneme labels[0/1/2].
+// DirectUpper/Lower: idx 0/1 map to letter labels[3/4].
 // For DirectLower: converts uppercase ASCII letters to lowercase.
 const char* ImeLogic::direct_mode_slot_label(uint8_t row, uint8_t col, int idx) const {
     const DirectEntry* e = find_direct_entry(row, col);
     if (!e || idx < 0) return nullptr;
-    int actual = (mode_ == InputMode::DirectBopomofo) ? idx : (2 + idx);
-    if (actual < 0 || actual >= 4 || !e->labels[actual]) return nullptr;
+    int actual = (mode_ == InputMode::DirectBopomofo) ? idx : (3 + idx);
+    if (actual < 0 || actual >= 5 || !e->labels[actual]) return nullptr;
     if (mode_ == InputMode::DirectLower)
         return to_lower_label(e->labels[actual]);
     return e->labels[actual];
@@ -226,6 +240,7 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
     , merged_count_(0)
     , merged_sel_(0)
     , matched_prefix_len_(0)
+    , en_capitalize_next_(false)
     , commit_cb_(nullptr)
     , commit_ctx_(nullptr)
 {
@@ -301,6 +316,13 @@ void ImeLogic::clear_input() {
     sym_pending_        = { 0xFF, 0 };
 }
 
+// ── UTF-8 helper (used by run_search sort and compound_input_str) ─────────
+static int utf8_char_count(const char* s) {
+    int n = 0;
+    while (*s) { if (((unsigned char)*s & 0xC0) != 0x80) ++n; ++s; }
+    return n;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // run_search  (uses key_seq_buf_, NOT input_buf_)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -330,6 +352,13 @@ void ImeLogic::run_search() {
         key_seq_buf_[len] = saved;
 
         if (zh_n > 0 || en_n > 0) {
+            // Stable-sort: single-codepoint words rank before multi-codepoint words.
+            // Within each group the original frequency order is preserved.
+            auto single_first = [](const Candidate& a, const Candidate& b) {
+                return (utf8_char_count(a.word) == 1) & (utf8_char_count(b.word) != 1);
+            };
+            if (zh_n > 1) std::stable_sort(zh_tmp, zh_tmp + zh_n, single_first);
+            if (en_n > 1) std::stable_sort(en_tmp, en_tmp + en_n, single_first);
             zh_cand_count_ = zh_n;
             en_cand_count_ = en_n;
             memcpy(zh_candidates_, zh_tmp, (size_t)zh_n * sizeof(Candidate));
@@ -360,6 +389,7 @@ void ImeLogic::do_commit(const char* utf8, int lang_hint) {
     if (utf8 && *utf8) {
         if (lang_hint == 0) context_lang_ = ZH;
         else if (lang_hint == 1) context_lang_ = EN;
+        did_commit(utf8);
         if (commit_cb_) commit_cb_(utf8, commit_ctx_);
     }
     // Full clear — reset all input state (but not sym_pending_; caller handles that).
@@ -381,6 +411,7 @@ void ImeLogic::do_commit_partial(const char* utf8, int lang_hint, int prefix_len
     if (utf8 && *utf8) {
         if (lang_hint == 0) context_lang_ = ZH;
         else if (lang_hint == 1) context_lang_ = EN;
+        did_commit(utf8);
         if (commit_cb_) commit_cb_(utf8, commit_ctx_);
     }
     int remove = (prefix_len > 0 && prefix_len <= key_seq_len_) ? prefix_len : key_seq_len_;
@@ -395,15 +426,19 @@ void ImeLogic::do_commit_partial(const char* utf8, int lang_hint, int prefix_len
     run_search();
 }
 
-// Rebuild input_buf_ from key_seq_buf_: phonemes for SmartZh, letters for SmartEn.
+// Rebuild input_buf_ from key_seq_buf_: primary phonemes for SmartZh, primary
+// letters for SmartEn.  The first-tone marker byte (0x20) is skipped in the
+// primary-phoneme display (it appears only in compound_input_str() as "ˉ").
 void ImeLogic::rebuild_input_buf() {
     input_len_      = 0;
     input_buf_[0]   = '\0';
     for (int i = 0; i < key_seq_len_; ++i) {
-        uint8_t idx = (uint8_t)key_seq_buf_[i] - 0x21;
+        uint8_t b = (uint8_t)key_seq_buf_[i];
+        if (b == 0x20) continue;          // first-tone marker: skip in primary display
+        uint8_t idx = b - 0x21;
         uint8_t row = idx / 5, col = idx % 5;
         if (mode_ == InputMode::SmartEn) {
-            const char* lt = key_to_direct_label(row, col, 2); // primary letter
+            const char* lt = key_to_direct_label(row, col, 3); // primary letter (index 3)
             if (lt) append_to_display(lt);
         } else {
             const char* ph = key_to_phoneme(row, col);
@@ -416,10 +451,12 @@ void ImeLogic::rebuild_input_buf() {
 int ImeLogic::matched_prefix_display_bytes() const {
     int bytes = 0;
     for (int i = 0; i < matched_prefix_len_ && i < key_seq_len_; ++i) {
-        uint8_t idx = (uint8_t)key_seq_buf_[i] - 0x21;
+        uint8_t b = (uint8_t)key_seq_buf_[i];
+        if (b == 0x20) continue;          // first-tone marker: skip
+        uint8_t idx = b - 0x21;
         uint8_t row = idx / 5, col = idx % 5;
         if (mode_ == InputMode::SmartEn) {
-            const char* lt = key_to_direct_label(row, col, 2);
+            const char* lt = key_to_direct_label(row, col, 3); // primary letter (index 3)
             if (lt) bytes += (int)strlen(lt);
         } else {
             const char* ph = key_to_phoneme(row, col);
@@ -427,6 +464,103 @@ int ImeLogic::matched_prefix_display_bytes() const {
         }
     }
     return bytes;
+}
+
+// ── did_commit ──────────────────────────────────────────────────────────────
+// Called internally after every commit callback invocation to update
+// en_capitalize_next_ based on what was just output.
+void ImeLogic::did_commit(const char* utf8) {
+    if (!utf8 || !utf8[0]) return;
+    const int len = (int)strlen(utf8);
+    // Spaces (ASCII or U+3000 ideographic) do not change the flag.
+    if (len == 1 && utf8[0] == ' ')  return;
+    if (len == 3 && memcmp(utf8, "\xe3\x80\x80", 3) == 0) return;
+    // Sentence-ending punctuation → capitalize the next EN word.
+    const char* e = utf8 + len;
+    bool ends_sentence =
+        (e[-1] == '.' || e[-1] == '?' || e[-1] == '!') ||
+        (len >= 3 && (memcmp(e - 3, "\xe3\x80\x82", 3) == 0 ||  // 。
+                      memcmp(e - 3, "\xef\xbc\x9f", 3) == 0 ||  // ？
+                      memcmp(e - 3, "\xef\xbc\x81", 3) == 0));   // ！
+    en_capitalize_next_ = ends_sentence;
+}
+
+// ── compound_input_str / matched_prefix_compound_bytes ────────────────────
+// Build the "compound key" display string used by the REPL and future UI.
+//   SmartZh:  each key → "[ph0ph1]" (or "[ph0]" if only one phoneme).
+//             First-tone marker (0x20) → "ˉ" appended literally.
+//   SmartEn:  falls back to the primary-letter display (same as input_str).
+//   Other:    returns input_str().
+
+const char* ImeLogic::compound_input_str() const {
+    static char buf[640];
+    if (mode_ != InputMode::SmartZh) return input_str();
+    int pos = 0;
+    for (int i = 0; i < key_seq_len_ && pos < 630; ++i) {
+        uint8_t b = (uint8_t)key_seq_buf_[i];
+        if (b == 0x20) {
+            // First-tone marker "ˉ" (U+02C9, UTF-8: CB 89)
+            if (pos + 3 < 639) { buf[pos++] = '\xcb'; buf[pos++] = '\x89'; buf[pos++] = '\0'; --pos; }
+            // Actually write properly:
+            memcpy(buf + pos, "\xcb\x89", 2); pos += 2;
+            continue;
+        }
+        uint8_t idx = b - 0x21;
+        uint8_t row = idx / 5, col = idx % 5;
+        const DirectEntry* e = find_direct_entry(row, col);
+        if (!e) continue;
+        // Collect phoneme labels (slots 0, 1, 2).
+        const char* phs[3] = { e->labels[0], e->labels[1], e->labels[2] };
+        int np = 0;
+        while (np < 3 && phs[np]) ++np;
+        if (np == 0) continue;
+        if (np == 1) {
+            // Single phoneme: output bare (no brackets)
+            int n = (int)strlen(phs[0]);
+            if (pos + n < 639) { memcpy(buf + pos, phs[0], (size_t)n); pos += n; }
+        } else {
+            // Multiple phonemes: "[ph0ph1...]"
+            buf[pos++] = '[';
+            for (int p = 0; p < np && pos < 638; ++p) {
+                int n = (int)strlen(phs[p]);
+                if (pos + n < 638) { memcpy(buf + pos, phs[p], (size_t)n); pos += n; }
+            }
+            if (pos < 639) buf[pos++] = ']';
+        }
+    }
+    buf[pos] = '\0';
+    return buf;
+}
+
+int ImeLogic::compound_input_bytes() const {
+    return (int)strlen(compound_input_str());
+}
+
+// Number of bytes of compound_input_str() that correspond to matched-prefix keys.
+int ImeLogic::matched_prefix_compound_bytes() const {
+    if (mode_ != InputMode::SmartZh) return matched_prefix_display_bytes();
+    // Re-run compound logic but only count matched_prefix_len_ key bytes.
+    static char buf2[640];
+    int pos = 0;
+    for (int i = 0; i < matched_prefix_len_ && i < key_seq_len_ && pos < 630; ++i) {
+        uint8_t b = (uint8_t)key_seq_buf_[i];
+        if (b == 0x20) { pos += 2; continue; }  // "ˉ" is 2 UTF-8 bytes
+        uint8_t idx = b - 0x21;
+        uint8_t row = idx / 5, col = idx % 5;
+        const DirectEntry* e = find_direct_entry(row, col);
+        if (!e) continue;
+        const char* phs[3] = { e->labels[0], e->labels[1], e->labels[2] };
+        int np = 0; while (np < 3 && phs[np]) ++np;
+        if (np == 0) continue;
+        if (np == 1) { pos += (int)strlen(phs[0]); }
+        else {
+            pos += 1;  // '['
+            for (int p = 0; p < np; ++p) pos += (int)strlen(phs[p]);
+            pos += 1;  // ']'
+        }
+    }
+    (void)buf2;
+    return pos;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -439,7 +573,7 @@ void ImeLogic::commit_sym_pending() {
     sym_pending_ = { 0xFF, 0 };
     // Clear the display buffer that was showing the symbol.
     input_len_ = 0; input_buf_[0] = '\0';
-    if (s && commit_cb_) commit_cb_(s, commit_ctx_);
+    if (s) { did_commit(s); if (commit_cb_) commit_cb_(s, commit_ctx_); }
     // symbol commit does not update context_lang_
 }
 
@@ -553,33 +687,77 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return true;
     }
 
-    // SPACE (4,2): quick-commit the first merged candidate (partial commit),
-    // or output a space when no input is pending.
+    // SPACE (4,2):
+    //   SmartZh, no input  → output full-width space U+3000.
+    //   SmartZh, pending   → append first-tone marker (0x20) to key_seq; no commit.
+    //                         Second press when already ending in 0x20 is a no-op.
+    //   SmartEn, no input  → output half-width space.
+    //   SmartEn, pending   → commit first candidate + auto-append space.
     if (ev.row == 4 && ev.col == 2) {
         if (key_seq_len_ == 0) {
-            // No pending input: SmartEn always outputs ASCII space;
-            // SmartZh outputs full-width space in ZH context.
+            // No pending input: output a space character.
             const char* sp = (mode_ == InputMode::SmartEn || context_lang_ == EN)
                              ? " " : "\xe3\x80\x80"; // U+3000 ideographic space
+            did_commit(sp);
             if (commit_cb_) commit_cb_(sp, commit_ctx_);
             return true;
         }
-        // Commit the first merged candidate and leave any remaining keys in buffer.
-        if (merged_count_ > 0)
-            do_commit_partial(merged_[0].cand->word, merged_[0].lang, matched_prefix_len_);
-        else
-            do_commit_partial(input_buf_, 2, key_seq_len_);
+        if (mode_ == InputMode::SmartZh) {
+            // First-tone marker: append 0x20 only if not already present.
+            if ((uint8_t)key_seq_buf_[key_seq_len_ - 1] != 0x20
+                    && key_seq_len_ < kMaxKeySeq) {
+                key_seq_buf_[key_seq_len_++] = 0x20;
+                key_seq_buf_[key_seq_len_]   = '\0';
+                run_search();
+            }
+            return true;
+        }
+        // SmartEn: commit first candidate and auto-append a space.
+        const char* word = (merged_count_ > 0) ? merged_[0].cand->word : input_buf_;
+        int  lang  = (merged_count_ > 0) ? merged_[0].lang : 2;
+        int  plen  = (merged_count_ > 0) ? matched_prefix_len_ : key_seq_len_;
+        // Apply capitalization if needed.
+        char cap[kCandidateMaxBytes] = {};
+        if (en_capitalize_next_) {
+            strncpy(cap, word, sizeof(cap) - 1);
+            if ((unsigned char)cap[0] >= 'a' && (unsigned char)cap[0] <= 'z')
+                cap[0] = (char)(cap[0] - 'a' + 'A');
+            word = cap;
+        }
+        do_commit_partial(word, lang, plen);
+        // Auto-space
+        did_commit(" ");
+        if (commit_cb_) commit_cb_(" ", commit_ctx_);
         return true;
     }
 
     // OK (5,4): commit the currently navigated candidate (partial commit).
     if (ev.row == 5 && ev.col == 4) {
         if (key_seq_len_ == 0) return false;
+        const char* word;
+        int lang, plen;
         if (merged_count_ > 0) {
             int sel = (merged_sel_ < merged_count_) ? merged_sel_ : 0;
-            do_commit_partial(merged_[sel].cand->word, merged_[sel].lang, matched_prefix_len_);
+            word = merged_[sel].cand->word;
+            lang = merged_[sel].lang;
+            plen = matched_prefix_len_;
         } else {
-            do_commit_partial(input_buf_, 2, key_seq_len_);
+            word = input_buf_;
+            lang = 2;
+            plen = key_seq_len_;
+        }
+        // SmartEn: capitalize + auto-space.
+        char cap[kCandidateMaxBytes] = {};
+        if (mode_ == InputMode::SmartEn && en_capitalize_next_) {
+            strncpy(cap, word, sizeof(cap) - 1);
+            if ((unsigned char)cap[0] >= 'a' && (unsigned char)cap[0] <= 'z')
+                cap[0] = (char)(cap[0] - 'a' + 'A');
+            word = cap;
+        }
+        do_commit_partial(word, lang, plen);
+        if (mode_ == InputMode::SmartEn) {
+            did_commit(" ");
+            if (commit_cb_) commit_cb_(" ", commit_ctx_);
         }
         return true;
     }
@@ -641,7 +819,7 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
             key_seq_buf_[key_seq_len_++] = new_byte;
             key_seq_buf_[key_seq_len_]   = '\0';
             if (mode_ == InputMode::SmartEn) {
-                const char* lt = key_to_direct_label(ev.row, ev.col, 2); // primary letter
+                const char* lt = key_to_direct_label(ev.row, ev.col, 3); // primary letter (index 3)
                 if (lt) append_to_display(lt);
             } else {
                 const char* ph = key_to_phoneme(ev.row, ev.col);

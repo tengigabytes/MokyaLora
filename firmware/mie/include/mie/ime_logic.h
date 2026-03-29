@@ -126,6 +126,16 @@ public:
     // Use this to split the display into "matched | remaining" in the UI.
     int matched_prefix_display_bytes() const;
 
+    // Compound display string (SmartZh only):
+    //   Each key is shown as "[ph0ph1]" (or bare "ph" if only one phoneme).
+    //   First-tone marker (0x20) renders as "ˉ".
+    //   SmartEn / Direct modes: falls back to input_str().
+    // The returned pointer is valid until the next call to any ImeLogic method.
+    const char* compound_input_str() const;
+    int         compound_input_bytes() const;
+    // Number of bytes of compound_input_str() covered by the matched prefix.
+    int         matched_prefix_compound_bytes() const;
+
     // Short mode label for UI display: "中", "EN", "ABC", "abc", or "ㄅ".
     const char* mode_indicator() const;
 
@@ -158,6 +168,10 @@ private:
 
     // Rebuild input_buf_ (display phonemes or letters) from key_seq_buf_.
     void rebuild_input_buf();
+
+    // ── Commit-state helpers ───────────────────────────────────────────────
+    // Update en_capitalize_next_ based on what was just committed.
+    void did_commit(const char* utf8);
 
     // ── Display buffer helpers ─────────────────────────────────────────────
     void append_to_display(const char* utf8);
@@ -242,6 +256,9 @@ private:
 
     // How many bytes of key_seq_buf_ were matched by the last run_search() call.
     int matched_prefix_len_;
+
+    // SmartEn auto-capitalize: true after sentence-ending punctuation (. ? ! 。 ？ ！).
+    bool en_capitalize_next_;
 
     // Commit callback.
     CommitCallback commit_cb_;

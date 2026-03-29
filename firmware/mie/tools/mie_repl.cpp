@@ -84,7 +84,7 @@ static const KeyLabel kLabels[] = {
     {3,3,"m",  "ㄩㄝ","M",  "m"  },{3,4,"\\", "ㄡㄥ","—",  "—"  },{3,5,"Del","DEL", nullptr,nullptr},
     // Rows 4-5: same in all modes
     {4,0,"`",  "MODE",nullptr,nullptr},{4,1,"Tab","TAB",nullptr,nullptr},{4,2,"Spc","SPACE",nullptr,nullptr},
-    {4,3,",",  "，SYM",nullptr,nullptr},{4,4,".","。？",nullptr,nullptr},{4,5,"=","VOL+",nullptr,nullptr},
+    {4,3,"[",  "，SYM",nullptr,nullptr},{4,4,"]","。？",nullptr,nullptr},{4,5,"=","VOL+",nullptr,nullptr},
     {5,0,"\xe2\x86\x91","UP",  nullptr,nullptr},{5,1,"\xe2\x86\x93","DOWN", nullptr,nullptr},
     {5,2,"\xe2\x86\x90","LEFT",nullptr,nullptr},{5,3,"\xe2\x86\x92","RIGHT",nullptr,nullptr},
     {5,4,"\xe2\x8f\x8e","OK",  nullptr,nullptr},{5,5,"-","VOL-",nullptr,nullptr},
@@ -145,10 +145,7 @@ static void cursor_delete() {
 
 static void clear_screen() { fputs("\033[2J\033[H", stdout); }
 
-static const char* kCircle[] = {
-    "\xe2\x91\xa0","\xe2\x91\xa1","\xe2\x91\xa2","\xe2\x91\xa3","\xe2\x91\xa4",
-};
-static constexpr int kNumCircles = 5;  // kCircle array size — never index beyond this
+// (circle number labels removed; candidates now separated by spaces)
 
 static void render(const mie::ImeLogic& ime) {
     LOG("render: mode=%d zh=%d en=%d merged=%d mc_sel=%d prefix=%d input_bytes=%d\n",
@@ -189,26 +186,22 @@ static void render(const mie::ImeLogic& ime) {
     }
     puts("\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4");
 
-    // ── Mode & input: show [matched_prefix]remaining split ─────────────────
-    // If there's a matched prefix, bracket it so the user can see which part
-    // of the key buffer is "resolved" vs which keys still follow.
-    char input_display[320] = {};
-    if (ime.input_bytes() == 0) {
+    // ── Mode & input: compound display with [matched]remaining split ───────
+    // SmartZh shows "[ㄅㄉ][ㄍㄐ]" compound format; others use primary phoneme/letter.
+    char input_display[400] = {};
+    if (ime.input_bytes() == 0 && ime.compound_input_bytes() == 0) {
         // (按下鍵入)
         snprintf(input_display, sizeof(input_display), "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)");
     } else {
-        int split = ime.matched_prefix_display_bytes();
-        const char* s = ime.input_str();
-        int total = ime.input_bytes();
+        int split = ime.matched_prefix_compound_bytes();
+        const char* s = ime.compound_input_str();
+        int total = ime.compound_input_bytes();
         if (split > 0 && split < total) {
-            // [matched_prefix_phonemes]remaining_phonemes
             snprintf(input_display, sizeof(input_display), "[%.*s]%s",
                      split, s, s + split);
         } else if (split > 0) {
-            // All keys matched: [full_phonemes]
             snprintf(input_display, sizeof(input_display), "[%s]", s);
         } else {
-            // No match at all
             snprintf(input_display, sizeof(input_display), "%s", s);
         }
     }
@@ -230,11 +223,11 @@ static void render(const mie::ImeLogic& ime) {
             LOG("render: mc=%d page=%d/%d pg_count=%d sel=%d\n",
                 mc, page+1, pg_total, pg_count, sel_in_page);
             char cand_buf[512] = {}; int pos = 0;
-            for (int i = 0; i < pg_count && i < kNumCircles && pos < 460; ++i) {
+            for (int i = 0; i < pg_count && pos < 460; ++i) {
                 bool sel = (i == sel_in_page);
                 int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
-                                 "%s%s%s ",
-                                 sel ? ">" : " ", kCircle[i],
+                                 "%s%s ",
+                                 sel ? ">" : " ",
                                  ime.page_cand(i).word);
                 if (n > 0) pos += n;
             }
@@ -272,7 +265,8 @@ static void render(const mie::ImeLogic& ime) {
     }
 
     puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
-    // ESC離開 | `=MODE(中→EN→ABC→abc→ㄅ) | ←→=候選/游標 | Tab=下頁 | BS/Del=刪除 | Spc=快選 | ↩=確認
+    // ESC離開 | `=MODE(中→EN→ABC→abc→ㄅ) | ←→=候選/游標 | Tab=下頁 | BS/Del=刪除
+    // Spc=一聲/提交 | ↩=確認 | [/]=，SYM/。？
     // Note: string split at \x92 boundaries to avoid hex-escape-out-of-range warnings.
     puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  `=MODE("
          "\xe4\xb8\xad\xe2\x86\x92" "EN"
@@ -282,7 +276,9 @@ static void render(const mie::ImeLogic& ime) {
          "\xe5\x80\x99\xe9\x81\xb8/\xe6\xb8\xb8\xe6\xa8\x99  |  "
          "Tab=\xe4\xb8\x8b\xe9\xa0\x81  |  "   // Tab=下頁
          "BS/Del=\xe5\x88\xaa\xe9\x99\xa4  |  "
-         "Spc=\xe5\xbf\xab\xe9\x81\xb8  |  \xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d");
+         "Spc=\xe4\xb8\x80\xe8\x81\xb2/\xe6\x8f\x90\xe4\xba\xa4  |  "  // Spc=一聲/提交
+         "\xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d  |  "
+         "[=\xef\xbc\x8c\xe7\xac\xa6  ]=\xe3\x80\x82\xef\xbc\x9f");  // [=，符 ]=。？
     fflush(stdout);
 }
 
