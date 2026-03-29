@@ -36,3 +36,6 @@ firmware/mie/data/*.json
 
 # MIE downloaded source data (fetched by tools/fetch_data.py — not committed)
 firmware/mie/data_sources/
+
+# MIE REPL runtime log
+mie_repl.log
