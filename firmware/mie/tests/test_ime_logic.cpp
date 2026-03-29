@@ -1452,7 +1452,9 @@ TEST(ToneSort, ToneFourBeatsHigherFreqToneOne) {
     ime.process_key(kev(0, 3));
     ime.process_key(kev(0, 1));
 
-    ASSERT_GT(ime.zh_candidate_count(), 0);
+    // Strict filtering: only the tone-4 match (爸) should appear;
+    // the tone-1 candidate (巴) must be filtered out.
+    EXPECT_EQ(ime.zh_candidate_count(), 1);
     EXPECT_STREQ(ime.zh_candidate(0).word, "\xe7\x88\xb8");  // 爸
 }
 
@@ -1479,7 +1481,9 @@ TEST(ToneSort, ToneOneBeatsHigherFreqToneThree) {
     ime.process_key(kev(0, 4));
     ime.process_key(kSPACE);
 
-    ASSERT_GT(ime.zh_candidate_count(), 0);
+    // Strict filtering: only the tone-1 candidate (班) should appear;
+    // the tone-3 candidate (版) must be filtered out.
+    EXPECT_EQ(ime.zh_candidate_count(), 1);
     EXPECT_STREQ(ime.zh_candidate(0).word, "\xe7\x8f\xad");  // 班
 }
 
