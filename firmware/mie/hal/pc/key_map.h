@@ -57,6 +57,7 @@ static constexpr KeyMapEntry kPcKeyMap[] = {
     { '8',          0, 3 },  // ˙ ㄚ  — secondary
     { '9',          0, 4 },  // ㄞ ㄢ ㄦ — primary
     { '0',          0, 4 },  // ㄞ ㄢ ㄦ — secondary
+    { '-',          0, 4 },  // ㄞ ㄢ ㄦ — alternate (ergonomic for ㄦ)
     // Row 1  (primary first QWERTY letter of the pair, secondary second)
     { 'q',          1, 0 },  // ㄆ ㄊ  — primary
     { 'w',          1, 0 },  // ㄆ ㄊ  — secondary
@@ -77,7 +78,8 @@ static constexpr KeyMapEntry kPcKeyMap[] = {
     { 'h',          2, 2 },  // ㄕ ㄘ  — secondary
     { 'j',          2, 3 },  // ㄨ ㄜ  — primary
     { 'k',          2, 3 },  // ㄨ ㄜ  — secondary
-    { 'l',          2, 4 },  // ㄠ ㄤ  — (only one PC key)
+    { 'l',          2, 4 },  // ㄠ ㄤ  — primary
+    { ';',          2, 4 },  // ㄠ ㄤ  — alternate (mirrors l)
     // Row 3
     { 'z',          3, 0 },  // ㄈ ㄌ  — primary
     { 'x',          3, 0 },  // ㄈ ㄌ  — secondary
@@ -85,8 +87,11 @@ static constexpr KeyMapEntry kPcKeyMap[] = {
     { 'v',          3, 1 },  // ㄏ ㄒ  — secondary
     { 'b',          3, 2 },  // ㄖ ㄙ  — primary
     { 'n',          3, 2 },  // ㄖ ㄙ  — secondary
-    { 'm',          3, 3 },  // ㄩ ㄝ  — (only one PC key)
-    { '\\',         3, 4 },  // ㄡ ㄥ  — (only one PC key)
+    { 'm',          3, 3 },  // ㄩ ㄝ  — primary
+    { ',',          3, 3 },  // ㄩ ㄝ  — alternate (mirrors m)
+    { '\\',         3, 4 },  // ㄡ ㄥ  — primary
+    { '.',          3, 4 },  // ㄡ ㄥ  — alternate-1 (mirrors \)
+    { '/',          3, 4 },  // ㄡ ㄥ  — alternate-2
 
     // ── Col 5 function keys ───────────────────────────────────────────────
     { KEY_F1,       0, 5 },  // FUNC
@@ -108,7 +113,7 @@ static constexpr KeyMapEntry kPcKeyMap[] = {
     { KEY_LEFT,     5, 2 },  // LEFT
     { KEY_RIGHT,    5, 3 },  // RIGHT
     { KEY_ENTER,    5, 4 },  // OK
-    { '-',          5, 5 },  // VOL−
+    { '_',          5, 5 },  // VOL−  (moved from '-'; '-' now maps to (0,4) ㄦ)
 
     { -1,           0, 0 },  // sentinel
 };
