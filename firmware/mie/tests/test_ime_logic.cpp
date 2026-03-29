@@ -212,6 +212,8 @@ TEST(SmartMode, CommitCallbackCalledOnOK) {
 }
 
 TEST(SmartMode, CommitCallbackCalledOnSpace) {
+    // In SmartZh mode, SPACE with pending input appends the first-tone marker
+    // (0x20) to the key sequence and does NOT commit any text.
     mie::TrieSearcher ts;
     mie::ImeLogic ime(ts);
 
@@ -221,8 +223,9 @@ TEST(SmartMode, CommitCallbackCalledOnSpace) {
     }, &committed);
 
     ime.process_key(kev(1, 1));  // ㄍ
-    ime.process_key(kSPACE);
-    EXPECT_EQ(committed, "ㄍ");
+    ime.process_key(kSPACE);     // first tone — no commit in SmartZh
+    EXPECT_EQ(committed, "");    // nothing committed
+    EXPECT_GT(ime.input_bytes(), 0);  // input still pending
 }
 
 TEST(SmartMode, CommitFirstZhCandidate) {
@@ -925,6 +928,8 @@ TEST(ModeSeparation, SmartZhMergedIsZhOnly) {
 }
 
 TEST(ModeSeparation, SmartZhSpaceCommitsZhCandidate) {
+    // SmartZh: SPACE no longer commits — it appends the first-tone marker.
+    // Use OK to commit the candidate.
     std::vector<uint8_t> dat, val;
     build_single({ { "\x21", 1, "巴", 1 } }, dat, val);
     mie::TrieSearcher ts;
@@ -938,7 +943,10 @@ TEST(ModeSeparation, SmartZhSpaceCommitsZhCandidate) {
 
     ime.process_key(kev(0, 0));
     ASSERT_GT(ime.zh_candidate_count(), 0);
-    ime.process_key(kSPACE);
+    ime.process_key(kSPACE);     // first tone — no commit
+    EXPECT_EQ(committed, "");
+    // OK commits the candidate
+    ime.process_key(kOK);
     EXPECT_EQ(committed, "\xe5\xb7\xb4");  // 巴
 }
 
@@ -960,7 +968,8 @@ TEST(ModeSeparation, SmartEnSpaceCommitsEnCandidate) {
     ime.process_key(kev(0, 0));
     ASSERT_GT(ime.en_candidate_count(), 0);
     ime.process_key(kSPACE);
-    EXPECT_EQ(committed, "abc");
+    // SmartEn: word committed + auto-space appended
+    EXPECT_EQ(committed, "abc ");
 }
 
 TEST(ModeSeparation, SmartEnDisplayShowsLetters) {
@@ -1082,7 +1091,9 @@ TEST(AbbreviatedInput, SingleInitialFindsTopCandidates) {
 }
 
 TEST(AbbreviatedInput, SpaceCommitsAbbreviatedCandidate) {
-    // Full flow: type abbreviated keys for 要去, press SPACE, 要去 is committed.
+    // Full flow: type abbreviated keys for 要去.
+    // SmartZh: SPACE no longer commits — it marks first tone.
+    // Commit with OK instead.
     std::vector<uint8_t> dat, val;
     // prefix-initials key of 要去: [0x29,0x2C,0x33,0x22] = ufm4
     build_single({ { "\x29\x2C\x33\x22", 4,
@@ -1102,8 +1113,174 @@ TEST(AbbreviatedInput, SpaceCommitsAbbreviatedCandidate) {
     ime.process_key(kev(0, 1));  // 4 → ˇ/ˋ
     ASSERT_GT(ime.zh_candidate_count(), 0);
 
+    // SPACE adds first-tone marker, no commit
     ime.process_key(kSPACE);
+    EXPECT_EQ(committed, "");
+
+    // OK commits 要去
+    ime.process_key(kOK);
     EXPECT_EQ(committed, "\xe8\xa6\x81\xe5\x8e\xbb");  // 要去
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SpaceTone — SPACE key appends first-tone marker in SmartZh
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(SpaceTone, SmartZhSpaceAddsFirstToneMarker) {
+    // SPACE in SmartZh appends 0x20 (first-tone marker) to key_seq_buf_ and
+    // does NOT commit.  compound_input_str() shows the "ˉ" glyph.
+    // A second SPACE is a no-op (already trailing 0x20).
+    // BACK removes the marker, restoring the previous compound display.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "\xe5\xb7\xb4", 1 } }, dat, val);  // 巴
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    // Press key (0,0): builds key_seq [0x21], compound = "[ㄅㄉ]"
+    ime.process_key(kev(0, 0));
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_EQ(committed, "");
+
+    // SPACE appends first-tone marker: compound should now contain "ˉ" (U+02C9, 0xCB 0x89)
+    ime.process_key(kSPACE);
+    EXPECT_EQ(committed, "");
+    EXPECT_NE(nullptr, strstr(ime.compound_input_str(), "\xcb\x89"));  // ˉ present
+
+    // Second SPACE is a no-op: compound length should not increase
+    int clen = ime.compound_input_bytes();
+    ime.process_key(kSPACE);
+    EXPECT_EQ(ime.compound_input_bytes(), clen);
+
+    // BACK removes the first-tone marker byte from key_seq
+    ime.process_key(kBACK);
+    EXPECT_EQ(nullptr, strstr(ime.compound_input_str(), "\xcb\x89"));  // ˉ gone
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CompoundDisplay — "[ph0ph1]" format for SmartZh keys
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(CompoundDisplay, SingleKeyShowsBothPhonemes) {
+    // Pressing key (0,0) in SmartZh: compound_input_str() returns "[ㄅㄉ]".
+    // ㄅ = U+3105 = E3 84 85;  ㄉ = U+3109 = E3 84 89
+    mie::TrieSearcher ts;
+    mie::ImeLogic ime(ts);
+
+    ime.process_key(kev(0, 0));  // ㄅ/ㄉ
+    EXPECT_STREQ(ime.compound_input_str(), "[\xe3\x84\x85\xe3\x84\x89]");
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SingleCharPriority — single-codepoint words rank before multi-codepoint
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(SingleCharPriority, SingleCharsRankBeforeMultiChar) {
+    // Dict entry for key 0x21 has two words:
+    //   freq=900 "好吧" (2 chars, 6 UTF-8 bytes) — higher frequency, stored first
+    //   freq=500 "好"   (1 char,  3 UTF-8 bytes) — lower frequency, stored second
+    // After the single-char stable sort, "好" should appear as zh_candidate(0).
+    std::vector<uint8_t> dat, val;
+
+    // Build val: word_count=2, "好吧" first (higher freq), "好" second
+    val.clear();
+    push_u16(val, 2);
+    push_u16(val, 900); push_u8(val, 6); push_str(val, "\xe5\xa5\xbd\xe5\x90\xa7");  // 好吧
+    push_u16(val, 500); push_u8(val, 3); push_str(val, "\xe5\xa5\xbd");              // 好
+
+    // Build dat header (same pattern as build_two_zh)
+    dat.clear();
+    std::vector<uint8_t> keys_sec;
+    push_u8(keys_sec, 1); push_u8(keys_sec, 0x21);  // key_len=1, key=0x21
+    uint32_t kc  = 1;
+    uint32_t kdo = 16 + kc * 8;
+    push_str(dat, "MIED");
+    push_u16(dat, 1); push_u16(dat, 0);
+    push_u32(dat, kc); push_u32(dat, kdo);
+    push_u32(dat, 0); push_u32(dat, 0);  // key_off=0, val_off=0
+    dat.insert(dat.end(), keys_sec.begin(), keys_sec.end());
+
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    mie::ImeLogic ime(ts);
+
+    ime.process_key(kev(0, 0));  // triggers search
+    ASSERT_GE(ime.zh_candidate_count(), 2);
+    // Single-char "好" must be first despite lower frequency
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe5\xa5\xbd");   // 好
+    EXPECT_STREQ(ime.zh_candidate(1).word, "\xe5\xa5\xbd\xe5\x90\xa7");  // 好吧
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SmartEn — auto-space and auto-capitalize
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(SmartEn, AutoSpaceAfterWordCommit) {
+    // After committing a word in SmartEn (via OK), a trailing space is
+    // automatically appended to the output.
+    std::vector<uint8_t> en_dat, en_val;
+    build_single({ { "\x21", 1, "cat", 1 } }, en_dat, en_val);
+    mie::TrieSearcher zh_ts;
+    mie::TrieSearcher en_ts;
+    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
+    mie::ImeLogic ime(zh_ts, &en_ts);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ASSERT_EQ(ime.mode(), mie::InputMode::SmartEn);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    ime.process_key(kev(0, 0));  // key_seq [0x21] → finds "cat"
+    ASSERT_GT(ime.en_candidate_count(), 0);
+    EXPECT_STREQ(ime.en_candidate(0).word, "cat");
+
+    ime.process_key(kOK);  // commit "cat" + auto-space
+    EXPECT_EQ(committed, "cat ");
+}
+
+TEST(SmartEn, AutoCapAfterSentencePunctuation) {
+    // After committing sentence-ending punctuation ("."), the next EN word
+    // committed in SmartEn mode is automatically capitalized.
+    std::vector<uint8_t> en_dat, en_val;
+    build_single({ { "\x21", 1, "cat", 1 } }, en_dat, en_val);
+    mie::TrieSearcher zh_ts;
+    mie::TrieSearcher en_ts;
+    ASSERT_TRUE(en_ts.load_from_memory(en_dat.data(), en_dat.size(), en_val.data(), en_val.size()));
+    mie::ImeLogic ime(zh_ts, &en_ts);
+    ime.process_key(kMODE);  // SmartZh → SmartEn
+    ASSERT_EQ(ime.mode(), mie::InputMode::SmartEn);
+
+    std::string committed;
+    ime.set_commit_callback([](const char* s, void* ctx) {
+        *static_cast<std::string*>(ctx) += s;
+    }, &committed);
+
+    // Commit "cat" to set context_lang_ = EN (required for EN sym list).
+    ime.process_key(kev(0, 0));
+    ASSERT_GT(ime.en_candidate_count(), 0);
+    ime.process_key(kSPACE);   // commits "cat " → context_lang_ = EN
+    EXPECT_EQ(committed, "cat ");
+
+    // SYM4 (row 4, col 4) with EN context: first symbol = "." (kSymEN4[0])
+    ime.process_key(kSYM4);    // sym_pending_ = { col:4, sym_idx:0 } → "."
+
+    // Any non-sym key triggers commit_sym_pending() first, firing did_commit(".").
+    committed.clear();
+    ime.process_key(kev(0, 0));   // commits pending ".", then adds key to buffer
+    EXPECT_EQ(committed, ".");    // "." committed; en_capitalize_next_ is now true
+
+    // Next SmartEn commit should be capitalized: "cat" → "Cat"
+    ASSERT_GT(ime.en_candidate_count(), 0);
+    committed.clear();
+    ime.process_key(kSPACE);   // commits "Cat " (auto-cap + auto-space)
+    EXPECT_EQ(committed, "Cat ");
 }
 
 } // namespace
