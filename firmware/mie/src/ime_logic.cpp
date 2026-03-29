@@ -345,15 +345,20 @@ static int extract_tone_intent(const char* key_buf, int seq_len, int prefix_len)
 // Returns sort tier for a candidate given the detected tone intent:
 //   0 — single char  AND tone matches   (best)
 //   1 — multi-char   AND tone matches
-//   2 — single char  AND tone no match  (fallback)
-//   3 — multi-char   AND tone no match  (fallback)
+//   2 — single char  AND tone no match / unknown  (fallback)
+//   3 — multi-char   AND tone no match / unknown  (fallback)
+//
+// tone==0 (unknown, e.g. v1 dict with no tone data) is treated as non-matching
+// when a specific tone intent is expressed.  This ensures the fallback path
+// (see run_search filtering below) is taken rather than silently promoting
+// unknown-tone chars to the matching tier.
 static int tone_tier(const Candidate& c, int intent) {
     bool single = (utf8_char_count(c.word) == 1);
     bool match;
     if (intent == 0) {
         match = true;               // unspecified → treat all as matching
     } else if (intent == 1) {
-        match = (c.tone == 1 || c.tone == 0);   // tone-1 or unknown (implicit 1)
+        match = (c.tone == 1);
     } else if (intent == 34) {
         match = (c.tone == 3 || c.tone == 4);   // ˇ/ˋ key → accept tone 3 or 4
     } else {
@@ -425,6 +430,18 @@ void ImeLogic::run_search() {
             };
             if (zh_n > 1) std::stable_sort(zh_tmp, zh_tmp + zh_n, tone_sort);
             if (en_n > 1) std::stable_sort(en_tmp, en_tmp + en_n, tone_sort);
+            // Strict tone filter: when tone intent is specified, keep only
+            // tier-0/1 candidates (matching tone).  Fall back to the full
+            // sorted list only if no tone-matching candidates exist — this
+            // handles v1 dicts (all tone==0) or keys with no tone-1 entries.
+            if (intent != 0) {
+                int keep = 0;
+                for (int i = 0; i < zh_n; ++i)
+                    if (tone_tier(zh_tmp[i], intent) < 2)
+                        zh_tmp[keep++] = zh_tmp[i];
+                if (keep > 0) zh_n = keep;
+                // English candidates are not filtered by tone (always tone==0).
+            }
             zh_cand_count_ = zh_n;
             en_cand_count_ = en_n;
             memcpy(zh_candidates_, zh_tmp, (size_t)zh_n * sizeof(Candidate));
