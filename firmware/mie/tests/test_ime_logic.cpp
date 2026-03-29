@@ -44,7 +44,14 @@ static const mie::KeyEvent kSYM4  = kev(4, 4);  // 。.？
 
 // Build a small in-memory TrieSearcher.
 // key_bytes / key_len: raw key-index-encoded key.
-struct TEntry { const char* key; size_t klen; const char* word; uint16_t freq; };
+// tone: Bopomofo tone 1-5; 0=unspecified.  Defaults to 1 for ZH, 0 for EN.
+struct TEntry {
+    const char* key;
+    size_t      klen;
+    const char* word;
+    uint16_t    freq;
+    uint8_t     tone = 1;  // v2 tone field; default 1 (陰平)
+};
 
 static void push_u8 (std::vector<uint8_t>& v, uint8_t  x) { v.push_back(x); }
 static void push_u16(std::vector<uint8_t>& v, uint16_t x) {
@@ -61,7 +68,8 @@ static void push_str(std::vector<uint8_t>& v, const char* s) {
     while (*s) v.push_back((uint8_t)*s++);
 }
 
-// Build buffers for a list of single-word entries (one word per key, sorted).
+// Build v2-format buffers for a list of single-word entries (one word per key).
+// v2 per-word layout in values: freq:u16, tone:u8, word_len:u8, word_utf8
 static void build_single(const std::vector<TEntry>& entries,
                          std::vector<uint8_t>& dat, std::vector<uint8_t>& val) {
     std::vector<uint32_t> val_off, key_off;
@@ -69,9 +77,10 @@ static void build_single(const std::vector<TEntry>& entries,
 
     for (const auto& e : entries) {
         val_off.push_back((uint32_t)val.size());
-        push_u16(val, 1);  // word_count
+        push_u16(val, 1);  // word_count = 1
         size_t wlen = strlen(e.word);
         push_u16(val, e.freq);
+        push_u8 (val, e.tone);          // v2: tone byte
         push_u8 (val, (uint8_t)wlen);
         push_str(val, e.word);
     }
@@ -81,11 +90,11 @@ static void build_single(const std::vector<TEntry>& entries,
         push_raw(keys_sec, e.key, e.klen);
     }
 
-    uint32_t kc = (uint32_t)entries.size();
+    uint32_t kc  = (uint32_t)entries.size();
     uint32_t kdo = 16 + kc * 8;
 
     push_str(dat, "MIED");
-    push_u16(dat, 1); push_u16(dat, 0);
+    push_u16(dat, 2); push_u16(dat, 0);  // version=2
     push_u32(dat, kc); push_u32(dat, kdo);
     for (size_t i = 0; i < entries.size(); ++i) {
         push_u32(dat, key_off[i]);
@@ -1381,6 +1390,127 @@ TEST(DirectBopomofo, SearchFiltersMultiCharWords) {
     // Only single-char "巴" should appear; multi-char "巴士" must be filtered out.
     EXPECT_EQ(ime.zh_candidate_count(), 1);
     EXPECT_STREQ(ime.zh_candidate(0).word, "\xe5\xb7\xb4");  // "巴"
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Tone-aware sorting
+// ══════════════════════════════════════════════════════════════════════════
+
+// Helper: build a v2 dict with ONE key → multiple words.
+// words is [(word_utf8, freq, tone), ...]
+static void build_multi(const char* key, size_t klen,
+                        const std::vector<std::tuple<const char*,uint16_t,uint8_t>>& words,
+                        std::vector<uint8_t>& dat, std::vector<uint8_t>& val) {
+    uint32_t v_off = (uint32_t)val.size();
+    push_u16(val, (uint16_t)words.size());
+    for (size_t i = 0; i < words.size(); ++i) {
+        const char*    w    = std::get<0>(words[i]);
+        uint16_t       freq = std::get<1>(words[i]);
+        uint8_t        tone = std::get<2>(words[i]);
+        size_t wlen = strlen(w);
+        push_u16(val, freq);
+        push_u8 (val, tone);
+        push_u8 (val, (uint8_t)wlen);
+        push_str(val, w);
+    }
+
+    std::vector<uint8_t> keys_sec;
+    uint32_t k_off = 0;
+    push_u8(keys_sec, (uint8_t)klen);
+    push_raw(keys_sec, key, klen);
+
+    uint32_t kc  = 1;
+    uint32_t kdo = 16 + kc * 8;
+    push_str(dat, "MIED");
+    push_u16(dat, 2); push_u16(dat, 0);   // version = 2
+    push_u32(dat, kc); push_u32(dat, kdo);
+    push_u32(dat, k_off);
+    push_u32(dat, v_off);
+    dat.insert(dat.end(), keys_sec.begin(), keys_sec.end());
+}
+
+// Tone 4 (ˋ) candidate beats higher-freq tone-1 candidate.
+// Key [0x21, 0x24, 0x22]: 爸(tone=4,freq=100) vs 巴(tone=1,freq=200).
+// Last key byte is 0x22 → tone intent = 34 (3 or 4).
+// 爸 matches (tier 0, single+match); 巴 does not (tier 2, single+no-match).
+TEST(ToneSort, ToneFourBeatsHigherFreqToneOne) {
+    static const char kKey[] = "\x21\x24\x22";
+    std::vector<uint8_t> dat, val;
+    build_multi(kKey, 3,
+        {
+            {"\xe7\x88\xb8", 100, 4},  // 爸 tone=4 freq=100
+            {"\xe5\xb7\xb4", 200, 1},  // 巴 tone=1 freq=200
+        },
+        dat, val);
+
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+
+    mie::ImeLogic ime(ts);
+    // Press keys for [0x21, 0x24, 0x22]: (0,0), (0,3), (0,1)
+    ime.process_key(kev(0, 0));
+    ime.process_key(kev(0, 3));
+    ime.process_key(kev(0, 1));
+
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe7\x88\xb8");  // 爸
+}
+
+// Tone-1 (SPACE) candidate beats higher-freq tone-3 candidate.
+// Key [0x21, 0x25]: 版(tone=3,freq=500) vs 班(tone=1,freq=200).
+// SPACE after matched prefix → tone intent = 1.
+// 班 matches (tier 0); 版 does not (tier 2).
+TEST(ToneSort, ToneOneBeatsHigherFreqToneThree) {
+    static const char kKey[] = "\x21\x25";
+    std::vector<uint8_t> dat, val;
+    build_multi(kKey, 2,
+        {
+            {"\xe7\x89\x88", 500, 3},  // 版 tone=3 freq=500
+            {"\xe7\x8f\xad", 200, 1},  // 班 tone=1 freq=200
+        },
+        dat, val);
+
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+
+    mie::ImeLogic ime(ts);
+    // Press keys for [0x21, 0x25] then SPACE: (0,0), (0,4), SPACE
+    ime.process_key(kev(0, 0));
+    ime.process_key(kev(0, 4));
+    ime.process_key(kSPACE);
+
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe7\x8f\xad");  // 班
+}
+
+// Two-syllable word: 寶寶 is stored under full key and appears as first candidate.
+// Key [0x21, 0x2F, 0x22, 0x21, 0x2F, 0x24] → 寶寶 (6 UTF-8 bytes).
+// Pressing those exact 6 keys triggers a greedy match at len=6; no tone filter
+// (intent=0 for multi-key with last byte 0x24 which is not dedicated tone key).
+TEST(ToneSort, BopomofoTwosyllableExact) {
+    static const char kKey[] = "\x21\x2f\x22\x21\x2f\x24";
+    std::vector<uint8_t> dat, val;
+    build_multi(kKey, 6,
+        {
+            {"\xe5\xaf\xb6\xe5\xaf\xb6", 500, 0},  // 寶寶 tone=0 (multi-syll)
+        },
+        dat, val);
+
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+
+    mie::ImeLogic ime(ts);
+    // Press keys for [0x21, 0x2F, 0x22, 0x21, 0x2F, 0x24]:
+    // 0x21→(0,0)  0x2F→(2,4)  0x22→(0,1)  0x21→(0,0)  0x2F→(2,4)  0x24→(0,3)
+    ime.process_key(kev(0, 0));
+    ime.process_key(kev(2, 4));
+    ime.process_key(kev(0, 1));
+    ime.process_key(kev(0, 0));
+    ime.process_key(kev(2, 4));
+    ime.process_key(kev(0, 3));
+
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe5\xaf\xb6\xe5\xaf\xb6");  // 寶寶
 }
 
 } // namespace

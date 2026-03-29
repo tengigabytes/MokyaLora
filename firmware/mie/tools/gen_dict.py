@@ -58,8 +58,9 @@ MIED binary format (same as before, key changed from phoneme string to key-seq b
     Header (16 bytes LE): magic="MIED" version=1 flags=0 key_count keys_data_off
     Index  (key_count × 8 bytes): (key_data_off: uint32, val_data_off: uint32)
     Keys   (variable): (key_len: uint8, key_bytes: bytes)  — sorted ascending
-  dict_values.bin:
-    ValueRecord: (word_count: uint16, (freq: uint16, word_len: uint8, word_utf8)...)
+  dict_values.bin  (v2 format):
+    ValueRecord: (word_count: uint16, (freq: uint16, tone: uint8, word_len: uint8, word_utf8)...)
+    tone: 1=陰平 2=陽平 3=上聲 4=去聲 5=輕聲  0=unknown (English / unspecified)
 
 License notices
 ---------------
@@ -91,7 +92,7 @@ from pathlib import Path
 
 OUTPUT_DIR = Path(__file__).parent.parent / "data"
 MAGIC      = b"MIED"
-VERSION    = 1
+VERSION    = 2   # v2 adds tone:u8 per word in ValueRecord
 
 # ── 5×5 KEYMAP ────────────────────────────────────────────────────────────
 # key_index (0–19) → list of Bopomofo phonemes on that physical key.
@@ -242,6 +243,37 @@ def parse_reading_syllables(reading: str) -> list:
     return result
 
 
+def reading_to_tone(reading: str) -> int:
+    """
+    Extract the tone of the last syllable from a Bopomofo reading string.
+
+    Returns an integer 1–5:
+      1 = 陰平 (tone 1, no mark)
+      2 = 陽平 (ˊ)
+      3 = 上聲 (ˇ)
+      4 = 去聲 (ˋ)
+      5 = 輕聲 (˙)
+
+    Handles both tone-mark characters and digit suffixes (2–5).
+    Returns 1 when no tone mark is found (implicit first tone).
+    """
+    sylls = reading.split() if ' ' in reading else [reading]
+    last = sylls[-1].strip() if sylls else ''
+    # Digit-tone suffix check (rightmost digit 2–5).
+    for ch in reversed(last):
+        if ch in '2345':
+            return int(ch)
+        if ch in '1':
+            return 1
+    # Tone-mark character check.
+    for ch in reversed(last):
+        if ch == 'ˊ': return 2
+        if ch == 'ˇ': return 3
+        if ch == 'ˋ': return 4
+        if ch == '˙': return 5
+    return 1  # no marker → tone 1 (陰平)
+
+
 def abbreviated_keyseqs(reading: str, full_keyseq: bytes) -> list:
     """
     Generate ALL abbreviated key sequences for a word via cartesian product
@@ -330,7 +362,8 @@ def load_libchewing(path: str,
             phonemes = parse_reading(reading)
             keyseq   = phonemes_to_keyseq(phonemes)
             if keyseq and word:
-                entries.append((keyseq, word, freq))
+                tone = reading_to_tone(reading)
+                entries.append((keyseq, word, freq, tone))
                 n_syls = len(parse_reading_syllables(reading))
                 emit_abbr = (
                     (min_freq_for_abbr == 0 or freq >= min_freq_for_abbr) and
@@ -338,7 +371,7 @@ def load_libchewing(path: str,
                 )
                 if emit_abbr:
                     for abbr in abbreviated_keyseqs(reading, keyseq):
-                        entries.append((abbr, word, freq))
+                        entries.append((abbr, word, freq, tone))
             else:
                 skipped += 1
 
@@ -381,7 +414,8 @@ def load_moe_csv(path: str,
             phonemes = parse_reading(reading)
             keyseq   = phonemes_to_keyseq(phonemes)
             if keyseq:
-                entries.append((keyseq, word, freq))
+                tone = reading_to_tone(reading)
+                entries.append((keyseq, word, freq, tone))
                 n_syls = len(parse_reading_syllables(reading))
                 emit_abbr = (
                     (min_freq_for_abbr == 0 or freq >= min_freq_for_abbr) and
@@ -389,7 +423,7 @@ def load_moe_csv(path: str,
                 )
                 if emit_abbr:
                     for abbr in abbreviated_keyseqs(reading, keyseq):
-                        entries.append((abbr, word, freq))
+                        entries.append((abbr, word, freq, tone))
             else:
                 skipped += 1
 
@@ -439,7 +473,7 @@ def load_en_wordlist(path: str, min_freq: int = 0) -> list:
 
             keyseq = word_to_eng_keyseq(word)
             if keyseq:
-                entries.append((keyseq, word, freq))
+                entries.append((keyseq, word, freq, 0))  # tone=0: N/A for English
 
     return entries
 
@@ -448,24 +482,29 @@ def load_en_wordlist(path: str, min_freq: int = 0) -> list:
 _OVERSIZED_WORDS = 0  # module-level counter reset in build_mied
 
 def build_value_record(word_list: list) -> bytes:
-    """Serialise [(word, freq)] into a ValueRecord blob (freq-descending).
+    """Serialise [(word, freq, tone)] into a v2 ValueRecord blob (freq-descending).
+
+    v2 per-word layout: freq:u16, tone:u8, word_len:u8, word_utf8
+    tone: 1-5 for Bopomofo tones; 0 = unknown/unspecified (English).
 
     Words whose UTF-8 encoding exceeds 30 bytes are silently skipped
-    (kCandidateMaxBytes=32 in TrieSearcher; runtime check is >=32, so max safe=31;
-    we cap at 30 to leave room for the null terminator the runtime copies).
+    (kCandidateMaxBytes=32 in TrieSearcher; max safe = 31 bytes incl. NUL;
+    we cap at 30 to be safe).
     """
     global _OVERSIZED_WORDS
     sorted_words = sorted(word_list, key=lambda x: -x[1])
     valid = []
-    for word, freq in sorted_words:
+    for item in sorted_words:
+        word, freq = item[0], item[1]
+        tone = item[2] if len(item) > 2 else 0
         wb = word.encode('utf-8')
         if len(wb) >= 31:
             _OVERSIZED_WORDS += 1
             continue
-        valid.append((wb, freq))
+        valid.append((wb, freq, tone))
     data = struct.pack('<H', len(valid))
-    for wb, freq in valid:
-        data += struct.pack('<HB', min(freq, 0xFFFF), len(wb)) + wb
+    for wb, freq, tone in valid:
+        data += struct.pack('<HBB', min(freq, 0xFFFF), tone, len(wb)) + wb
     return data
 
 
@@ -485,10 +524,12 @@ def build_mied(entries: list, max_per_key: int = 0) -> tuple:
     global _OVERSIZED_WORDS
     _OVERSIZED_WORDS = 0
 
-    # Aggregate: keyseq → [(word, freq)]
+    # Aggregate: keyseq → [(word, freq, tone)]
     key_to_words: dict = defaultdict(list)
-    for keyseq, word, freq in entries:
-        key_to_words[keyseq].append((word, freq))
+    for entry in entries:
+        keyseq, word, freq = entry[0], entry[1], entry[2]
+        tone = entry[3] if len(entry) > 3 else 0
+        key_to_words[keyseq].append((word, freq, tone))
 
     # ── Collision pruning ─────────────────────────────────────────────────
     # For keys that resolve to more words than max_per_key, keep only the top-N
@@ -501,6 +542,7 @@ def build_mied(entries: list, max_per_key: int = 0) -> tuple:
             if len(wlist) > max_per_key:
                 key_to_words[ks] = sorted(wlist, key=lambda x: -x[1])[:max_per_key]
                 pruned_total += len(wlist) - max_per_key
+                # (tone is at index 2; sorting by freq[-x[1]] preserves tone)
 
     if pruned_total:
         print(f"  Collision pruning (max_per_key={max_per_key}): "
@@ -645,7 +687,8 @@ def main():
         seen: set = set()
         chars: list = []
         for ks in sorted(zh_key_to_words.keys()):
-            for word, _ in zh_key_to_words[ks]:
+            for item in zh_key_to_words[ks]:
+                word = item[0]
                 for ch in word:          # iterate individual Unicode codepoints
                     if ch not in seen:
                         seen.add(ch)
