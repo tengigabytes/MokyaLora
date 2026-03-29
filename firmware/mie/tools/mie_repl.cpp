@@ -16,11 +16,15 @@
 //                 When no IME input pending: delete character before cursor
 //   DEL         — When no IME input pending: delete character at cursor
 //   MODE  (`)   — cycle 中→EN→ABC→abc→ㄅ, clear input
-//   ，SYM (,)   — cycle Chinese/English comma/punctuation group
-//   。.？ (.)   — cycle Chinese/English period/punctuation group
+//   ，SYM ([)   — cycle Chinese/English comma/punctuation group
+//   。.？ (])   — cycle Chinese/English period/punctuation group
 //   ←/→         — navigate candidates (IME active) / move cursor in committed text
-//   SPACE / OK  — commit
+//   SPACE / OK  — commit (SmartZh: SPACE = first-tone marker)
 //   ESC         — quit
+//
+// Phoneme key aliases (SmartZh / DirectBopomofo):
+//   m or ,  → (3,3) ㄩ/ㄝ        \  or . or /  → (3,4) ㄡ/ㄥ
+//   l or ;  → (2,4) ㄠ/ㄤ        9, 0  or  -   → (0,4) ㄞ/ㄢ/ㄦ
 
 #include "../hal/pc/hal_pc_stdin.h"
 #include "../hal/pc/key_map.h"
@@ -71,23 +75,23 @@ struct KeyLabel {
 // clang-format off
 static const KeyLabel kLabels[] = {
     // Row 0: tone/digit keys — digits in all direct modes
-    {0,0,"1",  "ㄅㄉ","1/2","1/2" },{0,1,"3",  "ˇˋ", "3/4","3/4" },{0,2,"5",  "ㄓˊ","5/6","5/6" },
-    {0,3,"7",  "˙ㄚ", "7/8","7/8" },{0,4,"9",  "ㄞㄢ","9/0","9/0" },{0,5,"F1", "FUNC",nullptr,nullptr},
+    {0,0,"1",   "ㄅㄉ", "1/2","1/2" },{0,1,"3",  "ˇˋ",  "3/4","3/4" },{0,2,"5",  "ㄓˊ","5/6","5/6" },
+    {0,3,"7",   "˙ㄚ",  "7/8","7/8" },{0,4,"9/-","ㄞㄢㄦ","9/0","9/0" },{0,5,"F1","FUNC",nullptr,nullptr},
     // Row 1: ㄆㄊ=QW  ㄍㄐ=ER  ㄔㄗ=TY  ㄧㄛ=UI  ㄟㄣ=OP
-    {1,0,"q",  "ㄆㄊ","Q/W","q/w"},{1,1,"e",  "ㄍㄐ","E/R","e/r"},{1,2,"t",  "ㄔㄗ","T/Y","t/y"},
-    {1,3,"u",  "ㄧㄛ","U/I","u/i"},{1,4,"o",  "ㄟㄣ","O/P","o/p"},{1,5,"F2", "SET", nullptr,nullptr},
-    // Row 2: ㄇㄋ=AS  ㄎㄑ=DF  ㄕㄘ=GH  ㄨㄜ=JK  ㄠㄤ=L
-    {2,0,"a",  "ㄇㄋ","A/S","a/s"},{2,1,"d",  "ㄎㄑ","D/F","d/f"},{2,2,"g",  "ㄕㄘ","G/H","g/h"},
-    {2,3,"j",  "ㄨㄜ","J/K","j/k"},{2,4,"l",  "ㄠㄤ","L",  "l"  },{2,5,"BS", "BACK",nullptr,nullptr},
-    // Row 3: ㄈㄌ=ZX  ㄏㄒ=CV  ㄖㄙ=BN  ㄩㄝ=M  ㄡㄥ=—
-    {3,0,"z",  "ㄈㄌ","Z/X","z/x"},{3,1,"c",  "ㄏㄒ","C/V","c/v"},{3,2,"b",  "ㄖㄙ","B/N","b/n"},
-    {3,3,"m",  "ㄩㄝ","M",  "m"  },{3,4,"\\", "ㄡㄥ","—",  "—"  },{3,5,"Del","DEL", nullptr,nullptr},
+    {1,0,"q",   "ㄆㄊ","Q/W","q/w"},{1,1,"e",  "ㄍㄐ","E/R","e/r"},{1,2,"t",  "ㄔㄗ","T/Y","t/y"},
+    {1,3,"u",   "ㄧㄛ","U/I","u/i"},{1,4,"o",  "ㄟㄣ","O/P","o/p"},{1,5,"F2", "SET", nullptr,nullptr},
+    // Row 2: ㄇㄋ=AS  ㄎㄑ=DF  ㄕㄘ=GH  ㄨㄜ=JK  ㄠㄤ=L/;
+    {2,0,"a",   "ㄇㄋ","A/S","a/s"},{2,1,"d",  "ㄎㄑ","D/F","d/f"},{2,2,"g",  "ㄕㄘ","G/H","g/h"},
+    {2,3,"j",   "ㄨㄜ","J/K","j/k"},{2,4,"l/;","ㄠㄤ","L",  "l"  },{2,5,"BS","BACK",nullptr,nullptr},
+    // Row 3: ㄈㄌ=ZX  ㄏㄒ=CV  ㄖㄙ=BN  ㄩㄝ=M/,  ㄡㄥ=\.//
+    {3,0,"z",   "ㄈㄌ","Z/X","z/x"},{3,1,"c",  "ㄏㄒ","C/V","c/v"},{3,2,"b",  "ㄖㄙ","B/N","b/n"},
+    {3,3,"m/,", "ㄩㄝ","M",  "m"  },{3,4,"\\/.","ㄡㄥ","—", "—"  },{3,5,"Del","DEL",nullptr,nullptr},
     // Rows 4-5: same in all modes
-    {4,0,"`",  "MODE",nullptr,nullptr},{4,1,"Tab","TAB",nullptr,nullptr},{4,2,"Spc","SPACE",nullptr,nullptr},
-    {4,3,"[",  "，SYM",nullptr,nullptr},{4,4,"]","。？",nullptr,nullptr},{4,5,"=","VOL+",nullptr,nullptr},
+    {4,0,"`",   "MODE",nullptr,nullptr},{4,1,"Tab","TAB",nullptr,nullptr},{4,2,"Spc","SPACE",nullptr,nullptr},
+    {4,3,"[",   "，SYM",nullptr,nullptr},{4,4,"]","。？",nullptr,nullptr},{4,5,"=","VOL+",nullptr,nullptr},
     {5,0,"\xe2\x86\x91","UP",  nullptr,nullptr},{5,1,"\xe2\x86\x93","DOWN", nullptr,nullptr},
     {5,2,"\xe2\x86\x90","LEFT",nullptr,nullptr},{5,3,"\xe2\x86\x92","RIGHT",nullptr,nullptr},
-    {5,4,"\xe2\x8f\x8e","OK",  nullptr,nullptr},{5,5,"-","VOL-",nullptr,nullptr},
+    {5,4,"\xe2\x8f\x8e","OK",  nullptr,nullptr},{5,5,"_","VOL-",nullptr,nullptr},
 };
 // clang-format on
 
@@ -266,7 +270,7 @@ static void render(const mie::ImeLogic& ime) {
 
     puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
     // ESC離開 | `=MODE(中→EN→ABC→abc→ㄅ) | ←→=候選/游標 | Tab=下頁 | BS/Del=刪除
-    // Spc=一聲/提交 | ↩=確認 | [/]=，SYM/。？
+    // Spc=一聲/提交 | ↩=確認 | [/]=，SYM/。？ | ,.;-/ = 注音快捷鍵
     // Note: string split at \x92 boundaries to avoid hex-escape-out-of-range warnings.
     puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  `=MODE("
          "\xe4\xb8\xad\xe2\x86\x92" "EN"
@@ -278,7 +282,8 @@ static void render(const mie::ImeLogic& ime) {
          "BS/Del=\xe5\x88\xaa\xe9\x99\xa4  |  "
          "Spc=\xe4\xb8\x80\xe8\x81\xb2/\xe6\x8f\x90\xe4\xba\xa4  |  "  // Spc=一聲/提交
          "\xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d  |  "
-         "[=\xef\xbc\x8c\xe7\xac\xa6  ]=\xe3\x80\x82\xef\xbc\x9f");  // [=，符 ]=。？
+         "[=\xef\xbc\x8c\xe7\xac\xa6  ]=\xe3\x80\x82\xef\xbc\x9f  |  "  // [=，符 ]=。？
+         ",.=\xe3\x84\xa9\xe3\x84\x9d  ;=\xe3\x84\xa0\xe3\x84\xa4  -=\xe3\x84\xa6");  // ,.=ㄩㄝ ;=ㄠㄤ -=ㄦ
     fflush(stdout);
 }
 

@@ -221,7 +221,7 @@ private:
 
     // Candidate arrays (grouped).
     // Up to kMaxCandidates results fetched per language; paged in groups of kCandPageSize.
-    static constexpr int kMaxCandidates = 30;
+    static constexpr int kMaxCandidates = 50;
     Candidate zh_candidates_[kMaxCandidates];
     int       zh_cand_count_;
     Candidate en_candidates_[kMaxCandidates];

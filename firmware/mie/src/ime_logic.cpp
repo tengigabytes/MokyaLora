@@ -354,6 +354,10 @@ void ImeLogic::run_search() {
         if (zh_n > 0 || en_n > 0) {
             // Stable-sort: single-codepoint words rank before multi-codepoint words.
             // Within each group the original frequency order is preserved.
+            // Tone-1 note: when key_seq ends with 0x20 (first-tone marker), the
+            // greedy prefix falls back to the pure phoneme key (without tone byte),
+            // so the trie returns ONLY tone-1 candidates — no additional filtering
+            // is needed to suppress tone-3/4 words.
             auto single_first = [](const Candidate& a, const Candidate& b) {
                 return (utf8_char_count(a.word) == 1) & (utf8_char_count(b.word) != 1);
             };
