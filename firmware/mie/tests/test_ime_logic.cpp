@@ -1283,4 +1283,104 @@ TEST(SmartEn, AutoCapAfterSentencePunctuation) {
     EXPECT_EQ(committed, "Cat ");
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// BackspaceTone1 — BACK after 0x20 marker must not erase the preceding phoneme
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(BackspaceTone1, BackspaceAfterToneMarkerRestoresDisplay) {
+    mie::TrieSearcher ts;
+    mie::ImeLogic ime(ts);
+
+    // Press (0,0) → ㄅ appears in input bar.
+    ime.process_key(kev(0, 0));
+    EXPECT_STREQ(ime.input_str(), "\xe3\x84\x85");  // ㄅ (U+3105)
+    int bytes_before = ime.input_bytes();
+    EXPECT_GT(bytes_before, 0);
+
+    // SPACE appends 0x20 first-tone marker — display is unchanged.
+    ime.process_key(kSPACE);
+    EXPECT_EQ(ime.input_bytes(), bytes_before);
+
+    // BACK removes 0x20 — input_str() must remain "ㄅ", not become empty.
+    ime.process_key(kBACK);
+    EXPECT_STREQ(ime.input_str(), "\xe3\x84\x85");
+    EXPECT_EQ(ime.input_bytes(), bytes_before);
+
+    // Second BACK removes the phoneme key — display is now empty.
+    ime.process_key(kBACK);
+    EXPECT_STREQ(ime.input_str(), "");
+    EXPECT_EQ(ime.input_bytes(), 0);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DirectBopomofo — phoneme selection triggers single-char ZH candidate search
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(DirectBopomofo, SearchTriggeredOnPhonemeSelect) {
+    // dict: key 0x21 ("\x21") → single word "巴" (freq=1)
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "\xe5\xb7\xb4", 1 } }, dat, val);  // "巴"
+
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+
+    mie::ImeLogic ime(ts);
+    // Cycle MODE ×4 to reach DirectBopomofo.
+    ime.process_key(kMODE); ime.process_key(kMODE);
+    ime.process_key(kMODE); ime.process_key(kMODE);
+    ASSERT_EQ(ime.mode(), mie::InputMode::DirectBopomofo);
+
+    // Press (0,0) = ㄅ key: display "ㄅ" and candidates should be populated.
+    ime.process_key(kev(0, 0));
+    EXPECT_STREQ(ime.input_str(), "\xe3\x84\x85");  // ㄅ
+    ASSERT_GT(ime.zh_candidate_count(), 0);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe5\xb7\xb4");  // "巴"
+
+    // BACK clears candidates.
+    ime.process_key(kBACK);
+    EXPECT_EQ(ime.zh_candidate_count(), 0);
+    EXPECT_EQ(ime.merged_candidate_count(), 0);
+}
+
+TEST(DirectBopomofo, SearchFiltersMultiCharWords) {
+    // dict: key 0x21 → 2 words: "巴士" (freq=900, 6 bytes), "巴" (freq=500, 3 bytes)
+    std::vector<uint8_t> dat, val;
+
+    // Build val manually: word_count=2, then [freq, len, utf8...] for each word.
+    uint32_t v_off = (uint32_t)val.size();
+    push_u16(val, 2);                             // word_count = 2
+    push_u16(val, 900); push_u8(val, 6);          // "巴士" freq=900, len=6
+    push_str(val, "\xe5\xb7\xb4\xe5\xa3\xab");   // 巴士
+    push_u16(val, 500); push_u8(val, 3);          // "巴"  freq=500, len=3
+    push_str(val, "\xe5\xb7\xb4");                // 巴
+
+    // Build dat: header + 1 key entry + key section.
+    std::vector<uint8_t> keys_sec;
+    uint32_t k_off = 0;
+    push_u8(keys_sec, 1);      // key length = 1 byte
+    push_u8(keys_sec, 0x21);   // key byte = 0x21
+
+    uint32_t kc  = 1;
+    uint32_t kdo = 16 + kc * 8;  // key-directory offset
+    push_str(dat, "MIED");
+    push_u16(dat, 1); push_u16(dat, 0);   // version
+    push_u32(dat, kc); push_u32(dat, kdo);
+    push_u32(dat, k_off);    // key_sec offset for entry 0
+    push_u32(dat, v_off);    // val offset for entry 0
+    dat.insert(dat.end(), keys_sec.begin(), keys_sec.end());
+
+    mie::TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+
+    mie::ImeLogic ime(ts);
+    ime.process_key(kMODE); ime.process_key(kMODE);
+    ime.process_key(kMODE); ime.process_key(kMODE);
+    ASSERT_EQ(ime.mode(), mie::InputMode::DirectBopomofo);
+
+    ime.process_key(kev(0, 0));
+    // Only single-char "巴" should appear; multi-char "巴士" must be filtered out.
+    EXPECT_EQ(ime.zh_candidate_count(), 1);
+    EXPECT_STREQ(ime.zh_candidate(0).word, "\xe5\xb7\xb4");  // "巴"
+}
+
 } // namespace

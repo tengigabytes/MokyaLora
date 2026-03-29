@@ -201,10 +201,10 @@ static void render(const mie::ImeLogic& ime) {
         const char* s = ime.compound_input_str();
         int total = ime.compound_input_bytes();
         if (split > 0 && split < total) {
-            snprintf(input_display, sizeof(input_display), "[%.*s]%s",
+            snprintf(input_display, sizeof(input_display), "{%.*s}%s",
                      split, s, s + split);
         } else if (split > 0) {
-            snprintf(input_display, sizeof(input_display), "[%s]", s);
+            snprintf(input_display, sizeof(input_display), "{%s}", s);
         } else {
             snprintf(input_display, sizeof(input_display), "%s", s);
         }
@@ -215,7 +215,9 @@ static void render(const mie::ImeLogic& ime) {
     // ── Candidates — paged merged list ───────────────────────────────────
     // Shows kCandPageSize candidates per page. Tab advances to the next page.
     // LEFT/RIGHT/UP/DOWN navigate globally; page indicator shown when >1 page.
-    if (ime.mode() == mie::InputMode::SmartZh || ime.mode() == mie::InputMode::SmartEn) {
+    if (ime.mode() == mie::InputMode::SmartZh ||
+        ime.mode() == mie::InputMode::SmartEn ||
+        ime.mode() == mie::InputMode::DirectBopomofo) {
         int mc = ime.merged_candidate_count();
 
         if (mc > 0) {
@@ -241,18 +243,20 @@ static void render(const mie::ImeLogic& ime) {
                                  " [%d/%d]", page + 1, pg_total);
                 if (n > 0) pos += n;
             }
-            // Label: 中文 for SmartZh, English for SmartEn
+            // Label: 中文 for SmartZh, English for SmartEn, ㄅ for DirectBopomofo
             const char* lbl = (ime.mode() == mie::InputMode::SmartZh)
                               ? "[\xe4\xb8\xad\xe6\x96\x87]"  // [中文]
-                              : "[English]";
+                              : (ime.mode() == mie::InputMode::SmartEn)
+                              ? "[English]"
+                              : "[\xe3\x84\x85]";             // [ㄅ]
             printf("\xe2\x94\x82 %s %-46s \xe2\x94\x82\n", lbl, cand_buf);
-        } else if (ime.input_bytes() > 0) {
+        } else if (ime.mode() != mie::InputMode::DirectBopomofo && ime.input_bytes() > 0) {
             printf("\xe2\x94\x82   (\xe7\x84\xa1\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97) %-46s \xe2\x94\x82\n", "");  // (無候選字)
         } else {
             printf("\xe2\x94\x82   %-56s \xe2\x94\x82\n", "");
         }
     } else {
-        // Direct Mode: show pending label.
+        // DirectUpper / DirectLower: show pending label.
         printf("\xe2\x94\x82 \xe7\x9b\xb4\xe6\x8e\xa5\xe8\xbc\xb8\xe5\x85\xa5: %-48s \xe2\x94\x82\n",  // 直接輸入:
                ime.input_bytes() > 0 ? ime.input_str() : "");
     }
