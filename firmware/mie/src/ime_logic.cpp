@@ -338,7 +338,24 @@ void ImeLogic::run_search() {
     // Greedy prefix: try decreasing prefix lengths until candidates are found.
     // This lets the user type a long sequence (multi-word) without losing the
     // ability to see candidates for the leading word.
+    //
+    // Tone-1 priority: when key_seq is exactly [K, tone_byte, 0x20] (length 3),
+    // the greedy would otherwise stop at [K, tone_byte] (len=2) and return
+    // tone-3/4 candidates instead of tone-1 words for K alone.
+    // We skip len=2 so the bare-phoneme search [K] (len=1) runs first.
+    // Only applies to the single-key case (key_seq_len_==3); multi-key
+    // abbreviated sequences that end in a tone byte are NOT skipped so that
+    // abbreviated-input dict entries are still reachable.
+    int skip_len = -1;
+    if (key_seq_len_ == 3 &&
+        (uint8_t)key_seq_buf_[2] == 0x20) {
+        uint8_t pre = (uint8_t)key_seq_buf_[1];
+        if (pre == 0x22 || pre == 0x23)
+            skip_len = 2;  // skip [K, tone_byte] search
+    }
+
     for (int len = key_seq_len_; len >= 1; --len) {
+        if (len == skip_len) continue;  // bypass tone-byte-ending length for tone-1
         char saved = key_seq_buf_[len];
         key_seq_buf_[len] = '\0';
 
@@ -354,10 +371,6 @@ void ImeLogic::run_search() {
         if (zh_n > 0 || en_n > 0) {
             // Stable-sort: single-codepoint words rank before multi-codepoint words.
             // Within each group the original frequency order is preserved.
-            // Tone-1 note: when key_seq ends with 0x20 (first-tone marker), the
-            // greedy prefix falls back to the pure phoneme key (without tone byte),
-            // so the trie returns ONLY tone-1 candidates — no additional filtering
-            // is needed to suppress tone-3/4 words.
             auto single_first = [](const Candidate& a, const Candidate& b) {
                 return (utf8_char_count(a.word) == 1) & (utf8_char_count(b.word) != 1);
             };
@@ -681,11 +694,14 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
 
 bool ImeLogic::process_smart(const KeyEvent& ev) {
     // BACK (2,5) / DEL (3,5): remove last key from both buffers.
+    // Use rebuild_input_buf() rather than backspace_display() so that removing
+    // an invisible first-tone marker (0x20) does not accidentally erase the
+    // preceding phoneme from the display buffer.
     if ((ev.row == 2 && ev.col == 5) || (ev.row == 3 && ev.col == 5)) {
         if (key_seq_len_ > 0) {
             --key_seq_len_;
             key_seq_buf_[key_seq_len_] = '\0';
-            backspace_display();
+            rebuild_input_buf();
             run_search();
         }
         return true;
@@ -846,6 +862,7 @@ bool ImeLogic::process_direct(const KeyEvent& ev) {
     if ((ev.row == 2 && ev.col == 5) || (ev.row == 3 && ev.col == 5)) {
         direct_ = { 0xFF, 0xFF, 0 };
         input_len_ = 0; input_buf_[0] = '\0';
+        zh_cand_count_ = 0; en_cand_count_ = 0; merged_count_ = 0; merged_sel_ = 0;
         return true;
     }
 
@@ -855,6 +872,7 @@ bool ImeLogic::process_direct(const KeyEvent& ev) {
             const char* lbl = direct_mode_slot_label(direct_.row, direct_.col, direct_.label_idx);
             direct_ = { 0xFF, 0xFF, 0 };
             input_len_ = 0; input_buf_[0] = '\0';
+            zh_cand_count_ = 0; en_cand_count_ = 0; merged_count_ = 0; merged_sel_ = 0;
             if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
         }
         return true;
@@ -878,6 +896,22 @@ bool ImeLogic::process_direct(const KeyEvent& ev) {
         }
         const char* lbl = direct_mode_slot_label(direct_.row, direct_.col, direct_.label_idx);
         set_display(lbl ? lbl : "");
+
+        // DirectBopomofo: show single-character ZH candidates for the current key.
+        if (mode_ == InputMode::DirectBopomofo) {
+            zh_cand_count_ = 0; en_cand_count_ = 0;
+            merged_count_ = 0;  merged_sel_ = 0;
+            if (zh_searcher_.is_loaded()) {
+                char kb[2] = { (char)(ev.row * 5 + ev.col + 0x21), '\0' };
+                Candidate tmp[kMaxCandidates];
+                int n = zh_searcher_.search(kb, tmp, kMaxCandidates);
+                for (int i = 0; i < n && zh_cand_count_ < kMaxCandidates; ++i)
+                    if (utf8_char_count(tmp[i].word) == 1)
+                        zh_candidates_[zh_cand_count_++] = tmp[i];
+            }
+            build_merged();
+        }
+
         return true;
     }
 
