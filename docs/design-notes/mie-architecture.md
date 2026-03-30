@@ -3,7 +3,7 @@
 **Sub-project:** MokyaInput Engine (MIE)
 **Location:** `firmware/mie/`
 **Language:** C++11 (core), Python 3 (data pipeline tools)
-**Status:** Phase 1 complete — standalone repo extraction in progress
+**Status:** Phase 1.5 complete — C API shipped, standalone repo extraction deferred
 
 ---
 
@@ -18,8 +18,8 @@ open-source repository in the future with minimal refactoring.
 | Cross-platform core      | Pure C++11, zero hardware-register dependencies                        |
 | Taiwan localisation      | MoE standard character list + Academia Sinica corpus                   |
 | PSRAM-optimised search   | Double-Array Trie (DAT) — 4 MB budget, sub-second lookup               |
-| Standalone extraction    | `git subtree split` ready — clean boundary at `firmware/mie/` **(active)** |
-| Android / Windows targets| C API (`include/mie/mie.h`) planned for JNI and TSF wrappers           |
+| Standalone extraction    | `libmie-standalone` branch created; push to `tengigabytes/libmie` deferred |
+| Android / Windows targets| C API `include/mie/mie.h` + `src/mie_c_api.cpp` **done**; JNI/TSF wrappers planned |
 
 ---
 
@@ -608,13 +608,15 @@ builds the `mie_gui` target using the MSVC/Ninja toolchain.
 - [x] GUI tool (mie_gui): Dear ImGui + SDL2; virtual keyboard; live candidate display; click-to-commit.
 - [x] **83 GoogleTest cases passing** (69 ImeLogic + 14 TrieSearcher).
 
-### Phase 1.5 — Standalone Repo & C API (active)
+### Phase 1.5 — Standalone Repo & C API ✓ complete
 
 - [x] Split `src/ime_logic.cpp` (991 lines) → 7 focused files + `ime_internal.h`.
 - [x] Split `tests/test_ime_logic.cpp` (1,554 lines) → 3 test files + `test_helpers.h`.
-- [ ] Add `include/mie/mie.h` C API (opaque handles, C-linkage) — see §10.
-- [ ] Add `src/mie_c_api.cpp` implementing the C API.
-- [ ] `git subtree split --prefix=firmware/mie -b mie-standalone` → push to `tengigabytes/libmie`.
+- [x] Add `include/mie/mie.h` C API (opaque handles, C-linkage) — see §10.
+- [x] Add `src/mie_c_api.cpp` implementing the C API — **37 new tests; total 120/120 passing**.
+- [x] Add `firmware/mie/README.md` for standalone project landing page.
+- [x] `git subtree split --prefix=firmware/mie -b libmie-standalone` — branch created locally.
+- [ ] Push `libmie-standalone` to `tengigabytes/libmie` *(deferred — awaiting repo creation)*.
 - [ ] Replace `firmware/mie/` with submodule pointing to `tengigabytes/libmie`.
 
 ### Phase 2 — Hardware Integration (MokyaLora Rev A)
@@ -636,11 +638,26 @@ builds the `mie_gui` target using the MSVC/Ninja toolchain.
 
 MIE is designed from the start as an extractable library.
 
-**Extraction steps (Phase 1.5):**
-1. Add `include/mie/mie.h` C API and `src/mie_c_api.cpp` (see §10).
-2. `git subtree split --prefix=firmware/mie -b mie-standalone`
-3. Push `mie-standalone` to new repo `tengigabytes/libmie`.
-4. Replace `firmware/mie/` in this repo with `git submodule add`.
+**Extraction status:**
+
+| Step | Status |
+|------|--------|
+| `include/mie/mie.h` C API + `src/mie_c_api.cpp` | ✅ done |
+| `firmware/mie/README.md` | ✅ done |
+| `git subtree split --prefix=firmware/mie -b libmie-standalone` | ✅ done (branch exists locally) |
+| Create `tengigabytes/libmie` on GitHub | ⏳ deferred |
+| Push `libmie-standalone:main` to `tengigabytes/libmie` | ⏳ deferred |
+| `git submodule add` to replace `firmware/mie/` | ⏳ deferred (after repo push) |
+
+**Extraction commands (when ready):**
+```sh
+git remote add libmie https://github.com/tengigabytes/libmie.git
+git push libmie libmie-standalone:main
+# then in MokyaLora repo:
+git rm -r firmware/mie
+git submodule add https://github.com/tengigabytes/libmie.git firmware/mie
+git submodule update --init
+```
 
 The HAL interface contract and CMakeLists.txt structure ensure zero changes to core
 library code during extraction.
@@ -649,41 +666,50 @@ library code during extraction.
 
 ## 10. Cross-Platform Targets & C API
 
-To support Android IME, Windows TSF, and any future consumer beyond MokyaLora hardware,
-MIE will expose a stable C API via `include/mie/mie.h` (opaque handles, C-linkage,
-no C++ exceptions crossing the boundary).
+MIE exposes a stable C API via `include/mie/mie.h` (opaque handles, C-linkage,
+no C++ exceptions crossing the boundary). Implemented in `src/mie_c_api.cpp`; covered
+by 37 dedicated tests in `tests/test_mie_c_api.cpp`.
 
-### Proposed C API surface
+### C API surface (`include/mie/mie.h`)
 
 ```c
-/* Dictionary handles */
+/* ── Dictionary ──────────────────────────────────────────── */
 mie_dict_t* mie_dict_open(const char* dat_path, const char* val_path);
+mie_dict_t* mie_dict_open_memory(const uint8_t* dat_buf, size_t dat_size,
+                                  const uint8_t* val_buf, size_t val_size);
 void        mie_dict_close(mie_dict_t*);
 
-/* IME context */
+/* ── Context ─────────────────────────────────────────────── */
 mie_ctx_t*  mie_ctx_create(mie_dict_t* zh, mie_dict_t* en);  /* en may be NULL */
 void        mie_ctx_destroy(mie_ctx_t*);
-
-/* Input */
+void        mie_set_commit_cb(mie_ctx_t*, void(*cb)(const char*, void*), void*);
 int         mie_process_key(mie_ctx_t*, uint8_t row, uint8_t col, int pressed);
+void        mie_clear_input(mie_ctx_t*);
 
-/* Query — returned pointers valid until next mie_process_key call */
-const char* mie_input_str(mie_ctx_t*);          /* raw key-sequence display string */
-const char* mie_compound_str(mie_ctx_t*);        /* phoneme compound display string */
+/* ── Display ─────────────────────────────────────────────── */
+const char* mie_input_str(mie_ctx_t*);       /* raw phoneme/letter display */
+const char* mie_compound_str(mie_ctx_t*);    /* [ph0ph1]ˉ compound display */
+const char* mie_mode_indicator(mie_ctx_t*);  /* "中" / "EN" / "ABC" / "abc" / "ㄅ" */
+
+/* ── Candidates (merged ZH+EN list) ─────────────────────── */
 int         mie_candidate_count(mie_ctx_t*);
 const char* mie_candidate_word(mie_ctx_t*, int idx);
+int         mie_candidate_lang(mie_ctx_t*, int idx);  /* 0=ZH 1=EN -1=OOB */
 
-/* Commit callback */
-void        mie_set_commit_cb(mie_ctx_t*, void(*cb)(const char* utf8, void* userdata), void* userdata);
+/* ── Pagination (page size = 5) ──────────────────────────── */
+int         mie_page_size(void);
+int         mie_cand_page(mie_ctx_t*);
+int         mie_cand_page_count(mie_ctx_t*);
+int         mie_page_cand_count(mie_ctx_t*);
+const char* mie_page_cand_word(mie_ctx_t*, int idx);
+int         mie_page_cand_lang(mie_ctx_t*, int idx);
+int         mie_page_sel(mie_ctx_t*);
 ```
 
-### Platform wrappers (planned, not yet implemented)
+### Platform wrappers
 
-| Target | Wrapper | Dict location |
-|--------|---------|---------------|
-| MokyaLora (RP2350) | Direct C++ call to `ImeLogic` | Flash → PSRAM at boot |
-| Android IME service | JNI wrapper calling C API | APK assets → internal storage |
-| Windows TSF text service | COM `ITextInputProcessor` → C API | `%APPDATA%\MokyaLora\` |
-
-The C API and its wrappers will be implemented as part of Phase 1.5 before standalone
-repo extraction, so downstream consumers have a stable, versioned interface from day one.
+| Target | Wrapper | Dict location | Status |
+|--------|---------|---------------|--------|
+| MokyaLora (RP2350) | Direct C++ call to `ImeLogic` | Flash → PSRAM at boot (`mie_dict_open_memory`) | Phase 2 |
+| Android IME service | JNI wrapper calling C API | APK assets → internal storage | Planned |
+| Windows TSF text service | COM `ITextInputProcessor` → C API | `%APPDATA%\libmie\` | Planned |
