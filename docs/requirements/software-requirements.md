@@ -463,11 +463,14 @@ combinations are searched against an English MIED dictionary; results are merged
 - [x] `IME-Logic`: 5 input modes (SmartZh, SmartEn, DirectUpper, DirectLower, DirectBopomofo); tone-aware ranking; **83 GoogleTest cases passing**.
 - [x] GUI tool (`mie_gui`): Dear ImGui + SDL2; virtual keyboard matching PCB layout; live candidate display; click-to-commit.
 
-**Phase 1.5 — Standalone Repo & C API (active)**
+**Phase 1.5 — Standalone Repo & C API ✓ complete**
 - [x] Split `src/ime_logic.cpp` (991 lines) → 7 focused modules + `ime_internal.h`.
 - [x] Split `tests/test_ime_logic.cpp` (1,554 lines) → 3 test files + `test_helpers.h`.
-- [ ] Add `include/mie/mie.h` C API (opaque handles, C-linkage) for JNI/TSF wrappers.
-- [ ] `git subtree split` → push to `tengigabytes/libmie`; replace with submodule.
+- [x] `include/mie/mie.h` C API + `src/mie_c_api.cpp` — **120 GoogleTest cases passing**.
+- [x] `firmware/mie/README.md` added for standalone project landing page.
+- [x] `git subtree split --prefix=firmware/mie -b libmie-standalone` — branch ready.
+- [ ] Push `libmie-standalone` to `tengigabytes/libmie`; replace `firmware/mie/` with submodule *(deferred)*.
+
 
 **Phase 2 — Hardware integration (Rev A)**
 - [ ] `hal/rp2350/`: bridge PIO+DMA key buffer to `mie::KeyEvent`.
