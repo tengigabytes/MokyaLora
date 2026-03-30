@@ -16,6 +16,7 @@ add_executable(mie_tests
     test_ime_basic.cpp
     test_ime_modes.cpp
     test_ime_advanced.cpp
+    test_mie_c_api.cpp
 )
 
 target_link_libraries(mie_tests
