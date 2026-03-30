@@ -408,23 +408,30 @@ Font glyphs remain in Flash and are accessed on demand during rendering.
 
 ### 5.3 Input Modes (cycled via MODE key)
 
-Three modes cycle in order: Bopomofo → English → Alphanumeric → (back to Bopomofo).
+Five modes cycle in order: SmartZh → SmartEn → DirectUpper → DirectLower → DirectBopomofo → (back to SmartZh).
 
-| # | Mode | Description |
-|---|------|-------------|
-| 0 | Bopomofo | Bopomofo syllable accumulation; IME predicts Traditional Chinese — type `ㄐ ㄊ` → 「今天」 |
-| 1 | English Auto | Half-keyboard letter-pair expansion → frequency-ranked English word prediction |
-| 2 | Alphanumeric | Multi-tap single character — consecutive presses of same key cycle primary/secondary character |
+| # | `InputMode` enum | Trigger | Description |
+|---|-----------------|---------|-------------|
+| 0 | `SmartZh` | default | Bopomofo prefix prediction; SPACE appends first-tone marker `ˉ` |
+| 1 | `SmartEn` | MODE×1 | Half-keyboard letter-pair English prediction (en_dat.bin) |
+| 2 | `DirectUpper` | MODE×2 | Multi-tap uppercase letters / digits |
+| 3 | `DirectLower` | MODE×3 | Multi-tap lowercase letters |
+| 4 | `DirectBopomofo` | MODE×4 | Single Bopomofo phoneme cycling; single-char candidates only |
 
-**Bopomofo disambiguation:** syllable position state machine (initial → medial → final → tone)
+**Bopomofo disambiguation (SmartZh):** syllable position state machine (initial → medial → final → tone)
 constrains which of the two phonemes on an ambiguous key is valid. Phase 1 uses the primary
 phoneme only; full disambiguation is Phase 3.
 
-**English prediction:** each key press produces two candidate letters; all valid prefix
+**Tone-aware ranking (SmartZh):** trailing tone-key bytes or SPACE after a matched prefix set a
+tone intent (1–5). Candidates are sorted into 4 tiers (single/multi × tone-match/no-match);
+tier-2/3 candidates are hidden when intent is non-zero (strict filter). Falls back to full
+frequency-sorted list when no tier-0/1 candidates exist (v1 dict compatibility).
+
+**English prediction (SmartEn):** each key press produces two candidate letters; all valid prefix
 combinations are searched against an English MIED dictionary; results are merged by frequency.
 
-**Alphanumeric:** no dictionary lookup; `MultiTapState` tracks last key + consecutive tap count;
-a different key (or timeout in Phase 2+) confirms the pending character.
+**Direct modes:** no dictionary lookup; `DirectUpper` and `DirectLower` use multi-tap cycling;
+`DirectBopomofo` cycles the two phonemes on each key and produces single-character candidates.
 
 ### 5.4 Smart Correction
 
@@ -449,24 +456,18 @@ a different key (or timeout in Phase 2+) confirms the pending character.
 
 ### 5.7 MIE Development Roadmap
 
-**Phase 1 — PC environment & validation**
-- [x] `gen_font.py`: extract 8,104 glyphs from GNU Unifont; verify output.
-      Script complete; requires Unifont `.hex` + `charlist_8104.txt` to produce `.bin` assets.
-- [x] `gen_dict.py`: compile MoE word list to DAT binary; validate on PC.
-      MIED sorted-index format implemented; requires MoE CSV to produce `.bin` assets.
-- [x] `Trie-Searcher`: implement and unit-test DAT search in C++ on PC.
-      Binary search over sorted key index; 13 GoogleTest cases passing.
-- [x] `IME-Logic`: implement Bopomofo de-ambiguation; test with simulated key sequences.
-      Phase 1 skeleton: primary-phoneme key map, mode FSM, REPL integration.
-      Full disambiguation and smart correction are Phase 3 items.
-- [x] Phase 1 wrap-up: three-mode design (Bopomofo / English / Alphanumeric); `Calculator`
-      mode removed; MODE cycles `% 3`; mode-dispatch skeleton with stubs for English and
-      Alphanumeric; `MultiTapState` struct added; all 14 unit tests passing.
-- [ ] Phase 1 extension — Alphanumeric multi-tap: implement `process_alpha()`; consecutive
-      same-key presses cycle primary/secondary character; confirm on different key.
-- [ ] Phase 1 extension — English word prediction: `gen_en_dict.py` + English MIED dictionary;
-      `ImeLogic` accepts second `TrieSearcher`; `process_english()` expands key pairs and
-      merges prefix-search results by frequency.
+**Phase 1 — PC environment & validation ✓ complete**
+- [x] `gen_font.py`: extract 8,104 glyphs from GNU Unifont; output MIEF v1 binary.
+- [x] `gen_dict.py`: compile MoE + English word lists to MIED v2 (with tone byte); validate on PC.
+- [x] `Trie-Searcher`: binary search on sorted key index; `dict_version()` v1/v2 compat; 14 GoogleTest cases passing.
+- [x] `IME-Logic`: 5 input modes (SmartZh, SmartEn, DirectUpper, DirectLower, DirectBopomofo); tone-aware ranking; **83 GoogleTest cases passing**.
+- [x] GUI tool (`mie_gui`): Dear ImGui + SDL2; virtual keyboard matching PCB layout; live candidate display; click-to-commit.
+
+**Phase 1.5 — Standalone Repo & C API (active)**
+- [x] Split `src/ime_logic.cpp` (991 lines) → 7 focused modules + `ime_internal.h`.
+- [x] Split `tests/test_ime_logic.cpp` (1,554 lines) → 3 test files + `test_helpers.h`.
+- [ ] Add `include/mie/mie.h` C API (opaque handles, C-linkage) for JNI/TSF wrappers.
+- [ ] `git subtree split` → push to `tengigabytes/libmie`; replace with submodule.
 
 **Phase 2 — Hardware integration (Rev A)**
 - [ ] `hal/rp2350/`: bridge PIO+DMA key buffer to `mie::KeyEvent`.

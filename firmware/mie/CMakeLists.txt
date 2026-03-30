@@ -15,9 +15,15 @@ if(MSVC)
 endif()
 
 add_library(mie STATIC
-    src/mie_init.cpp        # keeps the library non-empty while all modules are present
+    src/mie_init.cpp
     src/trie_searcher.cpp
     src/ime_logic.cpp
+    src/ime_keys.cpp
+    src/ime_search.cpp
+    src/ime_display.cpp
+    src/ime_commit.cpp
+    src/ime_smart.cpp
+    src/ime_direct.cpp
 )
 
 target_include_directories(mie PUBLIC
