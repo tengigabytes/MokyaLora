@@ -24,6 +24,7 @@ add_library(mie STATIC
     src/ime_commit.cpp
     src/ime_smart.cpp
     src/ime_direct.cpp
+    src/mie_c_api.cpp
 )
 
 target_include_directories(mie PUBLIC
