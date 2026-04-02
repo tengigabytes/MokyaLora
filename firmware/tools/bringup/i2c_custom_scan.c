@@ -31,6 +31,14 @@
 #define TONE_TABLE_LEN   110
 #define MAX_AMPLITUDE    16384  // 50 % of 32767
 
+// Note frequencies (Hz) — C major, A4 = 440 Hz reference
+#define NOTE_C4   262
+#define NOTE_D4   294
+#define NOTE_E4   330
+#define NOTE_F4   349
+#define NOTE_G4   392
+#define NOTE_REST   0
+
 // LM27965 LED driver (Bus B, 0x36)
 // RSET = 8.25 kΩ → full-scale = 30.3 mA/pin
 // Bank A (D1A–D5A): TFT backlight, 5 pins → 151.5 mA @ full
@@ -282,6 +290,10 @@ static int amp_pio_start(void) {
     if (sm_num < 0) { printf("ERROR: no free PIO SM\n"); return -1; }
     uint sm = (uint)sm_num;
 
+    // RP2350B has 48 GPIOs; PIO addresses 32 at a time.
+    // GPIO 32 (DAC) needs gpio_base = 16 → must be set BEFORE add_program.
+    pio_set_gpio_base(pio0, 16);
+
     if (!pio_can_add_program_at_offset(pio0, &i2s_out_program, 0)) {
         printf("ERROR: PIO offset 0 not available\n");
         pio_sm_unclaim(pio0, sm);
@@ -310,7 +322,7 @@ static void amp_test(void) {
     // 80 % amplitude: P = 0.68 × 0.64 ≈ 0.44 W — under 0.7 W speaker limit
     const int amp = (int)(MAX_AMPLITUDE * 1.6f);
     printf("\n--- NAU8315 Tone Test (%d Hz, amp 80%%, ~0.44 W) ---\n", TONE_FREQ_HZ);
-    printf("    If silent: short TP43 to VCC_3V3 (FSL pin, switches NAU8315 to LJ mode)\n");
+    printf("    PIO uses standard I2S -- FSL floating is correct, no hardware mod needed.\n");
 
     int sm = amp_pio_start();
     if (sm < 0) return;
@@ -358,6 +370,79 @@ static void amp_breathe(void) {
     sleep_ms(10);
     amp_pio_stop(sm);
     printf("Amp off\n");
+}
+
+// Fill FIFO with zeros — prevents click when transitioning to/from silence.
+static void bee_silence(int sm, int dur_ms) {
+    uint32_t end_ms = to_ms_since_boot(get_absolute_time()) + (uint32_t)dur_ms;
+    while (to_ms_since_boot(get_absolute_time()) < end_ms)
+        pio_sm_put_blocking(pio0, (uint)sm, 0);
+}
+
+// Play one note: sound for (dur_ms - GAP) ms, then GAP ms of silence.
+// freq = 0 → pure silence for dur_ms.
+static void bee_note(int sm, int freq, int dur_ms, int amp) {
+    const int GAP = 45;
+    if (freq == 0) { bee_silence(sm, dur_ms); return; }
+    int tlen = I2S_SAMPLE_RATE / freq;
+    if (tlen > 200) tlen = 200;
+    uint32_t buf[200];
+    for (int i = 0; i < tlen; i++) {
+        int16_t s = (int16_t)(amp * sinf(2.0f * (float)M_PI * i / tlen));
+        buf[i] = ((uint32_t)(uint16_t)s << 16) | (uint16_t)s;
+    }
+    int play_ms = dur_ms > GAP + 20 ? dur_ms - GAP : dur_ms;
+    uint32_t end_ms = to_ms_since_boot(get_absolute_time()) + (uint32_t)play_ms;
+    while (to_ms_since_boot(get_absolute_time()) < end_ms)
+        for (int i = 0; i < tlen; i++)
+            pio_sm_put_blocking(pio0, (uint)sm, buf[i]);
+    bee_silence(sm, GAP);
+}
+
+// Little Bee (小蜜蜂) melody — 40% amplitude
+//
+// C major, 4/4, quarter = 460 ms (~130 BPM).
+// Numbered notation (jianpu):
+//   5 3 3- | 4 2 2- | 5 3 3- | 4 2 2- | 1 3 5 5 | 3---  |
+//   2 2 2 2 | 2 3 4- | 3 3 3 3 | 3 4 5- |
+//   5 3 3- | 4 2 2- | 1 3 5 5 | 1---
+static void amp_bee(void) {
+    printf("\n--- Little Bee at 40%% amp ---\n");
+    int sm = amp_pio_start();
+    if (sm < 0) return;
+
+    const int amp = (int)(MAX_AMPLITUDE * 0.8f);
+    const int q = 460, h = 920, w = 1840;   // quarter, half, whole (ms)
+    const int C = NOTE_C4, D = NOTE_D4, E = NOTE_E4,
+              F = NOTE_F4, G = NOTE_G4;
+
+    // 5 3 3- | 4 2 2- | 5 3 3- | 4 2 2-
+    bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
+    bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
+    bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
+    bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
+
+    // 1 3 5 5 | 3---
+    bee_note(sm,C,q,amp); bee_note(sm,E,q,amp); bee_note(sm,G,q,amp); bee_note(sm,G,q,amp);
+    bee_note(sm,E,w,amp);
+
+    // 2 2 2 2 | 2 3 4-
+    bee_note(sm,D,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,q,amp);
+    bee_note(sm,D,q,amp); bee_note(sm,E,q,amp); bee_note(sm,F,h,amp);
+
+    // 3 3 3 3 | 3 4 5-
+    bee_note(sm,E,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,q,amp);
+    bee_note(sm,E,q,amp); bee_note(sm,F,q,amp); bee_note(sm,G,h,amp);
+
+    // 5 3 3- | 4 2 2- | 1 3 5 5 | 1---
+    bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
+    bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
+    bee_note(sm,C,q,amp); bee_note(sm,E,q,amp); bee_note(sm,G,q,amp); bee_note(sm,G,q,amp);
+    bee_note(sm,C,w,amp);
+
+    bee_silence(sm, 50);
+    amp_pio_stop(sm);
+    printf("Done\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +508,9 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "amp") == 0) {
         amp_breathe();
 
+    } else if (strcmp(cmd, "bee") == 0) {
+        amp_bee();
+
     } else if (strcmp(cmd, "charge_on") == 0) {
         bus_b_init();
         bq25622_enable_charge();
@@ -442,6 +530,7 @@ static void handle_command(const char *cmd) {
         printf("  motor       -- vibration motor breathe x5\n");
         printf("  amp_test    -- NAU8315 constant tone 5 s at 80%% (hardware check)\n");
         printf("  amp         -- NAU8315 speaker breathe tone x5 (~444 Hz)\n");
+        printf("  bee         -- Xiao Mi Feng melody at 40%% amp\n");
         printf("  charge_on   -- enable BQ25622 charging\n");
         printf("  charge_off  -- disable BQ25622 charging\n");
 

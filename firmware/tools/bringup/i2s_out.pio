@@ -18,10 +18,9 @@
 ;   Use pio_add_program_at_offset(pio, &i2s_out_program, 0).
 ;
 ; NAU8315 format / gain notes:
-;   This program outputs Left-Justified (LJ) format — MSB appears on the same
-;   BCLK cycle as LRCK transitions (no 1-BCLK delay).
-;   NAU8315 FSL pin floating → I2S standard mode (expects 1-BCLK delay).
-;   *** Short TP43 to VCC_3V3 to select LJ mode, matching this program. ***
+;   Standard I2S format: LRCK transitions during the last BCLK high of each
+;   channel, so MSB of the next channel appears one BCLK later (1-BCLK delay).
+;   NAU8315 FSL pin floating → standard I2S mode — no hardware modification needed.
 ;
 ;   GAIN pin floating = Mode 5 = 6 dB (valid, defined state per datasheet).
 ;   No hardware modification to the GAIN pin is required.
@@ -30,17 +29,29 @@
 .origin 0
 .side_set 2
 
+; Standard I2S timing per channel (16 bits):
+;   LRCK transitions on the BCLK high of the previous channel's LSB.
+;   MSB appears on the first BCLK low of this channel.
+;   Every bit has a complete BCLK cycle (low then high).
+
 .wrap_target
-    set x, 14           side 0b00   ; LRCK=0, BCLK=0 — left channel start
-left_bit:
-    out pins, 1         side 0b00   ; output bit, BCLK low
-    jmp x-- left_bit    side 0b01   ; BCLK high (clock edge), loop
-    out pins, 1         side 0b00   ; 16th left-channel bit
-    set x, 14           side 0b10   ; LRCK=1, BCLK=0 — right channel start
-right_bit:
-    out pins, 1         side 0b10   ; output bit, BCLK low
-    jmp x-- right_bit   side 0b11   ; BCLK high, loop
-    out pins, 1         side 0b10   ; 16th right-channel bit
+    ; --- Left channel (LRCK=0), 16 bits MSB first ---
+    out pins, 1         side 0b00   ; D15 (MSB), BCLK low,  LRCK=0
+    set x, 13           side 0b01   ; D15 sampled, BCLK high; load loop counter
+left_loop:
+    out pins, 1         side 0b00   ; D14..D1, BCLK low
+    jmp x-- left_loop   side 0b01   ; sampled, BCLK high; loop 14×
+    out pins, 1         side 0b00   ; D0 (LSB), BCLK low,  LRCK=0
+    nop                 side 0b11   ; D0 sampled, BCLK high; LRCK→1 (1-BCLK delay)
+
+    ; --- Right channel (LRCK=1), 16 bits MSB first ---
+    out pins, 1         side 0b10   ; D15 (MSB), BCLK low,  LRCK=1
+    set x, 13           side 0b11   ; D15 sampled, BCLK high; load loop counter
+right_loop:
+    out pins, 1         side 0b10   ; D14..D1, BCLK low
+    jmp x-- right_loop  side 0b11   ; sampled, BCLK high; loop 14×
+    out pins, 1         side 0b10   ; D0 (LSB), BCLK low,  LRCK=1
+    nop                 side 0b01   ; D0 sampled, BCLK high; LRCK→0 (1-BCLK delay)
 .wrap
 
 % c-sdk {
