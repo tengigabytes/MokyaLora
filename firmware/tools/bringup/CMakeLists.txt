@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
 
+add_executable(i2c_custom_scan
+    i2c_custom_scan.c
+)
+
 # Generate the C header from the PIO assembler source.
 # The header (i2s_out.pio.h) is placed in the build directory and included
 # by i2c_custom_scan.c via the target's include path below.
 pico_generate_pio_header(i2c_custom_scan
     ${CMAKE_CURRENT_LIST_DIR}/i2s_out.pio
-)
-
-add_executable(i2c_custom_scan
-    i2c_custom_scan.c
 )
 
 target_link_libraries(i2c_custom_scan

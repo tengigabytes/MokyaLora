@@ -7,8 +7,12 @@
 
 cmake_minimum_required(VERSION 3.20)
 
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/main_core0.cpp)
+    return()  # no sources yet — skip until Phase 2
+endif()
+
 add_executable(mokya_core0
-    # src/main_core0.cpp   # add when sources exist
+    src/main_core0.cpp
 )
 
 target_include_directories(mokya_core0 PRIVATE
