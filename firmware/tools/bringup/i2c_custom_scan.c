@@ -310,7 +310,7 @@ static void amp_test(void) {
     // 80 % amplitude: P = 0.68 × 0.64 ≈ 0.44 W — under 0.7 W speaker limit
     const int amp = (int)(MAX_AMPLITUDE * 1.6f);
     printf("\n--- NAU8315 Tone Test (%d Hz, amp 80%%, ~0.44 W) ---\n", TONE_FREQ_HZ);
-    printf("    Short TP46 to GND if silent (GAIN pin floating)\n");
+    printf("    If silent: short TP43 to VCC_3V3 (FSL pin, switches NAU8315 to LJ mode)\n");
 
     int sm = amp_pio_start();
     if (sm < 0) return;
