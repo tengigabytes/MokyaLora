@@ -1,0 +1,72 @@
+;
+; I2S output for NAU8315 — 16-bit stereo, standard I2S format
+;
+; side-set: 2 bits
+;   bit0 = BCLK  (pin_bclk + 0)
+;   bit1 = LRCK  (pin_bclk + 1)   <-- must be consecutive GPIOs
+; out pin: DAC data (pin_data)
+;
+; Data format: push one uint32_t per stereo sample pair
+;   bits[31:16] = left  channel (MSB first)
+;   bits[15:0]  = right channel (MSB first)
+;
+; Timing example: clkdiv = 40.0 → PIO clock = 125 MHz / 40 = 3.125 MHz
+;   64 PIO clocks per stereo pair → sample rate ≈ 48 828 Hz
+;
+; IMPORTANT: JMP targets are absolute instruction addresses.
+;   .origin 0 forces the program to load at PIO instruction offset 0.
+;   Use pio_add_program_at_offset(pio, &i2s_out_program, 0).
+;
+; NAU8315 FSL pin note:
+;   FSL pin (U6.8) floating → chip defaults to I2S standard format.
+;   If audio is garbled, short TP43 to VCC_3V3 to force Left-Justified mode.
+;
+.program i2s_out
+.origin 0
+.side_set 2
+
+.wrap_target
+    set x, 14           side 0b00   ; LRCK=0, BCLK=0 — left channel start
+left_bit:
+    out pins, 1         side 0b00   ; output bit, BCLK low
+    jmp x-- left_bit    side 0b01   ; BCLK high (clock edge), loop
+    out pins, 1         side 0b00   ; 16th left-channel bit
+    set x, 14           side 0b10   ; LRCK=1, BCLK=0 — right channel start
+right_bit:
+    out pins, 1         side 0b10   ; output bit, BCLK low
+    jmp x-- right_bit   side 0b11   ; BCLK high, loop
+    out pins, 1         side 0b10   ; 16th right-channel bit
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+// Initialise a PIO state machine for I2S output.
+//
+// Parameters:
+//   pio      - PIO instance (pio0 or pio1)
+//   sm       - state machine index
+//   offset   - program load offset (must be 0 due to .origin 0)
+//   pin_data - GPIO for I2S DAC data out (AMP_DAC_PIN)
+//   pin_bclk - GPIO for BCLK; LRCK must be on pin_bclk + 1 (consecutive)
+//   clkdiv   - PIO clock divider  (40.0 → ~48 828 Hz sample rate)
+static inline void i2s_out_program_init(PIO pio, uint sm, uint offset,
+                                         uint pin_data, uint pin_bclk,
+                                         float clkdiv) {
+    pio_sm_config c = i2s_out_program_get_default_config(offset);
+
+    sm_config_set_out_pins(&c, pin_data, 1);
+    sm_config_set_sideset_pins(&c, pin_bclk);          // BCLK=pin_bclk, LRCK=pin_bclk+1
+    sm_config_set_out_shift(&c, false, true, 32);       // shift left, autopull 32 bits
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    pio_gpio_init(pio, pin_data);
+    pio_gpio_init(pio, pin_bclk);
+    pio_gpio_init(pio, pin_bclk + 1);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_data,  1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_bclk, 2, true);
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

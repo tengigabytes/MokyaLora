@@ -21,3 +21,6 @@ add_subdirectory(core0)
 
 # Core 1: UI & application layer (Apache-2.0)
 add_subdirectory(core1)
+
+# ── Bring-up / development tools ──────────────────────────────────────────────
+add_subdirectory(tools)

@@ -109,8 +109,8 @@ extern NodeDB g_nodeDB;   /* Core 1 must not reference any Core 0 symbol */
 
 | Bus / Peripheral          | Owner  | Devices / Notes                                            |
 |---------------------------|--------|------------------------------------------------------------|
-| I2C0 (GPIO 34 / 35)       | Core 1 | LSM6DSV16X, LIS2MDL, LPS22HH, Teseo-LIV3FL                |
-| I2C1 (GPIO 6 / 7)         | Core 1 | BQ25622, BQ27441, LM27965                                  |
+| Sensor bus (`i2c1`, GPIO 34/35) | Core 1 | LSM6DSV16X, LIS2MDL, LPS22HH, Teseo-LIV3FL         |
+| Power bus (`i2c1`, GPIO 6/7)   | Core 1 | BQ25622, BQ27441, LM27965 (same peripheral, different GPIOs) |
 | SPI1 (GPIO 24–27)         | Core 0 | SX1262 LoRa transceiver                                    |
 | PIO — keypad scan         | Core 1 | 6×6 matrix, GPIO 36–47                                     |
 | PIO — audio               | Core 1 | IM69D130 PDM (GPIO 4/5), NAU8315 I2S (GPIO 30–32)         |
@@ -245,7 +245,7 @@ All HAL drivers listed below run on **Core 1** and exclusively own their respect
 - **API:** `getSoC()`, `getAverageCurrent()`, `getSOH()`.
 - **Remaining time:** compute `Time-to-Empty` from `getAverageCurrent()`.
 
-### `EnvironmentSensor` — LSM6DSV16X, LIS2MDL, LPS22HH [Core 1 · I2C0]
+### `EnvironmentSensor` — LSM6DSV16X, LIS2MDL, LPS22HH [Core 1 · sensor bus, `i2c1`, GPIO 34/35]
 
 | Driver | Address | Function                                           |
 |--------|---------|----------------------------------------------------|
