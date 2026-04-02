@@ -165,13 +165,13 @@ See `docs/design-notes/power-architecture.md` for the full power tree.
 |------|------|---------|-------------|-----------------|
 | IMU (ACC + GYRO) | ST LSM6DSV16X | LGA-14 | 0x6A | SA0 → GND (default 0x6B conflicts with charger) |
 | Magnetometer | ST LIS2MDL | LGA-12 | 0x1E | Fixed |
-| Barometer | ST LPS22HH | LGA-10 | 0x5C | SA0 → GND |
+| Barometer | ST LPS22HH | LGA-10 | 0x5D | SA0 → 3.3 V (Rev A confirmed; schematic ties SA0 to 3.3 V) |
 
 All sensors share **I2C0 (GPIO 34 / 35)** with the GNSS receiver.
 
 **Design constraints:**
 - LSM6DSV16X SA0 must be tied to GND — default address 0x6B conflicts with BQ25622 on I2C1.
-- LPS22HH SA0 must be tied to GND.
+- LPS22HH SA0 is tied to 3.3 V → address 0x5D (confirmed Rev A bring-up).
 - I2C0 pull-ups: 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL.
 
 ---
@@ -279,7 +279,7 @@ All sensors share **I2C0 (GPIO 34 / 35)** with the GNSS receiver.
 | LED Driver | LM27965 | 0x36 | I2C1 | GPIO 6 / 7 | Fixed; nets BKLT_SCL / BKLT_SDA |
 | IMU | LSM6DSV16X | 0x6A | I2C0 | GPIO 34 / 35 | SA0 → GND |
 | Magnetometer | LIS2MDL | 0x1E | I2C0 | GPIO 34 / 35 | Fixed |
-| Barometer | LPS22HH | 0x5C | I2C0 | GPIO 34 / 35 | SA0 → GND |
+| Barometer | LPS22HH | 0x5D | I2C0 | GPIO 34 / 35 | SA0 → 3.3 V |
 | GNSS | Teseo-LIV3FL | 0x3A | I2C0 | GPIO 34 / 35 | Fixed |
 
 Pull-up: 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL for both buses.

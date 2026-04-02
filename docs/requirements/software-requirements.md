@@ -251,7 +251,7 @@ All HAL drivers listed below run on **Core 1** and exclusively own their respect
 |--------|---------|----------------------------------------------------|
 | IMU    | 0x6A    | 6-axis attitude; gesture detection (raise-to-wake) |
 | Mag    | 0x1E    | Electronic compass heading                         |
-| Baro   | 0x5C    | Barometric altitude                                |
+| Baro   | 0x5D    | Barometric altitude                                |
 
 - **Fusion:** Kalman filter or Madgwick algorithm for 9-DOF data fusion.
 
