@@ -63,9 +63,19 @@ No temporary workaround. See Issue 5. Pending Rev B correction.
 
 ### Step 7 — Audio
 
-**Result: 🔄 IN PROGRESS**
+**Result: ✅ PASS**
 
-NAU8315 audio amplifier bring-up in progress.
+| Item | Result | Notes |
+|------|--------|-------|
+| NAU8315 I2S format | ✅ PASS | FSL pin floating → Standard I2S mode confirmed |
+| NAU8315 gain | ✅ PASS | GAIN pin floating → Mode 5 = 6 dB (valid, defined state per datasheet) |
+| PIO I2S driver | ✅ PASS | 48 828 Hz sample rate (clkdiv=40.0); 16-bit stereo |
+| Speaker output | ✅ PASS | Little Bee melody plays correctly at 40% amplitude |
+
+**Firmware notes:**
+- Standard I2S timing: LRCK transitions during last BCLK high of previous channel; MSB appears at first BCLK low of next channel. PIO program verified against NAU8315 datasheet timing diagram.
+- RP2350B PIO: GPIO 32 (AMP_DAC_PIN) is above the 32-GPIO boundary. `pio_set_gpio_base(pio0, 16)` **must** be called before `pio_add_program_at_offset()`; calling it after causes `PICO_ERROR_INVALID_STATE` and the state machine silently fails to start (FIFO hangs full).
+- Click/pop suppression: transitions between notes send zero samples via `pio_sm_put_blocking` rather than using `sleep_ms`, which would drain the FIFO abruptly.
 
 ### Step 8 — Battery & Motor
 
