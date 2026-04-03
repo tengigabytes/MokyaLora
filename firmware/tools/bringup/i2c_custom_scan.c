@@ -53,6 +53,15 @@
 //                              0x17-0x1C=70%(21mA), 0x1D-0x1F=100%(30mA)
 // Brightness codes (Bank C):   bits[1:0] 00=20% 01=40% 10=70% 11=100%
 
+// Keypad matrix (6×6, GPIO 36–47)
+// Diode: Anode=COL(GPIO36-41), Cathode=ROW(GPIO42-47) → current flows COL→ROW.
+// Rows    GPIO 42–47: output, driven LOW to select row.
+// Columns GPIO 36–41: input pull-up, read LOW when key pressed (Vf ~0.3V < VIL 0.54V).
+#define KEY_COL_BASE  36
+#define KEY_ROW_BASE  42
+#define KEY_COLS       6
+#define KEY_ROWS       6
+
 // BQ25622 charger (Bus B, 0x6B)
 #define BQ25622_ADDR  0x6B
 
@@ -477,6 +486,96 @@ void perform_scan(i2c_inst_t *i2c, uint sda, uint scl, const char *bus_name) {
 }
 
 // ---------------------------------------------------------------------------
+// Keypad scan (GPIO polling, bringup only — not the PIO+DMA production scan)
+// ---------------------------------------------------------------------------
+
+// Primary key label per [row][col], matching hardware-requirements.md matrix.
+// key_names[row][col]: ROW = GPIO42+r driven LOW, COL = GPIO36+c read.
+// SW numbering is column-major (SW1-6 = col0 top-to-bottom, etc.).
+static const char *const key_names[KEY_ROWS][KEY_COLS] = {
+    {"FUNC",  "BACK",  "LEFT",  "DEL",   "VOL-",  "UP"  },
+    {"1/2",   "3/4",   "5/6",   "7/8",   "9/0",   "OK"  },
+    {"Q/W",   "E/R",   "T/Y",   "U/I",   "O/P",   "DOWN"},
+    {"A/S",   "D/F",   "G/H",   "J/K",   "L",     "RIGHT"},
+    {"Z/X",   "C/V",   "B/N",   "M",     "ㄡㄥ",  "SET" },
+    {"MODE",  "TAB",   "SPACE", "SYM",   "。.？", "VOL+"},
+};
+
+// Diode orientation: Anode=COL, Cathode=ROW.
+// Current flows COL→ROW (forward bias) only when ROW is driven LOW.
+// ROW = OUTPUT (drive LOW to select), COL = INPUT pull-up (read).
+static void key_gpio_init(void) {
+    for (int c = 0; c < KEY_COLS; c++) {
+        gpio_init(KEY_COL_BASE + c);
+        gpio_set_dir(KEY_COL_BASE + c, GPIO_IN);
+        gpio_pull_up(KEY_COL_BASE + c);
+    }
+    for (int r = 0; r < KEY_ROWS; r++) {
+        gpio_init(KEY_ROW_BASE + r);
+        gpio_set_dir(KEY_ROW_BASE + r, GPIO_OUT);
+        gpio_put(KEY_ROW_BASE + r, 1);   // idle high
+    }
+}
+
+static void key_gpio_deinit(void) {
+    for (int c = 0; c < KEY_COLS; c++)
+        gpio_disable_pulls(KEY_COL_BASE + c);
+    for (int r = 0; r < KEY_ROWS; r++) {
+        gpio_put(KEY_ROW_BASE + r, 1);
+        gpio_set_dir(KEY_ROW_BASE + r, GPIO_IN);
+        gpio_disable_pulls(KEY_ROW_BASE + r);
+    }
+}
+
+// Drive each ROW LOW; read which COLs are pulled low through diode (Vf ~0.3V < VIL 0.54V).
+static void key_scan_matrix(uint8_t pressed[KEY_ROWS]) {
+    for (int r = 0; r < KEY_ROWS; r++) pressed[r] = 0;
+    for (int r = 0; r < KEY_ROWS; r++) {
+        gpio_put(KEY_ROW_BASE + r, 0);
+        sleep_us(10);
+        for (int c = 0; c < KEY_COLS; c++) {
+            if (!gpio_get(KEY_COL_BASE + c))
+                pressed[r] |= (uint8_t)(1u << c);
+        }
+        gpio_put(KEY_ROW_BASE + r, 1);
+    }
+}
+
+// Monitor key presses for up to 60 s; exit on Enter key from serial.
+static void key_monitor(void) {
+    printf("\n--- Keyboard monitor (press keys; Enter to exit) ---\n");
+    key_gpio_init();
+    sleep_ms(10);
+
+    // Drain any residual bytes (e.g. '\n' left after command dispatch on '\r')
+    while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
+
+    uint8_t prev[KEY_ROWS] = {0};
+    uint32_t deadline = to_ms_since_boot(get_absolute_time()) + 60000;
+
+    while (to_ms_since_boot(get_absolute_time()) < deadline) {
+        int ch = getchar_timeout_us(0);
+        if (ch == '\r' || ch == '\n') break;
+
+        uint8_t cur[KEY_ROWS];
+        key_scan_matrix(cur);
+
+        for (int r = 0; r < KEY_ROWS; r++) {
+            uint8_t newly = (uint8_t)(cur[r] & ~prev[r]);
+            for (int c = 0; c < KEY_COLS; c++) {
+                if (newly & (1u << c))
+                    printf("  %s  (R%dC%d)\n", key_names[r][c], r, c);
+            }
+        }
+        memcpy(prev, cur, KEY_ROWS);
+        sleep_ms(20);   // ~50 Hz scan
+    }
+
+    key_gpio_deinit();
+    printf("Done\n");
+}
+
+// ---------------------------------------------------------------------------
 // Command dispatch
 // ---------------------------------------------------------------------------
 
@@ -511,6 +610,9 @@ static void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "bee") == 0) {
         amp_bee();
 
+    } else if (strcmp(cmd, "key") == 0) {
+        key_monitor();
+
     } else if (strcmp(cmd, "charge_on") == 0) {
         bus_b_init();
         bq25622_enable_charge();
@@ -531,6 +633,7 @@ static void handle_command(const char *cmd) {
         printf("  amp_test    -- NAU8315 constant tone 5 s at 80%% (hardware check)\n");
         printf("  amp         -- NAU8315 speaker breathe tone x5 (~444 Hz)\n");
         printf("  bee         -- Xiao Mi Feng melody at 40%% amp\n");
+        printf("  key         -- keyboard monitor (prints key name on press; Enter to exit)\n");
         printf("  charge_on   -- enable BQ25622 charging\n");
         printf("  charge_off  -- disable BQ25622 charging\n");
 
