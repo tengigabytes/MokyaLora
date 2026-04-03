@@ -320,36 +320,25 @@ t(ms)   samples  omin  omax  density
 Without amp: omin reaches as low as 14 (DATA line fully driven low by mic), omax up to 64.
 Density ≈ 50.0 % confirms mic is correctly biased and operational.
 
-**mic_loopback — amp interference finding:**
+**mic_loopback — status:**
 
-When I2S amp is active (BCLK = 1.5625 MHz, LRCK = 48828 Hz clocking), electrical interference
-couples into GPIO 5 (MIC_DATA), causing PDM bit errors:
+**Test tone isolation result:** A 444 Hz tone (0.5 s) played at start of `mic_loop` is confirmed audible → amp PIO hardware is functioning correctly within the `mic_loop` context. Loopback audio not yet confirmed — investigation ongoing.
 
-| Condition | ones range | Effect |
-|-----------|-----------|--------|
-| Amp OFF (`mic_raw`) | 14–64 | Correct; both polarities captured |
-| Amp ON (`mic_loop`) | 32–64 | DATA floored at 32; negative modulation clipped |
-
-**Before `gpio_pull_up` (original):** amp noise forced DATA low → ones capped at 32 (stuck low).
-**After `gpio_pull_up` (current):** pull-up (~50 kΩ) holds DATA high during IM69D130 tri-state window → interference now pulls '0' bits to '1' → ones floored at 32 instead of capped.
-
-Signal processing chain added to compensate:
+Signal processing chain in place:
 - **IIR LPF:** `filtered = (filtered*3 + pcm) >> 2`, α=0.75, fc ≈ 2.25 kHz — attenuates PDM noise-shaped HF content
-- **DC blocking HPF:** `dc_est += (filtered - dc_est) >> 10`, fc ≈ 7.6 Hz — removes amp-interference-induced DC bias
+- **DC blocking HPF:** `dc_est += (filtered - dc_est) >> 10`, fc ≈ 7.6 Hz — removes DC offset in PDM path
 - **Warm-up:** 100 ms pre-settling of `filtered` and `dc_est` before main loop to avoid initial DC step
-
-**Test tone isolation result:** A 444 Hz tone (0.5 s) played at start of `mic_loop` is confirmed audible → amp PIO hardware is functioning correctly within the `mic_loop` context. Issue is in the PDM→PCM signal path (amp interference limiting mic fidelity). Loopback audio not yet confirmed — investigation ongoing.
 
 **介面說明：**
 
-IM69D130 沒有任何暫存器介面（無 I2C/SPI/UART）。唯一的互動是：提供 PDM CLK → 麥克風輸出 PDM bit stream。SELECT 腳位硬體接 GND → L channel → 資料在 CLK 上升沿有效（tDV ≤ 100 ns）。1-density 檢查是能做到最接近 dump 的診斷方式。
+IM69D130 沒有任何暫存器介面（無 I2C/SPI/UART）。唯一的互動是：提供 PDM CLK → 麥克風輸出 PDM bit stream。SELECT 腳位硬體接 VDD → R channel (DATA2) → 資料在 CLK 下降沿後輸出（tDV ≤ 100 ns），在上升沿前有效，PIO 在上升沿取樣。1-density 檢查是能做到最接近 dump 的診斷方式。
 
 **mic_loopback 設計：**
 
-- PDM CLK 3.125 MHz，decimation ratio = 64 → PCM 48 828 Hz（與 I2S 完全同步）
-- 每 2 個 PDM FIFO word（64 bits）→ 1 個 I2S stereo sample，無需 DMA
-- Integrate-and-dump（1-stage CIC）decimation，增益 ×4（12 dB）
-- IIR LPF（α=0.75）+ DC blocking HPF（fc ≈ 7.6 Hz）
+- PDM CLK 781.25 kHz（clkdiv=80），decimation ratio = 16 → PCM 48 828 Hz（與 I2S 完全同步）
+- 每 1 個 PDM FIFO word（16 bits，autopush at 16）→ 1 個 I2S stereo sample，無需 DMA
+- Integrate-and-dump（1-stage CIC）decimation，ones ∈ [0,16]，centre=8，增益 ×4
+- IIR LPF（α=0.75, fc ≈ 2.25 kHz）+ DC blocking HPF（fc ≈ 7.6 Hz）
 - 輸出限制在 MAX_AMPLITUDE（50 % full scale）保護喇叭
 - pio1（PDM mic）＋ pio0（I2S amp）獨立運作，無 gpio_base 衝突
 

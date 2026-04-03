@@ -35,11 +35,19 @@ $CmdTimeout = @{
     'motor'     = 12
     'amp'       = 12
     'bee'       = 10
+    'voice'     = 8
+    'gc'        = 30
+    'test01_8k' = 30
+    'test01_16k'= 30
+    'test01_44k'= 30
+    'test01_48k'= 30
+    'test01'    = 105
     'amp_test'  = 7
     'mic'       = 3
     'mic_raw'   = 12
     'mic_loop'  = 12
-    'tft'       = 15
+    'mic_rec'   = 10
+    'tft'       = 35
 }
 $DefaultTimeout = 2
 
