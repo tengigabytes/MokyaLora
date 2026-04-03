@@ -180,6 +180,7 @@ void mic_test(void);
 void mic_raw(void);
 void mic_loopback(void);
 void mic_rec(void);
+void mic_dump(void);
 
 // bringup_flash.c
 void sram_test(void);
