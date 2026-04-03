@@ -152,6 +152,8 @@ static void handle_command(const char *cmd) {
         mic_loopback();
     } else if (strcmp(cmd, "mic_rec") == 0) {
         mic_rec();
+    } else if (strcmp(cmd, "mic_dump") == 0) {
+        mic_dump();
     } else if (strcmp(cmd, "lora") == 0) {
         lora_test();
     } else if (strcmp(cmd, "lora_rx") == 0) {
@@ -206,6 +208,7 @@ static void handle_command(const char *cmd) {
         printf("  mic_raw     -- PDM density monitor 10 s, no amp (speak to see shift)\n");
         printf("  mic_loop    -- mic -> speaker loopback 10 s (Enter to stop)\n");
         printf("  mic_rec     -- record 3 s into SRAM then play back (no loopback CLK hazard)\n");
+        printf("  mic_dump    -- record 1 s into SRAM then dump raw PCM over serial (use recv_pcm_dump.py)\n");
         printf("  lora        -- SX1262 reset + GetStatus + ReadRegister (SyncWord check)\n");
         printf("  lora_rx     -- SX1262 RX sniff 30 s (923.125 MHz, SF11, BW250k, AS923 Meshtastic)\n");
         printf("  lora_dump   -- SX1262 full status: errors, SyncWord, OCP, RxGain, RSSI, stats\n");
