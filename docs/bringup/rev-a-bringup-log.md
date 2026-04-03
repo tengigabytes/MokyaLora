@@ -59,7 +59,33 @@ No temporary workaround. See Issue 5. Pending Rev B correction.
 
 ### Step 6 — Keypad
 
-**Result: 🔲 NOT TESTED**
+**Result: ✅ PASS**
+
+| Item | Result | Notes |
+|------|--------|-------|
+| Matrix scan direction | ✅ PASS | ROW = output (drive LOW), COL = input pull-up; diode Anode=COL / Cathode=ROW enforces this direction |
+| All 36 keys detected | ✅ PASS | SW1–SW36 confirmed via key_monitor |
+| 1 kΩ series resistors (R90–R101) | ✅ PASS | No impact at 1.8 V: Vf ~0.3 V < VIL 0.54 V with pull-up idle at 1.8 V |
+
+**Firmware (r, c) matrix — confirmed by physical testing:**
+
+SW numbering in the schematic is column-major (SW1–6 = GPIO ROW0 column, top-to-bottom). The firmware `key_names[r][c]` maps as follows:
+
+| r \ c | C0 | C1 | C2 | C3 | C4 | C5 |
+|-------|----|----|----|----|----|----|
+| R0 | FUNC | BACK | LEFT | DEL | VOL- | UP |
+| R1 | 1/2 | 3/4 | 5/6 | 7/8 | 9/0 | OK |
+| R2 | Q/W | E/R | T/Y | U/I | O/P | DOWN |
+| R3 | A/S | D/F | G/H | J/K | L | RIGHT |
+| R4 | Z/X | C/V | B/N | M | ㄡㄥ | SET |
+| R5 | MODE | TAB | SPACE | SYM | 。.？ | VOL+ |
+
+> Note: this (r, c) order does not match the logical Row/Col in hardware-requirements.md — it reflects the physical GPIO-to-switch wiring order in the schematic.
+
+**Firmware notes:**
+- Bringup scan: GPIO polling, ROW-major (ROW driven LOW one at a time, COL read). Not the production PIO+DMA scan.
+- GPIO 36–47 are above the 32-bit GPIO bank boundary; verified functional on RP2350B.
+- Initial firmware had scanning direction inverted (COL drive, ROW read = reverse bias = no detection). Corrected to ROW drive / COL read.
 
 ### Step 7 — Audio
 

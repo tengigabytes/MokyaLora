@@ -239,6 +239,8 @@ All sensors share the **sensor bus (GPIO 34 / 35, `i2c1` in Pico SDK)** with the
 | Row 4 | MODE | TAB | SPACE | ，SYM | 。.？ | VOL+ |
 | Row 5 (nav) | UP | DOWN | LEFT | RIGHT | OK | VOL− |
 
+> **Rev A bringup note:** The schematic SW designators are numbered column-major (SW1–6 = logical Col 5 ext top-to-bottom, i.e. FUNC/SET/BACK/DEL/VOL+/VOL−, then SW7–12 = Col 0 number row, etc.). As a result, the firmware GPIO scan index `(r, c)` does **not** correspond to the logical Row/Col above. See `docs/bringup/rev-a-bringup-log.md` Step 6 for the confirmed firmware `key_names[r][c]` table. Correct SW-to-Row/Col assignment should be verified against the schematic before Rev B firmware development.
+
 ### 8.2 Indicators & Haptics
 
 | Role | Part | Notes |
