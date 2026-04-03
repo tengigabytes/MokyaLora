@@ -28,6 +28,11 @@ static inline void pdm_mic_program_init(PIO pio, uint sm, uint offset,
 
     pio_gpio_init(pio, data_pin);
     pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 1, false); // DATA = input
+    // Pull-up on DATA: IM69D130 tri-states during CLK low (L-ch); without a
+    // pull-up the line floats and is susceptible to noise discharge on the
+    // falling edge where we sample.  Internal pull-up (~50 kΩ) holds the line
+    // high during the tri-state window so the sampled bit is not corrupted.
+    gpio_pull_up(data_pin);
 
     pio_sm_config c = pdm_mic_program_get_default_config(offset);
     sm_config_set_sideset_pins(&c, clk_pin);
