@@ -1,0 +1,359 @@
+#include "bringup.h"
+#include "i2s_out.pio.h"
+#include "pdm_mic.pio.h"
+
+// ---------------------------------------------------------------------------
+// NAU8315 I2S audio via PIO
+// ---------------------------------------------------------------------------
+
+// Unit sine table (full scale) — computed once at startup using hardware FPU
+static int16_t sine_unit[TONE_TABLE_LEN];
+
+void precompute_sine(void) {
+    for (int i = 0; i < TONE_TABLE_LEN; i++)
+        sine_unit[i] = (int16_t)(32767 * sinf(2.0f * (float)M_PI * i / TONE_TABLE_LEN));
+}
+
+// Fast fill: integer scale only — no trig in playback path
+static void amp_fill_sine(uint32_t *buf, int amp) {
+    for (int i = 0; i < TONE_TABLE_LEN; i++) {
+        int16_t s = (int16_t)((int32_t)sine_unit[i] * amp / 32767);
+        buf[i] = ((uint32_t)(uint16_t)s << 16) | (uint16_t)s;
+    }
+}
+
+// Start PIO I2S state machine. Returns SM number, or -1 on failure.
+// Program uses .origin 0 — must load at offset 0 (absolute JMP targets).
+static int amp_pio_start(void) {
+    int sm_num = pio_claim_unused_sm(pio0, false);
+    if (sm_num < 0) { printf("ERROR: no free PIO SM\n"); return -1; }
+    uint sm = (uint)sm_num;
+
+    // RP2350B has 48 GPIOs; PIO addresses 32 at a time.
+    // GPIO 32 (DAC) needs gpio_base = 16 → must be set BEFORE add_program.
+    pio_set_gpio_base(pio0, 16);
+
+    if (!pio_can_add_program_at_offset(pio0, &i2s_out_program, 0)) {
+        printf("ERROR: PIO offset 0 not available\n");
+        pio_sm_unclaim(pio0, sm);
+        return -1;
+    }
+    pio_add_program_at_offset(pio0, &i2s_out_program, 0);
+
+    printf("  PIO0 SM%d loaded at offset=0\n", sm);
+
+    i2s_out_program_init(pio0, sm, 0, AMP_DAC_PIN, AMP_BCLK_PIN, 40.0f);
+    pio_sm_set_enabled(pio0, sm, true);
+    return (int)sm;
+}
+
+static void amp_pio_stop(int sm) {
+    pio_sm_set_enabled(pio0, (uint)sm, false);
+    pio_remove_program(pio0, &i2s_out_program, 0);
+    pio_sm_unclaim(pio0, (uint)sm);
+    gpio_set_function(AMP_BCLK_PIN, GPIO_FUNC_NULL);
+    gpio_set_function(AMP_LRCK_PIN, GPIO_FUNC_NULL);
+    gpio_set_function(AMP_DAC_PIN,  GPIO_FUNC_NULL);
+}
+
+// Constant-amplitude tone for 5 s — use this first to verify hardware
+void amp_test(void) {
+    // 80 % amplitude: P = 0.68 × 0.64 ≈ 0.44 W — under 0.7 W speaker limit
+    const int amp = (int)(MAX_AMPLITUDE * 1.6f);
+    printf("\n--- NAU8315 Tone Test (%d Hz, amp 80%%, ~0.44 W) ---\n", TONE_FREQ_HZ);
+    printf("    PIO uses standard I2S -- FSL floating is correct, no hardware mod needed.\n");
+
+    int sm = amp_pio_start();
+    if (sm < 0) return;
+
+    uint32_t buf[TONE_TABLE_LEN];
+    amp_fill_sine(buf, amp);
+
+    uint32_t end_ms = to_ms_since_boot(get_absolute_time()) + 5000;
+    int count = 0;
+    while (to_ms_since_boot(get_absolute_time()) < end_ms) {
+        for (int i = 0; i < TONE_TABLE_LEN; i++)
+            pio_sm_put_blocking(pio0, (uint)sm, buf[i]);
+        count++;
+    }
+    printf("  played %d periods\n", count);
+    sleep_ms(10);
+    amp_pio_stop(sm);
+    printf("Amp off\n");
+}
+
+// Amplitude-modulated tone — breathing effect × 5
+void amp_breathe(void) {
+    printf("\n--- NAU8315 Amp Breathe (~%d Hz) ---\n", TONE_FREQ_HZ);
+
+    int sm = amp_pio_start();
+    if (sm < 0) return;
+
+    uint32_t buf[TONE_TABLE_LEN];
+    for (int b = 0; b < 5; b++) {
+        for (int step = 0; step <= 20; step++) {
+            amp_fill_sine(buf, MAX_AMPLITUDE * step / 20);
+            for (int rep = 0; rep < 10; rep++)
+                for (int i = 0; i < TONE_TABLE_LEN; i++)
+                    pio_sm_put_blocking(pio0, (uint)sm, buf[i]);
+        }
+        for (int step = 20; step >= 0; step--) {
+            amp_fill_sine(buf, MAX_AMPLITUDE * step / 20);
+            for (int rep = 0; rep < 10; rep++)
+                for (int i = 0; i < TONE_TABLE_LEN; i++)
+                    pio_sm_put_blocking(pio0, (uint)sm, buf[i]);
+        }
+        printf("  breath %d done\n", b + 1);
+    }
+
+    sleep_ms(10);
+    amp_pio_stop(sm);
+    printf("Amp off\n");
+}
+
+// Fill FIFO with zeros — prevents click when transitioning to/from silence.
+static void bee_silence(int sm, int dur_ms) {
+    uint32_t end_ms = to_ms_since_boot(get_absolute_time()) + (uint32_t)dur_ms;
+    while (to_ms_since_boot(get_absolute_time()) < end_ms)
+        pio_sm_put_blocking(pio0, (uint)sm, 0);
+}
+
+// Play one note: sound for (dur_ms - GAP) ms, then GAP ms of silence.
+// freq = 0 → pure silence for dur_ms.
+static void bee_note(int sm, int freq, int dur_ms, int amp) {
+    const int GAP = 45;
+    if (freq == 0) { bee_silence(sm, dur_ms); return; }
+    int tlen = I2S_SAMPLE_RATE / freq;
+    if (tlen > 200) tlen = 200;
+    uint32_t buf[200];
+    for (int i = 0; i < tlen; i++) {
+        int16_t s = (int16_t)(amp * sinf(2.0f * (float)M_PI * i / tlen));
+        buf[i] = ((uint32_t)(uint16_t)s << 16) | (uint16_t)s;
+    }
+    int play_ms = dur_ms > GAP + 20 ? dur_ms - GAP : dur_ms;
+    uint32_t end_ms = to_ms_since_boot(get_absolute_time()) + (uint32_t)play_ms;
+    while (to_ms_since_boot(get_absolute_time()) < end_ms)
+        for (int i = 0; i < tlen; i++)
+            pio_sm_put_blocking(pio0, (uint)sm, buf[i]);
+    bee_silence(sm, GAP);
+}
+
+// ---------------------------------------------------------------------------
+// IM69D130 PDM microphone test
+//
+// Uses pio1 (not pio0) to avoid gpio_base conflict with the amp (pio0, base=16).
+// GPIO 4/5 are within pio1's default range (0–31); no base change needed.
+//
+// Procedure:
+//   1. Start PDM CLK at 3.125 MHz (clkdiv=20), collect bits into RX FIFO.
+//   2. Discard 100 ms warm-up (mic datasheet: power-up settling).
+//   3. Capture 1024 words (32 768 PDM bits ≈ 10.5 ms of audio data).
+//   4. Count 1-density and check for stuck-high / stuck-low faults.
+//   Silent room: density ≈ 50 %. Loud sound shifts density up or down.
+// ---------------------------------------------------------------------------
+
+void mic_test(void) {
+    printf("\n--- IM69D130 PDM Mic Test (GPIO%d=CLK, GPIO%d=DATA) ---\n",
+           MIC_CLK_PIN, MIC_DATA_PIN);
+    printf("  CLK = %.3f MHz (clkdiv=%.0f)  SELECT=GND (L-ch, rising edge)\n",
+           125.0f / (2.0f * PDM_CLK_DIV), PDM_CLK_DIV);
+
+    int sm_num = pio_claim_unused_sm(pio1, false);
+    if (sm_num < 0) { printf("ERROR: no free PIO1 SM\n"); return; }
+    uint sm = (uint)sm_num;
+
+    if (!pio_can_add_program(pio1, &pdm_mic_program)) {
+        printf("ERROR: PIO1 program space full\n");
+        pio_sm_unclaim(pio1, sm);
+        return;
+    }
+    uint offset = pio_add_program(pio1, &pdm_mic_program);
+    pdm_mic_program_init(pio1, sm, offset, MIC_CLK_PIN, MIC_DATA_PIN, PDM_CLK_DIV);
+    pio_sm_set_enabled(pio1, sm, true);
+
+    // Warm-up: discard first 100 ms
+    uint32_t warmup_end = to_ms_since_boot(get_absolute_time()) + 100;
+    while (to_ms_since_boot(get_absolute_time()) < warmup_end)
+        (void)pio_sm_get_blocking(pio1, sm);
+
+    // Capture 1024 words = 32 768 PDM bits
+    const int N_WORDS = 1024;
+    uint32_t total_ones = 0;
+    uint32_t min_word = 0xFFFFFFFFu, max_word = 0;
+
+    for (int i = 0; i < N_WORDS; i++) {
+        uint32_t w = pio_sm_get_blocking(pio1, sm);
+        uint32_t ones = (uint32_t)__builtin_popcount(w);
+        total_ones += ones;
+        if (w < min_word) min_word = w;
+        if (w > max_word) max_word = w;
+    }
+
+    const uint32_t total_bits = (uint32_t)N_WORDS * 32u;
+    float density = (float)total_ones / (float)total_bits * 100.0f;
+
+    printf("  Captured %u PDM bits (%d words)\n", total_bits, N_WORDS);
+    printf("  1-density : %.1f %%  (silent room ≈ 50%%)\n", density);
+    printf("  Min word  : 0x%08X\n", (unsigned)min_word);
+    printf("  Max word  : 0x%08X\n", (unsigned)max_word);
+
+    bool stuck_low  = (total_ones == 0);
+    bool stuck_high = (total_ones == total_bits);
+    bool varying    = (min_word != max_word);
+
+    if (stuck_low)
+        printf("  WARN: DATA stuck LOW  — check GPIO%d wiring / VDD\n", MIC_DATA_PIN);
+    else if (stuck_high)
+        printf("  WARN: DATA stuck HIGH — check GPIO%d pullup or SELECT pin\n", MIC_DATA_PIN);
+    else if (!varying)
+        printf("  WARN: all words identical (0x%08X) — data may be frozen\n", (unsigned)min_word);
+
+    bool pass = !stuck_low && !stuck_high && varying;
+    printf("  Result: %s\n", pass ? "PASS" : "FAIL");
+
+    pio_sm_set_enabled(pio1, sm, false);
+    pio_remove_program(pio1, &pdm_mic_program, offset);
+    pio_sm_unclaim(pio1, sm);
+    gpio_set_function(MIC_CLK_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(MIC_DATA_PIN, GPIO_FUNC_NULL);
+}
+
+// ---------------------------------------------------------------------------
+// Microphone → Speaker loopback
+//
+// PDM CLK = 3.125 MHz (clkdiv=20), decimation ratio = 64.
+// 3,125,000 / 64 = 48,828 Hz — exactly matches the I2S sample rate.
+// Every 2 PDM FIFO words (64 bits) → 1 stereo I2S sample; rates are locked.
+//
+// Decimation: simple integrate-and-dump (1-stage CIC).
+//   64 PDM bits → ones count [0..64], centre 32.
+//   PCM = (ones − 32) × 1024 × GAIN, clamped to MAX_AMPLITUDE for speaker safety.
+//
+// Audio quality: passable for voice; CIC roll-off above ~10 kHz is expected.
+// pio0: I2S amp (gpio_base=16 for GPIO 32). pio1: PDM mic (GPIO 4/5, default base).
+// ---------------------------------------------------------------------------
+
+#define MIC_GAIN 4   // 12 dB boost — raises quiet speech above CIC noise floor
+
+void mic_loopback(void) {
+    printf("\n--- Mic → Speaker Loopback (10 s, Enter to stop) ---\n");
+    printf("  PDM 3.125 MHz, decimation=64 → PCM 48828 Hz, gain=×%d\n", MIC_GAIN);
+
+    // --- Start I2S amp on pio0 ---
+    int amp_sm = amp_pio_start();
+    if (amp_sm < 0) return;
+
+    // --- Start PDM mic on pio1 ---
+    int mic_sm_num = pio_claim_unused_sm(pio1, false);
+    if (mic_sm_num < 0) {
+        printf("ERROR: no free PIO1 SM\n");
+        amp_pio_stop(amp_sm);
+        return;
+    }
+    uint mic_sm = (uint)mic_sm_num;
+
+    if (!pio_can_add_program(pio1, &pdm_mic_program)) {
+        printf("ERROR: PIO1 program space full\n");
+        pio_sm_unclaim(pio1, mic_sm);
+        amp_pio_stop(amp_sm);
+        return;
+    }
+    uint mic_offset = pio_add_program(pio1, &pdm_mic_program);
+    pdm_mic_program_init(pio1, mic_sm, mic_offset, MIC_CLK_PIN, MIC_DATA_PIN, PDM_CLK_DIV);
+    pio_sm_set_enabled(pio1, mic_sm, true);
+
+    // Drain any residual serial bytes
+    while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
+
+    // Warm-up: 100 ms — match loop structure (2 PDM → 1 I2S silence) to
+    // bring both FIFOs to steady state before live audio starts.
+    uint32_t warmup_end = to_ms_since_boot(get_absolute_time()) + 100;
+    while (to_ms_since_boot(get_absolute_time()) < warmup_end) {
+        (void)pio_sm_get_blocking(pio1, mic_sm);
+        (void)pio_sm_get_blocking(pio1, mic_sm);
+        pio_sm_put_blocking(pio0, (uint)amp_sm, 0);
+    }
+
+    printf("  Live — speak into mic...\n");
+
+    uint32_t deadline = to_ms_since_boot(get_absolute_time()) + 10000;
+
+    while (to_ms_since_boot(get_absolute_time()) < deadline) {
+        if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) break;
+
+        // 2 PDM words = 64 bits = 1 sample at 48 828 Hz
+        uint32_t p0 = pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t p1 = pio_sm_get_blocking(pio1, mic_sm);
+
+        // Integrate-and-dump: ones in [0,64], centre 32
+        int ones = __builtin_popcount(p0) + __builtin_popcount(p1);
+        int32_t pcm = (int32_t)(ones - 32) * 1024 * MIC_GAIN;
+
+        // Clamp to MAX_AMPLITUDE for speaker protection
+        if (pcm >  MAX_AMPLITUDE) pcm =  MAX_AMPLITUDE;
+        if (pcm < -MAX_AMPLITUDE) pcm = -MAX_AMPLITUDE;
+        int16_t s = (int16_t)pcm;
+
+        // I2S word: bits[31:16]=L, bits[15:0]=R (mono mic → both channels)
+        pio_sm_put_blocking(pio0, (uint)amp_sm, ((uint32_t)(uint16_t)s << 16) | (uint16_t)s);
+    }
+
+    // Drain: output silence to avoid click/pop on stop
+    for (int i = 0; i < 256; i++)
+        pio_sm_put_blocking(pio0, (uint)amp_sm, 0);
+
+    pio_sm_set_enabled(pio1, mic_sm, false);
+    pio_remove_program(pio1, &pdm_mic_program, mic_offset);
+    pio_sm_unclaim(pio1, mic_sm);
+    gpio_set_function(MIC_CLK_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(MIC_DATA_PIN, GPIO_FUNC_NULL);
+
+    amp_pio_stop(amp_sm);
+    printf("Done\n");
+}
+
+// Little Bee (小蜜蜂) melody — 40% amplitude
+//
+// C major, 4/4, quarter = 460 ms (~130 BPM).
+// Numbered notation (jianpu):
+//   5 3 3- | 4 2 2- | 5 3 3- | 4 2 2- | 1 3 5 5 | 3---  |
+//   2 2 2 2 | 2 3 4- | 3 3 3 3 | 3 4 5- |
+//   5 3 3- | 4 2 2- | 1 3 5 5 | 1---
+void amp_bee(void) {
+    printf("\n--- Little Bee at 40%% amp ---\n");
+    int sm = amp_pio_start();
+    if (sm < 0) return;
+
+    const int amp = (int)(MAX_AMPLITUDE * 0.8f);
+    const int q = 460, h = 920, w = 1840;   // quarter, half, whole (ms)
+    const int C = NOTE_C4, D = NOTE_D4, E = NOTE_E4,
+              F = NOTE_F4, G = NOTE_G4;
+
+    // 5 3 3- | 4 2 2- | 5 3 3- | 4 2 2-
+    bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
+    bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
+    bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
+    bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
+
+    // 1 3 5 5 | 3---
+    bee_note(sm,C,q,amp); bee_note(sm,E,q,amp); bee_note(sm,G,q,amp); bee_note(sm,G,q,amp);
+    bee_note(sm,E,w,amp);
+
+    // 2 2 2 2 | 2 3 4-
+    bee_note(sm,D,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,q,amp);
+    bee_note(sm,D,q,amp); bee_note(sm,E,q,amp); bee_note(sm,F,h,amp);
+
+    // 3 3 3 3 | 3 4 5-
+    bee_note(sm,E,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,q,amp);
+    bee_note(sm,E,q,amp); bee_note(sm,F,q,amp); bee_note(sm,G,h,amp);
+
+    // 5 3 3- | 4 2 2- | 1 3 5 5 | 1---
+    bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
+    bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
+    bee_note(sm,C,q,amp); bee_note(sm,E,q,amp); bee_note(sm,G,q,amp); bee_note(sm,G,q,amp);
+    bee_note(sm,C,w,amp);
+
+    bee_silence(sm, 50);
+    amp_pio_stop(sm);
+    printf("Done\n");
+}

@@ -1,0 +1,45 @@
+;
+; pdm_mic.pio — PDM microphone input (IM69D130)
+;
+; side-set controls MIC_CLK (GPIO 4).
+; IN pin is MIC_DATA (GPIO 5).
+;
+; L-channel (SELECT = GND): mic drives DATA after CLK rising edge, tDV ≤ 100 ns.
+; 'nop side 1' gives one full clkdiv cycle (≥ 160 ns at clkdiv=20) before sampling.
+;
+; CLK frequency = sys_clk / (2 × clkdiv)
+;   clkdiv = 20 → 125 MHz / 40 = 3.125 MHz  (within IM69D130 3.3 MHz max)
+;   clkdiv = 41 → 125 MHz / 82 ≈ 1.524 MHz  (lower power mode)
+
+.program pdm_mic
+.side_set 1
+
+.wrap_target
+    nop        side 1   ; CLK high — mic drives DATA within tDV ≤ 100 ns
+    in pins, 1 side 0   ; Sample DATA (≥1 cycle after rising edge), then CLK low
+.wrap
+
+% c-sdk {
+static inline void pdm_mic_program_init(PIO pio, uint sm, uint offset,
+                                         uint clk_pin, uint data_pin,
+                                         float clkdiv) {
+    pio_gpio_init(pio, clk_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, clk_pin, 1, true);   // CLK = output
+
+    pio_gpio_init(pio, data_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, data_pin, 1, false); // DATA = input
+
+    pio_sm_config c = pdm_mic_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, clk_pin);
+    sm_config_set_in_pins(&c, data_pin);
+
+    // Shift left into ISR, autopush at 32 bits → one FIFO word per 32 CLK cycles
+    sm_config_set_in_shift(&c, false, true, 32);
+
+    // Join RX FIFO (8 × 32-bit words) — no TX needed
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+
+    sm_config_set_clkdiv(&c, clkdiv);
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
