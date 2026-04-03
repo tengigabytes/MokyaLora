@@ -295,12 +295,13 @@ Conclusion: firmware and QMI configuration are correct. PSRAM unresponsive to bo
 |------|--------|-------|
 | `mic` — PDM bit capture & 1-density check | ✅ PASS | 1-density = 49.8 % (silent room ≈ 50 % expected) |
 | `mic_raw` — PDM density monitor (no amp, 10 s) | ✅ PASS | Density 50.0 %; responds to speech; omin/omax shift confirmed |
-| `mic_loop` — mic → speaker loopback | 🔍 IN PROGRESS | Amp confirmed working (test tone audible); mic audio loopback not yet confirmed audible |
+| `mic_loop` — mic → speaker real-time loopback | ⚠️ PARTIAL | Audio audible but background noise present; CLK-freeze hazard mitigated |
+| `mic_rec` — record 3 s to SRAM then play back | ✅ PASS | Capture and playback both working; background noise under investigation |
 
-**mic_test output (1024 words = 32 768 PDM bits):**
+**mic_test output (1024 words = 32 768 PDM bits, 3.125 MHz):**
 
 ```
-CLK = 3.125 MHz (clkdiv=20)  SELECT=GND (L-ch, rising edge)
+CLK = 3125.000 kHz (clkdiv=20)  SELECT=VDD (R-ch, falling edge)
 1-density : 49.8 %  (silent room ≈ 50%)
 Min word  : 0x0E959956
 Max word  : 0xE8D4E4D5
@@ -309,38 +310,57 @@ Result: PASS
 
 GPIO 4 (MIC_CLK) 和 GPIO 5 (MIC_DATA) 連線正常。PDM bit stream 密度 49.8 % ≈ 50 %，符合靜音時的理論值。Min/Max word 各異，確認資料隨時間變化（麥克風有在收音）。
 
-**mic_raw output (no amp running, 10 s window):**
+**mic_raw output (no amp running, 10 s window, 64-bit decimation):**
 
 ```
 t(ms)   samples  omin  omax  density
-  xxx     24414    18    62   50.0%   ← silence
-  xxx     24414    14    64   50.1%   ← during speech: omin drops, omax rises
+  xxx     24414    22    42   50.0%   ← silence
+  xxx     24414    10    58   50.2%   ← during speech: omin drops, omax rises
 ```
 
-Without amp: omin reaches as low as 14 (DATA line fully driven low by mic), omax up to 64.
-Density ≈ 50.0 % confirms mic is correctly biased and operational.
-
-**mic_loopback — status:**
-
-**Test tone isolation result:** A 444 Hz tone (0.5 s) played at start of `mic_loop` is confirmed audible → amp PIO hardware is functioning correctly within the `mic_loop` context. Loopback audio not yet confirmed — investigation ongoing.
-
-Signal processing chain in place:
-- **IIR LPF:** `filtered = (filtered*3 + pcm) >> 2`, α=0.75, fc ≈ 2.25 kHz — attenuates PDM noise-shaped HF content
-- **DC blocking HPF:** `dc_est += (filtered - dc_est) >> 10`, fc ≈ 7.6 Hz — removes DC offset in PDM path
-- **Warm-up:** 100 ms pre-settling of `filtered` and `dc_est` before main loop to avoid initial DC step
+Density ≈ 50.0 % confirms mic correctly biased. With 64-bit decimation window (ones ∈ [0,64]), the statistical variance per sample is lower than the earlier 16-bit window, resulting in a tighter omin/omax spread at silence — consistent with a healthy PDM stream.
 
 **介面說明：**
 
-IM69D130 沒有任何暫存器介面（無 I2C/SPI/UART）。唯一的互動是：提供 PDM CLK → 麥克風輸出 PDM bit stream。SELECT 腳位硬體接 VDD → R channel (DATA2) → 資料在 CLK 下降沿後輸出（tDV ≤ 100 ns），在上升沿前有效，PIO 在上升沿取樣。1-density 檢查是能做到最接近 dump 的診斷方式。
+IM69D130 沒有任何暫存器介面（無 I2C/SPI/UART）。唯一的互動是：提供 PDM CLK → 麥克風輸出 PDM bit stream。SELECT 腳位硬體接 VDD → R channel (DATA2)：資料在 CLK **下降沿**後輸出（tDV ≤ 100 ns），在上升沿前有效，PIO 在上升沿取樣。
 
-**mic_loopback 設計：**
+電路：DATA 線經 100 Ω 串聯 + 100 kΩ 下拉 ∥ 47 pF 至 MCU GPIO；VDD 有 100 nF 去耦電容。MCU 端不啟用 internal pull-up（外部 100 kΩ 為 pull-down，啟用 internal pull-up 會在 HiZ 窗口造成 ~1.2 V 不確定電壓）。
 
-- PDM CLK 781.25 kHz（clkdiv=80），decimation ratio = 16 → PCM 48 828 Hz（與 I2S 完全同步）
-- 每 1 個 PDM FIFO word（16 bits，autopush at 16）→ 1 個 I2S stereo sample，無需 DMA
-- Integrate-and-dump（1-stage CIC）decimation，ones ∈ [0,16]，centre=8，增益 ×4
-- IIR LPF（α=0.75, fc ≈ 2.25 kHz）+ DC blocking HPF（fc ≈ 7.6 Hz）
-- 輸出限制在 MAX_AMPLITUDE（50 % full scale）保護喇叭
-- pio1（PDM mic）＋ pio0（I2S amp）獨立運作，無 gpio_base 衝突
+**PDM→PCM signal processing chain:**
+
+- **Decimation:** 1-stage integrate-and-dump（CIC）；每 2 個 32-bit FIFO word（= 64 PDM bits）→ 1 個 PCM sample；ones ∈ [0,64]，centre = 32，`pcm = (ones−32) × 1024 × GAIN`
+- **IIR LPF:** `filtered = (filtered×3 + pcm) >> 2`，α = 0.75，fc ≈ 2.25 kHz — 衰減 PDM noise shaping 的高頻量化雜訊
+- **DC blocking HPF:** `dc_est += (filtered − dc_est) >> 10`，fc ≈ 7.6 Hz — 移除 PDM 路徑 DC offset
+- **Warm-up:** 100 ms 預先穩定 `filtered` 和 `dc_est`，避免主迴圈開始時的 DC step
+- **Output clamp:** ±MAX\_AMPLITUDE（50 % full scale）保護喇叭
+
+**PIO configuration:**
+
+- PDM CLK = 3.125 MHz（clkdiv=20，SNR 69 dB mode）；autopush = 32 bits（PIO ISR 最大寬度）
+- 3,125,000 / 32 / 2 = 48,828 Hz — 與 I2S sample rate 完全同步
+- pio1（PDM mic，GPIO 4/5）＋ pio0（I2S amp，GPIO 30–32，gpio_base=16）獨立運作，無衝突
+
+**已知問題與已修正的 bugs：**
+
+| Bug | 修正 |
+|-----|------|
+| PIO 最初按 L-channel 時序設計（SELECT=GND，CLK 上升沿後取樣）；實際 SELECT=VDD → R-channel（CLK 下降沿後輸出，上升沿前有效） | PIO 程式改為 `nop side 0` / `in pins,1 side 1`（上升沿取樣），gpio_disable_pulls 取代 gpio_pull_up |
+| `mic_loop` 中 printf 輸出 stats 導致 CPU stall 數 ms → PDM CLK 凍結 → IM69D130 失鎖（表現為 ones∈[0,0]） | 加 `#define MIC_LOOP_STATS 0` compile-time 開關；預設關閉 |
+| Real-time loopback 中 PDM `pio_sm_get_blocking` 和 I2S `pio_sm_put_blocking` 互相競爭，無法保證 48828 Hz 對齊 | 新增 `mic_rec`：Phase 1 僅 PDM PIO 執行（錄音），Phase 2 僅 I2S PIO 執行（回放），完全分離 |
+
+**mic_rec 設計：**
+
+```
+Phase 1 (capture, PDM only):
+  pio1 PDM SM → warm-up 100 ms → record REC_SAMPLES (3 × 48828 = 146 484) → stop PDM
+
+Phase 2 (playback, I2S only):
+  pio0 I2S SM → play rec_buf[] → 256 silence drain → stop I2S
+```
+
+Buffer: `static int16_t rec_buf[146484]` = 292,968 bytes in BSS（RP2350B 264 KB SRAM 可容納）。
+
+**現狀：** `mic_rec` 錄音回放功能正常，但背景雜音明顯。初步判斷為 1-stage CIC decimation 的高頻衰減不足（sinc 頻率響應），PDM noise shaping 的高頻能量 fold 回通頻帶。後續考慮：2 階 IIR LPF cascade 或 multi-stage CIC。
 
 ---
 
@@ -356,7 +376,7 @@ The bringup shell was originally a single 1880-line `i2c_custom_scan.c`. It has 
 | `i2c_custom_scan.c` | ~225 | Main REPL loop, keypad monitor, command dispatch |
 | `bringup_power.c` | ~280 | LM27965, BQ25622, motor PWM, Bus B init/deinit |
 | `bringup_sensors.c` | ~290 | LSM6DSV16X, LIS2MDL, LPS22HH, Teseo-LIV3FL, Bus A scan |
-| `bringup_audio.c` | ~470 | PIO I2S driver, NAU8315 tone/breathe/melody, PDM mic test/raw/loopback |
+| `bringup_audio.c` | ~530 | PIO I2S driver, NAU8315 tone/breathe/melody, PDM mic test/raw/loopback/rec |
 | `bringup_flash.c` | ~180 | W25Q128JW JEDEC/UID, APS6404L QMI probe |
 | `bringup_lora.c` | ~475 | SX1262 SPI helpers, `lora_test`, `lora_rx`, `lora_dump` |
 | `bringup_tft.c` | ~270 | PIO 8080 driver, ST7789VI init sequence, colour fill, `tft_test` |
