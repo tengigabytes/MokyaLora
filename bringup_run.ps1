@@ -37,6 +37,7 @@ $CmdTimeout = @{
     'bee'       = 10
     'amp_test'  = 7
     'mic'       = 3
+    'mic_raw'   = 12
     'mic_loop'  = 12
     'tft'       = 15
 }

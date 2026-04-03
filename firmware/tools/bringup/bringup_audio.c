@@ -219,6 +219,72 @@ void mic_test(void) {
 }
 
 // ---------------------------------------------------------------------------
+// mic_raw — continuous PDM density monitor, no amp, 10 s (Enter to stop)
+//
+// Every ~0.5 s prints: ones min/max per 64-bit frame, and average density.
+// Speak, clap, or whistle to see density shift away from 50%.
+// ---------------------------------------------------------------------------
+
+void mic_raw(void) {
+    printf("\n--- PDM raw monitor (no amp, 10 s, Enter to stop) ---\n");
+    printf("  Silence ≈ 50%%.  Loud sound shifts density up or down.\n");
+
+    int sm_num = pio_claim_unused_sm(pio1, false);
+    if (sm_num < 0) { printf("ERROR: no free PIO1 SM\n"); return; }
+    uint sm = (uint)sm_num;
+
+    if (!pio_can_add_program(pio1, &pdm_mic_program)) {
+        printf("ERROR: PIO1 program space full\n");
+        pio_sm_unclaim(pio1, sm);
+        return;
+    }
+    uint offset = pio_add_program(pio1, &pdm_mic_program);
+    pdm_mic_program_init(pio1, sm, offset, MIC_CLK_PIN, MIC_DATA_PIN, PDM_CLK_DIV);
+    pio_sm_set_enabled(pio1, sm, true);
+
+    // Warm-up: 100 ms
+    uint32_t t = to_ms_since_boot(get_absolute_time());
+    while (to_ms_since_boot(get_absolute_time()) < t + 100)
+        (void)pio_sm_get_blocking(pio1, sm);
+
+    while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
+
+    // Print header
+    printf("  %6s  %8s  %4s  %4s  %6s\n", "t(ms)", "samples", "omin", "omax", "density");
+
+    uint32_t deadline = to_ms_since_boot(get_absolute_time()) + 10000;
+    const int INTERVAL = 24414;  // ~0.5 s at 48828 Hz (pairs of words)
+
+    while (to_ms_since_boot(get_absolute_time()) < deadline) {
+        if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) break;
+
+        int ones_min = 64, ones_max = 0;
+        uint32_t total_ones = 0;
+
+        for (int i = 0; i < INTERVAL; i++) {
+            uint32_t p0 = pio_sm_get_blocking(pio1, sm);
+            uint32_t p1 = pio_sm_get_blocking(pio1, sm);
+            int ones = __builtin_popcount(p0) + __builtin_popcount(p1);
+            if (ones < ones_min) ones_min = ones;
+            if (ones > ones_max) ones_max = ones;
+            total_ones += (uint32_t)ones;
+        }
+
+        float density = (float)total_ones / (float)(INTERVAL * 64) * 100.0f;
+        printf("  %6u  %8d  %4d  %4d  %5.1f%%\n",
+               (unsigned)to_ms_since_boot(get_absolute_time()),
+               INTERVAL, ones_min, ones_max, density);
+    }
+
+    pio_sm_set_enabled(pio1, sm, false);
+    pio_remove_program(pio1, &pdm_mic_program, offset);
+    pio_sm_unclaim(pio1, sm);
+    gpio_set_function(MIC_CLK_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(MIC_DATA_PIN, GPIO_FUNC_NULL);
+    printf("Done\n");
+}
+
+// ---------------------------------------------------------------------------
 // Microphone → Speaker loopback
 //
 // PDM CLK = 3.125 MHz (clkdiv=20), decimation ratio = 64.
@@ -233,7 +299,7 @@ void mic_test(void) {
 // pio0: I2S amp (gpio_base=16 for GPIO 32). pio1: PDM mic (GPIO 4/5, default base).
 // ---------------------------------------------------------------------------
 
-#define MIC_GAIN 4   // 12 dB boost — raises quiet speech above CIC noise floor
+#define MIC_GAIN 4   // 12 dB — speech signal fits within MAX_AMPLITUDE after IIR LPF
 
 void mic_loopback(void) {
     printf("\n--- Mic → Speaker Loopback (10 s, Enter to stop) ---\n");
@@ -242,6 +308,13 @@ void mic_loopback(void) {
     // --- Start I2S amp on pio0 ---
     int amp_sm = amp_pio_start();
     if (amp_sm < 0) return;
+
+    // Test tone before PDM mic starts — isolates amp vs signal-processing issues.
+    // If this tone is heard: amp chain works, problem is in PDM→PCM path.
+    // If this tone is also silent: fundamental amp issue specific to mic_loop.
+    printf("  Test tone 440 Hz 0.5 s — should be audible...\n");
+    bee_note(amp_sm, 440, 500, MAX_AMPLITUDE);
+    printf("  Tone done. Starting mic...\n");
 
     // --- Start PDM mic on pio1 ---
     int mic_sm_num = pio_claim_unused_sm(pio1, false);
@@ -265,18 +338,38 @@ void mic_loopback(void) {
     // Drain any residual serial bytes
     while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
 
-    // Warm-up: 100 ms — match loop structure (2 PDM → 1 I2S silence) to
-    // bring both FIFOs to steady state before live audio starts.
+    // IIR low-pass filter state: y[n] = (y[n-1]*3 + x[n]) >> 2
+    // Cutoff ~3.9 kHz — passes speech, attenuates PDM noise-shaped HF content.
+    int32_t filtered = 0;
+
+    // DC blocking: very slow IIR HPF, removes bias from amp-induced noise or
+    // any other DC offset in the PDM path.  fc ≈ 7.6 Hz; settles in ~20 ms.
+    // dc_est tracks the long-term mean of filtered; subtracting it centres
+    // the signal around zero so the speaker receives AC, not a static offset.
+    int32_t dc_est = 0;
+
+    // Warm-up: 100 ms — pre-settle filtered and dc_est so the main loop
+    // starts with correct DC baseline; output silence to amp during this time.
     uint32_t warmup_end = to_ms_since_boot(get_absolute_time()) + 100;
     while (to_ms_since_boot(get_absolute_time()) < warmup_end) {
-        (void)pio_sm_get_blocking(pio1, mic_sm);
-        (void)pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t p0 = pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t p1 = pio_sm_get_blocking(pio1, mic_sm);
+        int ones_wu = __builtin_popcount(p0) + __builtin_popcount(p1);
+        int32_t pcm_wu = (int32_t)(ones_wu - 32) * 1024 * MIC_GAIN;
+        filtered = (filtered * 3 + pcm_wu) >> 2;
+        dc_est += (filtered - dc_est) >> 10;
         pio_sm_put_blocking(pio0, (uint)amp_sm, 0);
     }
 
     printf("  Live — speak into mic...\n");
 
     uint32_t deadline = to_ms_since_boot(get_absolute_time()) + 10000;
+
+    // Debug stats — printed every ~0.5 s (24414 samples)
+    int ones_min = 64, ones_max = 0;
+    int32_t filt_min = INT32_MAX, filt_max = INT32_MIN;
+    int stat_count = 0;
+    const int STAT_INTERVAL = 24414;
 
     while (to_ms_since_boot(get_absolute_time()) < deadline) {
         if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) break;
@@ -289,13 +382,34 @@ void mic_loopback(void) {
         int ones = __builtin_popcount(p0) + __builtin_popcount(p1);
         int32_t pcm = (int32_t)(ones - 32) * 1024 * MIC_GAIN;
 
+        // IIR LPF: α=0.75 — attenuates PDM noise shaping above ~3.9 kHz
+        filtered = (filtered * 3 + pcm) >> 2;
+
+        // DC blocking: track and remove the slowly-varying mean of filtered
+        dc_est += (filtered - dc_est) >> 10;  // fc ≈ 48828 / (2π × 1024) ≈ 7.6 Hz
+
         // Clamp to MAX_AMPLITUDE for speaker protection
-        if (pcm >  MAX_AMPLITUDE) pcm =  MAX_AMPLITUDE;
-        if (pcm < -MAX_AMPLITUDE) pcm = -MAX_AMPLITUDE;
-        int16_t s = (int16_t)pcm;
+        int32_t out = filtered - dc_est;
+        if (out >  MAX_AMPLITUDE) out =  MAX_AMPLITUDE;
+        if (out < -MAX_AMPLITUDE) out = -MAX_AMPLITUDE;
+        int16_t s = (int16_t)out;
 
         // I2S word: bits[31:16]=L, bits[15:0]=R (mono mic → both channels)
         pio_sm_put_blocking(pio0, (uint)amp_sm, ((uint32_t)(uint16_t)s << 16) | (uint16_t)s);
+
+        // Accumulate debug stats
+        if (ones < ones_min) ones_min = ones;
+        if (ones > ones_max) ones_max = ones;
+        if (out < filt_min) filt_min = out;
+        if (out > filt_max) filt_max = out;
+
+        if (++stat_count >= STAT_INTERVAL) {
+            printf("  ones[%2d..%2d]  out_dc_blocked[%7d..%7d]\n",
+                   ones_min, ones_max, (int)filt_min, (int)filt_max);
+            ones_min = 64; ones_max = 0;
+            filt_min = INT32_MAX; filt_max = INT32_MIN;
+            stat_count = 0;
+        }
     }
 
     // Drain: output silence to avoid click/pop on stop

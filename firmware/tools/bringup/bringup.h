@@ -158,6 +158,7 @@ void amp_test(void);
 void amp_breathe(void);
 void amp_bee(void);
 void mic_test(void);
+void mic_raw(void);
 void mic_loopback(void);
 
 // bringup_flash.c

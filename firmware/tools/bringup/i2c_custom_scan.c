@@ -130,6 +130,8 @@ static void handle_command(const char *cmd) {
         amp_bee();
     } else if (strcmp(cmd, "mic") == 0) {
         mic_test();
+    } else if (strcmp(cmd, "mic_raw") == 0) {
+        mic_raw();
     } else if (strcmp(cmd, "mic_loop") == 0) {
         mic_loopback();
     } else if (strcmp(cmd, "lora") == 0) {
@@ -172,6 +174,7 @@ static void handle_command(const char *cmd) {
         printf("  amp         -- NAU8315 speaker breathe tone x5 (~444 Hz)\n");
         printf("  bee         -- Xiao Mi Feng melody at 40%% amp\n");
         printf("  mic         -- IM69D130 PDM mic: capture 32768 bits, check 1-density\n");
+        printf("  mic_raw     -- PDM density monitor 10 s, no amp (speak to see shift)\n");
         printf("  mic_loop    -- mic -> speaker loopback 10 s (Enter to stop)\n");
         printf("  lora        -- SX1262 reset + GetStatus + ReadRegister (SyncWord check)\n");
         printf("  lora_rx     -- SX1262 RX sniff 30 s (923.125 MHz, SF11, BW250k, AS923 Meshtastic)\n");
