@@ -128,12 +128,30 @@ static void handle_command(const char *cmd) {
         amp_breathe();
     } else if (strcmp(cmd, "bee") == 0) {
         amp_bee();
+#if BRINGUP_WAV
+    } else if (strcmp(cmd, "voice") == 0) {
+        amp_voice();
+    } else if (strcmp(cmd, "gc") == 0) {
+        amp_gc();
+    } else if (strcmp(cmd, "test01_8k") == 0) {
+        amp_test01_8k();
+    } else if (strcmp(cmd, "test01_16k") == 0) {
+        amp_test01_16k();
+    } else if (strcmp(cmd, "test01_44k") == 0) {
+        amp_test01_44k();
+    } else if (strcmp(cmd, "test01_48k") == 0) {
+        amp_test01_48k();
+    } else if (strcmp(cmd, "test01") == 0) {
+        amp_test01_all();
+#endif
     } else if (strcmp(cmd, "mic") == 0) {
         mic_test();
     } else if (strcmp(cmd, "mic_raw") == 0) {
         mic_raw();
     } else if (strcmp(cmd, "mic_loop") == 0) {
         mic_loopback();
+    } else if (strcmp(cmd, "mic_rec") == 0) {
+        mic_rec();
     } else if (strcmp(cmd, "lora") == 0) {
         lora_test();
     } else if (strcmp(cmd, "lora_rx") == 0) {
@@ -141,6 +159,8 @@ static void handle_command(const char *cmd) {
         lora_rx(923125000UL, 11, 0x08, 0x01, 30);
     } else if (strcmp(cmd, "lora_dump") == 0) {
         lora_dump();
+    } else if (strcmp(cmd, "sram") == 0) {
+        sram_test();
     } else if (strcmp(cmd, "flash") == 0) {
         flash_test();
     } else if (strcmp(cmd, "psram") == 0) {
@@ -173,12 +193,23 @@ static void handle_command(const char *cmd) {
         printf("  amp_test    -- NAU8315 constant tone 5 s at 80%% (hardware check)\n");
         printf("  amp         -- NAU8315 speaker breathe tone x5 (~444 Hz)\n");
         printf("  bee         -- Xiao Mi Feng melody at 40%% amp\n");
+#if BRINGUP_WAV
+        printf("  voice       -- play voice.wav (4.95 s, embedded in flash)\n");
+        printf("  gc          -- play gc.wav (26.01 s, embedded in flash)\n");
+        printf("  test01_8k   -- play test01 resampled from  8000 Hz\n");
+        printf("  test01_16k  -- play test01 resampled from 16000 Hz\n");
+        printf("  test01_44k  -- play test01 resampled from 44100 Hz\n");
+        printf("  test01_48k  -- play test01 resampled from 48000 Hz\n");
+        printf("  test01      -- play all four in sequence (A/B/C/D comparison)\n");
+#endif
         printf("  mic         -- IM69D130 PDM mic: capture 32768 bits, check 1-density\n");
         printf("  mic_raw     -- PDM density monitor 10 s, no amp (speak to see shift)\n");
         printf("  mic_loop    -- mic -> speaker loopback 10 s (Enter to stop)\n");
+        printf("  mic_rec     -- record 3 s into SRAM then play back (no loopback CLK hazard)\n");
         printf("  lora        -- SX1262 reset + GetStatus + ReadRegister (SyncWord check)\n");
         printf("  lora_rx     -- SX1262 RX sniff 30 s (923.125 MHz, SF11, BW250k, AS923 Meshtastic)\n");
         printf("  lora_dump   -- SX1262 full status: errors, SyncWord, OCP, RxGain, RSSI, stats\n");
+        printf("  sram        -- RP2350B internal SRAM 16 KB pattern test (5 patterns)\n");
         printf("  flash       -- read Flash JEDEC ID + unique ID (W25Q128JW)\n");
         printf("  psram       -- init + 4 KB pattern test (APS6404L, CS=GPIO0)\n");
         printf("  tft         -- ST7789VI LCD: init + fill Red/Green/Blue/White/Black (1.5s each)\n");

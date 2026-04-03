@@ -26,8 +26,9 @@
 #define MTR_PWM_PIN 9   // PWM4_B — drives low-side MOSFET for vibration motor
 
 // IM69D130 PDM microphone (GPIO 4/5)
-// SELECT = GND → L channel; data valid on CLK rising edge (tDV ≤ 100 ns)
-// CLK frequency: 400 kHz – 3.3 MHz; clkdiv=20 → 3.125 MHz (best SNR)
+// SELECT = VDD → R channel (DATA2); data valid on CLK falling edge (tDV ≤ 100 ns)
+// CLK frequency: 400 kHz – 3.3 MHz; clkdiv=20 → 3.125 MHz (3.072 MHz mode, SNR 69 dB)
+// Low-SNR fallback: clkdiv=80 → 781.25 kHz (768 kHz mode, SNR 64 dB)
 #define MIC_CLK_PIN    4
 #define MIC_DATA_PIN   5
 #define PDM_CLK_DIV    20.0f   // 125 MHz / (2 × 20) = 3.125 MHz
@@ -152,16 +153,36 @@ void gnss_info(void);
 void dump_bus_a(void);
 void perform_scan(i2c_inst_t *i2c, uint sda, uint scl, const char *bus_name);
 
+// Set to 1 to compile embedded WAV files (~12 MB flash, slow build).
+// Also uncomment the WAV source files in firmware/tools/bringup/CMakeLists.txt.
+#define BRINGUP_WAV  0
+
+// Set to 1 to enable ~0.5 s periodic stat prints in mic_loopback.
+// Disable (0) when testing audio quality — printf stalls the CPU long enough
+// to freeze the PDM CLK, causing the mic to lose lock.
+#define MIC_LOOP_STATS  0
+
 // bringup_audio.c
 void precompute_sine(void);
 void amp_test(void);
 void amp_breathe(void);
 void amp_bee(void);
+#if BRINGUP_WAV
+void amp_voice(void);
+void amp_gc(void);
+void amp_test01_8k(void);
+void amp_test01_16k(void);
+void amp_test01_44k(void);
+void amp_test01_48k(void);
+void amp_test01_all(void);
+#endif
 void mic_test(void);
 void mic_raw(void);
 void mic_loopback(void);
+void mic_rec(void);
 
 // bringup_flash.c
+void sram_test(void);
 void flash_test(void);
 void psram_test(void);
 
