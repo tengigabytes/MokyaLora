@@ -1,0 +1,55 @@
+;
+; tft_8080.pio — 8080 8-bit parallel write driver for ST7789VI
+;
+; side-set bit 0 = TFT_nWR (GPIO 12, active-low write strobe)
+; OUT pins      = TFT_D[7:0] (GPIO 13..20, 8 consecutive data bits)
+;
+; DCX (GPIO 11) and nCS (GPIO 10) are driven directly by CPU (SIO).
+; They change rarely (per command/data phase), so PIO overhead is not needed.
+;
+; Timing at clkdiv=4, sys_clk=125 MHz:
+;   PIO clock  = 125 / 4 = 31.25 MHz  →  32 ns per cycle
+;   nWR low    = 2 cycles = 64 ns     (ST7789 twl min 15 ns ✅)
+;   nWR high   = 2 cycles = 64 ns     (ST7789 twh min 15 ns ✅)
+;   write cycle= 4 cycles = 128 ns    (ST7789 twc min 66 ns at 3.3V,
+;                                      ~100 ns recommended at 1.8V VDDI ✅)
+;
+; Autopull: shift right, threshold 8 bits.
+; Push one uint32_t per byte: value = (uint32_t)byte (byte in bits[7:0]).
+
+.program tft_8080
+.side_set 1
+
+.wrap_target
+    out pins, 8   side 0  [1]  ; data on bus, nWR low  (2 cycles)
+    nop           side 1  [1]  ; nWR high → ST7789 latches on rising edge (2 cycles)
+.wrap
+
+% c-sdk {
+static inline void tft_8080_program_init(PIO pio, uint sm, uint offset,
+                                          uint pin_data, uint pin_nwr,
+                                          float clkdiv) {
+    pio_sm_config c = tft_8080_program_get_default_config(offset);
+
+    // 8 consecutive data pins
+    sm_config_set_out_pins(&c, pin_data, 8);
+    // nWR as side-set
+    sm_config_set_sideset_pins(&c, pin_nwr);
+    // Shift right, autopull at 8 bits — one byte per FIFO word
+    sm_config_set_out_shift(&c, true, true, 8);
+    // Join TX FIFO: 8-word depth for burst writes
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    for (uint i = 0; i < 8; i++) pio_gpio_init(pio, pin_data + i);
+    pio_gpio_init(pio, pin_nwr);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_data, 8, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_nwr,  1, true);
+
+    pio_sm_init(pio, sm, offset, &c);
+
+    // Start with nWR deasserted (high)
+    pio_sm_set_pins_with_mask(pio, sm, 1u << pin_nwr, 1u << pin_nwr);
+}
+%}

@@ -169,3 +169,13 @@ void lora_test(void);
 void lora_rx(uint32_t freq_hz, uint8_t sf, uint8_t bw_code,
              uint8_t cr_code, uint32_t timeout_s);
 void lora_dump(void);
+
+// bringup_tft.c — ST7789VI 2.4" IPS, 8080 8-bit parallel (pio1)
+// GPIO 10 nCS, 11 DCX, 12 nWR, 13-20 D[7:0], 21 nRST, 22 TE
+#define TFT_nCS_PIN   10
+#define TFT_DCX_PIN   11
+#define TFT_nWR_PIN   12
+#define TFT_D0_PIN    13
+#define TFT_nRST_PIN  21
+#define TFT_TE_PIN    22
+void tft_test(void);
