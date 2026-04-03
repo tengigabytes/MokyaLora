@@ -7,6 +7,7 @@ add_executable(i2c_custom_scan
     bringup_audio.c
     bringup_flash.c
     bringup_lora.c
+    bringup_tft.c
 )
 
 # Generate the C header from the PIO assembler source.
@@ -17,6 +18,9 @@ pico_generate_pio_header(i2c_custom_scan
 )
 pico_generate_pio_header(i2c_custom_scan
     ${CMAKE_CURRENT_LIST_DIR}/pdm_mic.pio
+)
+pico_generate_pio_header(i2c_custom_scan
+    ${CMAKE_CURRENT_LIST_DIR}/tft_8080.pio
 )
 
 target_link_libraries(i2c_custom_scan

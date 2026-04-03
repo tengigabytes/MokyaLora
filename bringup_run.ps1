@@ -38,6 +38,7 @@ $CmdTimeout = @{
     'amp_test'  = 7
     'mic'       = 3
     'mic_loop'  = 12
+    'tft'       = 15
 }
 $DefaultTimeout = 2
 

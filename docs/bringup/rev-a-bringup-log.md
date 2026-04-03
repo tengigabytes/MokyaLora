@@ -99,10 +99,26 @@ No GPS fix expected indoors. Teseo-LIV3FL confirmed operational. Device has no t
 
 ### Step 4 — Display
 
-**Result: ❌ FAIL**
+**Result: ✅ PASS** (via FPC adapter — Rev A connector pinout mismatch bypassed; see Issue 5)
 
-LCD FPC connector pin order is incompatible with NHD-2.4-240320AF-CSXP — display cannot be driven.
-No temporary workaround. See Issue 5. Pending Rev B correction.
+| Item | Result | Notes |
+|------|--------|-------|
+| ST7789VI hardware reset | ✅ PASS | nRST GPIO21 toggled correctly |
+| ST7789VI init sequence | ✅ PASS | SWRESET → SLPOUT → COLMOD(RGB565) → MADCTL → gamma → CASET/RASET → INVON → DISPON |
+| LM27965 backlight (Bank A 40%) | ✅ PASS | brightness code 0x16, GP=0x21 |
+| PIO 8080 write (pio1, clkdiv=4) | ✅ PASS | 128 ns write cycle — within ST7789VI 1.8 V VDDI spec |
+| Colour fill — Red (0xF800) | ✅ PASS | Visual confirm |
+| Colour fill — Green (0x07E0) | ✅ PASS | Visual confirm |
+| Colour fill — Blue (0x001F) | ✅ PASS | Visual confirm |
+| Colour fill — White (0xFFFF) | ✅ PASS | Visual confirm |
+| Colour fill — Black (0x0000) | ✅ PASS | Visual confirm |
+
+**Firmware notes:**
+- pio1 used (not pio0) to avoid `gpio_base` conflict: pio0 has `gpio_base=16` (set by NAU8315 amp driver for GPIO 30–32); TFT data bus is GPIO 13–20, requiring `gpio_base ≤ 13` → only pio1 (default base=0) is compatible.
+- side-set = nWR (GPIO 12); out = D[7:0] (GPIO 13–20); DCX (GPIO 11) and nCS (GPIO 10) CPU-controlled (SIO), as they change only at command/data phase boundaries.
+- `tft_flush()` waits TX FIFO empty + 1 µs before toggling DCX, preventing data/command interleave glitches.
+- Display inversion (`INVON`, 0x21) required for correct colour on this IPS panel — without it colours are inverted.
+- Issue 5 (FPC connector pinout mismatch) bypassed using a FPC adapter board for Rev A validation. Rev B must correct the connector pinout.
 
 ### Step 5 — LoRa
 
@@ -321,6 +337,8 @@ The bringup shell was originally a single 1880-line `i2c_custom_scan.c`. It has 
 | `bringup_audio.c` | ~185 | PIO I2S driver, NAU8315 tone/breathe/melody |
 | `bringup_flash.c` | ~180 | W25Q128JW JEDEC/UID, APS6404L QMI probe |
 | `bringup_lora.c` | ~475 | SX1262 SPI helpers, `lora_test`, `lora_rx`, `lora_dump` |
+| `bringup_tft.c` | ~270 | PIO 8080 driver, ST7789VI init sequence, colour fill, `tft_test` |
+| `tft_8080.pio` | ~55 | PIO program: side-set nWR, out D[7:0], autopull 8-bit, clkdiv=4 |
 
 ### Bug fixes applied during bringup
 
