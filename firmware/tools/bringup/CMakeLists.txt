@@ -8,6 +8,14 @@ add_executable(i2c_custom_scan
     bringup_flash.c
     bringup_lora.c
     bringup_tft.c
+    OpenPDMFilter.c
+    # WAV audio data — uncomment + set BRINGUP_WAV=1 in bringup.h to enable (~12 MB flash)
+    # voice_pcm.c
+    # gc_pcm.c
+    # test01_8k_pcm.c
+    # test01_16k_pcm.c
+    # test01_44k_pcm.c
+    # test01_48k_pcm.c
 )
 
 # Generate the C header from the PIO assembler source.
@@ -32,6 +40,9 @@ target_link_libraries(i2c_custom_scan
     hardware_flash
     m
 )
+
+# PICO_BUILD activates the per-instance Gain field in OpenPDMFilter
+target_compile_definitions(i2c_custom_scan PRIVATE PICO_BUILD)
 
 # Route stdio over USB CDC; disable UART
 pico_enable_stdio_usb(i2c_custom_scan 1)
