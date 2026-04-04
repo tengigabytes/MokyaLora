@@ -297,6 +297,7 @@ Conclusion: firmware and QMI configuration are correct. PSRAM unresponsive to bo
 | `mic_raw` — PDM density monitor (no amp, 10 s) | ✅ PASS | Density 50.0 %; responds to speech; omin/omax shift confirmed |
 | `mic_loop` — mic → speaker real-time loopback | ⚠️ PARTIAL | Audio audible but background noise present; CLK-freeze hazard mitigated |
 | `mic_rec` — record 3 s to SRAM then play back | ✅ PASS | Capture and playback both working; background noise under investigation |
+| `mic_dump` — record 1 s, send raw PCM over serial | ✅ PASS | Binary int16 PCM received by `recv_pcm_dump.py`; WAV saved OK |
 
 **mic_test output (1024 words = 32 768 PDM bits, 3.125 MHz):**
 
@@ -308,7 +309,7 @@ Max word  : 0xE8D4E4D5
 Result: PASS
 ```
 
-GPIO 4 (MIC_CLK) 和 GPIO 5 (MIC_DATA) 連線正常。PDM bit stream 密度 49.8 % ≈ 50 %，符合靜音時的理論值。Min/Max word 各異，確認資料隨時間變化（麥克風有在收音）。
+GPIO 4 (MIC_CLK) and GPIO 5 (MIC_DATA) wiring confirmed. PDM bit-stream density 49.8 % ≈ 50 %, consistent with the theoretical value for a silent room. Min/Max words differ, confirming the data changes over time (microphone is actively capturing audio).
 
 **mic_raw output (no amp running, 10 s window, 64-bit decimation):**
 
@@ -320,35 +321,35 @@ t(ms)   samples  omin  omax  density
 
 Density ≈ 50.0 % confirms mic correctly biased. With 64-bit decimation window (ones ∈ [0,64]), the statistical variance per sample is lower than the earlier 16-bit window, resulting in a tighter omin/omax spread at silence — consistent with a healthy PDM stream.
 
-**介面說明：**
+**Interface notes:**
 
-IM69D130 沒有任何暫存器介面（無 I2C/SPI/UART）。唯一的互動是：提供 PDM CLK → 麥克風輸出 PDM bit stream。SELECT 腳位硬體接 VDD → R channel (DATA2)：資料在 CLK **下降沿**後輸出（tDV ≤ 100 ns），在上升沿前有效，PIO 在上升沿取樣。
+The IM69D130 has no register interface (no I2C/SPI/UART). The only interaction is: supply PDM CLK → microphone outputs a PDM bit stream. SELECT is hardware-tied to VDD → R channel (DATA2): data is valid after the CLK **falling edge** (tDV ≤ 100 ns) and before the rising edge; PIO samples on the rising edge.
 
-電路：DATA 線經 100 Ω 串聯 + 100 kΩ 下拉 ∥ 47 pF 至 MCU GPIO；VDD 有 100 nF 去耦電容。MCU 端不啟用 internal pull-up（外部 100 kΩ 為 pull-down，啟用 internal pull-up 會在 HiZ 窗口造成 ~1.2 V 不確定電壓）。
+Circuit: DATA line has a 100 Ω series resistor + 100 kΩ pull-down ∥ 47 pF to the MCU GPIO; VDD has a 100 nF decoupling capacitor. Internal pull-up is not enabled on the MCU side (the external 100 kΩ is a pull-down; enabling internal pull-up would cause ~1.2 V undefined voltage during the HiZ window).
 
 **PDM→PCM signal processing chain:**
 
-- **Decimation:** 1-stage integrate-and-dump（CIC）；每 2 個 32-bit FIFO word（= 64 PDM bits）→ 1 個 PCM sample；ones ∈ [0,64]，centre = 32，`pcm = (ones−32) × 1024 × GAIN`
-- **IIR LPF:** `filtered = (filtered×3 + pcm) >> 2`，α = 0.75，fc ≈ 2.25 kHz — 衰減 PDM noise shaping 的高頻量化雜訊
-- **DC blocking HPF:** `dc_est += (filtered − dc_est) >> 10`，fc ≈ 7.6 Hz — 移除 PDM 路徑 DC offset
-- **Warm-up:** 100 ms 預先穩定 `filtered` 和 `dc_est`，避免主迴圈開始時的 DC step
-- **Output clamp:** ±MAX\_AMPLITUDE（50 % full scale）保護喇叭
+- **Decimation:** 1-stage integrate-and-dump (CIC); every 2 × 32-bit FIFO words (= 64 PDM bits) → 1 PCM sample; ones ∈ [0,64], centre = 32, `pcm = (ones−32) × 1024 × GAIN`
+- **IIR LPF:** `filtered = (filtered×3 + pcm) >> 2`, α = 0.75, fc ≈ 2.25 kHz — attenuates high-frequency quantisation noise from PDM noise shaping
+- **DC blocking HPF:** `dc_est += (filtered − dc_est) >> 10`, fc ≈ 7.6 Hz — removes DC offset in the PDM path
+- **Warm-up:** 100 ms to settle `filtered` and `dc_est` before the main loop starts, avoiding an initial DC step
+- **Output clamp:** ±MAX\_AMPLITUDE (50 % full scale) to protect the speaker
 
 **PIO configuration:**
 
-- PDM CLK = 3.125 MHz（clkdiv=20，SNR 69 dB mode）；autopush = 32 bits（PIO ISR 最大寬度）
-- 3,125,000 / 32 / 2 = 48,828 Hz — 與 I2S sample rate 完全同步
-- pio1（PDM mic，GPIO 4/5）＋ pio0（I2S amp，GPIO 30–32，gpio_base=16）獨立運作，無衝突
+- PDM CLK = 3.125 MHz (clkdiv=20, SNR 69 dB mode); autopush = 32 bits (maximum PIO ISR width)
+- 3,125,000 / 32 / 2 = 48,828 Hz — exactly synchronised with the I2S sample rate
+- pio1 (PDM mic, GPIO 4/5) + pio0 (I2S amp, GPIO 30–32, gpio_base=16) run independently with no conflict
 
-**已知問題與已修正的 bugs：**
+**Known issues and bugs fixed:**
 
-| Bug | 修正 |
-|-----|------|
-| PIO 最初按 L-channel 時序設計（SELECT=GND，CLK 上升沿後取樣）；實際 SELECT=VDD → R-channel（CLK 下降沿後輸出，上升沿前有效） | PIO 程式改為 `nop side 0` / `in pins,1 side 1`（上升沿取樣），gpio_disable_pulls 取代 gpio_pull_up |
-| `mic_loop` 中 printf 輸出 stats 導致 CPU stall 數 ms → PDM CLK 凍結 → IM69D130 失鎖（表現為 ones∈[0,0]） | 加 `#define MIC_LOOP_STATS 0` compile-time 開關；預設關閉 |
-| Real-time loopback 中 PDM `pio_sm_get_blocking` 和 I2S `pio_sm_put_blocking` 互相競爭，無法保證 48828 Hz 對齊 | 新增 `mic_rec`：Phase 1 僅 PDM PIO 執行（錄音），Phase 2 僅 I2S PIO 執行（回放），完全分離 |
+| Bug | Fix |
+|-----|-----|
+| PIO initially designed for L-channel timing (SELECT=GND, sample on CLK rising edge); actual SELECT=VDD → R-channel (data valid after falling edge, before rising edge) | Changed PIO program to `nop side 0` / `in pins,1 side 1` (sample on rising edge); replaced `gpio_pull_up` with `gpio_disable_pulls` |
+| `printf` in `mic_loop` stats output caused CPU stall of several ms → PDM CLK frozen → IM69D130 lost lock (symptom: ones∈[0,0]) | Added `#define MIC_LOOP_STATS 0` compile-time switch; disabled by default |
+| Real-time loopback: `pio_sm_get_blocking` (PDM) and `pio_sm_put_blocking` (I2S) contend for CPU cycles, cannot guarantee 48828 Hz alignment | Added `mic_rec`: Phase 1 runs PDM PIO only (capture), Phase 2 runs I2S PIO only (playback) — fully separated |
 
-**mic_rec 設計：**
+**mic_rec design:**
 
 ```
 Phase 1 (capture, PDM only):
@@ -358,9 +359,20 @@ Phase 2 (playback, I2S only):
   pio0 I2S SM → play rec_buf[] → 256 silence drain → stop I2S
 ```
 
-Buffer: `static int16_t rec_buf[146484]` = 292,968 bytes in BSS（RP2350B 264 KB SRAM 可容納）。
+Buffer: `static int16_t rec_buf[146484]` = 292,968 bytes in BSS (fits within RP2350B 264 KB SRAM).
 
-**現狀：** `mic_rec` 錄音回放功能正常，但背景雜音明顯。初步判斷為 1-stage CIC decimation 的高頻衰減不足（sinc 頻率響應），PDM noise shaping 的高頻能量 fold 回通頻帶。後續考慮：2 階 IIR LPF cascade 或 multi-stage CIC。
+**Current status:** `mic_rec` and `mic_dump` capture and playback are functional, but audible background noise is present. Likely cause: 1-stage CIC decimation has insufficient high-frequency attenuation (sinc¹ frequency response), allowing PDM noise-shaping energy to fold back into the passband. Candidates for improvement: 2-stage IIR LPF cascade or multi-stage CIC.
+
+**OpenPDMFilter (sinc³) attempt — failed, reverted:**
+
+Attempted to replace the CIC+IIR decimation with ST OpenPDMFilter (Apache-2.0, sinc³ 3-stage cascade, LUT-accelerated) to improve high-frequency roll-off. After integration, all PDM FIFO reads in `mic_dump` returned `0x00000000`; PCM output was a constant −1024 (sub_const bias offset), indicating zero PDM input throughout.
+
+Diagnostics confirmed:
+- `mic_raw` (not using OpenPDMFilter) continued to read valid 49.8 % density PDM data — hardware is not at fault
+- `Warmup raw[0..3]: 00000000 00000000 00000000 00000000` — first FIFO word is zero immediately after PIO start
+- Root cause not determined; `pdm_mic_program_init` / `pio_sm_set_enabled` call order was identical to `mic_raw`
+
+Conclusion: existing CIC+IIR decimation confirmed working; OpenPDMFilter integration deferred for further investigation. Reverted at commit 1853c9e.
 
 ---
 
@@ -376,7 +388,7 @@ The bringup shell was originally a single 1880-line `i2c_custom_scan.c`. It has 
 | `i2c_custom_scan.c` | ~225 | Main REPL loop, keypad monitor, command dispatch |
 | `bringup_power.c` | ~280 | LM27965, BQ25622, motor PWM, Bus B init/deinit |
 | `bringup_sensors.c` | ~290 | LSM6DSV16X, LIS2MDL, LPS22HH, Teseo-LIV3FL, Bus A scan |
-| `bringup_audio.c` | ~530 | PIO I2S driver, NAU8315 tone/breathe/melody, PDM mic test/raw/loopback/rec |
+| `bringup_audio.c` | ~580 | PIO I2S driver, NAU8315 tone/breathe/melody, PDM mic test/raw/loopback/rec/dump |
 | `bringup_flash.c` | ~180 | W25Q128JW JEDEC/UID, APS6404L QMI probe |
 | `bringup_lora.c` | ~475 | SX1262 SPI helpers, `lora_test`, `lora_rx`, `lora_dump` |
 | `bringup_tft.c` | ~270 | PIO 8080 driver, ST7789VI init sequence, colour fill, `tft_test` |
@@ -398,6 +410,7 @@ The bringup shell was originally a single 1880-line `i2c_custom_scan.c`. It has 
 | `build_and_flash_bringup.sh` | Build via MSVC + CMake ninja, flash via J-Link SWD |
 | `serial_monitor.ps1` | Interactive serial terminal (COM4, 115200). Usage: `.\serial_monitor.ps1 [cmd]` |
 | `bringup_run.ps1` | **Automated command runner.** Handles COM port retry, boot banner wait, per-command timeouts. Usage: `.\bringup_run.ps1 [-Flash] [-PortName COM4] cmd1 cmd2 …` |
+| `recv_pcm_dump.py` | **PCM binary receiver** for `mic_dump`. Opens COM4, sends `mic_dump` command, receives binary int16 PCM stream, saves to `mic_dump.wav`. |
 
 **`bringup_run.ps1` example invocations:**
 ```powershell
