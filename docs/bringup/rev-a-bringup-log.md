@@ -5,6 +5,9 @@
 **Board received:** 2026-04-02
 **Bring-up started:** 2026-04-02
 
+For build/flash scripts, shell commands, and source layout see
+[bringup-tooling.md](bringup-tooling.md).
+
 ---
 
 ## Pre-Power Checklist
@@ -13,6 +16,8 @@
 - [x] Continuity check: VSYS, 1.8 V, 3.3 V rails to GND (expect open before power).
 - [x] Resistance to GND: VSYS rail > 10 Ω, no short.
 - [x] USB-C CC1 / CC2 pull-down resistors (5.1 kΩ) present — USB-C correctly negotiates 5 V.
+
+---
 
 ## Bring-Up Sequence
 
@@ -83,19 +88,19 @@ Init sequence: SW reset → CFG_REG_A=0x80 (comp_temp_en, 10 Hz, continuous) →
 
 > Sensitivity fixed at 1.5 mGauss/LSB. Values consistent with Earth's magnetic field at this location.
 
-**Teseo-LIV3FL GNSS (0x3A)** — ✅ PASS (streaming confirmed)
+**Teseo-LIV3FL GNSS (0x3A)** — ⚠️ CONDITIONAL (I2C streaming confirmed; outdoor RF test pending)
 
-I2C read returns live NMEA sentences. `$PSTMGETSWVER` proprietary command ACKed. 300-byte stream sample:
+I2C read returns live NMEA sentences. `$PSTMGETSWVER` proprietary command ACKed. Indoor test only — no fix expected. 300-byte stream sample:
 
 | NMEA sentence | Decode |
 |---------------|--------|
-| `$GNGSA,A,1,…,PDOP=99.0` | Fix=1 (no fix); all satellite slots empty; PDOP/HDOP undefined |
+| `$GNGSA,A,1,…,PDOP=99.0` | Fix=1 (no fix); all satellite slots empty |
 | `$GPGLL,…,V` | Position void (no fix) |
 | `$PSTMCPU,15.21,-1,98` | ST proprietary: chip temp 15.21 °C, freq ~98 MHz |
-| `$GPRMC,033936,V` | Status void; UTC 03:39:36; date from RTC default (not synced) |
-| `$GPGGA,…,0 sats,Fix=0` | 0 satellites tracked; no position |
+| `$GPRMC,033936,V` | Status void; UTC 03:39:36 |
+| `$GPGGA,…,0 sats,Fix=0` | 0 satellites tracked |
 
-No GPS fix expected indoors. Teseo-LIV3FL confirmed operational. Device has no traditional register map; all status via NMEA proprietary sentences (`$PSTM…`).
+Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). **RF chain performance (outdoor fix acquisition, TTFF, sensitivity) not yet tested** — requires outdoor test with clear sky view. See Step 14.
 
 ### Step 4 — Display
 
@@ -107,11 +112,12 @@ No GPS fix expected indoors. Teseo-LIV3FL confirmed operational. Device has no t
 | ST7789VI init sequence | ✅ PASS | SWRESET → SLPOUT → COLMOD(RGB565) → MADCTL → gamma → CASET/RASET → INVON → DISPON |
 | LM27965 backlight (Bank A 40%) | ✅ PASS | brightness code 0x16, GP=0x21 |
 | PIO 8080 write (pio1, clkdiv=4) | ✅ PASS | 128 ns write cycle — within ST7789VI 1.8 V VDDI spec |
-| Colour fill — Red (0xF800) | ✅ PASS | Visual confirm |
-| Colour fill — Green (0x07E0) | ✅ PASS | Visual confirm |
-| Colour fill — Blue (0x001F) | ✅ PASS | Visual confirm |
-| Colour fill — White (0xFFFF) | ✅ PASS | Visual confirm |
-| Colour fill — Black (0x0000) | ✅ PASS | Visual confirm |
+| Solid colour fills (R/G/B/W/K) | ✅ PASS | Visual confirm |
+| SMPTE colour bars (8 × 30 px) | ✅ PASS | Visual confirm |
+| Hue gradient + scroll (90 frames) | ✅ PASS | Visible but response sluggish — see Step 13 |
+| Checkerboard (32×32 px) | ✅ PASS | Visual confirm |
+| Bouncing block (80 frames) | ✅ PASS | Motion smooth at 40 ms/frame |
+| Backlight fade (LM27965 Bank A) | ✅ PASS | Smooth fade in/out across all 32 codes |
 
 **Firmware notes:**
 - pio1 used (not pio0) to avoid `gpio_base` conflict: pio0 has `gpio_base=16` (set by NAU8315 amp driver for GPIO 30–32); TFT data bus is GPIO 13–20, requiring `gpio_base ≤ 13` → only pio1 (default base=0) is compatible.
@@ -122,42 +128,26 @@ No GPS fix expected indoors. Teseo-LIV3FL confirmed operational. Device has no t
 
 ### Step 5 — LoRa
 
-**Result: ✅ PASS** (SPI, calibration, RX mode, and RSSI verified; TX link test pending)
+**Result: ⚠️ CONDITIONAL** (SPI, calibration, RX mode, RSSI verified; RF link and performance not yet tested)
 
 | Item | Result | Notes |
 |------|--------|-------|
-| SX1262 SPI response | ✅ PASS | GetStatus returns valid status byte |
-| ChipMode after reset | ✅ PASS | STBY_RC (mode=2) as expected per datasheet |
-| RegSyncWord (0x0740/41) | ✅ PASS | 0x14 0x24 — POR default (private network) |
-| Calibrate + CalibrateImage | ✅ PASS | GetDeviceErrors = 0x0020 (XOSC=1 only — see note) |
-| RxGain write (0x08AC) | ✅ PASS | Readback 0x96 (boosted LNA) |
+| SX1262 SPI response | ✅ PASS | GetStatus: ChipMode=2 (STBY_RC), CmdStatus=5 (POR normal) |
+| RegSyncWord (0x0740/41) | ✅ PASS | 0x14 0x24 — private network default |
+| Calibrate + CalibrateImage | ✅ PASS | GetDeviceErrors = 0x0020 (XOSC flag only — cosmetic false positive, see note) |
+| RxGain (0x08AC) | ✅ PASS | Write 0x96, readback 0x96 (boosted LNA confirmed) |
 | SetRx → ChipMode=5 | ✅ PASS | RX mode entered successfully |
 | RSSI (923.125 MHz, 5 samples) | ✅ PASS | −114.0 dBm consistent (indoor noise floor) |
-| GetStats (8-byte frame) | ✅ PASS | RxOk=0 CrcErr=0 HdrErr=0 (no packets; no crash) |
-| OCP (0x08E7) | ⚠️ NOTE | 0x18 → 105 mA (non-default; SX1262 default is 0x38 = 185 mA) |
-
-**GetStatus raw:** `0x2A` — ChipMode=2 (STBY_RC), CmdStatus=5 (no command pending — normal at POR).
-
-**lora_dump static registers:**
-
-| Register | Value | Decode |
-|----------|-------|--------|
-| RegSyncWord 0x0740/41 | 0x14 0x24 | Private network default ✅ |
-| OCP 0x08E7 | 0x18 | 105 mA — non-default; investigate before TX |
-| XTATrim 0x0911 | 0x12 | Default |
-| RxGain 0x08AC | 0x96 | Boosted LNA — write/readback OK ✅ |
-
-**SPI configuration:** Mode 0 (CPOL=0 CPHA=0), MSB first, 1 MHz, manual CS on GPIO 25. BUSY (GPIO 28) asserted low after reset within 200 ms timeout.
+| GetStats | ✅ PASS | RxOk=0 CrcErr=0 HdrErr=0 (no packets; no crash) |
+| OCP (0x08E7) | ⚠️ NOTE | 0x18 → 105 mA (non-default; investigate before TX — default is 0x38 = 185 mA) |
+| TX link test | ⏳ PENDING | Actual LoRa packet exchange not yet performed |
+| RF performance (sensitivity, range) | ⏳ PENDING | Requires outdoor test — see Step 15 |
 
 **Firmware notes:**
 - GPIO: nRST=23, MISO=24, nCS=25, SCK=26, MOSI=27, BUSY=28, DIO1=29 (matches schematic)
-- SPI1 peripheral used; CS controlled manually (not via SPI1_CSn hardware)
-- Reset sequence: nRST low 10 ms → high 10 ms → wait BUSY low → GetStatus
-- CmdStatus=5 at POR is expected (datasheet §13.1: "Failure to execute" maps to no prior command)
-- `SetDIO3AsTCXOCtrl` (0x97, voltage=0x02 1.8V, timeout=500 µs) must be called even though TCXO is always-on (ECS-TXO-20CSMV4 powered from 1.8V rail). Without it PLL calibration fails.
-- `GetDeviceErrors = 0x0020` (XOSC_START bit only): cosmetic false positive. The SX1262 startup-detection circuit flags XOSC even when the always-on TCXO is running. Chip is fully functional: enters RX (ChipMode=5), RSSI valid. No action required.
-- `GetStats` frame is 8 bytes: opcode(1) + status-NOP(1) + RxOk(2) + CrcErr(2) + HdrErr(2). A prior firmware bug used 7 bytes causing out-of-bounds access on `rx[7]`; corrected.
-- TX link test (actual LoRa packet exchange) pending.
+- SPI1, Mode 0, MSB first, 1 MHz; CS controlled manually (not via SPI1_CSn hardware)
+- `SetDIO3AsTCXOCtrl` (0x97, voltage=0x02 1.8V, timeout=500 µs) must be called even though TCXO is always-on. Without it PLL calibration fails.
+- `GetDeviceErrors = 0x0020` (XOSC_START bit): cosmetic false positive — SX1262 startup-detection flags XOSC even when always-on TCXO is running. Chip is fully functional.
 
 ### Step 6 — Keypad
 
@@ -171,8 +161,6 @@ No GPS fix expected indoors. Teseo-LIV3FL confirmed operational. Device has no t
 
 **Firmware (r, c) matrix — confirmed by physical testing:**
 
-SW numbering in the schematic is column-major (SW1–6 = GPIO ROW0 column, top-to-bottom). The firmware `key_names[r][c]` maps as follows:
-
 | r \ c | C0 | C1 | C2 | C3 | C4 | C5 |
 |-------|----|----|----|----|----|----|
 | R0 | FUNC | BACK | LEFT | DEL | VOL- | UP |
@@ -182,14 +170,14 @@ SW numbering in the schematic is column-major (SW1–6 = GPIO ROW0 column, top-t
 | R4 | Z/X | C/V | B/N | M | ㄡㄥ | SET |
 | R5 | MODE | TAB | SPACE | SYM | 。.？ | VOL+ |
 
-> Note: this (r, c) order does not match the logical Row/Col in hardware-requirements.md — it reflects the physical GPIO-to-switch wiring order in the schematic.
+> Note: this (r, c) order reflects the physical GPIO-to-switch wiring order in the schematic, not the logical Row/Col in hardware-requirements.md.
 
 **Firmware notes:**
 - Bringup scan: GPIO polling, ROW-major (ROW driven LOW one at a time, COL read). Not the production PIO+DMA scan.
 - GPIO 36–47 are above the 32-bit GPIO bank boundary; verified functional on RP2350B.
 - Initial firmware had scanning direction inverted (COL drive, ROW read = reverse bias = no detection). Corrected to ROW drive / COL read.
 
-### Step 7 — Audio
+### Step 7 — Audio (NAU8315 Amplifier)
 
 **Result: ✅ PASS**
 
@@ -201,48 +189,42 @@ SW numbering in the schematic is column-major (SW1–6 = GPIO ROW0 column, top-t
 | Speaker output | ✅ PASS | Little Bee melody plays correctly at 40% amplitude |
 
 **Firmware notes:**
-- Standard I2S timing: LRCK transitions during last BCLK high of previous channel; MSB appears at first BCLK low of next channel. PIO program verified against NAU8315 datasheet timing diagram.
-- RP2350B PIO: GPIO 32 (AMP_DAC_PIN) is above the 32-GPIO boundary. `pio_set_gpio_base(pio0, 16)` **must** be called before `pio_add_program_at_offset()`; calling it after causes `PICO_ERROR_INVALID_STATE` and the state machine silently fails to start (FIFO hangs full).
-- Click/pop suppression: transitions between notes send zero samples via `pio_sm_put_blocking` rather than using `sleep_ms`, which would drain the FIFO abruptly.
+- GPIO 32 (AMP_DAC_PIN) is above the 32-GPIO boundary. `pio_set_gpio_base(pio0, 16)` **must** be called before `pio_add_program_at_offset()`; calling it after causes `PICO_ERROR_INVALID_STATE` and the state machine silently fails to start.
+- Click/pop suppression: transitions between notes push zero samples to FIFO rather than using `sleep_ms`, which would drain the FIFO abruptly.
 
 ### Step 8 — Battery & Motor
 
 | Item | Result | Notes |
 |------|--------|-------|
 | Vibration motor (HD-EMB1104-SM-2) | ✅ PASS | PWM drive via SSM3K56ACT OK |
-| BQ27441 fuel gauge I2C | ✅ PASS | Readable after TP101 fix; requires battery installed |
-| BQ25622 charging | ✅ PASS | After TP101 fix (Issue 2) |
+| BQ25622 charger I2C + register dump | ✅ PASS | After TP101 fix (Issue 2); see register dump below |
+| BQ27441 fuel gauge I2C presence | ⚠️ CONDITIONAL | Readable only with battery installed or in charging mode |
+| BQ27441 SOC / capacity readout | ⏳ PENDING | Detailed gauge characterisation not yet performed |
 
 **BQ25622 register dump (at power-on, no battery, charging disabled by firmware):**
 
 | Register | Value | Field decode |
 |----------|-------|--------------|
 | PART_INFO (0x38) | 0x0A | PN=1 (BQ25622 ✅), DEV_REV=2 |
-| CHG_CTRL0 (0x14) | 0x06 | ICHG = 240 mA (6 × 40 mA) — POR default |
-| VREG (0x06) | 0x00 | Charge voltage = 3504 mV (base, code=0) — POR default; **must be set to 4200 mV for BL-4C** |
-| IINDPM (0x00) | 0xFF | Input current limit = 6300 mA — POR default, not yet configured by firmware |
-| VINDPM (0x01) | 0xFF | Input UVLO = 16600 mV — POR default, not yet configured by firmware |
-| CTRL1 (0x16) | 0x80 | EN_CHG=0 (charging disabled at startup), EN_HIZ=0, WD=0 |
-| CTRL2 (0x17) | 0x4F | — |
-| CTRL3 (0x18) | 0x04 | BATFET normal, BATFET_DLY=1 |
-| CTRL4 (0x19) | 0xC4 | — |
-| NTC_CTRL0 (0x1A) | 0x3D | TS_IGNORE=0 (NTC active) |
-| STATUS0 (0x1D) | 0x10 | **VSYS_STAT=1** — battery below VSYSMIN; system powered from VBUS only (no battery connected) |
-| STATUS1 (0x1E) | 0x04 | CHG=Not charging, **VBUS=Adj. HV DCP** — USB-C 5 V input detected; normal |
+| CHG_CTRL0 (0x14) | 0x06 | ICHG = 240 mA — POR default |
+| VREG (0x06) | 0x00 | Charge voltage = 3504 mV — POR default; **must be set to 4200 mV for BL-4C** |
+| IINDPM (0x00) | 0xFF | Input current limit = 6300 mA — POR default, not yet configured |
+| VINDPM (0x01) | 0xFF | Input UVLO = 16600 mV — POR default, not yet configured |
+| CTRL1 (0x16) | 0x80 | EN_CHG=0 (charging disabled at startup) |
+| STATUS0 (0x1D) | 0x10 | VSYS_STAT=1 — no battery; system powered from VBUS only |
+| STATUS1 (0x1E) | 0x04 | CHG=Not charging, VBUS=Adj. HV DCP (USB-C 5 V) |
 | FAULT (0x1F) | 0x00 | No faults ✅ |
 
-> **Firmware note:** ICHG (240 mA) and VREG (3504 mV) are POR defaults. The production charging driver must initialise VREG to 4200 mV (Nokia BL-4C max), set IINDPM/VINDPM to appropriate limits, and enable charging via CTRL1[EN_CHG]. VSYS_STAT=1 confirms no battery was installed during this test.
+> ICHG and VREG are POR defaults. Production driver must set VREG=4200 mV, configure IINDPM/VINDPM, and enable charging via CTRL1[EN_CHG].
 
 **LM27965 register dump (at power-on, all LEDs off):**
 
 | Register | Value | Field decode |
 |----------|-------|--------------|
-| GP (0x10) | 0x20 | ENA=0 ENB=0 ENC=0 EN5A=0 EN3B=0 — all banks disabled ✅ (bit5 always 1 per datasheet) |
+| GP (0x10) | 0x20 | All banks disabled ✅ (bit5 always 1 per datasheet) |
 | BANK_A (0xA0) | 0xE0 | brightness code = 0 (TFT backlight, off) |
 | BANK_B (0xB0) | 0xE0 | brightness code = 0 (keyboard BL + D3B green, off) |
 | BANK_C (0xC0) | 0xFC | brightness code = 0 (D1C red indicator, off) |
-
-LM27965 idle state correct — all outputs disabled at firmware startup.
 
 ### Step 9 — Memory (Flash & PSRAM)
 
@@ -251,43 +233,23 @@ LM27965 idle state correct — all outputs disabled at firmware startup.
 | W25Q128JW Flash JEDEC ID | ✅ PASS | `EF 60 18` — Winbond W25Q128JW confirmed |
 | Flash SR1/SR2/SR3 | ✅ PASS | SR2 QE bit set (QSPI enabled); boot config intact |
 | Flash XIP read | ✅ PASS | First 32 bytes match programmed firmware image |
-| APS6404L PSRAM QPI probe | ❌ FAIL | Returns 0xFFFFFFFF — no response in QPI mode |
-| APS6404L PSRAM SPI probe | ❌ FAIL | Returns 0xFFFFFFFF — no response in SPI mode |
-
-**Flash diagnostics:**
-
-JEDEC: `EF 60 18` (Winbond W25Q128JW, 128 Mbit). SR1=0x00, SR2=0x02 (QE=1), SR3=0x60. XIP dump matches programmed firmware — flash interface healthy.
+| Internal SRAM (16 KB pattern test) | ✅ PASS | 5 patterns including address-based — all PASS |
+| APS6404L PSRAM | ❌ FAIL | No response on SPI or QPI — hardware fault; see Issue 8 |
 
 **PSRAM diagnostics:**
 
-Firmware-side configuration confirmed correct across multiple test runs:
+Firmware and QMI configuration confirmed correct:
 
 | Diagnostic item | Value | Conclusion |
 |----------------|-------|-----------|
 | GPIO0_CTRL FUNCSEL | 9 (`XIP_CS1`) | GPIO assignment correct ✅ |
-| QMI M1 rfmt (1st run, post-flash) | 0x000492A8 | Bootrom pre-configured M1 for QPI (rcmd=0xEB) |
-| QMI M1 rfmt (2nd run, warm) | 0x00001000 | Previous `psram_test()` call reset M1 to SPI single-lane |
-| QPI probe (`rcmd=0xEB`) | 0xFFFFFFFF | No response |
-| SPI probe (`rcmd=0x03`, single-lane) | 0xFFFFFFFF | No response |
+| QMI M1 rfmt (post-flash bootrom) | 0x000492A8 | Bootrom pre-configured M1 for QPI |
+| SPI write+readback | 0xFFFFFFFF | No response — write not persisted |
+| QPI Quad I/O probe (rcmd=0xEB) | 0xFFFFFFFF | No response |
 
-XIP occupying QMI CS0 does **not** block CS1 — the two chip-select channels are fully independent. Confirmed: the issue is not software or XIP contention.
+XIP (CS0) and PSRAM (CS1) channels are fully independent — XIP activity does not block CS1. Issue is hardware, not firmware.
 
-Conclusion: firmware and QMI configuration are correct. PSRAM unresponsive to both QPI and SPI → **hardware connectivity issue**. See Issue 8. Physical investigation required: DMM continuity on GPIO0 (RP2350B pin 77) → U3 CE# (pin 1); 3.3V at U3 VDD; solder joint inspection under microscope.
-
----
-
-## Issues Log
-
-| # | Date | Component | Issue | Root Cause | Fix Applied | Rev B Action |
-|---|------|-----------|-------|-----------|-------------|--------------|
-| 1 | 2026-04-02 | L1 (Murata DLM0NSN900HY2D) | USB common mode choke assembled in wrong orientation → USB non-functional | Factory assembly error: orientation mark misread | Removed L1; bridged D+/D− lines with jumper wire → USB OK | Flag orientation in Assembly PDF; add assembly note |
-| 2 | 2026-04-02 | U14 (BQ25622RYKR) | nCE pin has hardware pull-up → charging disabled by default | Design error: nCE (active-low) must be pulled to GND to enable charging | Shorted TP101 to GND → charging enabled; BQ27441 I2C readable | Connect nCE to GND or MCU GPIO (default low) in Rev B schematic |
-| 3 | 2026-04-02 | U17 (LIS2MDL, I2C0 0x1E) | SCL and SDA lines connected in reverse → device unreachable | Schematic routing error | Removed R54, R55 (0 Ω series resistors); jumper wires to swap SCL/SDA → 0x1E readable | Fix I2C routing in Rev B schematic |
-| 4 | 2026-04-02 | U18 (LPS22HH, I2C0) | SCL/SDA reversed; actual I2C address 0x5D (design stated 0x5C) | Routing error (same pattern as U17); SA0 connected to 3.3 V in schematic — contradicts documentation which stated SA0 = GND | Removed R59, R60 (0 Ω series resistors); jumper wires → 0x5D readable | Fix I2C routing; verify/correct SA0 net; update all docs to 0x5D |
-| 5 | 2026-04-02 | LCD FPC (Molex 54132-4062) | Connector pin order incompatible with NHD-2.4-240320AF-CSXP → display non-functional | Pinout mismatch between selected connector and display datasheet | None — no practical temporary workaround | Re-verify FPC connector pinout against display datasheet; correct in Rev B |
-| 6 | 2026-04-02 | U5 (LM27965) Bank B | Status indicator LED D37 and keypad backlight share Bank B → cannot be driven independently | Routing error: D37 should be on a separate Bank A channel | Accept Rev A limitation; D37 and keypad BL driven together | Move D37 to an unused Bank A channel in Rev B schematic |
-| 7 | 2026-04-02 | U15 (TPS62840) / 1.8 V rail | Pi Debug Probe requires 3.3 V VTREF; MCU logic is 1.8 V → incompatible | 1.8 V design voltage vs 3.3 V-only debug tool | Using J-Link (supports 1.8 V VTREF) | Add VSET resistor option for switchable 3.3 V during development; requires re-evaluation of all 1.8 V net components and I2C pull-up resistor compatibility for both voltages |
-| 8 | 2026-04-03 | U3 (APS6404L PSRAM) | PSRAM returns 0xFFFFFFFF on both QPI and SPI probe — no response | Suspected hardware connectivity issue: ~CS (GPIO0/pin 77) or VCC_1V8 to U3 may be open/unconnected. Firmware and QMI register configuration confirmed correct (FUNCSEL=9, bootrom QPI pre-config visible in M1 registers). | None — requires physical board inspection | Verify U3 ~CS trace continuity (GPIO0 → U3 pin 1); verify VCC_1V8 at U3; confirm PSRAM solder joints under microscope. If trace is open, bodge wire from RP2350B GPIO0 (pin 77) to U3 ~CS. Replace U3 if VCC shorted. |
+**Next action (Issue 8):** DMM continuity: GPIO0 (RP2350B pin 77) → U3 CE# (pin 1); verify VCC_1V8 at U3; inspect solder joints under microscope. Bodge wire if trace is open.
 
 ### Step 10 — Microphone (IM69D130 PDM)
 
@@ -309,115 +271,159 @@ Max word  : 0xE8D4E4D5
 Result: PASS
 ```
 
-GPIO 4 (MIC_CLK) and GPIO 5 (MIC_DATA) wiring confirmed. PDM bit-stream density 49.8 % ≈ 50 %, consistent with the theoretical value for a silent room. Min/Max words differ, confirming the data changes over time (microphone is actively capturing audio).
-
-**mic_raw output (no amp running, 10 s window, 64-bit decimation):**
-
-```
-t(ms)   samples  omin  omax  density
-  xxx     24414    22    42   50.0%   ← silence
-  xxx     24414    10    58   50.2%   ← during speech: omin drops, omax rises
-```
-
-Density ≈ 50.0 % confirms mic correctly biased. With 64-bit decimation window (ones ∈ [0,64]), the statistical variance per sample is lower than the earlier 16-bit window, resulting in a tighter omin/omax spread at silence — consistent with a healthy PDM stream.
-
 **Interface notes:**
 
-The IM69D130 has no register interface (no I2C/SPI/UART). The only interaction is: supply PDM CLK → microphone outputs a PDM bit stream. SELECT is hardware-tied to VDD → R channel (DATA2): data is valid after the CLK **falling edge** (tDV ≤ 100 ns) and before the rising edge; PIO samples on the rising edge.
+The IM69D130 has no register interface (no I2C/SPI/UART). SELECT is hardware-tied to VDD → R channel (DATA2): data is valid after the CLK **falling edge** (tDV ≤ 100 ns) and before the rising edge; PIO samples on the rising edge.
 
-Circuit: DATA line has a 100 Ω series resistor + 100 kΩ pull-down ∥ 47 pF to the MCU GPIO; VDD has a 100 nF decoupling capacitor. Internal pull-up is not enabled on the MCU side (the external 100 kΩ is a pull-down; enabling internal pull-up would cause ~1.2 V undefined voltage during the HiZ window).
+Circuit: DATA line has a 100 Ω series resistor + 100 kΩ pull-down ∥ 47 pF to the MCU GPIO; VDD has a 100 nF decoupling capacitor. Internal pull-up not enabled (external 100 kΩ is pull-down; internal pull-up would cause ~1.2 V undefined voltage during HiZ window).
 
 **PDM→PCM signal processing chain:**
 
-- **Decimation:** 1-stage integrate-and-dump (CIC); every 2 × 32-bit FIFO words (= 64 PDM bits) → 1 PCM sample; ones ∈ [0,64], centre = 32, `pcm = (ones−32) × 1024 × GAIN`
+- **Decimation:** 1-stage integrate-and-dump (CIC); every 2 × 32-bit FIFO words (= 64 PDM bits) → 1 PCM sample; `pcm = (ones−32) × 1024 × GAIN`
 - **IIR LPF:** `filtered = (filtered×3 + pcm) >> 2`, α = 0.75, fc ≈ 2.25 kHz — attenuates high-frequency quantisation noise from PDM noise shaping
-- **DC blocking HPF:** `dc_est += (filtered − dc_est) >> 10`, fc ≈ 7.6 Hz — removes DC offset in the PDM path
-- **Warm-up:** 100 ms to settle `filtered` and `dc_est` before the main loop starts, avoiding an initial DC step
+- **DC blocking HPF:** `dc_est += (filtered − dc_est) >> 10`, fc ≈ 7.6 Hz — removes DC offset
+- **Warm-up:** 100 ms to settle state before recording, avoiding initial DC step
 - **Output clamp:** ±MAX\_AMPLITUDE (50 % full scale) to protect the speaker
 
 **PIO configuration:**
 
-- PDM CLK = 3.125 MHz (clkdiv=20, SNR 69 dB mode); autopush = 32 bits (maximum PIO ISR width)
-- 3,125,000 / 32 / 2 = 48,828 Hz — exactly synchronised with the I2S sample rate
-- pio1 (PDM mic, GPIO 4/5) + pio0 (I2S amp, GPIO 30–32, gpio_base=16) run independently with no conflict
+- PDM CLK = 3.125 MHz (clkdiv=20, SNR 69 dB mode); autopush = 32 bits
+- 3,125,000 / 32 / 2 = 48,828 Hz — synchronised with I2S sample rate
+- pio1 (PDM mic, GPIO 4/5) + pio0 (I2S amp, GPIO 30–32, gpio_base=16) run independently
 
-**Known issues and bugs fixed:**
-
-| Bug | Fix |
-|-----|-----|
-| PIO initially designed for L-channel timing (SELECT=GND, sample on CLK rising edge); actual SELECT=VDD → R-channel (data valid after falling edge, before rising edge) | Changed PIO program to `nop side 0` / `in pins,1 side 1` (sample on rising edge); replaced `gpio_pull_up` with `gpio_disable_pulls` |
-| `printf` in `mic_loop` stats output caused CPU stall of several ms → PDM CLK frozen → IM69D130 lost lock (symptom: ones∈[0,0]) | Added `#define MIC_LOOP_STATS 0` compile-time switch; disabled by default |
-| Real-time loopback: `pio_sm_get_blocking` (PDM) and `pio_sm_put_blocking` (I2S) contend for CPU cycles, cannot guarantee 48828 Hz alignment | Added `mic_rec`: Phase 1 runs PDM PIO only (capture), Phase 2 runs I2S PIO only (playback) — fully separated |
-
-**mic_rec design:**
-
-```
-Phase 1 (capture, PDM only):
-  pio1 PDM SM → warm-up 100 ms → record REC_SAMPLES (3 × 48828 = 146 484) → stop PDM
-
-Phase 2 (playback, I2S only):
-  pio0 I2S SM → play rec_buf[] → 256 silence drain → stop I2S
-```
-
-Buffer: `static int16_t rec_buf[146484]` = 292,968 bytes in BSS (fits within RP2350B 264 KB SRAM).
-
-**Current status:** `mic_rec` and `mic_dump` capture and playback are functional, but audible background noise is present. Likely cause: 1-stage CIC decimation has insufficient high-frequency attenuation (sinc¹ frequency response), allowing PDM noise-shaping energy to fold back into the passband. Candidates for improvement: 2-stage IIR LPF cascade or multi-stage CIC.
+**Current status:** Background noise audible in `mic_rec` and `mic_dump`. Likely cause: 1-stage CIC decimation has insufficient high-frequency attenuation (sinc¹ frequency response), allowing PDM noise-shaping energy to fold back into the passband. Candidates for improvement: 2-stage IIR LPF cascade or multi-stage CIC.
 
 **OpenPDMFilter (sinc³) attempt — failed, reverted:**
 
-Attempted to replace the CIC+IIR decimation with ST OpenPDMFilter (Apache-2.0, sinc³ 3-stage cascade, LUT-accelerated) to improve high-frequency roll-off. After integration, all PDM FIFO reads in `mic_dump` returned `0x00000000`; PCM output was a constant −1024 (sub_const bias offset), indicating zero PDM input throughout.
-
-Diagnostics confirmed:
-- `mic_raw` (not using OpenPDMFilter) continued to read valid 49.8 % density PDM data — hardware is not at fault
-- `Warmup raw[0..3]: 00000000 00000000 00000000 00000000` — first FIFO word is zero immediately after PIO start
-- Root cause not determined; `pdm_mic_program_init` / `pio_sm_set_enabled` call order was identical to `mic_raw`
-
-Conclusion: existing CIC+IIR decimation confirmed working; OpenPDMFilter integration deferred for further investigation. Reverted at commit 1853c9e.
+Attempted to replace CIC+IIR with ST OpenPDMFilter (Apache-2.0, sinc³ cascade, LUT-accelerated). After integration, all PDM FIFO reads returned `0x00000000`; PCM output was a constant −1024. `mic_raw` (not using the filter) continued to show valid 49.8 % density — hardware is not at fault. Root cause not determined. Reverted at commit 1853c9e.
 
 ---
 
-## Bringup Firmware & Tooling
+## Pending Steps
 
-### Source layout (post-refactor)
+### Step 11 — J-Link Debug Validation
 
-The bringup shell was originally a single 1880-line `i2c_custom_scan.c`. It has been split into focused compilation units:
+**Result: ⏳ PENDING**
 
-| File | Lines | Contents |
-|------|-------|----------|
-| `bringup.h` | ~160 | Shared header: all `#include`, pin `#define`, register `#define`, public function declarations |
-| `i2c_custom_scan.c` | ~225 | Main REPL loop, keypad monitor, command dispatch |
-| `bringup_power.c` | ~280 | LM27965, BQ25622, motor PWM, Bus B init/deinit |
-| `bringup_sensors.c` | ~290 | LSM6DSV16X, LIS2MDL, LPS22HH, Teseo-LIV3FL, Bus A scan |
-| `bringup_audio.c` | ~580 | PIO I2S driver, NAU8315 tone/breathe/melody, PDM mic test/raw/loopback/rec/dump |
-| `bringup_flash.c` | ~180 | W25Q128JW JEDEC/UID, APS6404L QMI probe |
-| `bringup_lora.c` | ~475 | SX1262 SPI helpers, `lora_test`, `lora_rx`, `lora_dump` |
-| `bringup_tft.c` | ~270 | PIO 8080 driver, ST7789VI init sequence, colour fill, `tft_test` |
-| `tft_8080.pio` | ~55 | PIO program: side-set nWR, out D[7:0], autopull 8-bit, clkdiv=4 |
+Objective: validate the SWD debug interface beyond basic flash programming — confirm that
+the full debug capability needed for Core 0/1 firmware development is functional.
 
-### Bug fixes applied during bringup
+| Item | Method | Expected result |
+|------|--------|----------------|
+| Breakpoint + halt | Set SW breakpoint in bringup shell loop; run to breakpoint | MCU halts at correct instruction |
+| Single-step execution | Step over / step into from breakpoint | PC advances correctly; registers update |
+| Register read | Read core registers (PC, SP, LR, r0–r15) via J-Link Commander or GDB | Values consistent with code state |
+| Memory read — SRAM | Read `sram_test_buf` address range | Pattern matches last written test pattern |
+| Memory read — flash XIP | Read 0x10000000 (flash start) | Matches first bytes of .elf firmware image |
+| Memory read — peripheral | Read SIO registers, PIO SM state | Registers reflect expected hardware state |
+| Variable watch | Watch a global variable during a running loop | Value updates in real time |
 
-| Bug | Fix |
-|-----|-----|
-| `lora_dump`: GetDeviceErrors called before calibration (returned all-fail POR default) | Moved to after `Calibrate(0x7F)` + `CalibrateImage({0xE1,0xE9})` |
-| `lora_dump`: RxGain WriteRegister used wrong address 0x06B8 | Corrected to **0x08AC** (confirmed: readback = 0x96) |
-| `lora_dump` / `lora_rx`: GetStats used 7-byte SPI transfer; `rx[7]` out-of-bounds | Corrected to **8 bytes** (opcode + status + RxOk×2 + CrcErr×2 + HdrErr×2) |
-| `bq25622_print_status`: VBUS_STAT decode table had wrong string at index 4 ("Unknown Adapter" → "Adj. HV DCP") | Unified into a single shared `bq_vbus_str[]` array used by both status and dump functions |
+**Tools:**
+- J-Link Commander (`JLink.exe`) for low-level register/memory access
+- J-Link GDB Server + `arm-none-eabi-gdb` for full source-level debug
+- Alternatively: VS Code + Cortex-Debug extension + J-Link GDB Server
 
-### Scripts
+### Step 12 — BQ27441 Fuel Gauge Characterisation
 
-| Script | Purpose |
-|--------|---------|
-| `build_and_flash_bringup.sh` | Build via MSVC + CMake ninja, flash via J-Link SWD |
-| `serial_monitor.ps1` | Interactive serial terminal (COM4, 115200). Usage: `.\serial_monitor.ps1 [cmd]` |
-| `bringup_run.ps1` | **Automated command runner.** Handles COM port retry, boot banner wait, per-command timeouts. Usage: `.\bringup_run.ps1 [-Flash] [-PortName COM4] cmd1 cmd2 …` |
-| `recv_pcm_dump.py` | **PCM binary receiver** for `mic_dump`. Opens COM4, sends `mic_dump` command, receives binary int16 PCM stream, saves to `mic_dump.wav`. |
+**Result: ⏳ PENDING**
 
-**`bringup_run.ps1` example invocations:**
-```powershell
-.\bringup_run.ps1 psram                           # single command
-.\bringup_run.ps1 scan_a scan_b status lora_dump  # multiple commands
-.\bringup_run.ps1 -Flash scan_a lora_dump psram   # build+flash then test
-```
+BQ27441 I2C presence confirmed (conditional on battery installed). Detailed gauge
+characterisation not yet performed.
+
+| Item | Method | Expected result |
+|------|--------|----------------|
+| SOC readout | Read `StateOfCharge()` (0x1C) | 0–100 % consistent with charge level |
+| Voltage readout | Read `Voltage()` (0x08) | ~3.7 V for BL-4C at mid-charge |
+| Remaining capacity | Read `RemainingCapacity()` (0x10) | mAh consistent with SOC |
+| Average current | Read `AverageCurrent()` (0x14) | Positive during charge, negative during discharge |
+| Full charge capacity | Read `FullChargeCapacity()` (0x12) | Should match BL-4C ~890 mAh after learning |
+| Gauge learning cycle | Charge to full + discharge to empty | SOC tracking accuracy improves after first cycle |
+
+> BQ27441 requires at least one full charge/discharge cycle for the Impedance Track algorithm to calibrate capacity accurately. First readout may show default design capacity.
+
+### Step 13 — TFT LCD Fast Refresh
+
+**Result: ⏳ PENDING**
+
+Current bringup (`tft_test`) drives the PIO 8080 bus using CPU polling
+(`pio_sm_put_blocking`). The hue gradient scroll test (~90 full-screen frames) was
+noticeably sluggish, indicating that the CPU-bound pixel push is the bottleneck, not the
+display controller.
+
+| Item | Method | Expected result |
+|------|--------|----------------|
+| Measure current FPS | Time 10 full-screen fills; divide | Baseline for comparison |
+| DMA-driven pixel push | Configure DMA channel → PIO TX FIFO; CPU queues next frame while DMA transfers current | CPU free during transfer; higher FPS |
+| Maximum theoretical FPS | 240×320×2 bytes at 8 MHz PIO clock | ~52 FPS theoretical (clkdiv=2 limit check) |
+| Tear-free timing | Read TE (GPIO 22) signal; gate frame start on TE rising edge | No visible tearing |
+
+> The ST7789VI TE (tearing effect) pin is connected to GPIO 22. Production UI (LVGL) should synchronise frame flushes to TE to prevent tearing.
+
+### Step 14 — GNSS Outdoor RF Test
+
+**Result: ⏳ PENDING**
+
+Indoor test confirmed I2C streaming and NMEA output. RF chain performance requires outdoor
+test with clear sky view.
+
+| Item | Expected result |
+|------|----------------|
+| Cold start TTFF (open sky) | < 60 s (Teseo-LIV3FL datasheet: typ. 27 s) |
+| Warm start TTFF | < 5 s |
+| Position accuracy (static) | CEP50 < 2.5 m (Teseo-LIV3FL spec) |
+| Satellite count | ≥ 6 SVs tracked (GPS + GLONASS) |
+| SNR per satellite | > 30 dB-Hz for healthy signal |
+
+> RF chain: Teseo-LIV3FL → BGA725L6 LNA → B39162B4327P810 SAW filter → chip antenna.
+> Verify LNA enable/disable control and SAW passband.
+
+### Step 15 — LoRa RF Performance
+
+**Result: ⏳ PENDING**
+
+SPI interface and RX mode entry confirmed. Actual RF link performance not yet verified.
+
+| Item | Method | Expected result |
+|------|--------|----------------|
+| TX packet — loopback | Two boards; one TX, one RX | Packet received, CRC OK |
+| RSSI at known distance | 10 m line-of-sight | RSSI consistent with path loss model |
+| Sensitivity | Long-range test (SF12, BW125) | −148 dBm datasheet spec |
+| OCP investigation | Read 0x08E7; confirm expected value | Determine if 105 mA setting is intentional or POR anomaly |
+| Frequency accuracy | Compare TX frequency against reference | TCXO ±0.5 ppm spec |
+
+### Step 16 — Core 1 Functionality
+
+**Result: ⏳ PENDING**
+
+All bringup to date has run on Core 0. Core 1 functionality must be validated separately
+before starting UI/application firmware development.
+
+| Item | Method | Expected result |
+|------|--------|----------------|
+| Core 1 boot | Launch Core 1 via `multicore_launch_core1()` | Core 1 enters its entry function |
+| Core 1 FreeRTOS | Start FreeRTOS scheduler on Core 1; create test task | Task runs, prints heartbeat |
+| Inter-core FIFO (SIO) | Core 0 pushes value; Core 1 reads and echoes back | Round-trip confirmed |
+| Shared SRAM access | Both cores read/write a shared buffer with spinlock | No data corruption |
+| Core 1 peripheral access | Core 1 controls an LED or GPIO | Peripheral access from Core 1 confirmed |
+
+> Core 1 will run FreeRTOS (LVGL + MIE integration) in the production firmware. The IPC
+> protocol (`firmware/shared/ipc/ipc_protocol.h`) uses RP2350 HW FIFO as the doorbell
+> mechanism — this must be validated before Core 1 development starts.
+
+---
+
+## Issues Log
+
+| # | Date | Component | Issue | Root Cause | Fix Applied | Rev B Action |
+|---|------|-----------|-------|-----------|-------------|--------------|
+| 1 | 2026-04-02 | L1 (Murata DLM0NSN900HY2D) | USB common mode choke wrong orientation → USB non-functional | Factory assembly error | Removed L1; bridged D+/D− with jumper wire | Flag orientation in Assembly PDF |
+| 2 | 2026-04-02 | U14 (BQ25622RYKR) | nCE pull-up → charging disabled by default | Design error: nCE must be pulled to GND | Shorted TP101 to GND | Connect nCE to GND or MCU GPIO in Rev B |
+| 3 | 2026-04-02 | U17 (LIS2MDL, 0x1E) | SCL/SDA reversed → device unreachable | Schematic routing error | Removed R54/R55; jumper wires swap SCL/SDA | Fix I2C routing in Rev B |
+| 4 | 2026-04-02 | U18 (LPS22HH) | SCL/SDA reversed; address 0x5D not 0x5C | Routing error; SA0=3.3V contradicts docs | Removed R59/R60; jumper wires | Fix routing; correct SA0 net; update docs |
+| 5 | 2026-04-02 | LCD FPC (Molex 54132-4062) | FPC pinout incompatible with NHD-2.4-240320AF-CSXP | Pinout mismatch | FPC adapter board for Rev A | Re-verify FPC pinout; correct in Rev B |
+| 6 | 2026-04-02 | U5 (LM27965) Bank B | LED D37 and keypad backlight share Bank B → not independently controllable | Routing error | Accept Rev A limitation | Move D37 to unused Bank A channel in Rev B |
+| 7 | 2026-04-02 | U15 (TPS62840) / 1.8 V rail | Pi Debug Probe incompatible (requires 3.3 V VTREF) | 1.8 V logic vs 3.3 V-only debug tool | Using J-Link (supports 1.8 V VTREF) | Evaluate switchable VTREF option |
+| 8 | 2026-04-03 | U3 (APS6404L PSRAM) | No response on SPI or QPI — returns 0xFFFFFFFF | Suspected open trace: GPIO0 (pin 77) → U3 CE# (pin 1), or VCC_1V8 open at U3 | None — requires physical inspection | Verify trace continuity + VCC; bodge wire if open; replace U3 if VCC shorted |
 
 ---
 
