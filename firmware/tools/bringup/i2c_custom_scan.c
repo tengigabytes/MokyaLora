@@ -234,9 +234,13 @@ static void handle_command(const char *cmd) {
 // Main
 // ---------------------------------------------------------------------------
 
-int main() {
+/* bringup_repl_init — must be called from Core 0.
+ * Initialises USB CDC (stdio_init_all registers the USB interrupt on Core 0's
+ * NVIC), waits for rails to settle, and sets safe peripheral defaults.
+ * Safe to call before multicore_launch_core1(). */
+void bringup_repl_init(void) {
     stdio_init_all();
-    sleep_ms(2000);  // wait for power rails to settle
+    sleep_ms(2000);  // wait for USB enumeration and power rails
 
     // Pre-compute unit sine table using hardware FPU sinf()
     precompute_sine();
@@ -251,7 +255,12 @@ int main() {
     printf("* MokyaLora RP2350 Bring-Up Shell     *\n");
     printf("***************************************\n");
     printf("Type 'help' for commands.\n> ");
+}
 
+/* bringup_repl_loop — the interactive REPL loop.
+ * Can be called from Core 0 or Core 1 after bringup_repl_init() has run on
+ * Core 0 (USB CDC is already live at this point). */
+void bringup_repl_loop(void) {
     char line[32];
     int pos = 0;
 
@@ -272,4 +281,10 @@ int main() {
             printf("%c", c);
         }
     }
+}
+
+/* bringup_repl_run — convenience wrapper for the Core 0 binary. */
+void bringup_repl_run(void) {
+    bringup_repl_init();
+    bringup_repl_loop();
 }
