@@ -316,10 +316,10 @@ void mic_raw(void) {
 //   Phase 1 (capture): only PDM PIO running → CLK uninterrupted, no I2S competition.
 //   Phase 2 (playback): only I2S PIO running → clean amp output.
 //
-// Buffer: REC_SAMPLES × 2 bytes = 3 × 48828 × 2 = 292,968 bytes in BSS.
+// Buffer: REC_SAMPLES × 2 bytes = 1 × 48828 × 2 = 97,656 bytes in BSS.
 // ---------------------------------------------------------------------------
-#define REC_SECONDS  3
-#define REC_SAMPLES  (REC_SECONDS * I2S_SAMPLE_RATE)   // 146,484 int16_t samples
+#define REC_SECONDS  1
+#define REC_SAMPLES  (REC_SECONDS * I2S_SAMPLE_RATE)   // 48,828 int16_t samples
 
 static int16_t rec_buf[REC_SAMPLES];
 
