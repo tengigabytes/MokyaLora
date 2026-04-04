@@ -433,7 +433,8 @@ before starting UI/application firmware development.
 - All FIFO pops on Core 0 use `multicore_fifo_pop_timeout_us()` to prevent hangs
 - `pico_multicore` + `hardware_sync` added to bringup CMakeLists
 - `multicore_reset_core1()` called after shutdown to leave Core 1 in clean state
-- Stage B (FreeRTOS on Core 1) deferred; requires `FREERTOS_KERNEL_PATH` setup
+- Stage B prerequisite complete: `FreeRTOS-Kernel V11.3.0` added as submodule at `firmware/core1/freertos-kernel/` (MIT); nested submodule `Community-Supported-Ports` provides `RP2350_ARM_NTZ` Cortex-M33 port; `FreeRTOS_Kernel_import.cmake` auto-selects this port when `PICO_PLATFORM=rp2350-arm-s`
+- Stage B remaining: write `FreeRTOSConfig.h`, update `firmware/core1/CMakeLists.txt`, implement heartbeat task on Core 1
 
 > Core 1 will run FreeRTOS (LVGL + MIE integration) in the production firmware. The IPC
 > protocol (`firmware/shared/ipc/ipc_protocol.h`) uses RP2350 HW FIFO as the doorbell
