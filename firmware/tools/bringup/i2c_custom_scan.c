@@ -116,6 +116,10 @@ static void handle_command(const char *cmd) {
         bus_b_init();
         bq25622_print_status();
         bus_b_deinit();
+    } else if (strcmp(cmd, "adc") == 0) {
+        bus_b_init();
+        bq25622_read_adc();
+        bus_b_deinit();
     } else if (strcmp(cmd, "led") == 0) {
         bus_b_init();
         lm27965_cycle();
@@ -177,6 +181,13 @@ static void handle_command(const char *cmd) {
         bus_b_init();
         bq25622_enable_charge();
         bus_b_deinit();
+    } else if (strcmp(cmd, "charge_scan") == 0) {
+        bus_b_init();
+        bq25622_enable_charge();
+        sleep_ms(500);  // allow charging current to flow and wake BQ27441
+        bus_b_deinit();
+        perform_scan(i2c1, BUS_B_SDA, BUS_B_SCL, "Bus B (Power, i2c1) — post charge_on");
+        printf("Expected: 0x6B(Charger)  0x55(FuelGauge — only if awake)  0x36(LED)\n");
     } else if (strcmp(cmd, "charge_off") == 0) {
         bus_b_init();
         bq25622_disable_charge();
@@ -194,6 +205,7 @@ static void handle_command(const char *cmd) {
         printf("  scan_a      -- scan Bus A (sensors, GPIO 34/35)\n");
         printf("  scan_b      -- scan Bus B (power, GPIO 6/7)\n");
         printf("  status      -- BQ25622 charger status\n");
+        printf("  adc         -- BQ25622 ADC: IBUS/IBAT/VBUS/VPMID/VBAT/VSYS\n");
         printf("  led         -- LED cycle (keyboard/red/green)\n");
         printf("  motor       -- vibration motor breathe x5\n");
         printf("  amp_test    -- NAU8315 constant tone 5 s at 80%% (hardware check)\n");
@@ -222,8 +234,9 @@ static void handle_command(const char *cmd) {
         printf("  tft         -- ST7789VI LCD: init + fill Red/Green/Blue/White/Black (1.5s each)\n");
         printf("  tft_fast    -- Step 13: TE freq, baseline FPS, DMA FPS, clkdiv=3 test, TE-gated fill\n");
         printf("  key         -- keyboard monitor (prints key name on press; Enter to exit)\n");
-        printf("  charge_on   -- enable BQ25622 charging\n");
+        printf("  charge_on   -- set VREG=4100mV IINDPM=100mA, enable BQ25622 charging\n");
         printf("  charge_off  -- disable BQ25622 charging\n");
+        printf("  charge_scan -- charge_on + 500ms + scan Bus B (checks if BQ27441 wakes up)\n");
         printf("  core1       -- Step 16 Stage A: Core 1 boot/FIFO/SRAM/GPIO test\n");
     } else if (cmd[0] != '\0') {
         printf("Unknown command: '%s'  (type 'help' for list)\n", cmd);
