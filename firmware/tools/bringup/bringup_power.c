@@ -299,9 +299,55 @@ void bq27441_read(void) {
 
     // 1. Probe: any directed I2C transaction wakes gauge from SLEEP/HIBERNATE
     //    via ≤100 µs clock stretch (SLUSBH1C p.14). Read CONTROL_STATUS first.
+    //    If NACK: attempt I2C bus recovery (9 SCL clocks + STOP) and retry.
+    //    BQ27441 I2C engine can lock up during cold boot when SDA/SCL are held
+    //    low by MCU pull-downs before the 1.8V pull-up rail is active.
     uint16_t cs;
-    if (fg_ctrl_read(BQ27441_CTRL_STATUS, &cs) < 0) {
-        printf("NACK — BQ27441 not responding at 0x55\n");
+    int probe_ok = 0;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (fg_ctrl_read(BQ27441_CTRL_STATUS, &cs) >= 0) {
+            probe_ok = 1;
+            break;
+        }
+        printf("  NACK at 0x55 (attempt %d/3) — I2C bus recovery...\n", attempt + 1);
+        // Deinit I2C peripheral so we can bitbang GPIO for recovery
+        bus_b_deinit();
+        // 9 SCL clocks + STOP per UM10204 §3.1.16
+        const uint scl = BUS_B_SCL;
+        const uint sda = BUS_B_SDA;
+        gpio_init(scl);
+        gpio_set_dir(scl, GPIO_OUT);
+        gpio_put(scl, 1);
+        gpio_init(sda);
+        gpio_set_dir(sda, GPIO_IN);
+        gpio_pull_up(sda);
+        sleep_us(10);
+        for (int i = 0; i < 9; i++) {
+            gpio_put(scl, 0);
+            sleep_us(5);
+            gpio_put(scl, 1);
+            sleep_us(5);
+            if (gpio_get(sda)) break;
+        }
+        // STOP condition: SDA LOW→HIGH while SCL HIGH
+        gpio_set_dir(sda, GPIO_OUT);
+        gpio_put(sda, 0);
+        sleep_us(5);
+        gpio_put(scl, 1);
+        sleep_us(5);
+        gpio_put(sda, 1);
+        sleep_us(10);
+        // Release pins
+        gpio_set_dir(scl, GPIO_IN);
+        gpio_set_dir(sda, GPIO_IN);
+        gpio_disable_pulls(scl);
+        gpio_disable_pulls(sda);
+        sleep_ms(100);  // let gauge settle
+        // Reinit I2C
+        bus_b_init();
+    }
+    if (!probe_ok) {
+        printf("NACK — BQ27441 not responding at 0x55 after 3 recovery attempts\n");
         printf("Check: battery installed? BAT pin voltage > 2 V (UVLOIT)?\n");
         bus_b_deinit();
         return;

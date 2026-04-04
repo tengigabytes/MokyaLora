@@ -254,7 +254,59 @@ static void handle_command(const char *cmd) {
  * Initialises USB CDC (stdio_init_all registers the USB interrupt on Core 0's
  * NVIC), waits for rails to settle, and sets safe peripheral defaults.
  * Safe to call before multicore_launch_core1(). */
+// I2C bus recovery for Bus B (GPIO 6 SCL, GPIO 7 SDA).
+// BQ27441 has no I2C bus timeout (pure I2C, not SMBus). If the gauge sees
+// glitches on SDA/SCL during cold boot (before pull-ups are active), its I2C
+// state machine can lock up permanently until power-cycled.
+// Fix: send 9 SCL clocks + STOP condition per I2C spec UM10204 §3.1.16
+// before any peripheral touches these pins.
+static void bus_b_i2c_recovery(void) {
+    const uint scl = BUS_B_SCL;  // GPIO 6
+    const uint sda = BUS_B_SDA;  // GPIO 7
+
+    // Configure SCL as output HIGH, SDA as input with pull-up
+    gpio_init(scl);
+    gpio_set_dir(scl, GPIO_OUT);
+    gpio_put(scl, 1);
+
+    gpio_init(sda);
+    gpio_set_dir(sda, GPIO_IN);
+    gpio_pull_up(sda);
+
+    sleep_us(10);
+
+    // 9 clock pulses — if slave holds SDA low, each clock gives it a chance
+    // to release.  If SDA goes HIGH before 9 clocks, slave has released.
+    for (int i = 0; i < 9; i++) {
+        gpio_put(scl, 0);
+        sleep_us(5);
+        gpio_put(scl, 1);
+        sleep_us(5);
+        if (gpio_get(sda)) break;  // SDA released — bus is free
+    }
+
+    // Generate STOP condition: SDA LOW→HIGH while SCL is HIGH
+    gpio_set_dir(sda, GPIO_OUT);
+    gpio_put(sda, 0);
+    sleep_us(5);
+    gpio_put(scl, 1);
+    sleep_us(5);
+    gpio_put(sda, 1);  // SDA rising edge while SCL HIGH = STOP
+    sleep_us(10);
+
+    // Release pins back to default (will be reconfigured by bus_b_init later)
+    gpio_set_dir(scl, GPIO_IN);
+    gpio_set_dir(sda, GPIO_IN);
+    gpio_disable_pulls(scl);
+    gpio_disable_pulls(sda);
+}
+
 void bringup_repl_init(void) {
+    // Immediately clear any I2C bus lockup on Bus B before anything else.
+    // BQ27441 may have locked up if SDA/SCL glitched during cold boot
+    // (1.8V pull-up rail not yet stable when gauge powered from battery).
+    bus_b_i2c_recovery();
+
     stdio_init_all();
     sleep_ms(2000);  // wait for USB enumeration and power rails
 
