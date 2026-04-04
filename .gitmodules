@@ -2,3 +2,6 @@
 	path = firmware/core0/meshtastic
 	url = https://github.com/tengigabytes/firmware
 	branch = feat/rp2350b-mokya
+[submodule "firmware/core1/freertos-kernel"]
+	path = firmware/core1/freertos-kernel
+	url = https://github.com/FreeRTOS/FreeRTOS-Kernel

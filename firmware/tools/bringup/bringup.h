@@ -204,3 +204,7 @@ void lora_dump(void);
 #define TFT_TE_PIN    22
 void tft_test(void);
 void tft_fast_test(void);
+
+// bringup_core1.c — Step 16 Stage A: bare-metal Core 1 validation
+// Tests: boot, FIFO echo, shared SRAM spinlock, GPIO from Core 1
+void core1_test(void);
