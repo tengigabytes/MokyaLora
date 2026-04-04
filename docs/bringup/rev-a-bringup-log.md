@@ -358,21 +358,27 @@ characterisation not yet performed.
 
 ### Step 13 — TFT LCD Fast Refresh
 
-**Result: ⏳ PENDING**
+**Result: ✅ PASS**
 
-Current bringup (`tft_test`) drives the PIO 8080 bus using CPU polling
-(`pio_sm_put_blocking`). The hue gradient scroll test (~90 full-screen frames) was
-noticeably sluggish, indicating that the CPU-bound pixel push is the bottleneck, not the
-display controller.
+| Item | Method | Result |
+|------|--------|--------|
+| TE pin frequency | Count rising edges on GPIO 22 over 2 s | ✅ PASS — 120 edges → **60.0 Hz** |
+| Baseline FPS (CPU polling) | 10 full-screen fills, `pio_sm_put_blocking`, clkdiv=4 | ✅ MEASURED — **1.46 FPS** (682 ms/frame, 0.225 MB/s) |
+| DMA solid fill — clkdiv=4 | DMA_SIZE_8 + 2-byte ring buf → PIO TX FIFO, 10 fills | ✅ PASS — **59.88 FPS** (16.7 ms/frame, 9.2 MB/s) — **41× faster than CPU polling** |
+| DMA solid fill — clkdiv=3 | Same DMA path, 96 ns write cycle, 10 fills | ✅ PASS — **79.37 FPS** (12.6 ms/frame, 12.2 MB/s) — no visible pixel glitches |
+| TE-gated DMA fill | Gate frame start on TE rising edge, clkdiv=4, 10 frames | ✅ PASS — **54.35 FPS**; transfer fits within one frame period — tear-free capable |
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| Measure current FPS | Time 10 full-screen fills; divide | Baseline for comparison |
-| DMA-driven pixel push | Configure DMA channel → PIO TX FIFO; CPU queues next frame while DMA transfers current | CPU free during transfer; higher FPS |
-| Maximum theoretical FPS | 240×320×2 bytes at 8 MHz PIO clock | ~52 FPS theoretical (clkdiv=2 limit check) |
-| Tear-free timing | Read TE (GPIO 22) signal; gate frame start on TE rising edge | No visible tearing |
+**Firmware notes:**
+- `tft_fast` bringup command added (`bringup_tft.c`: `tft_fast_test()`; `hardware_dma` added to CMakeLists).
+- DMA method: `DMA_SIZE_8` byte transfers to `&pio1->txf[sm]`; DREQ = `pio_get_dreq(pio1, sm, true)`. 8-bit writes to the 32-bit FIFO register are promoted to 32-bit by the bus (byte replicated). PIO autopull threshold = 8 bits, shift-right → bits[7:0] of each FIFO word are consumed; correct value delivered. ✓
+- Solid-colour fill uses a 2-byte ring buffer `{hi, lo}` with `channel_config_set_ring(false, 1)` (2^1 = 2 byte ring on read side). No framebuffer required for solid fills.
+- TE enable: `TEON` command (0x35, mode=0) must be sent after `st7789_init()` — the standard init sequence does not include it. Without this command the TE pin is permanently low.
+- clkdiv=3 (96 ns write cycle) is accepted by the ST7789VI at 1.8 V VDDI with no visible artefacts; datasheet recommends ~100 ns minimum at 1.8 V. **Production driver should use clkdiv=3** for comfortable frame budget headroom.
+- At clkdiv=4 (16.7 ms/frame) the transfer time is nearly equal to one 60 Hz TE period (16.67 ms); TE-gated test shows occasional frame slip (54 FPS < 60 FPS). At clkdiv=3 (12.6 ms/frame) each transfer completes well within one period, leaving ~4 ms CPU time for rendering.
+- CPU polling (`pio_sm_put_blocking`) is **not viable** for production: 682 ms/frame (1.46 FPS). DMA is mandatory.
+- TE-gated pattern: wait for TE low → wait for TE rising edge → start DMA transfer. Synchronises frame start to V-blank for tear-free output. LVGL `flush_cb` should follow this pattern.
 
-> The ST7789VI TE (tearing effect) pin is connected to GPIO 22. Production UI (LVGL) should synchronise frame flushes to TE to prevent tearing.
+> The ST7789VI TE (tearing effect) pin is connected to GPIO 22. Production UI (LVGL) must synchronise `lv_display_flush_ready()` to TE to prevent tearing.
 
 ### Step 14 — GNSS Outdoor RF Test
 

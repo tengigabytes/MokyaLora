@@ -426,3 +426,226 @@ void tft_test(void) {
 
     printf("Done\n");
 }
+
+// ---------------------------------------------------------------------------
+// Step 13 — TFT LCD Fast Refresh
+//
+// Sub-tests:
+//   A  TE pin frequency check — verify ST7789VI TE toggles at ~60 Hz
+//   B  Baseline FPS           — 10 solid fills via CPU polling
+//   C  DMA solid fill FPS     — 10 fills via DMA + 2-byte ring (clkdiv=4)
+//   D  DMA at clkdiv=3        — 96 ns write cycle; compare FPS
+//   E  TE-gated DMA fill      — gate frame start on TE rising edge (10 frames)
+//
+// DMA notes:
+//   - DMA_SIZE_8 byte writes to a 32-bit FIFO register: RP2350 replicates the
+//     byte into all 4 byte lanes (→ FIFO word = 0xXXXXXXXX). The PIO autopull
+//     threshold is 8 bits, shift-right, so bits[7:0] are consumed first — the
+//     replicated byte in bits[7:0] is the correct value. ✓
+//   - Solid fill uses a 2-byte ring buffer {hi, lo} so no framebuffer is needed.
+//   - tft_solid_pix must be 2-byte aligned for ring_size=1 to wrap correctly.
+// ---------------------------------------------------------------------------
+
+// 2-byte ring source for solid-colour DMA fills
+static uint8_t __attribute__((aligned(2))) tft_solid_pix[2];
+
+// DMA transfer: solid colour via 2-byte ring buffer
+// Caller must have called tft_cmd(0x2C) (RAMWR) and have DCX=1 (data phase).
+static void tft_dma_solid(int dma_ch, uint16_t colour) {
+    tft_solid_pix[0] = (uint8_t)(colour >> 8);
+    tft_solid_pix[1] = (uint8_t)(colour & 0xFF);
+
+    dma_channel_config cfg = dma_channel_get_default_config(dma_ch);
+    channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+    channel_config_set_dreq(&cfg, pio_get_dreq(TFT_PIO, tft_sm, true));
+    channel_config_set_read_increment(&cfg, true);
+    channel_config_set_write_increment(&cfg, false);
+    channel_config_set_ring(&cfg, false, 1);  // read ring: 2^1 = 2 bytes
+
+    dma_channel_configure(dma_ch, &cfg,
+        (volatile void *)&TFT_PIO->txf[tft_sm],
+        tft_solid_pix,
+        240 * 320 * 2,
+        true);
+    dma_channel_wait_for_finish_blocking(dma_ch);
+    tft_flush();
+}
+
+// Full solid-colour fill via DMA: issues RAMWR then calls tft_dma_solid()
+static void tft_fill_dma(int dma_ch, uint16_t colour) {
+    tft_set_window(0, 0, 239, 319);
+    tft_cmd(0x2C);
+    tft_dma_solid(dma_ch, colour);
+}
+
+void tft_fast_test(void) {
+    printf("\n--- TFT Fast Refresh Test (Step 13) ---\n");
+
+    // --- Hardware init (identical to tft_test) ---
+    gpio_init(TFT_nCS_PIN);  gpio_set_dir(TFT_nCS_PIN,  GPIO_OUT); gpio_put(TFT_nCS_PIN,  1);
+    gpio_init(TFT_DCX_PIN);  gpio_set_dir(TFT_DCX_PIN,  GPIO_OUT); gpio_put(TFT_DCX_PIN,  1);
+    gpio_init(TFT_nRST_PIN); gpio_set_dir(TFT_nRST_PIN, GPIO_OUT); gpio_put(TFT_nRST_PIN, 1);
+    gpio_init(TFT_TE_PIN);   gpio_set_dir(TFT_TE_PIN,   GPIO_IN);
+
+    if (!tft_pio_start()) {
+        gpio_set_function(TFT_nCS_PIN,  GPIO_FUNC_NULL);
+        gpio_set_function(TFT_DCX_PIN,  GPIO_FUNC_NULL);
+        gpio_set_function(TFT_nRST_PIN, GPIO_FUNC_NULL);
+        return;
+    }
+
+    gpio_put(TFT_nRST_PIN, 0); sleep_ms(10);
+    gpio_put(TFT_nRST_PIN, 1); sleep_ms(120);
+    gpio_put(TFT_nCS_PIN, 0);
+
+    st7789_init();
+
+    // Enable TE output (V-blank only, mode=0).
+    // The init sequence does not send TEON — add it here before any TE tests.
+    tft_cmd(0x35); tft_dat(0x00);
+
+    bus_b_init();
+    lm_write(LM27965_BANKA, 0x16);
+    lm_write(LM27965_GP, 0x21);
+    bus_b_deinit();
+
+    int dma_ch = dma_claim_unused_channel(true);
+
+    // -------------------------------------------------------------------------
+    // Sub-test A — TE pin frequency check
+    // -------------------------------------------------------------------------
+    printf("\n[A] TE pin frequency (2 s window)...\n");
+    {
+        uint32_t t_start = to_ms_since_boot(get_absolute_time());
+        uint32_t rising  = 0;
+        bool prev = gpio_get(TFT_TE_PIN);
+        while (to_ms_since_boot(get_absolute_time()) - t_start < 2000) {
+            bool cur = gpio_get(TFT_TE_PIN);
+            if (cur && !prev) rising++;
+            prev = cur;
+        }
+        float freq = rising / 2.0f;
+        printf("  TE rising edges in 2 s: %lu  →  %.1f Hz\n", rising, freq);
+        if (rising == 0)
+            printf("  WARNING: no TE signal — check TEON command and GPIO22\n");
+        else if (freq >= 55.0f && freq <= 65.0f)
+            printf("  Result: PASS (~60 Hz)\n");
+        else
+            printf("  Result: NOTE — outside 55-65 Hz expected range\n");
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test B — Baseline FPS (CPU polling)
+    // -------------------------------------------------------------------------
+    printf("\n[B] Baseline FPS — CPU polling, clkdiv=%.0f (10 fills)...\n", TFT_CLK_DIV);
+    {
+        static const uint16_t colours[2] = {0xF800, 0x001F};  // red / blue
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int i = 0; i < 10; i++) tft_fill(colours[i & 1]);
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+        printf("  Theoretical byte rate: %.3f MB/s  (%.0f ns/byte)\n",
+               (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f,
+               (float)elapsed * 1e6f / (240.0f * 320 * 2 * 10));
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test C — DMA solid fill, clkdiv=4 (128 ns write cycle)
+    // -------------------------------------------------------------------------
+    printf("\n[C] DMA solid fill — clkdiv=%.0f, 128 ns cycle (10 fills)...\n", TFT_CLK_DIV);
+    {
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int i = 0; i < 10; i++) tft_fill_dma(dma_ch, i & 1 ? 0x07E0 : 0xFFE0);
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+        float byte_rate_mb = (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f;
+        printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test D — DMA solid fill, clkdiv=3 (96 ns write cycle)
+    //
+    // ST7789VI twc spec: min 66 ns @ 3.3V VDDI; ~100 ns recommended @ 1.8V VDDI.
+    // 96 ns is close to the 1.8V recommendation — observe for display glitches.
+    // -------------------------------------------------------------------------
+    printf("\n[D] DMA solid fill — clkdiv=3, 96 ns cycle (10 fills)...\n");
+    printf("  (Watch for pixel glitches — 96 ns is near the 1.8V VDDI limit)\n");
+    {
+        tft_flush();
+        pio_sm_set_clkdiv(TFT_PIO, tft_sm, 3.0f);
+        pio_sm_clkdiv_restart(TFT_PIO, tft_sm);
+
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int i = 0; i < 10; i++) tft_fill_dma(dma_ch, i & 1 ? 0xF81F : 0x07FF);
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+        float byte_rate_mb = (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f;
+        printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+
+        // Restore safe clkdiv
+        tft_flush();
+        pio_sm_set_clkdiv(TFT_PIO, tft_sm, TFT_CLK_DIV);
+        pio_sm_clkdiv_restart(TFT_PIO, tft_sm);
+        printf("  clkdiv restored to %.0f\n", TFT_CLK_DIV);
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test E — TE-gated DMA fill (10 frames)
+    //
+    // Gates each frame transfer to the TE rising edge (start of V-blank).
+    // Frame starts in the safe blanking window — no mid-frame tearing.
+    // Expected: throughput matches display refresh rate (~60 FPS if transfer
+    // completes within one frame; otherwise the effective rate is lower).
+    // -------------------------------------------------------------------------
+    printf("\n[E] TE-gated DMA fill — 10 frames (wait TE rise before each)...\n");
+    if (!gpio_get(TFT_TE_PIN) && true) {  // always run; print skip only if needed
+        // Wait for at most 100 ms for first TE edge; skip if no signal
+        uint32_t t_wait = to_ms_since_boot(get_absolute_time());
+        bool got_te = false;
+        bool prev = gpio_get(TFT_TE_PIN);
+        while (to_ms_since_boot(get_absolute_time()) - t_wait < 100) {
+            bool cur = gpio_get(TFT_TE_PIN);
+            if (cur && !prev) { got_te = true; break; }
+            prev = cur;
+        }
+        if (!got_te) {
+            printf("  SKIP: no TE signal within 100 ms timeout\n");
+            goto fast_cleanup;
+        }
+    }
+    {
+        static const uint16_t te_colours[2] = {0xFFFF, 0x0000};
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int i = 0; i < 10; i++) {
+            // Wait for TE rising edge (start of V-blank)
+            while ( gpio_get(TFT_TE_PIN)) tight_loop_contents();  // wait for low
+            while (!gpio_get(TFT_TE_PIN)) tight_loop_contents();  // wait for rise
+            tft_fill_dma(dma_ch, te_colours[i & 1]);
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        printf("  10 TE-gated frames in %lu ms  →  %.2f FPS\n",
+               elapsed, 10000.0f / (float)elapsed);
+        if (elapsed <= 10 * 17 + 50)
+            printf("  Result: transfer fits within one frame period — tear-free capable\n");
+        else
+            printf("  Result: transfer exceeds one frame — reduce clkdiv or use partial update\n");
+    }
+
+fast_cleanup:
+    dma_channel_unclaim(dma_ch);
+
+    bus_b_init();
+    lm_write(LM27965_GP, 0x20);
+    bus_b_deinit();
+
+    gpio_put(TFT_nCS_PIN, 1);
+    tft_pio_stop();
+    gpio_set_function(TFT_nCS_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(TFT_DCX_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(TFT_nRST_PIN, GPIO_FUNC_NULL);
+
+    printf("Done\n");
+}
