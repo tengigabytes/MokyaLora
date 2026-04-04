@@ -10,15 +10,31 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 
 | Revision | Status |
 |----------|--------|
-| Rev A | Sent to manufacturer — PCB prototype fabrication in progress |
+| Rev A | **Received 2026-04-02 — bringup in progress** — 9 of 10 steps complete; PSRAM hardware fault under investigation (Issue 8) |
+
+**Rev A bringup summary** (see [`docs/bringup/rev-a-bringup-log.md`](docs/bringup/rev-a-bringup-log.md) for full details):
+
+| Step | Component | Result |
+|------|-----------|--------|
+| 1 | Power rails (1.8 V / 3.3 V) | ✅ PASS |
+| 2 | MCU boot + USB CDC | ✅ PASS |
+| 3 | I2C sensors (IMU / Mag / Baro / GNSS) | ✅ PASS |
+| 4 | TFT LCD (ST7789VI, PIO 8080) | ✅ PASS (via FPC adapter — Issue 5) |
+| 5 | LoRa SX1262 (SPI, RX, RSSI) | ✅ PASS |
+| 6 | Keypad (6×6 matrix) | ✅ PASS |
+| 7 | Audio — NAU8315 I2S amp + speaker | ✅ PASS |
+| 8 | Battery (BQ25622 charger) + vibration motor | ✅ PASS |
+| 9 | Flash (W25Q128JW) | ✅ PASS — PSRAM unresponsive (hardware fault, Issue 8) |
+| 10 | PDM microphone (IM69D130) | ⚠️ PARTIAL — capture/playback working; background noise under investigation |
 
 ### Firmware
 
 | Component | Status |
 |-----------|--------|
-| Core 0 — Meshtastic modem | Not yet started — pending Rev A hardware bring-up |
-| Core 1 — UI / application | Not yet started — pending Rev A hardware bring-up |
-| MokyaInput Engine (MIE) | Not yet started |
+| Core 0 — Meshtastic modem | Not yet started — pending Rev A bringup completion |
+| Core 1 — UI / application | Not yet started — pending Rev A bringup completion |
+| MokyaInput Engine (MIE) | **Phase 1 complete** — full IME (Smart Zh/En, Direct, Bopomofo), C API, 83/83 tests passing |
+| Bringup shell | **Complete** — `firmware/tools/bringup/`; covers all Rev A test steps |
 
 ## System Overview
 
@@ -155,12 +171,18 @@ accepted by the project owner before being committed.
 
 ### Firmware
 
-- **No firmware provided** — Firmware development has not yet started. No firmware is
-  available in this repository at this time. This notice will be updated when firmware
-  is released.
+- **Bringup firmware** — A hardware validation shell (`firmware/tools/bringup/`) is
+  available for Rev A bring-up. It is a development/test tool only and is not intended
+  for end-user deployment.
 
-- **No warranty** — When firmware is released, it will be provided "as-is" under its
-  respective open-source licence (GPL-3.0 for Core 0, Apache-2.0 for Core 1, MIT for MIE)
+- **MokyaInput Engine (MIE)** — The IME sub-library (`firmware/mie/`) is available as a
+  host-buildable static library with unit tests. It has not yet been integrated with
+  RP2350B hardware.
+
+- **Core 0 / Core 1** — Application firmware development has not yet started.
+
+- **No warranty** — All firmware is provided "as-is" under its respective open-source
+  licence (GPL-3.0 for Core 0, Apache-2.0 for Core 1, MIT for MIE and bringup tools)
   without any warranty of fitness for a particular purpose.
 
 ## Contributing
