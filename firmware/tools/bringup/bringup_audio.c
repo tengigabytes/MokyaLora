@@ -1,7 +1,6 @@
 #include "bringup.h"
 #include "i2s_out.pio.h"
 #include "pdm_mic.pio.h"
-#include "OpenPDMFilter.h"
 #if BRINGUP_WAV
 #include "voice_pcm.h"
 #include "gc_pcm.h"
@@ -294,66 +293,47 @@ void mic_raw(void) {
 }
 
 // ---------------------------------------------------------------------------
-// PDM microphone → PCM via ST OpenPDMFilter (sinc³ decimation, Apache-2.0)
+// Microphone → Speaker loopback
 //
-// PDM CLK = 3.125 MHz (clkdiv=20), decimation = 64.
-// Open_PDM_Filter_64 processes Fs/1000 = 48 samples per call, consuming
-// 96 × 32-bit FIFO words (384 PDM bytes) → output rate = 48 828 Hz.
+// PDM CLK = 3.125 MHz (clkdiv=20), decimation ratio = 64.
+// PIO autopush = 32 bits; software reads 2 words (64 PDM bits) per audio sample.
+// 3,125,000 / 32 / 2 = 48,828 Hz — exactly matches the I2S sample rate.
 //
-// Bit ordering: PIO shifts LEFT (MSB first); bit 31 = first PDM bit received.
-// Filter expects byte[0] bit 7 = first PDM bit, so bytes are extracted in
-// big-endian order from each 32-bit FIFO word.
+// Decimation: simple integrate-and-dump (1-stage CIC).
+//   64 PDM bits → ones count [0..64], centre 32.
+//   PCM = (ones − 32) × 1024 × GAIN, clamped to MAX_AMPLITUDE for speaker safety.
 //
-// Warmup: 200 filter calls ≈ 200 ms; fully settles sinc³ state and HP/LP IIRs.
-// The first 200 ms of output is discarded to avoid the initial DC transient.
-//
-// pio0: I2S amp (gpio_base=16 for GPIO 32). pio1: PDM mic (GPIO 4/5).
+// Audio quality: passable for voice; CIC roll-off above ~10 kHz is expected.
+// pio0: I2S amp (gpio_base=16 for GPIO 32). pio1: PDM mic (GPIO 4/5, default base).
 // ---------------------------------------------------------------------------
 
-#define REC_SECONDS        3
-#define REC_SAMPLES        (REC_SECONDS * I2S_SAMPLE_RATE)  // 146,484 int16_t samples
-#define PDM_CHUNK_SAMPLES  ((int)(I2S_SAMPLE_RATE / 1000))  // 48 PCM samples per call
-#define PDM_CHUNK_BYTES    (PDM_CHUNK_SAMPLES * 8)           // 384 PDM bytes per call
-#define PDM_CHUNK_WORDS    (PDM_CHUNK_BYTES / 4)             // 96 FIFO reads per call
-#define PDM_WARMUP_CALLS   200                               // ≈ 200 ms
+#define MIC_GAIN 4   // 12 dB — speech signal fits within MAX_AMPLITUDE after IIR LPF
+
+// ---------------------------------------------------------------------------
+// mic_rec — record 3 s into SRAM, then play back through speaker.
+//
+// Separates capture and playback into two distinct phases:
+//   Phase 1 (capture): only PDM PIO running → CLK uninterrupted, no I2S competition.
+//   Phase 2 (playback): only I2S PIO running → clean amp output.
+//
+// Buffer: REC_SAMPLES × 2 bytes = 3 × 48828 × 2 = 292,968 bytes in BSS.
+// ---------------------------------------------------------------------------
+#define REC_SECONDS  3
+#define REC_SAMPLES  (REC_SECONDS * I2S_SAMPLE_RATE)   // 146,484 int16_t samples
 
 static int16_t rec_buf[REC_SAMPLES];
-static TPDMFilter_InitStruct pdm_filter;
-
-// Reinitialise sinc³ filter + build LUT. Call once before each mic function.
-static void pdm_filter_reinit(void) {
-    memset(&pdm_filter, 0, sizeof(pdm_filter));
-    pdm_filter.Fs              = (uint16_t)I2S_SAMPLE_RATE;
-    pdm_filter.LP_HZ           = (float)(I2S_SAMPLE_RATE / 2);
-    pdm_filter.HP_HZ           = 10.0f;
-    pdm_filter.In_MicChannels  = 1;
-    pdm_filter.Out_MicChannels = 1;
-    pdm_filter.Decimation      = 64;
-    pdm_filter.MaxVolume       = 64;
-    pdm_filter.Gain            = 16;
-    Open_PDM_Filter_Init(&pdm_filter);
-}
-
-// Read PDM_CHUNK_WORDS 32-bit words from PIO FIFO → buf[PDM_CHUNK_BYTES].
-// PIO shifts LEFT so bit 31 = first PDM bit; extract MSB-first for the filter.
-static void pdm_read_chunk(uint mic_sm, uint8_t *buf) {
-    for (int w = 0; w < PDM_CHUNK_WORDS; w++) {
-        uint32_t word = pio_sm_get_blocking(pio1, mic_sm);
-        buf[w * 4 + 0] = (uint8_t)(word >> 24);
-        buf[w * 4 + 1] = (uint8_t)(word >> 16);
-        buf[w * 4 + 2] = (uint8_t)(word >>  8);
-        buf[w * 4 + 3] = (uint8_t)(word      );
-    }
-}
 
 void mic_loopback(void) {
     printf("\n--- Mic → Speaker Loopback (10 s, Enter to stop) ---\n");
-    printf("  PDM 3.125 MHz, sinc³ decimation=64 → PCM 48828 Hz\n");
+    printf("  PDM 3.125 MHz, decimation=64 → PCM 48828 Hz, gain=×%d\n", MIC_GAIN);
 
     // --- Start I2S amp on pio0 ---
     int amp_sm = amp_pio_start();
     if (amp_sm < 0) return;
 
+    // Test tone before PDM mic starts — isolates amp vs signal-processing issues.
+    // If this tone is heard: amp chain works, problem is in PDM→PCM path.
+    // If this tone is also silent: fundamental amp issue specific to mic_loop.
     printf("  Test tone 440 Hz 0.5 s — should be audible...\n");
     bee_note(amp_sm, 440, 500, MAX_AMPLITUDE);
     printf("  Tone done. Starting mic...\n");
@@ -377,36 +357,86 @@ void mic_loopback(void) {
     pdm_mic_program_init(pio1, mic_sm, mic_offset, MIC_CLK_PIN, MIC_DATA_PIN, PDM_CLK_DIV);
     pio_sm_set_enabled(pio1, mic_sm, true);
 
-    pdm_filter_reinit();
-    uint8_t pdm_buf[PDM_CHUNK_BYTES];
-    uint16_t pcm_tmp[PDM_CHUNK_SAMPLES];
-
     // Drain any residual serial bytes
     while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
 
-    // Warmup: PDM_WARMUP_CALLS chunks ≈ 200 ms; settles sinc³ + HP/LP IIRs.
-    // Send silence to amp so there is no gap or pop when live audio starts.
-    for (int c = 0; c < PDM_WARMUP_CALLS; c++) {
-        pdm_read_chunk(mic_sm, pdm_buf);
-        Open_PDM_Filter_64(pdm_buf, pcm_tmp, pdm_filter.MaxVolume, &pdm_filter);
-        for (int i = 0; i < PDM_CHUNK_SAMPLES; i++)
-            pio_sm_put_blocking(pio0, (uint)amp_sm, 0);
+    // IIR low-pass filter state: y[n] = (y[n-1]*3 + x[n]) >> 2
+    // Cutoff ~2.25 kHz — fc = arccos(23/24) × fs / 2π ≈ 2254 Hz; passes voice, attenuates HF.
+    int32_t filtered = 0;
+
+    // DC blocking: very slow IIR HPF, removes DC offset in the PDM path.
+    // fc ≈ 7.6 Hz; settles in ~20 ms.
+    // dc_est tracks the long-term mean of filtered; subtracting it centres
+    // the signal around zero so the speaker receives AC, not a static offset.
+    int32_t dc_est = 0;
+
+    // Warm-up: 100 ms — pre-settle filtered and dc_est so the main loop
+    // starts with correct DC baseline; output silence to amp during this time.
+    uint32_t warmup_end = to_ms_since_boot(get_absolute_time()) + 100;
+    while (to_ms_since_boot(get_absolute_time()) < warmup_end) {
+        uint32_t w0 = pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t w1 = pio_sm_get_blocking(pio1, mic_sm);
+        int ones_wu = __builtin_popcount(w0) + __builtin_popcount(w1);
+        int32_t pcm_wu = (int32_t)(ones_wu - 32) * 1024 * MIC_GAIN;
+        filtered = (filtered * 3 + pcm_wu) >> 2;
+        dc_est += (filtered - dc_est) >> 10;
+        pio_sm_put_blocking(pio0, (uint)amp_sm, 0);
     }
 
     printf("  Live — speak into mic...\n");
 
     uint32_t deadline = to_ms_since_boot(get_absolute_time()) + 10000;
 
+#if MIC_LOOP_STATS
+    // Debug stats — printed every ~0.5 s (24414 samples).
+    // WARNING: printf stalls CPU long enough to freeze PDM CLK → mic loses lock.
+    // Keep disabled (MIC_LOOP_STATS=0) when testing audio quality.
+    int ones_min = 64, ones_max = 0;
+    int32_t filt_min = INT32_MAX, filt_max = INT32_MIN;
+    int stat_count = 0;
+    const int STAT_INTERVAL = 24414;
+#endif
+
     while (to_ms_since_boot(get_absolute_time()) < deadline) {
         if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) break;
 
-        pdm_read_chunk(mic_sm, pdm_buf);
-        Open_PDM_Filter_64(pdm_buf, pcm_tmp, pdm_filter.MaxVolume, &pdm_filter);
-        for (int i = 0; i < PDM_CHUNK_SAMPLES; i++) {
-            int16_t s = (int16_t)pcm_tmp[i];
-            pio_sm_put_blocking(pio0, (uint)amp_sm,
-                                ((uint32_t)(uint16_t)s << 16) | (uint16_t)s);
+        // 2 PDM words = 64 bits = 1 sample at 48 828 Hz
+        uint32_t w0 = pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t w1 = pio_sm_get_blocking(pio1, mic_sm);
+
+        // Integrate-and-dump: ones in [0,64], centre 32
+        int ones = __builtin_popcount(w0) + __builtin_popcount(w1);
+        int32_t pcm = (int32_t)(ones - 32) * 1024 * MIC_GAIN;
+
+        // IIR LPF: α=0.75 — attenuates PDM noise shaping above ~2.25 kHz
+        filtered = (filtered * 3 + pcm) >> 2;
+
+        // DC blocking: track and remove the slowly-varying mean of filtered
+        dc_est += (filtered - dc_est) >> 10;  // fc ≈ 48828 / (2π × 1024) ≈ 7.6 Hz
+
+        // Clamp to MAX_AMPLITUDE for speaker protection
+        int32_t out = filtered - dc_est;
+        if (out >  MAX_AMPLITUDE) out =  MAX_AMPLITUDE;
+        if (out < -MAX_AMPLITUDE) out = -MAX_AMPLITUDE;
+        int16_t s = (int16_t)out;
+
+        // I2S word: bits[31:16]=L, bits[15:0]=R (mono mic → both channels)
+        pio_sm_put_blocking(pio0, (uint)amp_sm, ((uint32_t)(uint16_t)s << 16) | (uint16_t)s);
+
+#if MIC_LOOP_STATS
+        if (ones < ones_min) ones_min = ones;
+        if (ones > ones_max) ones_max = ones;
+        if (out < filt_min) filt_min = out;
+        if (out > filt_max) filt_max = out;
+
+        if (++stat_count >= STAT_INTERVAL) {
+            printf("  ones[%2d..%2d]  out_dc_blocked[%7d..%7d]\n",
+                   ones_min, ones_max, (int)filt_min, (int)filt_max);
+            ones_min = 16; ones_max = 0;
+            filt_min = INT32_MAX; filt_max = INT32_MIN;
+            stat_count = 0;
         }
+#endif
     }
 
     // Drain: output silence to avoid click/pop on stop
@@ -428,7 +458,7 @@ void mic_loopback(void) {
 // ---------------------------------------------------------------------------
 
 void mic_rec(void) {
-    printf("\n--- Mic Record + Playback (%d s, sinc³ decimation → PCM 48828 Hz) ---\n",
+    printf("\n--- Mic Record + Playback (%d s, PDM 3.125 MHz → PCM 48828 Hz) ---\n",
            REC_SECONDS);
     printf("  Buffer: %u samples = %u bytes in SRAM\n",
            (unsigned)REC_SAMPLES, (unsigned)(REC_SAMPLES * sizeof(int16_t)));
@@ -447,24 +477,31 @@ void mic_rec(void) {
     pdm_mic_program_init(pio1, mic_sm, mic_offset, MIC_CLK_PIN, MIC_DATA_PIN, PDM_CLK_DIV);
     pio_sm_set_enabled(pio1, mic_sm, true);
 
-    pdm_filter_reinit();
-    uint8_t pdm_buf[PDM_CHUNK_BYTES];
-    uint16_t pcm_tmp[PDM_CHUNK_SAMPLES];
-
-    // Warmup: PDM_WARMUP_CALLS chunks ≈ 200 ms; settles sinc³ + HP/LP IIRs.
-    for (int c = 0; c < PDM_WARMUP_CALLS; c++) {
-        pdm_read_chunk(mic_sm, pdm_buf);
-        Open_PDM_Filter_64(pdm_buf, pcm_tmp, pdm_filter.MaxVolume, &pdm_filter);
+    // Warm-up: 100 ms to settle mic and IIR/DC filter state
+    int32_t filtered = 0, dc_est = 0;
+    uint32_t warmup_end = to_ms_since_boot(get_absolute_time()) + 100;
+    while (to_ms_since_boot(get_absolute_time()) < warmup_end) {
+        uint32_t w0 = pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t w1 = pio_sm_get_blocking(pio1, mic_sm);
+        int ones = __builtin_popcount(w0) + __builtin_popcount(w1);
+        int32_t pcm = (int32_t)(ones - 32) * 1024 * MIC_GAIN;
+        filtered = (filtered * 3 + pcm) >> 2;
+        dc_est += (filtered - dc_est) >> 10;
     }
 
     printf("  Recording — speak now...\n");
 
-    int chunks = REC_SAMPLES / PDM_CHUNK_SAMPLES;
-    for (int ch = 0; ch < chunks; ch++) {
-        pdm_read_chunk(mic_sm, pdm_buf);
-        Open_PDM_Filter_64(pdm_buf, pcm_tmp, pdm_filter.MaxVolume, &pdm_filter);
-        for (int i = 0; i < PDM_CHUNK_SAMPLES; i++)
-            rec_buf[ch * PDM_CHUNK_SAMPLES + i] = (int16_t)pcm_tmp[i];
+    for (uint32_t i = 0; i < REC_SAMPLES; i++) {
+        uint32_t w0 = pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t w1 = pio_sm_get_blocking(pio1, mic_sm);
+        int ones = __builtin_popcount(w0) + __builtin_popcount(w1);
+        int32_t pcm = (int32_t)(ones - 32) * 1024 * MIC_GAIN;
+        filtered = (filtered * 3 + pcm) >> 2;
+        dc_est += (filtered - dc_est) >> 10;
+        int32_t out = filtered - dc_est;
+        if (out >  MAX_AMPLITUDE) out =  MAX_AMPLITUDE;
+        if (out < -MAX_AMPLITUDE) out = -MAX_AMPLITUDE;
+        rec_buf[i] = (int16_t)out;
     }
 
     pio_sm_set_enabled(pio1, mic_sm, false);
@@ -507,7 +544,7 @@ void mic_rec(void) {
 #define DUMP_SAMPLES  I2S_SAMPLE_RATE   // 1 s = 48 828 samples = 97 656 bytes
 
 void mic_dump(void) {
-    printf("\n--- Mic Dump (1 s record  binary PCM over serial) ---\n");
+    printf("\n--- Mic Dump (1 s record → binary PCM over serial) ---\n");
     printf("  Run recv_pcm_dump.py on PC to receive.\n");
 
     // Phase 1: capture — PDM only
@@ -524,24 +561,30 @@ void mic_dump(void) {
     pdm_mic_program_init(pio1, mic_sm, mic_offset, MIC_CLK_PIN, MIC_DATA_PIN, PDM_CLK_DIV);
     pio_sm_set_enabled(pio1, mic_sm, true);
 
-    pdm_filter_reinit();
-    uint8_t pdm_buf[PDM_CHUNK_BYTES];
-    uint16_t pcm_tmp[PDM_CHUNK_SAMPLES];
-
-    // Warmup: PDM_WARMUP_CALLS chunks ≈ 200 ms; settles sinc³ + HP/LP IIRs.
-    for (int c = 0; c < PDM_WARMUP_CALLS; c++) {
-        pdm_read_chunk(mic_sm, pdm_buf);
-        Open_PDM_Filter_64(pdm_buf, pcm_tmp, pdm_filter.MaxVolume, &pdm_filter);
+    int32_t filtered = 0, dc_est = 0;
+    uint32_t warmup_end = to_ms_since_boot(get_absolute_time()) + 100;
+    while (to_ms_since_boot(get_absolute_time()) < warmup_end) {
+        uint32_t w0 = pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t w1 = pio_sm_get_blocking(pio1, mic_sm);
+        int ones = __builtin_popcount(w0) + __builtin_popcount(w1);
+        int32_t pcm = (int32_t)(ones - 32) * 1024 * MIC_GAIN;
+        filtered = (filtered * 3 + pcm) >> 2;
+        dc_est += (filtered - dc_est) >> 10;
     }
 
-    printf("  Recording 1 s  speak now...\n");
+    printf("  Recording 1 s — speak now...\n");
 
-    int dump_chunks = DUMP_SAMPLES / PDM_CHUNK_SAMPLES;
-    for (int ch = 0; ch < dump_chunks; ch++) {
-        pdm_read_chunk(mic_sm, pdm_buf);
-        Open_PDM_Filter_64(pdm_buf, pcm_tmp, pdm_filter.MaxVolume, &pdm_filter);
-        for (int i = 0; i < PDM_CHUNK_SAMPLES; i++)
-            rec_buf[ch * PDM_CHUNK_SAMPLES + i] = (int16_t)pcm_tmp[i];
+    for (uint32_t i = 0; i < DUMP_SAMPLES; i++) {
+        uint32_t w0 = pio_sm_get_blocking(pio1, mic_sm);
+        uint32_t w1 = pio_sm_get_blocking(pio1, mic_sm);
+        int ones = __builtin_popcount(w0) + __builtin_popcount(w1);
+        int32_t pcm = (int32_t)(ones - 32) * 1024 * MIC_GAIN;
+        filtered = (filtered * 3 + pcm) >> 2;
+        dc_est += (filtered - dc_est) >> 10;
+        int32_t out = filtered - dc_est;
+        if (out >  MAX_AMPLITUDE) out =  MAX_AMPLITUDE;
+        if (out < -MAX_AMPLITUDE) out = -MAX_AMPLITUDE;
+        rec_buf[i] = (int16_t)out;
     }
 
     pio_sm_set_enabled(pio1, mic_sm, false);
@@ -551,6 +594,7 @@ void mic_dump(void) {
     gpio_set_function(MIC_DATA_PIN, GPIO_FUNC_NULL);
 
     // Phase 2: binary dump over serial
+    // Flush any buffered text first so PCMDUMP_START arrives before binary data.
     printf("PCMDUMP_START %u %u\n", (unsigned)I2S_SAMPLE_RATE, (unsigned)DUMP_SAMPLES);
     stdio_flush();
 

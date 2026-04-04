@@ -157,6 +157,11 @@ void perform_scan(i2c_inst_t *i2c, uint sda, uint scl, const char *bus_name);
 // Also uncomment the WAV source files in firmware/tools/bringup/CMakeLists.txt.
 #define BRINGUP_WAV  0
 
+// Set to 1 to enable ~0.5 s periodic stat prints in mic_loopback.
+// Disable (0) when testing audio quality — printf stalls the CPU long enough
+// to freeze the PDM CLK, causing the mic to lose lock.
+#define MIC_LOOP_STATS  0
+
 // bringup_audio.c
 void precompute_sine(void);
 void amp_test(void);
