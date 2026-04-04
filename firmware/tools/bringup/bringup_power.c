@@ -82,22 +82,23 @@ static int bq_write(uint8_t reg, uint8_t val) {
     return i2c_write_timeout_us(i2c1, BQ25622_ADDR, buf, 2, false, 50000);
 }
 
-// BQ25622 VBUS_STAT[2:0] decode (SLUSEG2D Table 10-4)
+// BQ25622 VBUS_STAT[2:0] decode (SLUSEG2D Table 8-28, BQ25622 only)
+// BQ25622 valid values: 000=not powered, 100=unknown adapter, 111=OTG
 static const char *const bq_vbus_str[] = {
-    "No Input",          // 000
-    "USB SDP (5V)",      // 001
-    "USB CDP (5V)",      // 010
-    "USB DCP (5V)",      // 011
-    "Adj. HV DCP",       // 100 — 9V/12V
-    "Unknown Adaptor",   // 101
-    "Non-Std Adaptor",   // 110
-    "OTG",               // 111
+    "Not powered",       // 000
+    "reserved(001)",     // 001
+    "reserved(010)",     // 010
+    "reserved(011)",     // 011
+    "Unknown Adapter",   // 100 — default IINDPM setting
+    "reserved(101)",     // 101
+    "reserved(110)",     // 110
+    "OTG boost",         // 111
 };
 
-// BQ25622 CHG_STAT[4:3] decode
+// BQ25622 CHG_STAT[4:3] decode (SLUSEG2D Table 8-28)
 static const char *const bq_chg_str[] = {
     "Not Charging",      // 00
-    "Pre/Fast Charge",   // 01
+    "CC (Trickle/Pre/Fast)",  // 01
     "Taper (CV)",        // 10
     "Top-off",           // 11
 };
@@ -112,10 +113,15 @@ void bq25622_print_status(void) {
                v, pn == 1 ? "BQ25622" : (pn == 0 ? "BQ25620" : "???"), v & 0x7);
     }
     if (bq_read(REG_STATUS0, &v) >= 0) {
-        printf("Status0    (0x1D): 0x%02X  VSYS_STAT=%d(%s)  WD_STAT=%d(%s)\n",
+        printf("Status0    (0x1D): 0x%02X  ADC_DONE=%d  TREG=%d  VSYS=%s  IINDPM=%d  VINDPM=%d  SAFETY_TMR=%d  WD=%d\n",
                v,
-               (v >> 4) & 1, (v >> 4) & 1 ? "BAT<VSYSMIN" : "OK",
-               v & 1,        v & 1         ? "WD expired!" : "OK");
+               (v >> 6) & 1,
+               (v >> 5) & 1,
+               (v >> 4) & 1 ? "BAT<VSYSMIN!" : "OK",
+               (v >> 3) & 1,
+               (v >> 2) & 1,
+               (v >> 1) & 1,
+               v & 1);
     }
     if (bq_read(REG_STATUS1, &v) >= 0) {
         printf("Status1    (0x1E): 0x%02X  CHG=%s  VBUS=%s\n",
@@ -159,14 +165,97 @@ void bq25622_disable_charge(void) {
 }
 
 void bq25622_enable_charge(void) {
-    uint8_t v;
+    uint8_t v, vlo, vhi;
     printf("\n--- BQ25622: Enabling Charge ---\n");
-    bq_write(REG_CHARGER_CTRL1, 0xA4);  // kick WD_RST, EN_CHG=1, WATCHDOG=01
+
+    // 1. Set VREG = 4100 mV
+    // VREG_RAW = 4100 / 10 = 410 = 0x19A (9-bit)
+    // VREG[4:0] = 0x1A → REG0x04[7:3] = 0xD0; VREG[8:5] = 0x0C → REG0x05[3:0] = 0x0C
+    bq_write(REG_VREG_LO, 0xD0);
+    bq_write(REG_VREG_HI, 0x0C);
+    bq_read(REG_VREG_LO, &vlo);
+    bq_read(REG_VREG_HI, &vhi);
+    uint16_t vreg_raw = (uint16_t)(((vhi & 0x0Fu) << 5) | ((vlo >> 3) & 0x1Fu));
+    printf("VREG:   lo=0x%02X hi=0x%02X → %u mV\n", vlo, vhi, (unsigned)(vreg_raw * 10u));
+
+    // 2. Set IINDPM = 100 mA
+    // IINDPM_RAW = 100 / 20 = 5 (8-bit)
+    // IINDPM[3:0] = 5 → REG0x06[7:4] = 0x50; IINDPM[7:4] = 0 → REG0x07[3:0] = 0x00
+    bq_write(REG_IINDPM_LO, 0x50);
+    bq_write(REG_IINDPM_HI, 0x00);
+    bq_read(REG_IINDPM_LO, &vlo);
+    bq_read(REG_IINDPM_HI, &vhi);
+    uint16_t iindpm_raw = (uint16_t)(((vhi & 0x0Fu) << 4) | ((vlo >> 4) & 0x0Fu));
+    printf("IINDPM: lo=0x%02X hi=0x%02X → %u mA\n", vlo, vhi, (unsigned)(iindpm_raw * 20u));
+
+    // 3. Enable charging
+    bq_write(REG_CHARGER_CTRL1, 0xA4);  // kick WD_RST
     sleep_ms(10);
-    bq_write(REG_CHARGER_CTRL1, 0xA1);  // EN_CHG=1, WATCHDOG=01 (default)
+    bq_write(REG_CHARGER_CTRL1, 0xA1);  // EN_CHG=1, WATCHDOG=01
     bq_read(REG_CHARGER_CTRL1, &v);
     printf("ChgCtrl1 (0x16): 0x%02X  EN_CHG=%d  EN_HIZ=%d  WATCHDOG=%d\n",
            v, (v >> 5) & 1, (v >> 4) & 1, v & 0x3);
+}
+
+// ---------------------------------------------------------------------------
+// BQ25622 ADC readout
+// ---------------------------------------------------------------------------
+
+void bq25622_read_adc(void) {
+    uint8_t lo, hi;
+    uint16_t raw16;
+    printf("\n--- BQ25622 ADC Readings ---\n");
+
+    // Enable ADC: continuous, 12-bit resolution (ADC_SAMPLE=00), all channels on
+    bq_write(REG_ADC_CTRL, 0x80);
+    uint8_t adc_ctrl, adc_dis;
+    bq_read(REG_ADC_CTRL, &adc_ctrl);
+    bq_read(REG_ADC_FUNC_DIS, &adc_dis);
+    printf("ADC_CTRL (0x26): 0x%02X  EN=%d RATE=%s SAMPLE=%ubit\n",
+           adc_ctrl, (adc_ctrl >> 7) & 1,
+           (adc_ctrl >> 6) & 1 ? "one-shot" : "continuous",
+           12u - ((adc_ctrl >> 4) & 0x3u));  // 00→12bit 01→11bit 10→10bit 11→9bit
+    printf("ADC_DIS  (0x27): 0x%02X  IBUS=%d IBAT=%d VBUS=%d VBAT=%d VSYS=%d TS=%d TDIE=%d VPMID=%d\n",
+           adc_dis,
+           (adc_dis >> 7) & 1, (adc_dis >> 6) & 1, (adc_dis >> 5) & 1, (adc_dis >> 4) & 1,
+           (adc_dis >> 3) & 1, (adc_dis >> 2) & 1, (adc_dis >> 1) & 1, adc_dis & 1);
+    sleep_ms(300);  // 12-bit continuous mode: wait for full channel-scan cycle
+
+    // IBUS: bits[15:1] 2s-complement, 2 mA/step
+    bq_read(REG_IBUS_ADC_LO, &lo); bq_read(REG_IBUS_ADC_HI, &hi);
+    raw16 = (uint16_t)((hi << 8) | lo);
+    int ibus_ma = (int)((int16_t)raw16 >> 1) * 2;
+    printf("  IBUS:  %+d mA  (raw 0x%04X)\n", ibus_ma, raw16);
+
+    // IBAT: bits[15:2] 2s-complement, 4 mA/step
+    bq_read(REG_IBAT_ADC_LO, &lo); bq_read(REG_IBAT_ADC_HI, &hi);
+    raw16 = (uint16_t)((hi << 8) | lo);
+    int ibat_ma = (int)((int16_t)raw16 >> 2) * 4;
+    printf("  IBAT:  %+d mA  (raw 0x%04X)\n", ibat_ma, raw16);
+
+    // VBUS: bits[14:2] unsigned, 3.97 mV/step
+    bq_read(REG_VBUS_ADC_LO, &lo); bq_read(REG_VBUS_ADC_HI, &hi);
+    raw16 = (uint16_t)((hi << 8) | lo);
+    unsigned vbus_mv = (unsigned)(((raw16 >> 2) & 0x1FFFu) * 397u / 100u);
+    printf("  VBUS:  %u mV  (raw 0x%04X)\n", vbus_mv, raw16);
+
+    // VPMID: bits[14:2] unsigned, 3.97 mV/step
+    bq_read(REG_VPMID_ADC_LO, &lo); bq_read(REG_VPMID_ADC_HI, &hi);
+    raw16 = (uint16_t)((hi << 8) | lo);
+    unsigned vpmid_mv = (unsigned)(((raw16 >> 2) & 0x1FFFu) * 397u / 100u);
+    printf("  VPMID: %u mV  (raw 0x%04X)\n", vpmid_mv, raw16);
+
+    // VBAT: bits[12:1] unsigned, 1.99 mV/step
+    bq_read(REG_VBAT_ADC_LO, &lo); bq_read(REG_VBAT_ADC_HI, &hi);
+    raw16 = (uint16_t)((hi << 8) | lo);
+    unsigned vbat_mv = (unsigned)(((raw16 >> 1) & 0x0FFFu) * 199u / 100u);
+    printf("  VBAT:  %u mV  (raw 0x%04X)\n", vbat_mv, raw16);
+
+    // VSYS: bits[12:1] unsigned, 1.99 mV/step
+    bq_read(REG_VSYS_ADC_LO, &lo); bq_read(REG_VSYS_ADC_HI, &hi);
+    raw16 = (uint16_t)((hi << 8) | lo);
+    unsigned vsys_mv = (unsigned)(((raw16 >> 1) & 0x0FFFu) * 199u / 100u);
+    printf("  VSYS:  %u mV  (raw 0x%04X)\n", vsys_mv, raw16);
 }
 
 // ---------------------------------------------------------------------------
@@ -217,20 +306,18 @@ static void dump_bq25622(void) {
     printf("    PART_INFO (0x38): 0x%02X  PN=%d(%s)  DEV_REV=%d\n",
            v, pn, pn==1?"BQ25622":pn==0?"BQ25620":"unknown", v&0x7);
 
-    bq_read(0x14, &v);
-    printf("    CHG_CTRL0 (0x14): 0x%02X  ICHG=%u mA\n", v, (unsigned)((v & 0x3F) * 40u));
+    // VREG: REG0x04/05, 10mV/step, 9-bit; VREG[4:0] in 0x04[7:3], VREG[8:5] in 0x05[3:0]
+    uint8_t vlo, vhi;
+    bq_read(REG_VREG_LO, &vlo);
+    bq_read(REG_VREG_HI, &vhi);
+    uint16_t vreg_raw = (uint16_t)(((vhi & 0x0Fu) << 5) | ((vlo >> 3) & 0x1Fu));
+    printf("    VREG      (0x04/05): lo=0x%02X hi=0x%02X → %u mV\n", vlo, vhi, (unsigned)(vreg_raw * 10u));
 
-    // VREG: 0x06 bits[7:1] = 8mV/LSB from 3504mV base
-    bq_read(0x06, &v);
-    printf("    VREG      (0x06): 0x%02X  VREG=%u mV  (note: POR=3504mV, must set to 4200mV)\n",
-           v, (unsigned)(3504u + ((v >> 1) & 0x7F) * 8u));
-
-    bq_read(0x00, &v);
-    printf("    IINDPM    (0x00): 0x%02X  IINDPM=%u mA\n", v, (unsigned)((v & 0x3F) * 100u));
-
-    bq_read(0x01, &v);
-    printf("    VINDPM    (0x01): 0x%02X  VINDPM=%u mV\n",
-           v, (unsigned)(3900u + ((v & 0x7F) * 100u)));
+    // IINDPM: REG0x06/07, 20mA/step, 8-bit; IINDPM[3:0] in 0x06[7:4], IINDPM[7:4] in 0x07[3:0]
+    bq_read(REG_IINDPM_LO, &vlo);
+    bq_read(REG_IINDPM_HI, &vhi);
+    uint16_t iindpm_raw = (uint16_t)(((vhi & 0x0Fu) << 4) | ((vlo >> 4) & 0x0Fu));
+    printf("    IINDPM    (0x06/07): lo=0x%02X hi=0x%02X → %u mA\n", vlo, vhi, (unsigned)(iindpm_raw * 20u));
 
     bq_read(0x16, &v);
     printf("    CTRL1     (0x16): 0x%02X  EN_CHG=%d EN_HIZ=%d WD=%d\n", v,(v>>5)&1,(v>>4)&1,v&3);

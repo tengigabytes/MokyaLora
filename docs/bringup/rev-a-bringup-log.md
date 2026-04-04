@@ -198,24 +198,54 @@ Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). 
 |------|--------|-------|
 | Vibration motor (HD-EMB1104-SM-2) | ✅ PASS | PWM drive via SSM3K56ACT OK |
 | BQ25622 charger I2C + register dump | ✅ PASS | After TP101 fix (Issue 2); see register dump below |
-| BQ27441 fuel gauge I2C presence | ⚠️ CONDITIONAL | Readable only with battery installed or in charging mode |
-| BQ27441 SOC / capacity readout | ⏳ PENDING | Detailed gauge characterisation not yet performed |
+| BQ25622 VREG/IINDPM write + charging enable | ✅ PASS | VREG=4100 mV, IINDPM=100 mA, EN_CHG=1 confirmed; see charging dump below |
+| BQ25622 ADC (IBUS/IBAT/VBUS/VPMID/VBAT/VSYS) | ✅ PASS | ADC_EN=1, 12-bit continuous; all 6 channels read correctly |
+| BQ27441 fuel gauge I2C presence | ❌ FAIL | NACK even with charging current flowing — Issue 9; SLEEP mode wakeup sequence required |
+| BQ27441 SOC / capacity readout | ⏳ PENDING | Blocked by Issue 9 |
 
 **BQ25622 register dump (at power-on, no battery, charging disabled by firmware):**
 
 | Register | Value | Field decode |
 |----------|-------|--------------|
 | PART_INFO (0x38) | 0x0A | PN=1 (BQ25622 ✅), DEV_REV=2 |
-| CHG_CTRL0 (0x14) | 0x06 | ICHG = 240 mA — POR default |
-| VREG (0x06) | 0x00 | Charge voltage = 3504 mV — POR default; **must be set to 4200 mV for BL-4C** |
-| IINDPM (0x00) | 0xFF | Input current limit = 6300 mA — POR default, not yet configured |
-| VINDPM (0x01) | 0xFF | Input UVLO = 16600 mV — POR default, not yet configured |
 | CTRL1 (0x16) | 0x80 | EN_CHG=0 (charging disabled at startup) |
 | STATUS0 (0x1D) | 0x10 | VSYS_STAT=1 — no battery; system powered from VBUS only |
-| STATUS1 (0x1E) | 0x04 | CHG=Not charging, VBUS=Adj. HV DCP (USB-C 5 V) |
+| STATUS1 (0x1E) | 0x04 | CHG=Not Charging, VBUS=Unknown Adapter |
 | FAULT (0x1F) | 0x00 | No faults ✅ |
 
-> ICHG and VREG are POR defaults. Production driver must set VREG=4200 mV, configure IINDPM/VINDPM, and enable charging via CTRL1[EN_CHG].
+> **Register map correction (2026-04-04):** Earlier dump incorrectly listed VREG at 0x06 and IINDPM at 0x00. Correct addresses: VREG = REG0x04 (bytes 0x04/0x05, 10 mV/step, POR=4200 mV); IINDPM = REG0x06 (bytes 0x06/0x07, 20 mA/step, POR=3200 mA). Register 0x00 does not exist. STATUS1 VBUS field for BQ25622 only defines 000/100/111; "Adj. HV DCP" in original dump was the BQ25620 decode — corrected to "Unknown Adapter".
+
+**BQ25622 charging operation dump (VREG=4100 mV, IINDPM=100 mA, battery installed):**
+
+| Register | Value | Field decode |
+|----------|-------|--------------|
+| VREG (0x04/05) | lo=0xD0 hi=0x0C | 4100 mV ✅ |
+| IINDPM (0x06/07) | lo=0x50 hi=0x00 | 100 mA ✅ |
+| CTRL1 (0x16) | 0xA1 | EN_CHG=1, EN_HIZ=0, WATCHDOG=01 |
+| STATUS0 (0x1D) | 0x08 | IINDPM_STAT=1 (100 mA limit active), all others 0 |
+| STATUS1 (0x1E) | 0x0C | CHG=CC (Trickle/Pre/Fast), VBUS=Unknown Adapter |
+| FAULT (0x1F) | 0x00 | No faults ✅ |
+
+**BQ25622 ADC readings (12-bit continuous, battery installed, charging active):**
+
+| Channel | Value | Notes |
+|---------|-------|-------|
+| VBUS | 5014 mV | USB-C 5 V input ✅ |
+| VPMID | 5002 mV | Mid-point between VBUS and charge path ✅ |
+| VBAT | 3966 mV | Battery voltage, BL-4C normal range ✅ |
+| VSYS | 3981 mV | System output voltage ✅ |
+| IBUS | +84 mA | Input current, within IINDPM=100 mA limit ✅ |
+| IBAT | +52 mA | Battery charge current (system load ≈ 32 mA) ✅ |
+
+**Firmware notes:**
+- Correct register addresses confirmed from SLUSEG2D: VREG=REG0x04 (10 mV/step), IINDPM=REG0x06 (20 mA/step), ADC_CTRL=REG0x26, ADC_FUNC_DIS=REG0x27.
+- `bq25622_enable_charge()` sets VREG and IINDPM before EN_CHG=1; both values confirmed via readback.
+- ADC requires explicit enable: write 0x80 to REG0x26 (ADC_EN=1, continuous, 12-bit). POR=disabled. Wait ≥ 300 ms for full channel-scan cycle after enabling.
+- REG0x27 (ADC_FUNC_DIS) POR=0x00; all channels enabled by default — no write needed.
+- `charge_scan` command: enables charging + 500 ms delay + Bus B I2C scan (to probe BQ27441 wakeup).
+- `adc` command: enables ADC (12-bit continuous) + 300 ms wait + reads all 6 channels.
+
+> ICHG POR = 1040 mA (REG0x02, 80 mA/step). Production driver must also configure ICHG, VINDPM (REG0x08), and enable charging via CTRL1[EN_CHG].
 
 **LM27965 register dump (at power-on, all LEDs off):**
 
@@ -577,7 +607,7 @@ Key findings:
 | 6 | 2026-04-02 | U5 (LM27965) Bank B | LED D37 and keypad backlight share Bank B → not independently controllable | Routing error | Accept Rev A limitation | Move D37 to unused Bank A channel in Rev B |
 | 7 | 2026-04-02 | U15 (TPS62840) / 1.8 V rail | Pi Debug Probe incompatible (requires 3.3 V VTREF) | 1.8 V logic vs 3.3 V-only debug tool | Using J-Link (supports 1.8 V VTREF) | Evaluate switchable VTREF option |
 | 8 | 2026-04-03 | U3 (APS6404L PSRAM) | No response on SPI or QPI — returns 0xFFFFFFFF | Suspected open trace: GPIO0 (pin 77) → U3 CE# (pin 1), or VCC_1V8 open at U3 | None — requires physical inspection | Verify trace continuity + VCC; bodge wire if open; replace U3 if VCC shorted |
-| 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | I2C NACK on Bus B scan even with battery installed — gauge undetectable at rest | BQ27441 enters SLEEP mode when no charge/discharge current flows; I2C address only responds when gauge is awake (current flowing or specific wakeup sequence required) | Battery detection re-targeted to BQ25622 STATUS0 VSYS_STAT[4] (pending implementation) | Consider connecting GPOUT to MCU GPIO to allow software wakeup; or rely on STATUS0 |
+| 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | I2C NACK even with charging current flowing (IBAT=+52 mA confirmed via BQ25622 ADC) — gauge remains undetectable | BQ27441 SLEEP mode wakeup requires specific I2C sequence (subclass access or CONTROL command); passive current flow is insufficient | Battery detection re-targeted to BQ25622 STATUS0.VSYS_STAT (pending) | Implement BQ27441 wakeup sequence per datasheet; consider GPOUT→MCU GPIO for wakeup |
 
 ---
 
