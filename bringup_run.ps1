@@ -49,6 +49,7 @@ $CmdTimeout = @{
     'mic_rec'   = 10
     'tft'       = 35
     'tft_fast'  = 60
+    'core1'     = 5
 }
 $DefaultTimeout = 2
 

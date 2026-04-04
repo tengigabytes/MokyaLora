@@ -181,6 +181,8 @@ static void handle_command(const char *cmd) {
         bus_b_init();
         bq25622_disable_charge();
         bus_b_deinit();
+    } else if (strcmp(cmd, "core1") == 0) {
+        core1_test();
     } else if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
         printf("Commands:\n");
         printf("  imu         -- LSM6DSV16X accel+gyro+temp one-shot read\n");
@@ -222,6 +224,7 @@ static void handle_command(const char *cmd) {
         printf("  key         -- keyboard monitor (prints key name on press; Enter to exit)\n");
         printf("  charge_on   -- enable BQ25622 charging\n");
         printf("  charge_off  -- disable BQ25622 charging\n");
+        printf("  core1       -- Step 16 Stage A: Core 1 boot/FIFO/SRAM/GPIO test\n");
     } else if (cmd[0] != '\0') {
         printf("Unknown command: '%s'  (type 'help' for list)\n", cmd);
     }

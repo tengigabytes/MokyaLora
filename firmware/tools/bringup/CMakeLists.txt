@@ -9,6 +9,7 @@ add_executable(i2c_custom_scan
     bringup_flash.c
     bringup_lora.c
     bringup_tft.c
+    bringup_core1.c
 )
 
 # Generate the C header from the PIO assembler source.
@@ -26,12 +27,14 @@ pico_generate_pio_header(i2c_custom_scan
 
 target_link_libraries(i2c_custom_scan
     pico_stdlib
+    pico_multicore
     hardware_i2c
     hardware_pwm
     hardware_pio
     hardware_spi
     hardware_flash
     hardware_dma
+    hardware_sync
     m
 )
 

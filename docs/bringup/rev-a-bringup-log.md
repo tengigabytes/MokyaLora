@@ -414,18 +414,26 @@ SPI interface and RX mode entry confirmed. Actual RF link performance not yet ve
 
 ### Step 16 — Core 1 Functionality
 
-**Result: ⏳ PENDING**
+**Result: ⚠️ PARTIAL** (Stage A bare-metal ✅ PASS; Stage B FreeRTOS ⏳ PENDING)
 
 All bringup to date has run on Core 0. Core 1 functionality must be validated separately
 before starting UI/application firmware development.
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| Core 1 boot | Launch Core 1 via `multicore_launch_core1()` | Core 1 enters its entry function |
-| Core 1 FreeRTOS | Start FreeRTOS scheduler on Core 1; create test task | Task runs, prints heartbeat |
-| Inter-core FIFO (SIO) | Core 0 pushes value; Core 1 reads and echoes back | Round-trip confirmed |
-| Shared SRAM access | Both cores read/write a shared buffer with spinlock | No data corruption |
-| Core 1 peripheral access | Core 1 controls an LED or GPIO | Peripheral access from Core 1 confirmed |
+| Item | Method | Expected result | Actual result |
+|------|--------|----------------|---------------|
+| Core 1 boot | Launch Core 1 via `multicore_launch_core1()` | Core 1 enters its entry function | ✅ PASS — `C1_READY` token `0xC1B00700` received |
+| Inter-core FIFO (SIO) | Core 0 pushes value; Core 1 reads and echoes back | Round-trip confirmed | ✅ PASS — 4/4 probe values echoed correctly |
+| Shared SRAM access | Both cores read/write a shared buffer with spinlock | No data corruption | ✅ PASS — Core 1 read `0xBEEFC0DE` as written by Core 0 |
+| Core 1 peripheral access | Core 1 controls an LED or GPIO | Peripheral access from Core 1 confirmed | ✅ PASS — motor pin (GPIO 9) toggled from Core 1 |
+| Core 1 FreeRTOS | Start FreeRTOS scheduler on Core 1; create test task | Task runs, prints heartbeat | ⏳ PENDING — Stage B; requires FreeRTOS integration |
+
+**Firmware notes:**
+- Stage A implemented in `firmware/tools/bringup/bringup_core1.c`; command: `core1`
+- Protocol: Core 1 sends `C1_READY (0xC1B00700)` on boot; Core 0 sends command tokens (`C0_CMD_ECHO/SRAM/GPIO/SHUTDOWN`) via SIO FIFO
+- All FIFO pops on Core 0 use `multicore_fifo_pop_timeout_us()` to prevent hangs
+- `pico_multicore` + `hardware_sync` added to bringup CMakeLists
+- `multicore_reset_core1()` called after shutdown to leave Core 1 in clean state
+- Stage B (FreeRTOS on Core 1) deferred; requires `FREERTOS_KERNEL_PATH` setup
 
 > Core 1 will run FreeRTOS (LVGL + MIE integration) in the production firmware. The IPC
 > protocol (`firmware/shared/ipc/ipc_protocol.h`) uses RP2350 HW FIFO as the doorbell
