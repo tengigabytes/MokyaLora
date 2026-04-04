@@ -414,10 +414,12 @@ SPI interface and RX mode entry confirmed. Actual RF link performance not yet ve
 
 ### Step 16 — Core 1 Functionality
 
-**Result: ⚠️ PARTIAL** (Stage A bare-metal ✅ PASS; Stage B-0 Core 1 REPL ✅ PASS; Stage B FreeRTOS ⏳ PENDING)
+**Result: ⚠️ PARTIAL** (Stage A ✅; B-0 ✅; B SMP ✅; D Core 0 single ✅; C Core 1 USB ❌; E–H ⏳)
 
 All bringup to date has run on Core 0. Core 1 functionality must be validated separately
 before starting UI/application firmware development.
+
+#### Stage A — Bare-Metal Core 1
 
 | Item | Method | Expected result | Actual result |
 |------|--------|----------------|---------------|
@@ -426,7 +428,114 @@ before starting UI/application firmware development.
 | Shared SRAM access | Both cores read/write a shared buffer with spinlock | No data corruption | ✅ PASS — Core 1 read `0xBEEFC0DE` as written by Core 0 |
 | Core 1 peripheral access | Core 1 controls an LED or GPIO | Peripheral access from Core 1 confirmed | ✅ PASS — motor pin (GPIO 9) toggled from Core 1 |
 | Core 1 REPL (Stage B-0) | Run full bringup REPL on Core 1; Core 0 owns USB CDC init | All REPL commands work identically to Core 0 run | ✅ PASS — imu/baro/lora/sram confirmed on Core 1 |
-| Core 1 FreeRTOS | Start FreeRTOS scheduler on Core 1; create test task | Task runs, prints heartbeat | ⏳ PENDING — Stage B |
+
+#### Stage B — FreeRTOS SMP Heartbeat (Core 1 Affinity)
+
+**Result: ✅ PASS** (2026-04-04)
+
+- `configNUMBER_OF_CORES = 2` (SMP), `configTICK_CORE = 0`, `configUSE_CORE_AFFINITY = 1`
+- Core 0 calls `stdio_init_all()` + `vTaskStartScheduler()` (owns USB + tick)
+- Heartbeat task pinned to Core 1 via `xTaskCreateAffinitySet(mask = 1<<1)`
+- Observed 5/5 heartbeats on Core 1, tick count incrementing correctly
+- Firmware: `firmware/tools/bringup/core1_freertos_test.c`
+
+#### Stage C — FreeRTOS + USB on Core 1 Only
+
+**Result: ❌ FAIL** (2026-04-04)
+
+- `configNUMBER_OF_CORES = 1`, Core 1 calls `stdio_init_all()` + `vTaskStartScheduler()`
+- USB CDC briefly enumerates during `busy_wait_ms(2000)` but dies after scheduler starts
+- Root cause: Pico SDK `runtime_init()` only runs on Core 0; default alarm pool's timer IRQ
+  fires on Core 0's NVIC. `stdio_usb_init()` periodic `tud_task()` alarm triggers on Core 0,
+  but `low_priority_worker_irq` registered on Core 1 → `tud_task()` never called → USB dies
+- **Conclusion: USB CDC is architecturally tied to Core 0 in the Pico SDK**
+
+#### Stage D — Single-Core FreeRTOS + USB on Core 0
+
+**Result: ✅ PASS** (2026-04-04)
+
+- `configNUMBER_OF_CORES = 1`, Core 0 calls `stdio_init_all()` + `vTaskStartScheduler()`
+- FreeRTOSConfig aligned with official `pico-examples/freertos/FreeRTOSConfig_examples_common.h`:
+  `configMINIMAL_STACK_SIZE = 512`, `configTIMER_TASK_STACK_DEPTH = 1024`,
+  `configTOTAL_HEAP_SIZE = 64 KB`, `configUSE_RECURSIVE_MUTEXES = 1`
+- Linked `pico_async_context_freertos` per official example
+- SYNC/TIME interop auto-enabled (safe — scheduler on same core as USB)
+- Infinite heartbeat confirmed stable (13+ iterations observed, Core 0, tick correct)
+
+#### Stage B2 — FreeRTOS + Manual TinyUSB CDC on Core 1 (Plan B)
+
+**Result: ✅ PASS** (2026-04-04)
+
+- Bypasses `pico_stdio_usb` entirely (hard-asserts Core 0 in SDK 2.2.0)
+- Core 1 calls `tusb_init()` directly → USBCTRL_IRQ on Core 1's NVIC
+- Busy-polls `tud_task()` for 2 s to complete USB enumeration before scheduler
+- High-priority FreeRTOS task continues `tud_task()` polling after scheduler starts
+- CDC output via `tud_cdc_write()` / `tud_cdc_write_flush()` (not printf/stdio)
+- `configNUMBER_OF_CORES = 1`, `SYNC/TIME_INTEROP = 0`
+- `PICO_CORE1_STACK_SIZE = 0x1000` (4 KB, up from default 2 KB)
+- USB descriptors from `stdio_usb_descriptors.c` (linked but `stdio_usb_init` never called)
+- Infinite heartbeat confirmed stable (9+ iterations, Core 1, tick correct at 2000/2s)
+- **Known issue:** after J-Link flash, USB may not enumerate until power cycle (USB re-plug).
+  Root cause: J-Link resets Core 0 only; USB peripheral state machine left dirty.
+  Workaround: re-plug USB after flashing.
+
+#### Architecture Decision (2026-04-04, revised)
+
+Based on Stages B–D and B2 findings, the production architecture preserves the
+original dual-core license boundary:
+
+```
+Core 0 (GPL-3.0):   Meshtastic modem (bare-metal / Arduino-Pico)
+                     SPI → SX1262, USB serial API for phone connection
+                     No FreeRTOS, no RTOS interop
+
+Core 1 (Apache-2.0): FreeRTOS + manual TinyUSB CDC + LVGL + MIE
+                     tusb_init() on Core 1; tud_task() polled by FreeRTOS task
+                     Display (PIO 8080), keyboard (PIO matrix), sensors (I2C)
+
+IPC (MIT):           ipc_protocol.h + HW FIFO + shared SRAM
+```
+
+Key findings:
+1. **`pico_stdio_usb` is Core 0-only** — hard assert in SDK 2.2.0 (Stage C)
+2. **Manual `tusb_init()` + `tud_task()` works on Core 1** — Plan B bypasses
+   the SDK's alarm-pool limitation (Stage B2)
+3. **FreeRTOS SYNC/TIME interop must be disabled** — Core 0 is bare-metal with
+   no scheduler; interop would redirect SDK calls to non-existent FreeRTOS
+4. **License boundary preserved** — separate compilation units, MIT IPC header
+   as sole crossing point; no GPL-3.0 contamination of Apache-2.0 code
+
+#### Stage E — Multi-Task FreeRTOS on Core 1 (⏳ PENDING)
+
+Validate USB CDC stability under multiple FreeRTOS tasks on Core 1.
+
+| Item | Method | Expected result |
+|------|--------|----------------|
+| Multi-task CDC | 2+ tasks writing CDC output concurrently via mutex | Interleaved output, no corruption, stable 30 s |
+
+#### Stage F — SPI from Core 1 FreeRTOS Task (⏳ PENDING)
+
+Validate SX1262 radio SPI access from a Core 1 FreeRTOS task.
+
+| Item | Method | Expected result |
+|------|--------|----------------|
+| SX1262 SPI read | Core 1 FreeRTOS task calls `lora` bringup command | GetStatus + SyncWord match bare-metal baseline |
+
+#### Stage G — HW FIFO IPC Between Cores (⏳ PENDING)
+
+Validate IPC between bare-metal Core 0 and FreeRTOS Core 1 via HW FIFO + shared SRAM.
+
+| Item | Method | Expected result |
+|------|--------|----------------|
+| IPC round-trip | Core 0 sends IPC message via FIFO; Core 1 FreeRTOS task receives and responds | Data integrity confirmed, no corruption over 100 messages |
+
+#### Stage H — I2C Sensor from FreeRTOS Task (⏳ PENDING)
+
+Validate peripheral drivers work within FreeRTOS task context on Core 1.
+
+| Item | Method | Expected result |
+|------|--------|----------------|
+| I2C sensor read | Core 1 FreeRTOS task reads IMU/baro/mag | Values match bare-metal bringup baseline |
 
 **Firmware notes:**
 - Stage A implemented in `firmware/tools/bringup/bringup_core1.c`; command: `core1`
@@ -434,13 +543,15 @@ before starting UI/application firmware development.
 - All FIFO pops on Core 0 use `multicore_fifo_pop_timeout_us()` to prevent hangs
 - `pico_multicore` + `hardware_sync` added to bringup CMakeLists
 - `multicore_reset_core1()` called after shutdown to leave Core 1 in clean state
-- Stage B prerequisite complete: `FreeRTOS-Kernel V11.3.0` added as submodule at `firmware/core1/freertos-kernel/` (MIT); nested submodule `Community-Supported-Ports` provides `RP2350_ARM_NTZ` Cortex-M33 port; `FreeRTOS_Kernel_import.cmake` auto-selects this port when `PICO_PLATFORM=rp2350-arm-s`
-- Stage B-0 (`core1_bringup_test`): `bringup_repl_run()` split into `bringup_repl_init()` (Core 0; registers USB CDC IRQ on Core 0's NVIC) and `bringup_repl_loop()` (Core 1; REPL loop only). `multicore_reset_core1()` called before `multicore_launch_core1()` — required because J-Link only resets Core 0 when reflashing; Core 1 may still be in user code and will not respond to the FIFO handshake unless explicitly PSM-cycled first.
-- Stage B remaining: write `FreeRTOSConfig.h`, implement heartbeat task on Core 1
+- FreeRTOS-Kernel V11.3.0 added as submodule at `firmware/core1/freertos-kernel/` (MIT); nested submodule `Community-Supported-Ports` provides `RP2350_ARM_NTZ` Cortex-M33 port
+- Stage B-0 (`core1_bringup_test`): `bringup_repl_run()` split into `bringup_repl_init()` (Core 0; registers USB CDC IRQ on Core 0's NVIC) and `bringup_repl_loop()` (Core 1; REPL loop only). `multicore_reset_core1()` called before `multicore_launch_core1()` — required because J-Link only resets Core 0 when reflashing; Core 1 may still be in user code and will not respond to the FIFO handshake unless explicitly PSM-cycled first
+- Stage B/D FreeRTOSConfig: aligned with official `pico-examples/freertos/FreeRTOSConfig_examples_common.h`; linked `pico_async_context_freertos`
+- Stage B2: bypasses `pico_stdio_usb`; calls `tusb_init()` + `tud_task()` directly on Core 1; `PICO_CORE1_STACK_SIZE=0x1000`; `configSUPPORT_PICO_SYNC_INTEROP=0`, `configSUPPORT_PICO_TIME_INTEROP=0`
+- Firmware: `firmware/tools/bringup/core1_freertos_test.c`, `FreeRTOSConfig.h`, `CMakeLists.txt`
 
-> Core 1 will run FreeRTOS (LVGL + MIE integration) in the production firmware. The IPC
-> protocol (`firmware/shared/ipc/ipc_protocol.h`) uses RP2350 HW FIFO as the doorbell
-> mechanism — this must be validated before Core 1 development starts.
+> Production architecture validated: Core 0 = bare-metal Meshtastic (GPL-3.0),
+> Core 1 = FreeRTOS + manual TinyUSB + UI (Apache-2.0). IPC via HW FIFO +
+> shared SRAM with MIT-licensed `ipc_protocol.h` as sole crossing point.
 
 ---
 

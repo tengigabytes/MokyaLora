@@ -1,91 +1,122 @@
 /*
- * core1_freertos_test.c — Step 16 Stage B: FreeRTOS on Core 1
+ * core1_freertos_test.c — Plan B: FreeRTOS + Manual TinyUSB CDC on Core 1
  *
- * Architecture (matches production design):
- *   Core 0 — bare-metal launcher: wakes Core 1, then loops doing nothing.
- *   Core 1 — owns all peripherals: initialises USB CDC, starts FreeRTOS
- *             (configNUMBER_OF_CORES = 1, single-core scheduler on Core 1),
- *             runs heartbeat task.
+ * Architecture:
+ *   Core 0 — bare-metal launcher, then __wfe() idle forever.
+ *   Core 1 — FreeRTOS scheduler + manually-driven TinyUSB CDC.
+ *            Bypasses pico_stdio_usb (which hard-asserts Core 0).
+ *            USB IRQ registered on Core 1's NVIC; tud_task() polled
+ *            by a high-priority FreeRTOS task — same core, no race.
  *
- * Core 1 calls stdio_init_all() itself, so printf() in FreeRTOS tasks goes
- * directly through its own USB CDC driver without cross-core mutex issues.
+ * USB descriptors provided by pico_stdio_usb's stdio_usb_descriptors.c
+ * (linked but stdio_usb_init never called).
  *
- * Expected USB CDC output:
- *   === Step 16 Stage B: Core 1 FreeRTOS ===
- *   [Stage B] HEARTBEAT 1/5 — core 1 — tick XXXX
- *   ...
- *   [Stage B] HEARTBEAT 5/5 — core 1 — tick XXXX
- *   [Stage B] PASS — FreeRTOS task ran 5 heartbeats on Core 1
+ * Expected: COM port appears, heartbeat messages every 2 s.
  */
 
 #include <stdio.h>
+#include <string.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "tusb.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
-#define HEARTBEAT_COUNT  5
+/* ---------------------------------------------------------------------------
+ * cdc_write_str — write a string to USB CDC.
+ * ---------------------------------------------------------------------------*/
+static void cdc_write_str(const char *s)
+{
+    if (!tud_cdc_connected()) return;
+
+    uint32_t len = strlen(s);
+    uint32_t pos = 0;
+
+    while (pos < len) {
+        uint32_t avail = tud_cdc_write_available();
+        if (avail == 0) {
+            tud_cdc_write_flush();
+            vTaskDelay(1);
+            continue;
+        }
+        uint32_t chunk = len - pos;
+        if (chunk > avail) chunk = avail;
+        tud_cdc_write(s + pos, chunk);
+        pos += chunk;
+    }
+    tud_cdc_write_flush();
+}
 
 /* ---------------------------------------------------------------------------
- * heartbeat_task — the only user task; runs on Core 1 under FreeRTOS.
+ * usb_device_task — high-priority task that polls tud_task().
+ * tusb_init() already called before scheduler start.
+ * ---------------------------------------------------------------------------*/
+static void usb_device_task(void *pv)
+{
+    (void)pv;
+    for (;;) {
+        tud_task();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * heartbeat_task — infinite heartbeat, writes directly via CDC.
  * ---------------------------------------------------------------------------*/
 static void heartbeat_task(void *pv)
 {
     (void)pv;
-    printf("[Stage B] Heartbeat task started on core %d\n\n", (int)get_core_num());
 
-    for (int i = 1; i <= HEARTBEAT_COUNT; i++) {
-        printf("[Stage B] HEARTBEAT %d/%d — core %d — tick %lu\n",
-               i, HEARTBEAT_COUNT,
-               (int)get_core_num(),
-               (unsigned long)xTaskGetTickCount());
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    /* Wait for USB to enumerate. */
+    vTaskDelay(pdMS_TO_TICKS(3000));
+
+    char buf[100];
+    for (int i = 1; ; i++) {
+        snprintf(buf, sizeof(buf),
+                 "[Core1-RTOS] HEARTBEAT %d — core %d — tick %lu\r\n",
+                 i, (int)get_core_num(),
+                 (unsigned long)xTaskGetTickCount());
+        cdc_write_str(buf);
+        vTaskDelay(pdMS_TO_TICKS(2000));
     }
-
-    printf("[Stage B] PASS — FreeRTOS task ran %d heartbeats on Core 1\n",
-           HEARTBEAT_COUNT);
-
-    while (true) vTaskDelay(pdMS_TO_TICKS(5000));
 }
 
 /* ---------------------------------------------------------------------------
- * core1_entry — executed by Core 1.
- * Core 1 owns stdio and runs FreeRTOS independently.
+ * core1_entry — launched by Core 0 via multicore_launch_core1().
+ *
+ * 1. tusb_init() on Core 1 stack (before scheduler)
+ * 2. Busy-poll tud_task() for 2 s to complete USB enumeration
+ * 3. Create FreeRTOS tasks
+ * 4. Start scheduler — USB polling continues via usb_device_task
  * ---------------------------------------------------------------------------*/
 static void core1_entry(void)
 {
-    /* Core 1 initialises USB CDC; Core 0 has nothing to do with stdio. */
-    stdio_init_all();
-    sleep_ms(2000);   /* wait for USB CDC to enumerate on the host */
+    /* Init TinyUSB — registers USBCTRL_IRQ on Core 1's NVIC. */
+    tusb_init();
 
-    printf("\n=== Step 16 Stage B: Core 1 FreeRTOS ===\n");
-    printf("Core 1 owns USB CDC; FreeRTOS single-core on Core 1\n");
+    /* Busy-poll to let USB enumerate before scheduler takes over. */
+    for (int i = 0; i < 2000; i++) {
+        tud_task();
+        busy_wait_ms(1);
+    }
 
-    BaseType_t ret = xTaskCreate(
-        heartbeat_task, "heartbeat",
-        512,                      /* stack depth in words */
-        NULL,
-        tskIDLE_PRIORITY + 1,
-        NULL
-    );
-    configASSERT(ret == pdPASS);
+    /* Create tasks. */
+    xTaskCreate(usb_device_task, "usb", 1024, NULL,
+                configMAX_PRIORITIES - 1, NULL);
+    xTaskCreate(heartbeat_task, "heartbeat", 512, NULL,
+                tskIDLE_PRIORITY + 1, NULL);
 
-    /* Start FreeRTOS on Core 1 — never returns. */
     vTaskStartScheduler();
-
     panic("FreeRTOS scheduler exited unexpectedly");
 }
 
 /* ---------------------------------------------------------------------------
- * main — executed by Core 0 (bare-metal launcher only).
- * Wakes Core 1, then yields the processor permanently.
+ * main — executed by Core 0.  Launches Core 1 then idles forever.
  * ---------------------------------------------------------------------------*/
 int main(void)
 {
     multicore_launch_core1(core1_entry);
 
-    /* Core 0 has no further role in this test. */
-    while (true) {
-        tight_loop_contents();
-    }
+    while (true)
+        __wfe();
 }

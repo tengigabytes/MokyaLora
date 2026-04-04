@@ -1,13 +1,13 @@
 /*
- * FreeRTOSConfig.h — MokyaLora Step 16 Stage B bringup test
+ * FreeRTOSConfig.h — MokyaLora bringup: FreeRTOS + USB CDC on Core 0
  *
  * Target: RP2350B, Cortex-M33, non-secure (NTZ).
  * Port:   firmware/core1/freertos-kernel/portable/ThirdParty/
  *         Community-Supported-Ports/GCC/RP2350_ARM_NTZ
  *
- * configNUMBER_OF_CORES = 1: FreeRTOS runs on Core 1 only.
- * Core 0 is a bare-metal launcher (multicore_launch_core1 then loops).
- * This matches the production architecture and avoids SMP complexity.
+ * Based on pico-examples/freertos/FreeRTOSConfig_examples_common.h.
+ * configNUMBER_OF_CORES = 1: single-core FreeRTOS on Core 1.
+ * SYNC/TIME interop disabled — Core 0 is bare-metal (no scheduler).
  */
 
 #ifndef FREERTOS_CONFIG_H
@@ -28,20 +28,27 @@
 #define configCPU_CLOCK_HZ                      150000000UL
 #define configTICK_RATE_HZ                      1000
 #define configMAX_PRIORITIES                    5
-#define configMINIMAL_STACK_SIZE                256
+#define configMINIMAL_STACK_SIZE                512
 #define configMAX_TASK_NAME_LEN                 16
 #define configTICK_TYPE_WIDTH_IN_BITS           TICK_TYPE_WIDTH_32_BITS
 #define configIDLE_SHOULD_YIELD                 1
 #define configUSE_TIME_SLICING                  1
 
-/* ── Single-core: FreeRTOS runs on Core 1 only ──────────────────────────── */
-/* Core 0 is bare-metal (multicore_launch_core1 launcher).                  */
+/* ── Single-core: FreeRTOS on Core 1 only ──────────────────────────────── */
+/* Core 0 is bare-metal (launches Core 1, then idles).                      */
+/* Core 1 owns FreeRTOS scheduler + manually-driven TinyUSB.                */
 #define configNUMBER_OF_CORES                   1
+
+/* ── Disable SDK interop — Core 0 has no scheduler ────────────────────── */
+/* With interop enabled, any SDK call on Core 0 (sleep_ms, mutex) would     */
+/* be redirected to FreeRTOS primitives on a core with no scheduler → crash.*/
+#define configSUPPORT_PICO_SYNC_INTEROP         0
+#define configSUPPORT_PICO_TIME_INTEROP         0
 
 /* ── Memory — heap_4 ────────────────────────────────────────────────────── */
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configSUPPORT_STATIC_ALLOCATION         0
-#define configTOTAL_HEAP_SIZE                   ( 16 * 1024 )
+#define configTOTAL_HEAP_SIZE                   ( 64 * 1024 )
 
 /* ── Interrupts ─────────────────────────────────────────────────────────── */
 /* Only tested value per port README. USB interrupt (priority 0) is above   */
@@ -54,7 +61,7 @@
 
 /* ── Synchronisation ────────────────────────────────────────────────────── */
 #define configUSE_MUTEXES                       1
-#define configUSE_RECURSIVE_MUTEXES             0
+#define configUSE_RECURSIVE_MUTEXES             1
 #define configUSE_COUNTING_SEMAPHORES           0
 #define configQUEUE_REGISTRY_SIZE               0
 #define configUSE_QUEUE_SETS                    0
@@ -63,7 +70,7 @@
 #define configUSE_TIMERS                        1
 #define configTIMER_TASK_PRIORITY               ( configMAX_PRIORITIES - 1 )
 #define configTIMER_QUEUE_LENGTH                10
-#define configTIMER_TASK_STACK_DEPTH            256
+#define configTIMER_TASK_STACK_DEPTH            1024
 
 /* ── Tracing / stats (disabled for bringup) ─────────────────────────────── */
 #define configUSE_TRACE_FACILITY                0
@@ -87,5 +94,6 @@
 #define INCLUDE_eTaskGetState                   0
 #define INCLUDE_xTaskAbortDelay                 0
 #define INCLUDE_uxTaskGetStackHighWaterMark     0
+#define INCLUDE_xSemaphoreGetMutexHolder       1
 
 #endif /* FREERTOS_CONFIG_H */
