@@ -46,7 +46,7 @@ For build/flash scripts, shell commands, and source layout see
 | Address | Device         | Bus  | Result | Notes |
 |---------|----------------|------|--------|-------|
 | 0x6B    | BQ25622        | I2C1 | ✅ PASS | After TP101 fix (Issue 2) |
-| 0x55    | BQ27441        | I2C1 | ⚠️ CONDITIONAL | Readable only with battery installed or in charging mode |
+| 0x55    | BQ27441        | I2C1 | ⚠️ CONDITIONAL | Cold boot NACK — see Issue 9 (BIE) + Issue 10 (latchup). Workaround: boot without battery → charge_on → insert battery |
 | 0x6A    | LSM6DSV16X     | I2C0 | ✅ PASS | |
 | 0x1E    | LIS2MDL        | I2C0 | ✅ PASS | After R54/R55 jumper fix (Issue 3) |
 | 0x5D    | LPS22HH        | I2C0 | ✅ PASS | Address is **0x5D** (SA0 = 3.3 V); design docs incorrectly stated 0x5C — see Issue 4 |
@@ -395,6 +395,8 @@ the full debug capability needed for Core 0/1 firmware development is functional
 - Production driver must run this CONFIG UPDATE once (check ITPOR=1 at POR) and also write DesignCapacity=890 mAh / DesignEnergy=3293 mWh (subclass 82) for accurate BL-4C SOC.
 - GPOUT pin connection to MCU GPIO recommended in Rev B to enable clean SHUTDOWN wakeup without requiring battery removal.
 - `bq27441` bringup command added to `bringup_power.c`; automatically performs CONFIG UPDATE + BAT_INSERT if BAT_DET=0; timeout extended to 15 s in `bringup_run.ps1`.
+- **Issue 10 — Cold boot I2C latchup:** gauge permanently NACKs after any cold boot that includes battery insertion. I2C bus recovery (9 clocks + STOP) ineffective; other Bus B devices (0x36, 0x6B) respond normally on the same bus, confirming bus itself is not locked. Root cause under investigation (suspected ESD latchup on gauge I2C input pins during VBAT ramp). Rev A workaround: boot without battery → `charge_on` → insert battery. BIE=0 setting lost on every full POR (ITPOR=1 → ROM defaults reloaded), so CONFIG UPDATE must re-run each time.
+- **Rev B consideration:** evaluate removing BQ27441 from BOM entirely. SOC estimation can be done in software from BQ25622 VBAT ADC + coulomb counting.
 
 ### Step 13 — TFT LCD Fast Refresh
 
@@ -617,7 +619,8 @@ Key findings:
 | 6 | 2026-04-02 | U5 (LM27965) Bank B | LED D37 and keypad backlight share Bank B → not independently controllable | Routing error | Accept Rev A limitation | Move D37 to unused Bank A channel in Rev B |
 | 7 | 2026-04-02 | U15 (TPS62840) / 1.8 V rail | Pi Debug Probe incompatible (requires 3.3 V VTREF) | 1.8 V logic vs 3.3 V-only debug tool | Using J-Link (supports 1.8 V VTREF) | Evaluate switchable VTREF option |
 | 8 | 2026-04-03 | U3 (APS6404L PSRAM) | No response on SPI or QPI — returns 0xFFFFFFFF | Suspected open trace: GPIO0 (pin 77) → U3 CE# (pin 1), or VCC_1V8 open at U3 | None — requires physical inspection | Verify trace continuity + VCC; bodge wire if open; replace U3 if VCC shorted |
-| 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | I2C NACK with battery installed — gauge in SHUTDOWN mode; BIN pin unconnected → BIE=1 → BAT_DET never set → INITCOMP stuck at 0 | BIN pin not connected in Rev A; SLEEP/HIBERNATE both respond to I2C (datasheet confirmed); SHUTDOWN requires GPOUT or battery removal (POR) to exit | CONFIG UPDATE clears BIE (OpConfig 0x25F8→0x05F8); BAT_INSERT (0x000C) sets BAT_DET=1; INITCOMP completes in ~1.6 s. Bringup command `bq27441` handles this automatically | Connect GPOUT to MCU GPIO in Rev B for clean SHUTDOWN wakeup; production driver must run CONFIG UPDATE + set DesignCapacity=890 mAh on ITPOR=1 |
+| 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | BIN pin unconnected → BIE=1 → BAT_DET never set → INITCOMP stuck at 0 | BIN pin not connected in Rev A; BIE default=1 (hardware detection mode) | CONFIG UPDATE clears BIE (OpConfig 0x25F8→0x05F8); BAT_INSERT (0x000C) sets BAT_DET=1; INITCOMP completes in ~1.6 s. Bringup command `bq27441` handles this automatically | Connect BIN pin or remove fuel gauge from BOM (see Issue 10) |
+| 10 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | Cold boot I2C NACK — gauge completely unresponsive after any power-on that includes battery insertion. 9-clock bus recovery ineffective. Observations: (1) USB on + no battery + charger toggle → gauge responds (charger supplies VSYS → gauge POR with clean bus); (2) while gauge already running, insert battery → still responds; (3) cold boot with battery (USB+battery both removed then reinserted) → permanent NACK; (4) USB on + charge off + insert battery → permanent NACK, even after charger re-toggle | Under investigation. Suspected ESD latchup on I2C input pins: battery insertion causes fast VBAT edge → internal 1.8V LDO ramps from 0V while external SDA/SCL pull-ups already at 1.8V → ESD protection diodes forward-bias → I2C input circuitry latch. Not yet confirmed with scope measurement | Rev A workaround: boot without battery → charge_on → insert battery (gauge already running, no POR). Standard I2C bus recovery (9 clocks + STOP) does not resolve the condition | **Consider removing BQ27441 from Rev B BOM.** If retained: add 1MΩ pull-down on SDA/SCL (TI recommendation), ensure power sequencing (1.8V pull-up rail not before gauge VDD), connect GPOUT to MCU GPIO |
 
 ---
 
