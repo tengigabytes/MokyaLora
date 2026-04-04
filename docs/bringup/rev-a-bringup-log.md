@@ -414,7 +414,7 @@ SPI interface and RX mode entry confirmed. Actual RF link performance not yet ve
 
 ### Step 16 — Core 1 Functionality
 
-**Result: ⚠️ PARTIAL** (Stage A bare-metal ✅ PASS; Stage B FreeRTOS ⏳ PENDING)
+**Result: ⚠️ PARTIAL** (Stage A bare-metal ✅ PASS; Stage B-0 Core 1 REPL ✅ PASS; Stage B FreeRTOS ⏳ PENDING)
 
 All bringup to date has run on Core 0. Core 1 functionality must be validated separately
 before starting UI/application firmware development.
@@ -425,7 +425,8 @@ before starting UI/application firmware development.
 | Inter-core FIFO (SIO) | Core 0 pushes value; Core 1 reads and echoes back | Round-trip confirmed | ✅ PASS — 4/4 probe values echoed correctly |
 | Shared SRAM access | Both cores read/write a shared buffer with spinlock | No data corruption | ✅ PASS — Core 1 read `0xBEEFC0DE` as written by Core 0 |
 | Core 1 peripheral access | Core 1 controls an LED or GPIO | Peripheral access from Core 1 confirmed | ✅ PASS — motor pin (GPIO 9) toggled from Core 1 |
-| Core 1 FreeRTOS | Start FreeRTOS scheduler on Core 1; create test task | Task runs, prints heartbeat | ⏳ PENDING — Stage B; requires FreeRTOS integration |
+| Core 1 REPL (Stage B-0) | Run full bringup REPL on Core 1; Core 0 owns USB CDC init | All REPL commands work identically to Core 0 run | ✅ PASS — imu/baro/lora/sram confirmed on Core 1 |
+| Core 1 FreeRTOS | Start FreeRTOS scheduler on Core 1; create test task | Task runs, prints heartbeat | ⏳ PENDING — Stage B |
 
 **Firmware notes:**
 - Stage A implemented in `firmware/tools/bringup/bringup_core1.c`; command: `core1`
@@ -434,7 +435,8 @@ before starting UI/application firmware development.
 - `pico_multicore` + `hardware_sync` added to bringup CMakeLists
 - `multicore_reset_core1()` called after shutdown to leave Core 1 in clean state
 - Stage B prerequisite complete: `FreeRTOS-Kernel V11.3.0` added as submodule at `firmware/core1/freertos-kernel/` (MIT); nested submodule `Community-Supported-Ports` provides `RP2350_ARM_NTZ` Cortex-M33 port; `FreeRTOS_Kernel_import.cmake` auto-selects this port when `PICO_PLATFORM=rp2350-arm-s`
-- Stage B remaining: write `FreeRTOSConfig.h`, update `firmware/core1/CMakeLists.txt`, implement heartbeat task on Core 1
+- Stage B-0 (`core1_bringup_test`): `bringup_repl_run()` split into `bringup_repl_init()` (Core 0; registers USB CDC IRQ on Core 0's NVIC) and `bringup_repl_loop()` (Core 1; REPL loop only). `multicore_reset_core1()` called before `multicore_launch_core1()` — required because J-Link only resets Core 0 when reflashing; Core 1 may still be in user code and will not respond to the FIFO handshake unless explicitly PSM-cycled first.
+- Stage B remaining: write `FreeRTOSConfig.h`, implement heartbeat task on Core 1
 
 > Core 1 will run FreeRTOS (LVGL + MIE integration) in the production firmware. The IPC
 > protocol (`firmware/shared/ipc/ipc_protocol.h`) uses RP2350 HW FIFO as the doorbell

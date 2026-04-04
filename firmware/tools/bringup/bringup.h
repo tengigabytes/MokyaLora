@@ -208,3 +208,11 @@ void tft_fast_test(void);
 // bringup_core1.c — Step 16 Stage A: bare-metal Core 1 validation
 // Tests: boot, FIFO echo, shared SRAM spinlock, GPIO from Core 1
 void core1_test(void);
+
+// i2c_custom_scan.c — bringup REPL entry points
+// bringup_repl_init() MUST be called from Core 0 (registers USB CDC interrupt).
+// bringup_repl_loop() may then be called from Core 0 or Core 1.
+// bringup_repl_run() is a convenience wrapper that calls both sequentially.
+void bringup_repl_init(void);
+void bringup_repl_loop(void);
+void bringup_repl_run(void);

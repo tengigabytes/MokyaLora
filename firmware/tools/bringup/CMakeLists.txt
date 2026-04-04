@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
-add_executable(i2c_custom_scan
+# Shared bringup sources (used by both Core 0 and Core 1 bringup targets)
+set(BRINGUP_SOURCES
     i2c_custom_scan.c
     bringup_power.c
     bringup_sensors.c
@@ -10,6 +11,12 @@ add_executable(i2c_custom_scan
     bringup_lora.c
     bringup_tft.c
     bringup_core1.c
+)
+
+# ── Core 0 bringup (normal: Core 0 owns all peripherals) ─────────────────────
+add_executable(i2c_custom_scan
+    ${BRINGUP_SOURCES}
+    main_core0.c
 )
 
 # Generate the C header from the PIO assembler source.
@@ -44,3 +51,64 @@ pico_enable_stdio_uart(i2c_custom_scan 0)
 
 # Generate .uf2 / .elf / .bin / .map outputs
 pico_add_extra_outputs(i2c_custom_scan)
+
+# ── Step 16 Stage B-0: Core 1 bringup REPL (same code, Core 1 owns periph) ───
+add_executable(core1_bringup_test
+    ${BRINGUP_SOURCES}
+    core1_bringup_test_main.c
+)
+
+pico_generate_pio_header(core1_bringup_test ${CMAKE_CURRENT_LIST_DIR}/i2s_out.pio)
+pico_generate_pio_header(core1_bringup_test ${CMAKE_CURRENT_LIST_DIR}/pdm_mic.pio)
+pico_generate_pio_header(core1_bringup_test ${CMAKE_CURRENT_LIST_DIR}/tft_8080.pio)
+
+target_link_libraries(core1_bringup_test
+    pico_stdlib
+    pico_multicore
+    hardware_i2c
+    hardware_pwm
+    hardware_pio
+    hardware_spi
+    hardware_flash
+    hardware_dma
+    hardware_sync
+    m
+)
+
+pico_enable_stdio_usb(core1_bringup_test 1)
+pico_enable_stdio_uart(core1_bringup_test 0)
+pico_add_extra_outputs(core1_bringup_test)
+
+# ── Step 16 Stage B: Core 1 FreeRTOS heartbeat test ───────────────────────────
+# Separate ELF; not linked into the bringup REPL because vTaskStartScheduler()
+# never returns on ARM Cortex-M.
+
+set(FREERTOS_KERNEL_PATH
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../core1/freertos-kernel"
+    CACHE PATH "FreeRTOS Kernel path" FORCE)
+set(FREERTOS_CONFIG_FILE_DIRECTORY
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    CACHE PATH "Directory containing FreeRTOSConfig.h" FORCE)
+
+# Add the RP2350_ARM_NTZ SMP port.  Because pico_sdk_init() has already run
+# at this point (SDK >= 1.3.2 / 2.x), the port's CMakeLists.txt detects the
+# _pico_sdk_inclusion_marker target and includes library.cmake immediately,
+# registering FreeRTOS-Kernel, FreeRTOS-Kernel-Heap{1..5}, etc.
+add_subdirectory(
+    "${FREERTOS_KERNEL_PATH}/portable/ThirdParty/Community-Supported-Ports/GCC/RP2350_ARM_NTZ"
+    FreeRTOS-Kernel-RP2350
+)
+
+add_executable(core1_freertos_test
+    core1_freertos_test.c
+)
+
+target_link_libraries(core1_freertos_test
+    pico_stdlib
+    FreeRTOS-Kernel
+    FreeRTOS-Kernel-Heap4
+)
+
+pico_enable_stdio_usb(core1_freertos_test 1)
+pico_enable_stdio_uart(core1_freertos_test 0)
+pico_add_extra_outputs(core1_freertos_test)
