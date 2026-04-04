@@ -414,7 +414,7 @@ SPI interface and RX mode entry confirmed. Actual RF link performance not yet ve
 
 ### Step 16 — Core 1 Functionality
 
-**Result: ⚠️ PARTIAL** (Stage A ✅; B-0 ✅; B SMP ✅; D Core 0 single ✅; C Core 1 USB ❌; E–H ⏳)
+**Result: ✅ PASS** (Stage A ✅; B-0 ✅; B SMP ✅; D Core 0 single ✅; C Core 1 USB ❌; B2 ✅; E ✅; F ✅; G ✅; H ✅)
 
 All bringup to date has run on Core 0. Core 1 functionality must be validated separately
 before starting UI/application firmware development.
@@ -505,37 +505,42 @@ Key findings:
 4. **License boundary preserved** — separate compilation units, MIT IPC header
    as sole crossing point; no GPL-3.0 contamination of Apache-2.0 code
 
-#### Stage E — Multi-Task FreeRTOS on Core 1 (⏳ PENDING)
+#### Stage E — Multi-Task FreeRTOS on Core 1
 
-Validate USB CDC stability under multiple FreeRTOS tasks on Core 1.
+**Result: ✅ PASS** (2026-04-04)
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| Multi-task CDC | 2+ tasks writing CDC output concurrently via mutex | Interleaved output, no corruption, stable 30 s |
+| Item | Method | Expected result | Actual result |
+|------|--------|----------------|---------------|
+| Multi-task CDC | 2 tasks (Writer-A / Writer-B) write CDC concurrently via mutex, 15 iters × 2 s | Interleaved output, no corruption, stable 30 s | ✅ PASS — both writers completed 15/15, lines interleaved cleanly, no corruption |
 
-#### Stage F — SPI from Core 1 FreeRTOS Task (⏳ PENDING)
+#### Stage F — SPI from Core 1 FreeRTOS Task
 
-Validate SX1262 radio SPI access from a Core 1 FreeRTOS task.
+**Result: ✅ PASS** (2026-04-04)
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| SX1262 SPI read | Core 1 FreeRTOS task calls `lora` bringup command | GetStatus + SyncWord match bare-metal baseline |
+| Item | Method | Expected result | Actual result |
+|------|--------|----------------|---------------|
+| SX1262 BUSY after reset | Hardware reset + poll BUSY | BUSY LOW within 200 ms | ✅ PASS — BUSY LOW |
+| GetStatus | SPI GetStatus (0xC0) | ChipMode=2 (STBY_RC) | ✅ PASS — Status=0x2A; ChipMode=2, CmdStatus=5 |
+| SyncWord | ReadRegister 0x0740/41 | 0x14 0x24 (private net default) | ✅ PASS — 0x14 0x24 |
 
-#### Stage G — HW FIFO IPC Between Cores (⏳ PENDING)
+#### Stage G — HW FIFO IPC Between Cores
 
-Validate IPC between bare-metal Core 0 and FreeRTOS Core 1 via HW FIFO + shared SRAM.
+**Result: ✅ PASS** (2026-04-04)
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| IPC round-trip | Core 0 sends IPC message via FIFO; Core 1 FreeRTOS task receives and responds | Data integrity confirmed, no corruption over 100 messages |
+| Item | Method | Expected result | Actual result |
+|------|--------|----------------|---------------|
+| FIFO round-trip (100 msg) | Core 0 sends `C0_EFGH_IPC_BASE\|seq`; Core 1 FreeRTOS task echoes `C1_EFGH_IPC_BASE\|seq` | 100/100 OK, no token errors | ✅ PASS — 100/100; FIFO-timeout=0; token-err=0 |
+| Shared SRAM integrity | Core 0 writes `0xABCD0000\|seq` before each push; Core 1 reads and verifies | 0 SRAM mismatches | ✅ PASS — sram-err=0 |
 
-#### Stage H — I2C Sensor from FreeRTOS Task (⏳ PENDING)
+#### Stage H — I2C Sensor from FreeRTOS Task
 
-Validate peripheral drivers work within FreeRTOS task context on Core 1.
+**Result: ✅ PASS** (2026-04-04)
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| I2C sensor read | Core 1 FreeRTOS task reads IMU/baro/mag | Values match bare-metal bringup baseline |
+| Item | Method | Expected result | Actual result |
+|------|--------|----------------|---------------|
+| LSM6DSV16X IMU | Core 1 FreeRTOS task: SW reset → configure → one-shot read | STATUS=0x07; Z≈1g | ✅ PASS — STATUS=0x07; X=−0.022g Y=+0.017g Z=+0.908g |
+| LPS22HH Baro | Core 1 FreeRTOS task: SW reset → ONE_SHOT → burst read | STATUS=0x03; plausible P/T | ✅ PASS — STATUS=0x03; P=1007.67 hPa; T=30.42 °C |
+| LIS2MDL Mag | Core 1 FreeRTOS task: SW reset → continuous → poll → burst read | STATUS=0x0F; Earth-field values | ✅ PASS — STATUS=0x0F; X=−66.0 Y=−268.5 Z=+318.0 mGauss |
 
 **Firmware notes:**
 - Stage A implemented in `firmware/tools/bringup/bringup_core1.c`; command: `core1`
@@ -547,11 +552,14 @@ Validate peripheral drivers work within FreeRTOS task context on Core 1.
 - Stage B-0 (`core1_bringup_test`): `bringup_repl_run()` split into `bringup_repl_init()` (Core 0; registers USB CDC IRQ on Core 0's NVIC) and `bringup_repl_loop()` (Core 1; REPL loop only). `multicore_reset_core1()` called before `multicore_launch_core1()` — required because J-Link only resets Core 0 when reflashing; Core 1 may still be in user code and will not respond to the FIFO handshake unless explicitly PSM-cycled first
 - Stage B/D FreeRTOSConfig: aligned with official `pico-examples/freertos/FreeRTOSConfig_examples_common.h`; linked `pico_async_context_freertos`
 - Stage B2: bypasses `pico_stdio_usb`; calls `tusb_init()` + `tud_task()` directly on Core 1; `PICO_CORE1_STACK_SIZE=0x1000`; `configSUPPORT_PICO_SYNC_INTEROP=0`, `configSUPPORT_PICO_TIME_INTEROP=0`
-- Firmware: `firmware/tools/bringup/core1_freertos_test.c`, `FreeRTOSConfig.h`, `CMakeLists.txt`
+- Stages E–H: `firmware/tools/bringup/core1_rtos_efgh.c` (new ELF target `core1_rtos_efgh`); uses Plan B architecture; inline SPI/I2C driver helpers; yield-friendly FIFO polling (`multicore_fifo_rvalid()` + `vTaskDelay(1)`) in Stage G task; `busy_wait_ms()` used in sensor init (not `sleep_ms()`) to avoid SDK alarm-pool dependency on Core 1; `INCLUDE_vTaskDelete = 1` enabled in `FreeRTOSConfig.h`
+- Stage G IPC: Core 0 writes shared SRAM (`g_ipc_sram = 0xABCD0000|seq`), issues `__dmb()` barrier, then pushes FIFO; Core 1 reads SRAM after FIFO pop; integrity verified by Core 1 and reported via CDC
+- Firmware: `firmware/tools/bringup/core1_rtos_efgh.c`, `FreeRTOSConfig.h`, `CMakeLists.txt`
 
-> Production architecture validated: Core 0 = bare-metal Meshtastic (GPL-3.0),
-> Core 1 = FreeRTOS + manual TinyUSB + UI (Apache-2.0). IPC via HW FIFO +
-> shared SRAM with MIT-licensed `ipc_protocol.h` as sole crossing point.
+> Production architecture fully validated on real hardware: Core 0 = bare-metal
+> Meshtastic (GPL-3.0), Core 1 = FreeRTOS + manual TinyUSB + UI (Apache-2.0).
+> IPC via HW FIFO + shared SRAM with MIT-licensed `ipc_protocol.h` as sole
+> crossing point. Step 16 complete.
 
 ---
 
