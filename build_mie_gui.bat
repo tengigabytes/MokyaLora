@@ -2,8 +2,8 @@
 call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat" > nul 2>&1
 
 set CMAKE="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-set SRC=C:\Users\user\Documents\Workspace\MokyaLora\firmware\mie
-set BUILD=C:\Users\user\Documents\Workspace\MokyaLora\build\mie-gui
+set SRC=%~dp0firmware\mie
+set BUILD=%~dp0build\mie-gui
 
 echo [1/2] Configuring (first run downloads ImGui + SDL2 from GitHub)...
 %CMAKE% -S "%SRC%" -B "%BUILD%" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DMIE_BUILD_GUI=ON
