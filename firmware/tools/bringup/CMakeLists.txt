@@ -105,8 +105,15 @@ add_executable(core1_freertos_test
 
 target_link_libraries(core1_freertos_test
     pico_stdlib
+    pico_multicore
+    pico_async_context_freertos
     FreeRTOS-Kernel
     FreeRTOS-Kernel-Heap4
+)
+
+# Core 1 stack: default 2 KB is too small for vTaskStartScheduler().
+target_compile_definitions(core1_freertos_test PRIVATE
+    PICO_CORE1_STACK_SIZE=0x1000
 )
 
 pico_enable_stdio_usb(core1_freertos_test 1)
