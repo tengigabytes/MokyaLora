@@ -119,3 +119,28 @@ target_compile_definitions(core1_freertos_test PRIVATE
 pico_enable_stdio_usb(core1_freertos_test 1)
 pico_enable_stdio_uart(core1_freertos_test 0)
 pico_add_extra_outputs(core1_freertos_test)
+
+# ── Step 16 Stages E–H: FreeRTOS multi-task + SPI + IPC + I2C on Core 1 ─────
+add_executable(core1_rtos_efgh
+    core1_rtos_efgh.c
+)
+
+target_link_libraries(core1_rtos_efgh
+    pico_stdlib
+    pico_multicore
+    pico_async_context_freertos
+    hardware_spi
+    hardware_i2c
+    hardware_sync
+    FreeRTOS-Kernel
+    FreeRTOS-Kernel-Heap4
+)
+
+# Core 1 stack: 4 KB (same as Stage B2 — USB + FreeRTOS startup).
+target_compile_definitions(core1_rtos_efgh PRIVATE
+    PICO_CORE1_STACK_SIZE=0x1000
+)
+
+pico_enable_stdio_usb(core1_rtos_efgh 1)
+pico_enable_stdio_uart(core1_rtos_efgh 0)
+pico_add_extra_outputs(core1_rtos_efgh)
