@@ -233,7 +233,7 @@ Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). 
 | W25Q128JW Flash JEDEC ID | ✅ PASS | `EF 60 18` — Winbond W25Q128JW confirmed |
 | Flash SR1/SR2/SR3 | ✅ PASS | SR2 QE bit set (QSPI enabled); boot config intact |
 | Flash XIP read | ✅ PASS | First 32 bytes match programmed firmware image |
-| Internal SRAM (16 KB pattern test) | ✅ PASS | 5 patterns including address-based — all PASS |
+| Internal SRAM (16 KB pattern test) | ✅ PASS | 5 patterns including address-based — all PASS; static used 313 KB / 520 KB (60%), free 206 KB |
 | APS6404L PSRAM | ❌ FAIL | No response on SPI or QPI — hardware fault; see Issue 8 |
 
 **PSRAM diagnostics:**
@@ -303,25 +303,40 @@ Attempted to replace CIC+IIR with ST OpenPDMFilter (Apache-2.0, sinc³ cascade, 
 
 ### Step 11 — J-Link Debug Validation
 
-**Result: ⏳ PENDING**
+**Result: ✅ PASS**
 
 Objective: validate the SWD debug interface beyond basic flash programming — confirm that
 the full debug capability needed for Core 0/1 firmware development is functional.
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| Breakpoint + halt | Set SW breakpoint in bringup shell loop; run to breakpoint | MCU halts at correct instruction |
-| Single-step execution | Step over / step into from breakpoint | PC advances correctly; registers update |
-| Register read | Read core registers (PC, SP, LR, r0–r15) via J-Link Commander or GDB | Values consistent with code state |
-| Memory read — SRAM | Read `sram_test_buf` address range | Pattern matches last written test pattern |
-| Memory read — flash XIP | Read 0x10000000 (flash start) | Matches first bytes of .elf firmware image |
-| Memory read — peripheral | Read SIO registers, PIO SM state | Registers reflect expected hardware state |
-| Variable watch | Watch a global variable during a running loop | Value updates in real time |
+| Item | Method | Result | Observations |
+|------|--------|--------|--------------|
+| Register read | J-Link Commander `regs` | ✅ PASS | PC=0x1000C53C (flash XIP, bringup REPL wait loop); SP=0x20081F50; XPSR=0x29000000 (no exception) |
+| Memory read — SRAM | J-Link Commander `mem32 0x20001D38 16` | ✅ PASS | Address pattern residue `0xA5000000…0xA500000F` from last `sram_test` run |
+| Memory read — flash XIP | J-Link Commander `mem32 0x10000000 8` | ✅ PASS | First word = `0x20082000` (MSP initial value = `__StackTop`) — ARM vector table correct |
+| Memory read — peripheral | J-Link Commander `mem32 0xD0000000 8` | ✅ PASS | SIO CPUID = `0x000000C0` — Core 0 confirmed |
+| Breakpoint + halt | GDB `break sram_test` + serial trigger | ✅ PASS | BP hit at `bringup_sram.c:25`; address `0x10003714` |
+| Single-step execution | GDB `stepi` ×5 from reset | ✅ PASS | PC advanced correctly through TinyUSB startup code; source line shown at each step |
+| Memory read via symbol | GDB `x/8xw &sram_test_buf` | ✅ PASS | GDB resolved symbol to `0x2001A67C` (Debug build layout); contents read correctly |
+| Variable watch | GDB hardware watchpoint on `sram_test_buf[0]` | ✅ PASS | Watchpoint triggered at `bringup_sram.c:52` when `0xAAAAAAAA` written; `total_errors=0` confirmed |
 
-**Tools:**
-- J-Link Commander (`JLink.exe`) for low-level register/memory access
-- J-Link GDB Server + `arm-none-eabi-gdb` for full source-level debug
-- Alternatively: VS Code + Cortex-Debug extension + J-Link GDB Server
+**Firmware notes:**
+- Debug build required (`-DCMAKE_BUILD_TYPE=Debug`); Release build optimises out local variables — GDB shows `<optimized out>`.
+- `monitor reset halt` used to ensure clean board state before setting breakpoints.
+- USB CDC disconnects while MCU is halted — expected behaviour; reconnects on `continue`.
+- J-Link device must be specified as `RP2350_M33_0` (not `RP2350` — unknown alias). Use `RP2350_M33_1` for Core 1 debug (Step 16).
+- Debug binary is larger; `sram_test_buf` moved from `0x20001D38` (Release) to `0x2001A67C` (Debug).
+- Scripts: `jlink_step11a.jlink` (Commander), `step11b.gdb` / `step11c.gdb` (GDB batch).
+
+**Debug toolchain (confirmed working):**
+- J-Link Commander V9.32: `C:/Program Files/SEGGER/JLink_V932/JLink.exe`
+- J-Link GDB Server: `JLinkGDBServerCL.exe -device RP2350_M33_0 -if SWD -speed 4000 -port 2331`
+- GDB: `C:/Program Files/Arm/GNU Toolchain mingw-w64-x86_64-arm-none-eabi/bin/arm-none-eabi-gdb.exe`
+
+**Future debug tooling improvements (planned):**
+- VS Code + Cortex-Debug extension: GUI source-level debug with breakpoints, call stack, variable watch panel — eliminates need for GDB batch scripts.
+- pyOCD or OpenOCD: alternative GDB server options (lower latency than J-Link GDB Server for iterative debug).
+- Bringup debug script library: consolidated `.jlink` and `.gdb` scripts per component (SRAM, LoRa, sensors) for repeatable diagnostics.
+- Dual-core debug: two J-Link GDB Server instances on ports 2331/2332 targeting `RP2350_M33_0` and `RP2350_M33_1` simultaneously — required for Step 16 IPC validation.
 
 ### Step 12 — BQ27441 Fuel Gauge Characterisation
 

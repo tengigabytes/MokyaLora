@@ -198,6 +198,17 @@ When writing drivers or bringup firmware, **never assume** any of the following 
 
 If uncertain, stop and ask. The user will provide the correct information or point to the relevant datasheet section.
 
+## J-Link Device Names (RP2350)
+
+When writing J-Link Commander scripts or GDB Server commands, always specify the core explicitly:
+
+| Device name | Core | When to use |
+|---|---|---|
+| `RP2350_M33_0` | Core 0 (Cortex-M33) | All current bringup work |
+| `RP2350_M33_1` | Core 1 (Cortex-M33) | Step 16 Core 1 validation onwards |
+
+Do NOT use the alias `RP2350` — it is unknown to the J-Link software and silently falls back to `RP2350_M33_0`.
+
 ## Hardware Debug Protocol
 
 When debugging a hardware peripheral that is not responding correctly, follow this sequence **without skipping steps**:
@@ -207,6 +218,12 @@ When debugging a hardware peripheral that is not responding correctly, follow th
 3. **Propose diagnostics.** For each hypothesis, propose a minimal diagnostic test (e.g., read a register, toggle a pin, measure a signal) that would confirm or eliminate it.
 4. **Wait for approval.** Present the full diagnostic plan and wait for the user to approve before writing any code.
 5. **Implement one at a time.** After approval, implement and run one diagnostic test at a time. Never assume a fix — prove each hypothesis before moving on.
+
+## Language
+
+- All discussions with the user must be in **Traditional Chinese (Taiwan)** (正體中文).
+- Code comments, documentation, and project descriptions must be in **English**.
+- Exception: content that demonstrates Chinese IME output (e.g., MIE test cases) should use Chinese as appropriate.
 
 ## Session Hygiene
 

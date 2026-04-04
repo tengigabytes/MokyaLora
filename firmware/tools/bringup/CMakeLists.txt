@@ -5,6 +5,7 @@ add_executable(i2c_custom_scan
     bringup_power.c
     bringup_sensors.c
     bringup_audio.c
+    bringup_sram.c
     bringup_flash.c
     bringup_lora.c
     bringup_tft.c
