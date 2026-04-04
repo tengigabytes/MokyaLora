@@ -12,6 +12,7 @@
 #include "hardware/sync.h"
 #include "hardware/structs/qmi.h"
 #include "hardware/regs/qmi.h"
+#include "hardware/dma.h"
 
 // ---------------------------------------------------------------------------
 // Pin / peripheral definitions
@@ -202,3 +203,4 @@ void lora_dump(void);
 #define TFT_nRST_PIN  21
 #define TFT_TE_PIN    22
 void tft_test(void);
+void tft_fast_test(void);

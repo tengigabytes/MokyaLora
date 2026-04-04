@@ -31,6 +31,7 @@ target_link_libraries(i2c_custom_scan
     hardware_pio
     hardware_spi
     hardware_flash
+    hardware_dma
     m
 )
 
