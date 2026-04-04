@@ -3,8 +3,8 @@ call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliar
 
 set CMAKE="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 set NINJA="C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
-set SRC=C:\Users\user\Documents\Workspace\MokyaLora\firmware\mie
-set BUILD=C:\Users\user\Documents\Workspace\MokyaLora\build\mie-host
+set SRC=%~dp0firmware\mie
+set BUILD=%~dp0build\mie-host
 
 echo [1/2] Configuring...
 %CMAKE% -S "%SRC%" -B "%BUILD%" -G Ninja -DCMAKE_BUILD_TYPE=Debug
