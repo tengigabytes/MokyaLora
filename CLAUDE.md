@@ -80,7 +80,7 @@ MokyaLora/
 - **LoRa:** SX1262 (SPI1) + ECS-TXO-20CSMV4 TCXO 32 MHz
 - **GNSS:** ST Teseo-LIV3FL (I2C0, 0x3A) + BGA725L6 LNA + B39162B4327P810 SAW
 - **Audio:** IM69D130 PDM mic (PIO) + NAU8315 3.2 W Class-D amp (PIO) + CMS-131304 speaker
-- **Sensors:** LSM6DSV16X IMU (0x6A), LIS2MDL mag (0x1E), LPS22HH baro (0x5C) — all I2C0
+- **Sensors:** LSM6DSV16X IMU (0x6A), LIS2MDL mag (0x1E), LPS22HH baro (0x5D) — all on sensor bus (GPIO 34/35, `i2c1`)
 - **Power:** BQ25622RYKR charger, BQ27441DRZR fuel gauge, TPS62840 1.8 V buck, TPS7A2033 3.3 V LDO
 - **Battery:** Nokia BL-4C (~890 mAh)
 
@@ -90,8 +90,11 @@ MokyaLora/
 - **Framework:** Arduino-Pico + FreeRTOS + LVGL
 
 ### I2C Bus Layout
-- **I2C0** (GPIO 34/35): IMU 0x6A, Mag 0x1E, Baro 0x5C, GPS 0x3A
-- **I2C1** (GPIO 6/7): Charger BQ25622RYKR 0x6B, Fuel Gauge BQ27441DRZR 0x55, LED Driver LM27965 0x36
+
+> **RP2350 SDK peripheral note:** Both buses map to `i2c1` in the Pico SDK — GPIO 6/7 and GPIO 34/35 are both I2C1 pin options. They cannot be active simultaneously; switch by reinitialising `i2c1` with different GPIO pairs.
+
+- **Sensor bus** (`i2c1`, GPIO 34/35): IMU 0x6A, Mag 0x1E, Baro 0x5D, GPS 0x3A
+- **Power bus** (`i2c1`, GPIO 6/7): Charger BQ25622RYKR 0x6B, Fuel Gauge BQ27441DRZR 0x55, LED Driver LM27965 0x36
 
 ## License Boundary Rules (CRITICAL)
 

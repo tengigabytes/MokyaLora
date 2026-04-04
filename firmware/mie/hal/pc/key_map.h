@@ -41,33 +41,57 @@ enum SpecialKey : int {
 
 // clang-format off
 /// Static mapping table: PC key → KeyEvent{row, col}.
+/// Each physical half-keyboard key is reachable via TWO PC keys so that
+/// both phonemes / letters on a key are equally accessible during testing.
 /// Terminate with {-1, 0, 0}.
 static constexpr KeyMapEntry kPcKeyMap[] = {
     // ── Core input rows (Bopomofo half-keyboard) ─────────────────────────
-    // Row 0
-    { '1',          0, 0 },  // ㄅ ㄉ
-    { '3',          0, 1 },  // ˇ ˋ
-    { '5',          0, 2 },  // ㄓ ˊ
-    { '7',          0, 3 },  // ˙ ㄚ
-    { '9',          0, 4 },  // ㄞ ㄢ ㄦ
-    // Row 1
-    { 'q',          1, 0 },  // ㄆ ㄊ
-    { 'e',          1, 1 },  // ㄍ ㄐ
-    { 't',          1, 2 },  // ㄔ ㄗ
-    { 'u',          1, 3 },  // ㄧ ㄛ
-    { 'o',          1, 4 },  // ㄟ ㄣ
+    // Row 0  (primary odd digit, secondary even digit)
+    { '1',          0, 0 },  // ㄅ ㄉ  — primary
+    { '2',          0, 0 },  // ㄅ ㄉ  — secondary
+    { '3',          0, 1 },  // ˇ ˋ   — primary
+    { '4',          0, 1 },  // ˇ ˋ   — secondary
+    { '5',          0, 2 },  // ㄓ ˊ  — primary
+    { '6',          0, 2 },  // ㄓ ˊ  — secondary
+    { '7',          0, 3 },  // ˙ ㄚ  — primary
+    { '8',          0, 3 },  // ˙ ㄚ  — secondary
+    { '9',          0, 4 },  // ㄞ ㄢ ㄦ — primary
+    { '0',          0, 4 },  // ㄞ ㄢ ㄦ — secondary
+    { '-',          0, 4 },  // ㄞ ㄢ ㄦ — alternate (ergonomic for ㄦ)
+    // Row 1  (primary first QWERTY letter of the pair, secondary second)
+    { 'q',          1, 0 },  // ㄆ ㄊ  — primary
+    { 'w',          1, 0 },  // ㄆ ㄊ  — secondary
+    { 'e',          1, 1 },  // ㄍ ㄐ  — primary
+    { 'r',          1, 1 },  // ㄍ ㄐ  — secondary
+    { 't',          1, 2 },  // ㄔ ㄗ  — primary
+    { 'y',          1, 2 },  // ㄔ ㄗ  — secondary
+    { 'u',          1, 3 },  // ㄧ ㄛ  — primary
+    { 'i',          1, 3 },  // ㄧ ㄛ  — secondary
+    { 'o',          1, 4 },  // ㄟ ㄣ  — primary
+    { 'p',          1, 4 },  // ㄟ ㄣ  — secondary
     // Row 2
-    { 'a',          2, 0 },  // ㄇ ㄋ
-    { 'd',          2, 1 },  // ㄎ ㄑ
-    { 'g',          2, 2 },  // ㄕ ㄘ
-    { 'j',          2, 3 },  // ㄨ ㄜ
-    { 'l',          2, 4 },  // ㄠ ㄤ
+    { 'a',          2, 0 },  // ㄇ ㄋ  — primary
+    { 's',          2, 0 },  // ㄇ ㄋ  — secondary
+    { 'd',          2, 1 },  // ㄎ ㄑ  — primary
+    { 'f',          2, 1 },  // ㄎ ㄑ  — secondary
+    { 'g',          2, 2 },  // ㄕ ㄘ  — primary
+    { 'h',          2, 2 },  // ㄕ ㄘ  — secondary
+    { 'j',          2, 3 },  // ㄨ ㄜ  — primary
+    { 'k',          2, 3 },  // ㄨ ㄜ  — secondary
+    { 'l',          2, 4 },  // ㄠ ㄤ  — primary
+    { ';',          2, 4 },  // ㄠ ㄤ  — alternate (mirrors l)
     // Row 3
-    { 'z',          3, 0 },  // ㄈ ㄌ
-    { 'c',          3, 1 },  // ㄏ ㄒ
-    { 'b',          3, 2 },  // ㄖ ㄙ
-    { 'm',          3, 3 },  // ㄩ ㄝ
-    { '\\',         3, 4 },  // ㄡ ㄥ
+    { 'z',          3, 0 },  // ㄈ ㄌ  — primary
+    { 'x',          3, 0 },  // ㄈ ㄌ  — secondary
+    { 'c',          3, 1 },  // ㄏ ㄒ  — primary
+    { 'v',          3, 1 },  // ㄏ ㄒ  — secondary
+    { 'b',          3, 2 },  // ㄖ ㄙ  — primary
+    { 'n',          3, 2 },  // ㄖ ㄙ  — secondary
+    { 'm',          3, 3 },  // ㄩ ㄝ  — primary
+    { ',',          3, 3 },  // ㄩ ㄝ  — alternate (mirrors m)
+    { '\\',         3, 4 },  // ㄡ ㄥ  — primary
+    { '.',          3, 4 },  // ㄡ ㄥ  — alternate-1 (mirrors \)
+    { '/',          3, 4 },  // ㄡ ㄥ  — alternate-2
 
     // ── Col 5 function keys ───────────────────────────────────────────────
     { KEY_F1,       0, 5 },  // FUNC
@@ -79,8 +103,8 @@ static constexpr KeyMapEntry kPcKeyMap[] = {
     { '`',          4, 0 },  // MODE
     { KEY_TAB,      4, 1 },  // TAB
     { ' ',          4, 2 },  // SPACE
-    { ',',          4, 3 },  // ，SYM
-    { '.',          4, 4 },  // 。.？
+    { '[',          4, 3 },  // ，SYM
+    { ']',          4, 4 },  // 。.？
     { '=',          4, 5 },  // VOL+
 
     // ── Row 5 navigation ──────────────────────────────────────────────────
@@ -89,7 +113,7 @@ static constexpr KeyMapEntry kPcKeyMap[] = {
     { KEY_LEFT,     5, 2 },  // LEFT
     { KEY_RIGHT,    5, 3 },  // RIGHT
     { KEY_ENTER,    5, 4 },  // OK
-    { '-',          5, 5 },  // VOL−
+    { '_',          5, 5 },  // VOL−  (moved from '-'; '-' now maps to (0,4) ㄦ)
 
     { -1,           0, 0 },  // sentinel
 };

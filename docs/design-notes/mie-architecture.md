@@ -3,7 +3,7 @@
 **Sub-project:** MokyaInput Engine (MIE)
 **Location:** `firmware/mie/`
 **Language:** C++11 (core), Python 3 (data pipeline tools)
-**Status:** Phase 1 — environment setup & PC validation
+**Status:** Phase 1.5 complete — C API shipped, standalone repo extraction deferred
 
 ---
 
@@ -13,12 +13,13 @@ MIE is the input method engine for MokyaLora, developed as a **self-contained li
 within the main firmware tree. Its design allows it to be extracted into an independent
 open-source repository in the future with minimal refactoring.
 
-| Goal                  | Approach                                                        |
-|-----------------------|-----------------------------------------------------------------|
-| Cross-platform core   | Pure C++11, zero hardware-register dependencies                 |
-| Taiwan localisation   | MoE standard character list + Academia Sinica corpus            |
-| PSRAM-optimised search| Double-Array Trie (DAT) — 4 MB budget, sub-second lookup        |
-| Portable extraction   | `git subtree split` ready — clean boundary at `firmware/mie/`  |
+| Goal                     | Approach                                                               |
+|--------------------------|------------------------------------------------------------------------|
+| Cross-platform core      | Pure C++11, zero hardware-register dependencies                        |
+| Taiwan localisation      | MoE standard character list + Academia Sinica corpus                   |
+| PSRAM-optimised search   | Double-Array Trie (DAT) — 4 MB budget, sub-second lookup               |
+| Standalone extraction    | `libmie-standalone` branch created; push to `tengigabytes/libmie` deferred |
+| Android / Windows targets| C API `include/mie/mie.h` + `src/mie_c_api.cpp` **done**; JNI/TSF wrappers planned |
 
 ---
 
@@ -66,7 +67,14 @@ firmware/mie/
 ├── src/
 │   ├── mie_init.cpp            # Placeholder TU (keeps library target non-empty)
 │   ├── trie_searcher.cpp       # Sorted-index binary search implementation
-│   └── ime_logic.cpp           # Bopomofo primary-phoneme map + mode FSM
+│   ├── ime_internal.h          # Internal inline helpers (NOT public)
+│   ├── ime_logic.cpp           # Constructor + process_key dispatcher (~120 lines)
+│   ├── ime_keys.cpp            # Static phoneme/symbol tables + key_to_* lookups
+│   ├── ime_search.cpp          # run_search, build_merged, rebuild_input_buf
+│   ├── ime_display.cpp         # compound_input_str, matched_prefix_*, display helpers
+│   ├── ime_commit.cpp          # do_commit, do_commit_partial, did_commit
+│   ├── ime_smart.cpp           # process_smart (SmartZh + SmartEn modes)
+│   └── ime_direct.cpp          # process_direct, process_sym_key, commit_sym_pending
 ├── hal/
 │   ├── hal_port.h              # Shim → redirects to include/mie/hal_port.h
 │   ├── rp2350/                 # RP2350 PIO scan → KeyEvent adapter (Phase 2)
@@ -87,8 +95,12 @@ firmware/mie/
 │   └── dict_meta.json
 └── tests/                      # GoogleTest unit tests (host-only build)
     ├── CMakeLists.txt
+    ├── test_helpers.h           # Shared fixture: TEntry, kev helpers, build_single/multi
     ├── test_trie_stub.cpp       # Build-environment smoke test
-    └── test_trie_searcher.cpp   # TrieSearcher unit tests (14 cases)
+    ├── test_trie_searcher.cpp   # TrieSearcher unit tests (14 cases)
+    ├── test_ime_basic.cpp       # ImeLogic: SmartMode, DirectMode, SymbolKeys, CandidateNav
+    ├── test_ime_modes.cpp       # ImeLogic: ModeSwitch, ModeSeparation
+    └── test_ime_advanced.cpp    # ImeLogic: GreedyPrefix, ToneSort, SmartEn, DirectBopomofo…
 ```
 
 ---
@@ -244,6 +256,25 @@ TrieSearcher instance in ImeLogic).
 
 **PSRAM budget:** Chinese dict ≤ 3 MB, English dict ≤ 0.5 MB, total ≤ 4 MB.
 
+#### MIED v2 ValueRecord format
+
+The v2 value layout (used by `gen_dict.py` since Phase 1 completion) extends v1 with a
+tone byte per word entry:
+
+```
+ValueRecord (per word, inside a values-file entry):
+  word_count : uint16                    (number of candidate words at this key)
+  per-word records (repeated word_count times):
+    freq     : uint16                    (corpus frequency)
+    tone     : uint8                     (Bopomofo tone: 1=陰平 2=陽平ˊ 3=上聲ˇ 4=去聲ˋ 5=輕聲˙  0=unknown/English)
+    word_len : uint8                     (UTF-8 byte length of the word)
+    word_utf8: bytes[word_len]           (UTF-8 encoded candidate word)
+```
+
+`TrieSearcher::dict_version()` returns 1 or 2.  v1 dicts (tone byte absent) are still
+accepted — ImeLogic treats all tone values as 0 (unknown) and falls back to full
+frequency-sorted candidate ordering.
+
 #### Runtime query (ImeLogic → TrieSearcher)
 ```cpp
 // Bopomofo mode: after pressing key indices [0, 4, 1]
@@ -277,15 +308,45 @@ Font glyphs remain in Flash and are read on demand (cache-friendly sequential ac
 
 ## 5. Input Modes
 
-The MODE key cycles through three modes in order.
+The MODE key cycles through five modes in order.  Each press of MODE advances by one;
+wraps back to `SmartZh` after `DirectBopomofo`.
 
-| # | Mode | `InputMode` | Description |
-|---|------|-------------|-------------|
-| 0 | Bopomofo | `Bopomofo` | Bopomofo syllable accumulation → Traditional Chinese candidate prediction |
-| 1 | English | `English` | Half-keyboard letter-pair expansion → English word prediction |
-| 2 | Alphanumeric | `Alphanumeric` | Multi-tap single character — English letters and digits |
+| # | `InputMode` enum | Trigger | Description |
+|---|-----------------|---------|-------------|
+| 0 | `SmartZh` | default / MODE×0 | Bopomofo prefix prediction; SPACE appends first-tone marker `ˉ` |
+| 1 | `SmartEn` | MODE×1 | Half-keyboard letter-pair English prediction (MIED `en_dat.bin`) |
+| 2 | `DirectUpper` | MODE×2 | Multi-tap uppercase letters / digits |
+| 3 | `DirectLower` | MODE×3 | Multi-tap lowercase letters |
+| 4 | `DirectBopomofo` | MODE×4 | Single Bopomofo phoneme cycling; produces single-char candidates |
 
-### 5.1 Bopomofo Mode
+### 5.1 Tone-Aware Candidate Ranking (SmartZh)
+
+After a key sequence has a matched prefix in the trie, ImeLogic extracts a **tone intent**
+from the trailing key bytes and applies a 4-tier sort before presenting candidates:
+
+**Tone intent extraction:**
+- Trailing byte `0x22` (key index 1, carries ˇ/ˋ) → intent 34 (tone 3 or tone 4).
+- SPACE (`0x20`) appended after a matched prefix → intent 1 (first tone / 陰平).
+- No trailing tone key → intent 0 (no filter applied).
+
+**4-tier sort (within each tier: frequency descending):**
+
+| Tier | Condition |
+|------|-----------|
+| 0 | single-char word **and** tone matches intent |
+| 1 | multi-char word **and** tone matches intent |
+| 2 | single-char word, tone does not match |
+| 3 | multi-char word, tone does not match |
+
+**Strict filter:** when intent ≠ 0, only tier-0 and tier-1 candidates are shown.
+If no tier-0/1 candidates exist (e.g., v1 dict without tone data), the filter is
+automatically disabled and the full frequency-sorted list is presented (backwards compat).
+
+**First-tone SPACE marker:** `0x20` is appended to `key_seq_buf_`; rendered as `ˉ` in
+the compound display; consumed by `do_commit_partial` immediately after commit so it
+does not bleed into the next word.
+
+### 5.2 SmartZh Mode (Bopomofo prediction)
 
 Bopomofo syllable structure constrains which symbol can appear at each position:
 
@@ -293,32 +354,31 @@ Bopomofo syllable structure constrains which symbol can appear at each position:
 [ 聲母 (initial) ] → [ 介音 (medial) ] → [ 韻母 (final) ] → [ 聲調 (tone) ]
 ```
 
-Each physical key carries two phonemes. Phase 1 uses only the primary (first) phoneme.
-Full disambiguation (Phase 3) will use the syllable position state machine to resolve
-ambiguity: for example, after a medial `ㄧ`, only consonants compatible with `ㄧ`
-are valid initials, eliminating half the candidates automatically.
+Each physical key carries two phonemes.  Primary-phoneme mapping is used; full
+phoneme-position disambiguation (Phase 3) will use the syllable state machine to
+resolve ambiguity automatically.
 
-### 5.2 English Mode
+### 5.3 SmartEn Mode (English prediction)
 
 Each half-keyboard key carries two letters (e.g., `Q/W`, `E/R`). The search layer
 expands an n-key sequence into up to 2ⁿ letter combinations and queries a
-frequency-sorted English-language MIED dictionary (`en_dat.bin` / `en_val.bin`).
+frequency-sorted English MIED dictionary (`en_dat.bin` / `en_values.bin`).
 Results from all valid prefix combinations are merged and returned in frequency order.
 
-Dictionary tool: `gen_en_dict.py` (planned) — converts a word-frequency list to MIED
-format using the same binary layout as `gen_dict.py`; no changes to `TrieSearcher`.
+### 5.4 DirectUpper / DirectLower Modes (multi-tap)
 
-### 5.3 Alphanumeric Mode
+Multi-tap cycling with no dictionary lookup.  `DirectUpper` produces uppercase letters
+and digits; `DirectLower` produces lowercase letters.
 
-Multi-tap cycling with no dictionary lookup:
+- First press of a key → primary character.
+- Consecutive press of the same key → next character in the slot's cycle list.
+- A different key press (or BACK) confirms the pending character and starts a new one.
 
-- First press of a key → primary character (e.g., `Q`).
-- Consecutive press of the same key → secondary character (e.g., `W`).
-- A different key press confirms the pending character and starts a new one.
-- Number row (Row 0): each key produces its two printed digits.
+### 5.5 DirectBopomofo Mode
 
-State is tracked in `ImeLogic::MultiTapState {last_row, last_col, tap_count, pending}`.
-A hardware timer (Phase 2+) will add auto-confirm on timeout.
+Single Bopomofo phoneme per key, cycling through the two phonemes printed on each key.
+Produces single-character candidates that match the selected phoneme exactly.
+No multi-character word prediction.
 
 ---
 
@@ -537,53 +597,119 @@ builds the `mie_gui` target using the MSVC/Ninja toolchain.
 
 ## 8. Development Roadmap
 
-### Phase 1 — Environment Setup & PC Validation
+### Phase 1 — PC Validation ✓ complete
 
-- [x] Write `gen_font.py` and verify output against a reference glyph set.
-      — Script complete; end-to-end run requires Unifont source + charlist_8104.txt (pending).
-- [x] Write `gen_dict.py`, validate DAT search correctness on PC.
-      — MIED binary format implemented; end-to-end run requires MoE CSV source (pending).
-- [x] Implement `Trie-Searcher` in C++; unit-test with Google Test on PC.
-      — `src/trie_searcher.cpp` complete; 13 unit tests passing.  See `docs/design-notes/mie-implementation.md`.
-- [x] Implement `IME-Logic` Bopomofo mode de-ambiguation; test with simulated key sequences.
-      — Phase 1 skeleton: primary-phoneme mapping, mode FSM, REPL integration.
-        Full disambiguation (two-alternative + fuzzy correction) deferred to Phase 3.
-- [x] **Phase 1 wrap-up:** Remove `Calculator` mode; MODE key cycles three modes (`% 3`);
-      mode-dispatch skeleton (`process_bopomofo` / `process_english` / `process_alpha`);
-      `MultiTapState` struct added; all 14 unit tests still passing.
-- [ ] **Phase 1 extension — Alphanumeric:** Implement multi-tap cycling in `process_alpha()`;
-      `MultiTapState` tracks last key + tap count; different key confirms pending character.
-- [ ] **Phase 1 extension — English dictionary:** `gen_en_dict.py` converts word-frequency
-      list to MIED format; `ImeLogic` accepts a second `TrieSearcher` for English;
-      `process_english()` expands letter pairs and queries prefix search.
-- [x] **GUI tool — Milestone A:** CMake `MIE_BUILD_GUI` option; FetchContent for Dear ImGui (v1.91.6) + SDL2 (v2.26.5, static).
-- [x] **GUI tool — Milestone B:** Window with virtual keyboard; 3-layer key labels (English / Bopomofo / Calc); 150 ms green highlight on press.
-- [x] **GUI tool — Milestone C:** Keyboard input (PC keys + button clicks) → `ImeLogic::process_key()`; live IME status panel (mode, input, candidates, committed text).
-- [x] **GUI tool — Milestone D:** `--dat`/`--val` CLI arguments; dictionary status indicator; full candidate display with click-to-commit.
-- [x] **GUI tool — layout accuracy:** Keyboard panel restructured to match PCB assembly drawing — navigation cluster (FUNC/BACK/D-pad/SET/DEL/VOL+/VOL-) at top; 5×4 input grid + function bar below.
+- [x] `gen_font.py`: extract 8,104 glyphs from GNU Unifont; output MIEF v1 binary.
+- [x] `gen_dict.py`: compile MoE word list + English word list to MIED v2 (with tone byte); validate on PC.
+- [x] `Trie-Searcher`: binary search on sorted key index; `dict_version()` accessor; v1/v2 compat.
+- [x] `IME-Logic`: 5 input modes (SmartZh, SmartEn, DirectUpper, DirectLower, DirectBopomofo).
+- [x] Tone-aware candidate ranking (4-tier sort, strict filter, first-tone SPACE marker).
+- [x] English MIED dictionary; `ImeLogic` accepts second `TrieSearcher`; `SmartEn` mode live.
+- [x] GUI tool (mie_gui): Dear ImGui + SDL2; virtual keyboard; live candidate display; click-to-commit.
+- [x] **83 GoogleTest cases passing** (69 ImeLogic + 14 TrieSearcher).
+
+### Phase 1.5 — Standalone Repo & C API ✓ complete
+
+- [x] Split `src/ime_logic.cpp` (991 lines) → 7 focused files + `ime_internal.h`.
+- [x] Split `tests/test_ime_logic.cpp` (1,554 lines) → 3 test files + `test_helpers.h`.
+- [x] Add `include/mie/mie.h` C API (opaque handles, C-linkage) — see §10.
+- [x] Add `src/mie_c_api.cpp` implementing the C API — **37 new tests; total 120/120 passing**.
+- [x] Add `firmware/mie/README.md` for standalone project landing page.
+- [x] `git subtree split --prefix=firmware/mie -b libmie-standalone` — branch created locally.
+- [ ] Push `libmie-standalone` to `tengigabytes/libmie` *(deferred — awaiting repo creation)*.
+- [ ] Replace `firmware/mie/` with submodule pointing to `tengigabytes/libmie`.
 
 ### Phase 2 — Hardware Integration (MokyaLora Rev A)
 
-- [ ] Implement `hal/rp2350/` — bridge PIO+DMA key state buffer to `mie::KeyEvent`.
-- [ ] Load DAT + values from Flash to PSRAM at boot; validate search latency.
-- [ ] Render `font_glyphs.bin` on the NHD 2.4″ display via LVGL custom font driver.
-- [ ] Integrate candidate bar UI widget with `Trie-Searcher` output.
+- [ ] `hal/rp2350/`: bridge PIO+DMA key state buffer to `mie::KeyEvent`.
+- [ ] Boot loader: copy DAT + values from Flash to PSRAM; measure search latency.
+- [ ] Display: render `font_glyphs.bin` via LVGL custom font driver on NHD 2.4″.
+- [ ] UI: integrate candidate bar widget with Trie-Searcher output.
 
 ### Phase 3 — Optimisation & Extension
 
-- [ ] Spatial and phonetic fuzzy correction.
-- [ ] User-defined word list stored in LittleFS, merged into DAT at runtime.
+- [ ] Spatial + phonetic fuzzy correction.
+- [ ] User-defined word list in LittleFS, merged into DAT at runtime.
 - [ ] Additional language pack slots (Japanese kana, Latin-script prediction).
 
 ---
 
-## 9. Future Extraction to Standalone Repository
+## 9. Standalone Repository Extraction
 
-When MIE is stable enough to stand alone:
+MIE is designed from the start as an extractable library.
 
-1. `git subtree split --prefix=firmware/mie -b mie-standalone`
-2. Push `mie-standalone` branch to a new repository.
-3. Replace `firmware/mie/` in this repo with `git submodule add <new-repo-url> firmware/mie`.
+**Extraction status:**
 
-The HAL interface contract and CMakeLists.txt structure are designed to make this
-transition require zero changes to the core library code.
+| Step | Status |
+|------|--------|
+| `include/mie/mie.h` C API + `src/mie_c_api.cpp` | ✅ done |
+| `firmware/mie/README.md` | ✅ done |
+| `git subtree split --prefix=firmware/mie -b libmie-standalone` | ✅ done (branch exists locally) |
+| Create `tengigabytes/libmie` on GitHub | ⏳ deferred |
+| Push `libmie-standalone:main` to `tengigabytes/libmie` | ⏳ deferred |
+| `git submodule add` to replace `firmware/mie/` | ⏳ deferred (after repo push) |
+
+**Extraction commands (when ready):**
+```sh
+git remote add libmie https://github.com/tengigabytes/libmie.git
+git push libmie libmie-standalone:main
+# then in MokyaLora repo:
+git rm -r firmware/mie
+git submodule add https://github.com/tengigabytes/libmie.git firmware/mie
+git submodule update --init
+```
+
+The HAL interface contract and CMakeLists.txt structure ensure zero changes to core
+library code during extraction.
+
+---
+
+## 10. Cross-Platform Targets & C API
+
+MIE exposes a stable C API via `include/mie/mie.h` (opaque handles, C-linkage,
+no C++ exceptions crossing the boundary). Implemented in `src/mie_c_api.cpp`; covered
+by 37 dedicated tests in `tests/test_mie_c_api.cpp`.
+
+### C API surface (`include/mie/mie.h`)
+
+```c
+/* ── Dictionary ──────────────────────────────────────────── */
+mie_dict_t* mie_dict_open(const char* dat_path, const char* val_path);
+mie_dict_t* mie_dict_open_memory(const uint8_t* dat_buf, size_t dat_size,
+                                  const uint8_t* val_buf, size_t val_size);
+void        mie_dict_close(mie_dict_t*);
+
+/* ── Context ─────────────────────────────────────────────── */
+mie_ctx_t*  mie_ctx_create(mie_dict_t* zh, mie_dict_t* en);  /* en may be NULL */
+void        mie_ctx_destroy(mie_ctx_t*);
+void        mie_set_commit_cb(mie_ctx_t*, void(*cb)(const char*, void*), void*);
+int         mie_process_key(mie_ctx_t*, uint8_t row, uint8_t col, int pressed);
+void        mie_clear_input(mie_ctx_t*);
+
+/* ── Display ─────────────────────────────────────────────── */
+const char* mie_input_str(mie_ctx_t*);       /* raw phoneme/letter display */
+const char* mie_compound_str(mie_ctx_t*);    /* [ph0ph1]ˉ compound display */
+const char* mie_mode_indicator(mie_ctx_t*);  /* "中" / "EN" / "ABC" / "abc" / "ㄅ" */
+
+/* ── Candidates (merged ZH+EN list) ─────────────────────── */
+int         mie_candidate_count(mie_ctx_t*);
+const char* mie_candidate_word(mie_ctx_t*, int idx);
+int         mie_candidate_lang(mie_ctx_t*, int idx);  /* 0=ZH 1=EN -1=OOB */
+
+/* ── Pagination (page size = 5) ──────────────────────────── */
+int         mie_page_size(void);
+int         mie_cand_page(mie_ctx_t*);
+int         mie_cand_page_count(mie_ctx_t*);
+int         mie_page_cand_count(mie_ctx_t*);
+const char* mie_page_cand_word(mie_ctx_t*, int idx);
+int         mie_page_cand_lang(mie_ctx_t*, int idx);
+int         mie_page_sel(mie_ctx_t*);
+```
+
+### Platform wrappers
+
+| Target | Wrapper | Dict location | Status |
+|--------|---------|---------------|--------|
+| MokyaLora (RP2350) | Direct C++ call to `ImeLogic` | Flash → PSRAM at boot (`mie_dict_open_memory`) | Phase 2 |
+| Android IME service | JNI wrapper calling C API | APK assets → internal storage | Planned |
+| Windows TSF text service | COM `ITextInputProcessor` → C API | `%APPDATA%\libmie\` | Planned |

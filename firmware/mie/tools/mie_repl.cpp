@@ -2,20 +2,29 @@
 // SPDX-License-Identifier: MIT
 //
 // Renders a virtual MokyaLora half-keyboard in the terminal and passes key
-// events through ImeLogic → TrieSearcher, displaying the current phoneme
-// input sequence and candidate words in real time.
+// events through ImeLogic → TrieSearcher, displaying candidates in real time.
 //
-// Build: part of the mie CMake host build (not cross-compiled for RP2350).
-// Run:   ./build/mie-host/mie_repl [--dat dict_dat.bin] [--val dict_values.bin]
+// Usage:
+//   ./mie_repl [--dat dict_dat.bin] [--val dict_values.bin]
+//              [--en-dat en_dat.bin] [--en-val en_values.bin]
 //
-// Without --dat / --val the REPL still runs but shows no candidates.
+// Without dictionary arguments the REPL runs but shows no candidates.
 //
-// Controls (mapped keys shown in the virtual keyboard display):
-//   Phoneme keys  — append Bopomofo phoneme to input sequence
-//   BACK / DEL    — remove last phoneme
-//   MODE (`)      — cycle input mode, clear input
-//   SPACE / OK    — commit first candidate (clears input)
-//   ESC / Ctrl-C  — quit
+// Controls (PC keys shown in the virtual keyboard grid):
+//   Input keys  — append to key sequence (SmartZh/SmartEn) / cycle label (Direct)
+//   BACK (BS)   — backspace (Smart modes) / cancel pending (Direct)
+//                 When no IME input pending: delete character before cursor
+//   DEL         — When no IME input pending: delete character at cursor
+//   MODE  (`)   — cycle 中→EN→ABC→abc→ㄅ, clear input
+//   ，SYM ([)   — cycle Chinese/English comma/punctuation group
+//   。.？ (])   — cycle Chinese/English period/punctuation group
+//   ←/→         — navigate candidates (IME active) / move cursor in committed text
+//   SPACE / OK  — commit (SmartZh: SPACE = first-tone marker)
+//   ESC         — quit
+//
+// Phoneme key aliases (SmartZh / DirectBopomofo):
+//   m or ,  → (3,3) ㄩ/ㄝ        \  or . or /  → (3,4) ㄡ/ㄥ
+//   l or ;  → (2,4) ㄠ/ㄤ        9, 0  or  -   → (0,4) ㄞ/ㄢ/ㄦ
 
 #include "../hal/pc/hal_pc_stdin.h"
 #include "../hal/pc/key_map.h"
@@ -24,6 +33,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #ifdef _WIN32
 #  include <windows.h>
@@ -31,142 +41,312 @@
 #  include <sys/select.h>
 #endif
 
-// ── Virtual keyboard label table ─────────────────────────────────────────
+// ── Simple file logger (writes to mie_repl.log beside the executable) ────────
+// Helps diagnose crashes: if the program crashes the log shows the last entry.
 
+static FILE* g_log = nullptr;
+
+static void log_open() {
+    g_log = fopen("mie_repl.log", "w");
+    if (g_log) { fputs("[mie_repl] log opened\n", g_log); fflush(g_log); }
+}
+
+static void log_close() {
+    if (g_log) { fputs("[mie_repl] log closed\n", g_log); fclose(g_log); g_log = nullptr; }
+}
+
+// LOG(fmt, ...) — only active when g_log is open; always flushes so the last
+// entry is visible even if the process crashes immediately after.
+#define LOG(fmt, ...) \
+    do { if (g_log) { fprintf(g_log, fmt, ##__VA_ARGS__); fflush(g_log); } } while(0)
+
+
+// label_zh:    shown in SmartZh / DirectBopomofo mode.
+// label_en:    shown in SmartEn / DirectUpper mode (nullptr = same as label_zh).
+// label_lower: shown in DirectLower mode (nullptr = same as label_en).
 struct KeyLabel {
-    uint8_t     row;
-    uint8_t     col;
+    uint8_t row; uint8_t col;
     const char* pc_hint;
-    const char* label;
+    const char* label_zh;
+    const char* label_en;
+    const char* label_lower;
 };
 
 // clang-format off
 static const KeyLabel kLabels[] = {
-    // Row 0
-    {0, 0, "1",   "ㄅㄉ"  }, {0, 1, "3",   "ˇˋ"   }, {0, 2, "5",   "ㄓˊ"  },
-    {0, 3, "7",   "˙ㄚ"  }, {0, 4, "9",   "ㄞㄢ" }, {0, 5, "F1",  "FUNC" },
-    // Row 1
-    {1, 0, "q",   "ㄆㄊ"  }, {1, 1, "e",   "ㄍㄐ" }, {1, 2, "t",   "ㄔㄗ" },
-    {1, 3, "u",   "ㄧㄛ" }, {1, 4, "o",   "ㄟㄣ" }, {1, 5, "F2",  "SET"  },
-    // Row 2
-    {2, 0, "a",   "ㄇㄋ"  }, {2, 1, "d",   "ㄎㄑ" }, {2, 2, "g",   "ㄕㄘ" },
-    {2, 3, "j",   "ㄨㄜ" }, {2, 4, "l",   "ㄠㄤ" }, {2, 5, "BS",  "BACK" },
-    // Row 3
-    {3, 0, "z",   "ㄈㄌ"  }, {3, 1, "c",   "ㄏㄒ" }, {3, 2, "b",   "ㄖㄙ" },
-    {3, 3, "m",   "ㄩㄝ" }, {3, 4, "\\",  "ㄡㄥ" }, {3, 5, "Del", "DEL"  },
-    // Row 4
-    {4, 0, "`",   "MODE" }, {4, 1, "Tab", "TAB"  }, {4, 2, "Spc", "SPACE"},
-    {4, 3, ",",   "\xef\xbc\x8cSYM"}, {4, 4, ".",   "\xe3\x80\x82\xef\xbc\x9f"}, {4, 5, "=",   "VOL+" },
-    // Row 5
-    {5, 0, "\xe2\x86\x91",   "UP"   }, {5, 1, "\xe2\x86\x93",   "DOWN" }, {5, 2, "\xe2\x86\x90",   "LEFT" },
-    {5, 3, "\xe2\x86\x92",   "RIGHT"}, {5, 4, "\xe2\x8f\x8e",   "OK"   }, {5, 5, "-",   "VOL-" },
+    // Row 0: tone/digit keys — digits in all direct modes
+    {0,0,"1",   "ㄅㄉ", "1/2","1/2" },{0,1,"3",  "ˇˋ",  "3/4","3/4" },{0,2,"5",  "ㄓˊ","5/6","5/6" },
+    {0,3,"7",   "˙ㄚ",  "7/8","7/8" },{0,4,"9/-","ㄞㄢㄦ","9/0","9/0" },{0,5,"F1","FUNC",nullptr,nullptr},
+    // Row 1: ㄆㄊ=QW  ㄍㄐ=ER  ㄔㄗ=TY  ㄧㄛ=UI  ㄟㄣ=OP
+    {1,0,"q",   "ㄆㄊ","Q/W","q/w"},{1,1,"e",  "ㄍㄐ","E/R","e/r"},{1,2,"t",  "ㄔㄗ","T/Y","t/y"},
+    {1,3,"u",   "ㄧㄛ","U/I","u/i"},{1,4,"o",  "ㄟㄣ","O/P","o/p"},{1,5,"F2", "SET", nullptr,nullptr},
+    // Row 2: ㄇㄋ=AS  ㄎㄑ=DF  ㄕㄘ=GH  ㄨㄜ=JK  ㄠㄤ=L/;
+    {2,0,"a",   "ㄇㄋ","A/S","a/s"},{2,1,"d",  "ㄎㄑ","D/F","d/f"},{2,2,"g",  "ㄕㄘ","G/H","g/h"},
+    {2,3,"j",   "ㄨㄜ","J/K","j/k"},{2,4,"l/;","ㄠㄤ","L",  "l"  },{2,5,"BS","BACK",nullptr,nullptr},
+    // Row 3: ㄈㄌ=ZX  ㄏㄒ=CV  ㄖㄙ=BN  ㄩㄝ=M/,  ㄡㄥ=\.//
+    {3,0,"z",   "ㄈㄌ","Z/X","z/x"},{3,1,"c",  "ㄏㄒ","C/V","c/v"},{3,2,"b",  "ㄖㄙ","B/N","b/n"},
+    {3,3,"m/,", "ㄩㄝ","M",  "m"  },{3,4,"\\/.","ㄡㄥ","—", "—"  },{3,5,"Del","DEL",nullptr,nullptr},
+    // Rows 4-5: same in all modes
+    {4,0,"`",   "MODE",nullptr,nullptr},{4,1,"Tab","TAB",nullptr,nullptr},{4,2,"Spc","SPACE",nullptr,nullptr},
+    {4,3,"[",   "，SYM",nullptr,nullptr},{4,4,"]","。？",nullptr,nullptr},{4,5,"=","VOL+",nullptr,nullptr},
+    {5,0,"\xe2\x86\x91","UP",  nullptr,nullptr},{5,1,"\xe2\x86\x93","DOWN", nullptr,nullptr},
+    {5,2,"\xe2\x86\x90","LEFT",nullptr,nullptr},{5,3,"\xe2\x86\x92","RIGHT",nullptr,nullptr},
+    {5,4,"\xe2\x8f\x8e","OK",  nullptr,nullptr},{5,5,"_","VOL-",nullptr,nullptr},
 };
 // clang-format on
 
-static const char* label_for(uint8_t row, uint8_t col) {
-    for (const auto& k : kLabels) {
-        if (k.row == row && k.col == col) return k.label;
+
+// ── Committed output buffer & cursor ─────────────────────────────────────
+
+static std::string g_committed;
+static int         g_cursor = 0;  // byte offset into g_committed
+
+static void on_commit(const char* utf8, void* /*ctx*/) {
+    if (utf8 && *utf8) {
+        int len = (int)strlen(utf8);
+        g_committed.insert((size_t)g_cursor, utf8, (size_t)len);
+        g_cursor += len;
     }
-    return "?";
 }
 
-static const char* mode_name(mie::InputMode m) {
-    switch (m) {
-        case mie::InputMode::Bopomofo:     return "注音";
-        case mie::InputMode::English:      return "EN";
-        case mie::InputMode::Alphanumeric: return "ABC";
-    }
-    return "?";
+// UTF-8 helpers for cursor movement.
+// Move cursor left by one codepoint (skip over continuation bytes 0x80-0xBF).
+static void cursor_move_left() {
+    if (g_cursor <= 0) return;
+    --g_cursor;
+    while (g_cursor > 0 && ((unsigned char)g_committed[g_cursor] & 0xC0) == 0x80)
+        --g_cursor;
+}
+
+// Move cursor right by one codepoint.
+static void cursor_move_right() {
+    int n = (int)g_committed.size();
+    if (g_cursor >= n) return;
+    ++g_cursor;
+    while (g_cursor < n && ((unsigned char)g_committed[g_cursor] & 0xC0) == 0x80)
+        ++g_cursor;
+}
+
+// Delete codepoint before the cursor (backspace).
+static void cursor_backspace() {
+    if (g_cursor <= 0) return;
+    int end = g_cursor;
+    cursor_move_left();
+    g_committed.erase((size_t)g_cursor, (size_t)(end - g_cursor));
+}
+
+// Delete codepoint at the cursor (forward delete).
+static void cursor_delete() {
+    int n = (int)g_committed.size();
+    if (g_cursor >= n) return;
+    int start = g_cursor;
+    int pos = start + 1;
+    while (pos < n && ((unsigned char)g_committed[pos] & 0xC0) == 0x80) ++pos;
+    g_committed.erase((size_t)start, (size_t)(pos - start));
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────
 
 static void clear_screen() { fputs("\033[2J\033[H", stdout); }
 
-static void render(const mie::ImeLogic& ime) {
-    clear_screen();
-    puts("\xe2\x94\x8c\xe2\x94\x80 MokyaLora Virtual Keyboard (mie_repl) \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90");
+// (circle number labels removed; candidates now separated by spaces)
 
+static void render(const mie::ImeLogic& ime) {
+    LOG("render: mode=%d zh=%d en=%d merged=%d mc_sel=%d prefix=%d input_bytes=%d\n",
+        (int)ime.mode(), ime.zh_candidate_count(), ime.en_candidate_count(),
+        ime.merged_candidate_count(), ime.candidate_index(),
+        ime.matched_prefix_len(), ime.input_bytes());
+    clear_screen();
+
+    // ── Keyboard grid ──────────────────────────────────────────────────────
+    puts("\xe2\x94\x8c\xe2\x94\x80 MokyaLora REPL \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90");
     for (int row = 0; row < 6; ++row) {
         fputs("\xe2\x94\x82 ", stdout);
         for (int col = 0; col < 6; ++col) {
-            const char* pc    = "?";
-            const char* label = "?";
+            const char* pc = "?"; const char* lb = "?";
             for (const auto& k : kLabels) {
-                if (k.row == row && k.col == col) { pc = k.pc_hint; label = k.label; break; }
+                if (k.row == row && k.col == col) {
+                    pc = k.pc_hint;
+                    switch (ime.mode()) {
+                        case mie::InputMode::SmartEn:
+                        case mie::InputMode::DirectUpper:
+                            lb = k.label_en ? k.label_en : k.label_zh;
+                            break;
+                        case mie::InputMode::DirectLower:
+                            if (k.label_lower)      lb = k.label_lower;
+                            else if (k.label_en)    lb = k.label_en;
+                            else                    lb = k.label_zh;
+                            break;
+                        default:
+                            lb = k.label_zh;
+                            break;
+                    }
+                    break;
+                }
             }
-            printf("[%2s:%-4s]", pc, label);
+            printf("[%3s:%-5s]", pc, lb);
         }
         puts(" \xe2\x94\x82");
     }
+    puts("\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4");
 
-    puts("\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4");
-
-    // Mode indicator and input line
-    printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %-4s  \xe8\xbc\xb8\xe5\x85\xa5: %-46s \xe2\x94\x82\n",
-           mode_name(ime.mode()),
-           ime.input_bytes() > 0 ? ime.input_str() : "(\xe6\x8c\x89\xe4\xb8\x8b\xe6\xb3\xa8\xe9\x9f\xb3\xe9\x8d\xb5)");
-
-    // Candidates line
-    char cand_buf[256] = {};
-    int  pos           = 0;
-    if (ime.candidate_count() > 0) {
-        for (int i = 0; i < ime.candidate_count() && pos < 200; ++i) {
-            const char* circle_nums[] = {
-                "\xe2\x91\xa0","\xe2\x91\xa1","\xe2\x91\xa2","\xe2\x91\xa3","\xe2\x91\xa4",
-                "\xe2\x91\xa5","\xe2\x91\xa6","\xe2\x91\xa7","\xe2\x91\xa8","\xe2\x91\xa9",
-            };
-            int n = snprintf(cand_buf + pos, sizeof(cand_buf) - pos - 1,
-                             "%s%s ", circle_nums[i], ime.candidate(i).word);
-            if (n > 0) pos += n;
-        }
-    } else if (ime.input_bytes() > 0) {
-        snprintf(cand_buf, sizeof(cand_buf), "(\xe6\x9c\xaa\xe6\x89\xbe\xe5\x88\xb0\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97)");
+    // ── Mode & input: compound display with [matched]remaining split ───────
+    // SmartZh shows "[ㄅㄉ][ㄍㄐ]" compound format; others use primary phoneme/letter.
+    char input_display[400] = {};
+    if (ime.input_bytes() == 0 && ime.compound_input_bytes() == 0) {
+        // (按下鍵入)
+        snprintf(input_display, sizeof(input_display), "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)");
     } else {
-        snprintf(cand_buf, sizeof(cand_buf), "(\xe7\x84\xa1\xe5\xad\x97\xe5\x85\xb8\xe6\x99\x82\xe9\xa1\xaf\xe7\xa4\xba\xe9\x8d\xb5\xe5\x90\x8d)");
+        int split = ime.matched_prefix_compound_bytes();
+        const char* s = ime.compound_input_str();
+        int total = ime.compound_input_bytes();
+        if (split > 0 && split < total) {
+            snprintf(input_display, sizeof(input_display), "{%.*s}%s",
+                     split, s, s + split);
+        } else if (split > 0) {
+            snprintf(input_display, sizeof(input_display), "{%s}", s);
+        } else {
+            snprintf(input_display, sizeof(input_display), "%s", s);
+        }
     }
-    printf("\xe2\x94\x82 \xe5\x80\x99\xe9\x81\xb8: %-55s \xe2\x94\x82\n", cand_buf);
+    printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-40s \xe2\x94\x82\n",
+           ime.mode_indicator(), input_display);
 
-    puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
-    puts("  ESC/Ctrl-C \xe9\x9b\xa2\xe9\x96\x8b  |  BACK=\xe5\x88\xaa\xe9\x99\xa4  |  MODE=\xe5\x88\x87\xe6\xa8\xa1\xe5\xbc\x8f  |  SPACE/OK=\xe6\xa7\x8b\xe8\xa9\x9e");
+    // ── Candidates — paged merged list ───────────────────────────────────
+    // Shows kCandPageSize candidates per page. Tab advances to the next page.
+    // LEFT/RIGHT/UP/DOWN navigate globally; page indicator shown when >1 page.
+    if (ime.mode() == mie::InputMode::SmartZh ||
+        ime.mode() == mie::InputMode::SmartEn ||
+        ime.mode() == mie::InputMode::DirectBopomofo) {
+        int mc = ime.merged_candidate_count();
+
+        if (mc > 0) {
+            // Show only candidates on the current page.
+            int page     = ime.cand_page();
+            int pg_total = ime.cand_page_count();
+            int pg_count = ime.page_cand_count();  // candidates on this page (≤5)
+            int sel_in_page = ime.page_sel();       // highlight within page
+            LOG("render: mc=%d page=%d/%d pg_count=%d sel=%d\n",
+                mc, page+1, pg_total, pg_count, sel_in_page);
+            char cand_buf[512] = {}; int pos = 0;
+            for (int i = 0; i < pg_count && pos < 460; ++i) {
+                bool sel = (i == sel_in_page);
+                int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
+                                 "%s%s ",
+                                 sel ? ">" : " ",
+                                 ime.page_cand(i).word);
+                if (n > 0) pos += n;
+            }
+            // Page indicator appended if more than one page exists.
+            if (pg_total > 1) {
+                int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
+                                 " [%d/%d]", page + 1, pg_total);
+                if (n > 0) pos += n;
+            }
+            // Label: 中文 for SmartZh, English for SmartEn, ㄅ for DirectBopomofo
+            const char* lbl = (ime.mode() == mie::InputMode::SmartZh)
+                              ? "[\xe4\xb8\xad\xe6\x96\x87]"  // [中文]
+                              : (ime.mode() == mie::InputMode::SmartEn)
+                              ? "[English]"
+                              : "[\xe3\x84\x85]";             // [ㄅ]
+            printf("\xe2\x94\x82 %s %-46s \xe2\x94\x82\n", lbl, cand_buf);
+        } else if (ime.mode() != mie::InputMode::DirectBopomofo && ime.input_bytes() > 0) {
+            printf("\xe2\x94\x82   (\xe7\x84\xa1\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97) %-46s \xe2\x94\x82\n", "");  // (無候選字)
+        } else {
+            printf("\xe2\x94\x82   %-56s \xe2\x94\x82\n", "");
+        }
+    } else {
+        // DirectUpper / DirectLower: show pending label.
+        printf("\xe2\x94\x82 \xe7\x9b\xb4\xe6\x8e\xa5\xe8\xbc\xb8\xe5\x85\xa5: %-48s \xe2\x94\x82\n",  // 直接輸入:
+               ime.input_bytes() > 0 ? ime.input_str() : "");
+    }
+
+    // ── Committed output (with cursor position shown as |) ───────────────
+    {
+        std::string disp;
+        disp.reserve(g_committed.size() + 3);
+        disp.append(g_committed, 0, (size_t)g_cursor);
+        disp += '|';
+        disp.append(g_committed, (size_t)g_cursor);
+        printf("\xe2\x94\x82 \xe5\xb7\xb2\xe7\xa2\xba\xe8\xaa\x8d: %-50s \xe2\x94\x82\n",   // 已確認:
+               disp.c_str());
+    }
+
+    puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
+    // ESC離開 | `=MODE(中→EN→ABC→abc→ㄅ) | ←→=候選/游標 | Tab=下頁 | BS/Del=刪除
+    // Spc=一聲/提交 | ↩=確認 | [/]=，SYM/。？ | ,.;-/ = 注音快捷鍵
+    // Note: string split at \x92 boundaries to avoid hex-escape-out-of-range warnings.
+    puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  `=MODE("
+         "\xe4\xb8\xad\xe2\x86\x92" "EN"
+         "\xe2\x86\x92" "ABC"
+         "\xe2\x86\x92" "abc"
+         "\xe2\x86\x92\xe3\x84\x85)  |  \xe2\x86\x90\xe2\x86\x92="
+         "\xe5\x80\x99\xe9\x81\xb8/\xe6\xb8\xb8\xe6\xa8\x99  |  "
+         "Tab=\xe4\xb8\x8b\xe9\xa0\x81  |  "   // Tab=下頁
+         "BS/Del=\xe5\x88\xaa\xe9\x99\xa4  |  "
+         "Spc=\xe4\xb8\x80\xe8\x81\xb2/\xe6\x8f\x90\xe4\xba\xa4  |  "  // Spc=一聲/提交
+         "\xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d  |  "
+         "[=\xef\xbc\x8c\xe7\xac\xa6  ]=\xe3\x80\x82\xef\xbc\x9f  |  "  // [=，符 ]=。？
+         ",.=\xe3\x84\xa9\xe3\x84\x9d  ;=\xe3\x84\xa0\xe3\x84\xa4  -=\xe3\x84\xa6");  // ,.=ㄩㄝ ;=ㄠㄤ -=ㄦ
     fflush(stdout);
 }
 
-// ── Argument parsing (minimal) ────────────────────────────────────────────
+// ── Argument parsing ─────────────────────────────────────────────────────
 
 static const char* find_arg(int argc, char** argv, const char* flag) {
-    for (int i = 1; i + 1 < argc; ++i) {
+    for (int i = 1; i + 1 < argc; ++i)
         if (strcmp(argv[i], flag) == 0) return argv[i + 1];
-    }
     return nullptr;
 }
 
-// ── Main loop ────────────────────────────────────────────────────────────
+// ── Main ─────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
+    log_open();
+    LOG("main: startup\n");
+
 #ifdef _WIN32
-    // Enable UTF-8 console output on Windows.
     SetConsoleOutputCP(CP_UTF8);
+    LOG("main: SetConsoleOutputCP(CP_UTF8) done\n");
 #endif
 
-    const char* dat_path = find_arg(argc, argv, "--dat");
-    const char* val_path = find_arg(argc, argv, "--val");
+    const char* zh_dat = find_arg(argc, argv, "--dat");
+    const char* zh_val = find_arg(argc, argv, "--val");
+    const char* en_dat = find_arg(argc, argv, "--en-dat");
+    const char* en_val = find_arg(argc, argv, "--en-val");
 
-    mie::TrieSearcher searcher;
-    if (dat_path && val_path) {
-        if (searcher.load_from_file(dat_path, val_path)) {
-            printf("Dictionary loaded: %u keys.\n", searcher.key_count());
+    mie::TrieSearcher zh_searcher;
+    if (zh_dat && zh_val) {
+        if (zh_searcher.load_from_file(zh_dat, zh_val))
+            printf("\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe5\x85\xb8: %u keys  (v%u%s)\n",
+                   zh_searcher.key_count(),
+                   zh_searcher.dict_version(),
+                   zh_searcher.dict_version() < 2 ? "  WARNING: v1 dict has no tone data — rebuild with gen_dict.py" : "");
+        else
+            fprintf(stderr, "WARNING: failed to load Chinese dict '%s'/'%s'\n", zh_dat, zh_val);
+    }
+
+    mie::TrieSearcher en_searcher;
+    bool en_loaded = false;
+    if (en_dat && en_val) {
+        if (en_searcher.load_from_file(en_dat, en_val)) {
+            printf("English dict: %u keys\n", en_searcher.key_count());
+            en_loaded = true;
         } else {
-            fprintf(stderr, "WARNING: failed to load dictionary from '%s' / '%s'.\n",
-                    dat_path, val_path);
+            fprintf(stderr, "WARNING: failed to load English dict '%s'/'%s'\n", en_dat, en_val);
         }
     }
 
-    mie::ImeLogic     ime(searcher);
+    mie::ImeLogic ime(zh_searcher, en_loaded ? &en_searcher : nullptr);
+    ime.set_commit_callback(on_commit, nullptr);
+    LOG("main: ImeLogic created\n");
+
     mie::pc::HalPcStdin hal;
-    mie::KeyEvent     ev;
+    mie::KeyEvent ev;
+    LOG("main: HalPcStdin created, entering render\n");
 
     render(ime);
+    LOG("main: initial render done, entering event loop\n");
 
     while (true) {
         if (!hal.poll(ev)) {
@@ -179,9 +359,44 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        const bool refresh = ime.process_key(ev);
+        // ESC to quit (HalPcStdin maps ESC to row=0xFF signal)
+        if (ev.row == 0xFF) break;
+
+        LOG("key: row=%u col=%u\n", (unsigned)ev.row, (unsigned)ev.col);
+
+        // When no IME input is pending, intercept navigation/edit keys for the
+        // committed text cursor instead of passing them to ImeLogic.
+        bool cursor_handled = false;
+        if (ime.input_bytes() == 0) {
+            if (ev.row == 5 && ev.col == 2) {  // LEFT → cursor left
+                cursor_move_left();
+                cursor_handled = true;
+            } else if (ev.row == 5 && ev.col == 3) {  // RIGHT → cursor right
+                cursor_move_right();
+                cursor_handled = true;
+            } else if (ev.row == 2 && ev.col == 5) {  // BACK → delete before cursor
+                cursor_backspace();
+                cursor_handled = true;
+            } else if (ev.row == 3 && ev.col == 5) {  // DEL → delete at cursor
+                cursor_delete();
+                cursor_handled = true;
+            }
+        }
+
+        bool refresh;
+        if (cursor_handled) {
+            refresh = true;  // always re-render on cursor edit
+        } else {
+            refresh = ime.process_key(ev);
+        }
+
+        LOG("key: process_key -> refresh=%d zh=%d en=%d merged=%d\n",
+            refresh, ime.zh_candidate_count(), ime.en_candidate_count(),
+            ime.merged_candidate_count());
         if (refresh) render(ime);
     }
 
+    LOG("main: exit\n");
+    log_close();
     return 0;
 }

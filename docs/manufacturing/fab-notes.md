@@ -26,8 +26,8 @@ the PDF instead.
 | Gerber files generated | 2026-03-22 | `hardware/production/rev-a/gerber/` |
 | BOM finalised | 2026-03-22 | `hardware/production/rev-a/MokyaLora.csv` |
 | Submitted to manufacturer | 2026-03-22 | PCB fabrication + SMT assembly |
-| Board received | — | Pending |
-| Bring-up started | — | Pending — see `docs/bringup/rev-a-bringup-log.md` |
+| Board received | 2026-04-02 | |
+| Bring-up started | 2026-04-02 | 7 issues found — see `docs/bringup/rev-a-bringup-log.md` |
 
 ---
 

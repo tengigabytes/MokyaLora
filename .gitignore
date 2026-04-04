@@ -33,3 +33,21 @@ __pycache__/
 # MIE generated data assets (rebuilt by tools/gen_font.py and tools/gen_dict.py)
 firmware/mie/data/*.bin
 firmware/mie/data/*.json
+
+# MIE downloaded source data (fetched by tools/fetch_data.py — not committed)
+firmware/mie/data_sources/
+
+# MIE REPL runtime log
+mie_repl.log
+
+# MIE generated text data assets
+firmware/mie/data/*.txt
+
+# Bringup audio test files — WAV recordings and generated PCM C arrays may contain voice data
+*.wav
+firmware/tools/bringup/*_pcm.c
+firmware/tools/bringup/*_pcm.h
+firmware/tools/gen_voice_pcm.py
+
+# KiCad lock files
+*.lck

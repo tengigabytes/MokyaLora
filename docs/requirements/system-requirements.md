@@ -79,8 +79,8 @@ The device supports two mutually exclusive modes, selected by the user on USB in
 | Input            | 36-key 6×6 matrix (SDM03U40 anti-ghost diodes, PIO+DMA)    |
 | Audio            | IM69D130 PDM mic + NAU8315 3.2 W Class-D amp + CMS-131304  |
 | LoRa             | Semtech SX1262 (SPI1) + ECS-TXO-20CSMV4 TCXO              |
-| GNSS             | ST Teseo-LIV3FL (I2C0, 0x3A)                               |
-| Sensors          | LSM6DSV16X IMU, LIS2MDL mag, LPS22HH baro (I2C0)           |
+| GNSS             | ST Teseo-LIV3FL (sensor bus, 0x3A)                          |
+| Sensors          | LSM6DSV16X IMU, LIS2MDL mag, LPS22HH baro (sensor bus, GPIO 34/35, `i2c1`) |
 | Battery          | Nokia BL-4C Li-ion ~890 mAh                                |
 | Charging         | USB-C up to 2 A fast charge (configurable via I2C); OTG 5 V reverse power supported |
 

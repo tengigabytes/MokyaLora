@@ -18,7 +18,8 @@ namespace mie {
 // ── File-format constants ─────────────────────────────────────────────────
 
 static constexpr uint8_t  kMagic[4]   = { 'M', 'I', 'E', 'D' };
-static constexpr uint16_t kVersion    = 1;
+static constexpr uint16_t kVersionMin = 1;  // oldest supported format (no tone)
+static constexpr uint16_t kVersionMax = 2;  // current format (tone byte per word)
 static constexpr uint32_t kHeaderSize = 16;  // bytes before the index table
 static constexpr uint32_t kEntrySize  = 8;   // bytes per IndexEntry
 
@@ -81,7 +82,7 @@ bool TrieSearcher::load_from_memory(const uint8_t* dat_buf, size_t dat_size,
     // Version
     uint16_t ver = 0;
     memcpy(&ver, dat_buf + 4, 2);
-    if (ver != kVersion) return false;
+    if (ver < kVersionMin || ver > kVersionMax) return false;
 
     // key_count
     uint32_t kc = 0;
@@ -98,13 +99,14 @@ bool TrieSearcher::load_from_memory(const uint8_t* dat_buf, size_t dat_size,
     if (kdo > dat_size)
         return false;
 
-    dat_          = dat_buf;
-    dat_size_     = dat_size;
-    val_          = val_buf;
-    val_size_     = val_size;
-    key_count_    = kc;
+    dat_           = dat_buf;
+    dat_size_      = dat_size;
+    val_           = val_buf;
+    val_size_      = val_size;
+    key_count_     = kc;
     keys_data_off_ = kdo;
-    loaded_       = true;
+    version_       = ver;
+    loaded_        = true;
     return true;
 }
 
@@ -169,14 +171,21 @@ int TrieSearcher::search(const char* key_utf8,
     memcpy(&word_count, val_ + vo, 2);
     vo += 2;
 
+    // v2 adds a tone byte between freq and word_len:
+    //   v1: [freq:u16][word_len:u8][word_utf8...]
+    //   v2: [freq:u16][tone:u8][word_len:u8][word_utf8...]
+    const bool has_tone = (version_ == 2);
+    const uint32_t hdr_bytes = has_tone ? 4u : 3u;  // per-word header size
+
     int n = 0;
     for (int i = 0; i < static_cast<int>(word_count) && n < max_results; ++i) {
-        if (vo + 3u > val_size_) break;
+        if (vo + hdr_bytes > val_size_) break;
 
         uint16_t freq = 0;
         memcpy(&freq, val_ + vo, 2);
-        const uint8_t wlen = val_[vo + 2];
-        vo += 3;
+        const uint8_t tone = has_tone ? val_[vo + 2] : 0;
+        const uint8_t wlen = val_[vo + (has_tone ? 3u : 2u)];
+        vo += hdr_bytes;
 
         if (vo + wlen > val_size_) break;
 
@@ -188,6 +197,7 @@ int TrieSearcher::search(const char* key_utf8,
         memcpy(out[n].word, val_ + vo, wlen);
         out[n].word[wlen] = '\0';
         out[n].freq       = freq;
+        out[n].tone       = tone;
         vo += wlen;
         ++n;
     }

@@ -101,7 +101,7 @@ See `docs/design-notes/power-architecture.md` for the full power tree.
 - Protocol Select pin must be configured for I2C mode.
 - RF trace: 50 Ω controlled impedance.
 - 3.3 V supply (TPS7A2033) for RF and analogue sections.
-- SDA/SCL share I2C0 pull-ups with other sensors.
+- SDA/SCL share sensor bus pull-ups with other sensors.
 
 ---
 
@@ -165,13 +165,13 @@ See `docs/design-notes/power-architecture.md` for the full power tree.
 |------|------|---------|-------------|-----------------|
 | IMU (ACC + GYRO) | ST LSM6DSV16X | LGA-14 | 0x6A | SA0 → GND (default 0x6B conflicts with charger) |
 | Magnetometer | ST LIS2MDL | LGA-12 | 0x1E | Fixed |
-| Barometer | ST LPS22HH | LGA-10 | 0x5C | SA0 → GND |
+| Barometer | ST LPS22HH | LGA-10 | 0x5D | SA0 → 3.3 V (Rev A confirmed; schematic ties SA0 to 3.3 V) |
 
-All sensors share **I2C0 (GPIO 34 / 35)** with the GNSS receiver.
+All sensors share the **sensor bus (GPIO 34 / 35, `i2c1` in Pico SDK)** with the GNSS receiver.
 
 **Design constraints:**
 - LSM6DSV16X SA0 must be tied to GND — default address 0x6B conflicts with BQ25622 on I2C1.
-- LPS22HH SA0 must be tied to GND.
+- LPS22HH SA0 is tied to 3.3 V → address 0x5D (confirmed Rev A bring-up).
 - I2C0 pull-ups: 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL.
 
 ---
@@ -239,6 +239,8 @@ All sensors share **I2C0 (GPIO 34 / 35)** with the GNSS receiver.
 | Row 4 | MODE | TAB | SPACE | ，SYM | 。.？ | VOL+ |
 | Row 5 (nav) | UP | DOWN | LEFT | RIGHT | OK | VOL− |
 
+> **Rev A bringup note:** The schematic SW designators are numbered column-major (SW1–6 = logical Col 5 ext top-to-bottom, i.e. FUNC/SET/BACK/DEL/VOL+/VOL−, then SW7–12 = Col 0 number row, etc.). As a result, the firmware GPIO scan index `(r, c)` does **not** correspond to the logical Row/Col above. See `docs/bringup/rev-a-bringup-log.md` Step 6 for the confirmed firmware `key_names[r][c]` table. Correct SW-to-Row/Col assignment should be verified against the schematic before Rev B firmware development.
+
 ### 8.2 Indicators & Haptics
 
 | Role | Part | Notes |
@@ -277,12 +279,14 @@ All sensors share **I2C0 (GPIO 34 / 35)** with the GNSS receiver.
 | Charger | BQ25622 | 0x6B | I2C1 | GPIO 6 / 7 | Fixed |
 | Fuel Gauge | BQ27441 | 0x55 | I2C1 | GPIO 6 / 7 | Fixed |
 | LED Driver | LM27965 | 0x36 | I2C1 | GPIO 6 / 7 | Fixed; nets BKLT_SCL / BKLT_SDA |
-| IMU | LSM6DSV16X | 0x6A | I2C0 | GPIO 34 / 35 | SA0 → GND |
-| Magnetometer | LIS2MDL | 0x1E | I2C0 | GPIO 34 / 35 | Fixed |
-| Barometer | LPS22HH | 0x5C | I2C0 | GPIO 34 / 35 | SA0 → GND |
-| GNSS | Teseo-LIV3FL | 0x3A | I2C0 | GPIO 34 / 35 | Fixed |
+| IMU | LSM6DSV16X | 0x6A | `i2c1` (sensor bus) | GPIO 34 / 35 | SA0 → GND |
+| Magnetometer | LIS2MDL | 0x1E | `i2c1` (sensor bus) | GPIO 34 / 35 | Fixed |
+| Barometer | LPS22HH | 0x5D | `i2c1` (sensor bus) | GPIO 34 / 35 | SA0 → 3.3 V |
+| GNSS | Teseo-LIV3FL | 0x3A | `i2c1` (sensor bus) | GPIO 34 / 35 | Fixed |
 
 Pull-up: 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL for both buses.
+
+> **SDK peripheral note:** Both buses (GPIO 6/7 and GPIO 34/35) resolve to the `i2c1` peripheral in the RP2350 Pico SDK. They cannot be active simultaneously; firmware must deinit and reinit `i2c1` with different GPIO pairs to switch between them.
 
 ---
 
