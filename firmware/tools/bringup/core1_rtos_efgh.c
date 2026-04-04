@@ -27,6 +27,7 @@
 #include "hardware/i2c.h"
 #include "hardware/spi.h"
 #include "hardware/sync.h"
+#include "hardware/resets.h"
 #include "tusb.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -35,6 +36,19 @@
 /* ────────────────────────────────────────────────────────────────────────────
  * Pin definitions (from bringup.h / mcu-gpio-allocation.md)
  * ────────────────────────────────────────────────────────────────────────────*/
+
+/* Bus B — power I2C (i2c1, GPIO 6/7) */
+#define BUS_B_SDA  6
+#define BUS_B_SCL  7
+
+/* BQ25622 charger (Bus B, 0x6B) */
+#define BQ25622_ADDR         0x6Bu
+#define BQ25622_REG_CTRL1    0x16u   /* EN_AUTO_IBATDIS[7] EN_CHG[5] EN_HIZ[4] WD_RST[2] WATCHDOG[1:0] */
+#define BQ25622_CTRL1_DISABLE 0x80u  /* EN_CHG=0, WATCHDOG=off  (validated in Step 8) */
+#define BQ25622_CTRL1_ENABLE  0xA1u  /* EN_CHG=1, WATCHDOG=40s  (validated in Step 8) */
+
+/* BQ27441 fuel gauge (Bus B, 0x55) — present only when battery is installed */
+#define BQ27441_ADDR         0x55u
 
 /* Bus A — sensor I2C (i2c1, GPIO 34/35) */
 #define BUS_A_SDA  34
@@ -67,6 +81,73 @@
  * Core 0 writes g_ipc_sram before each FIFO push.
  * Core 1 reads it after popping the FIFO.                                    */
 static volatile uint32_t g_ipc_sram;
+
+/* Set by charger_startup_init(); reported via CDC after USB enumerates.      */
+static bool g_battery_present;
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * charger_startup_init — called once at Core 1 boot, before the FreeRTOS
+ * scheduler and TinyUSB init.
+ *
+ * Sequence:
+ *   1. Init Bus B (i2c1, GPIO 6/7, 100 kHz).
+ *   2. Disable BQ25622 charging immediately — suppresses inductor noise when
+ *      no battery is installed (charger attempts charge into open circuit).
+ *   3. Probe BQ27441 fuel gauge at 0x55.  The gauge only responds when a
+ *      battery is present (or the system is in charging mode with VBAT live).
+ *   4. If gauge ACKs → battery installed → re-enable charging.
+ *      If gauge absent → keep charging disabled.
+ *   5. Deinit Bus B; i2c1 is reclaimed by the sensor bus (Bus A) later.
+ * ────────────────────────────────────────────────────────────────────────────*/
+static void charger_startup_init(void)
+{
+    /* ── Bus B init (i2c1, GPIO 6/7, 100 kHz) ── */
+    i2c_init(i2c1, 100 * 1000);
+    gpio_set_function(BUS_B_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(BUS_B_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(BUS_B_SDA);
+    gpio_pull_up(BUS_B_SCL);
+
+    /* ── Step 1: disable charging (write 0x80 → EN_CHG=0) ── */
+    /* WD_RST kick first (bit2=1), then stable disable value.  */
+    uint8_t buf[2];
+    buf[0] = BQ25622_REG_CTRL1; buf[1] = 0x84u;   /* 0x80 | WD_RST */
+    i2c_write_timeout_us(i2c1, BQ25622_ADDR, buf, 2, false, 50000);
+    busy_wait_ms(10);
+    buf[1] = BQ25622_CTRL1_DISABLE;                /* EN_CHG=0 */
+    i2c_write_timeout_us(i2c1, BQ25622_ADDR, buf, 2, false, 50000);
+
+    /* ── Step 2: probe BQ27441 fuel gauge at 0x55 ── */
+    /* Give the gauge time to power up (VBAT → gauge startup ~50 ms).         */
+    busy_wait_ms(100);
+
+    /* Read-probe: send address byte only (read transaction, 1 byte).
+     * BQ27441 ACKs its address when awake; NACK or timeout = absent/asleep.
+     * Retry 3× with 50 ms spacing in case the gauge is mid-wakeup.          */
+    bool battery_present = false;
+    for (int attempt = 0; attempt < 3 && !battery_present; attempt++) {
+        uint8_t dummy = 0;
+        battery_present =
+            (i2c_read_timeout_us(i2c1, BQ27441_ADDR, &dummy, 1, false, 50000) >= 0);
+        if (!battery_present) busy_wait_ms(50);
+    }
+
+    g_battery_present = battery_present;
+
+    /* ── Step 3: if battery present, re-enable charging ── */
+    if (battery_present) {
+        buf[0] = BQ25622_REG_CTRL1; buf[1] = 0xA4u;   /* EN_CHG=1 | WD_RST */
+        i2c_write_timeout_us(i2c1, BQ25622_ADDR, buf, 2, false, 50000);
+        busy_wait_ms(10);
+        buf[1] = BQ25622_CTRL1_ENABLE;                  /* EN_CHG=1, WD=40s */
+        i2c_write_timeout_us(i2c1, BQ25622_ADDR, buf, 2, false, 50000);
+    }
+
+    /* ── Bus B deinit — i2c1 is shared; Stage H will reinit for Bus A ── */
+    i2c_deinit(i2c1);
+    gpio_set_function(BUS_B_SDA, GPIO_FUNC_NULL);
+    gpio_set_function(BUS_B_SCL, GPIO_FUNC_NULL);
+}
 
 /* ────────────────────────────────────────────────────────────────────────────
  * FreeRTOS shared state
@@ -119,8 +200,8 @@ static void usb_device_task(void *pv)
  * STAGE E — Multi-task CDC output with mutex
  * ════════════════════════════════════════════════════════════════════════════*/
 
-#define STAGE_E_ITERS   15    /* each writer fires 15 times × 2 s = 30 s */
-#define STAGE_E_DELAY_MS 2000
+#define STAGE_E_ITERS    3    /* each writer fires 3 times × 200 ms ≈ 0.6 s */
+#define STAGE_E_DELAY_MS 200
 
 static void stage_e_writer(void *pv)
 {
@@ -499,6 +580,11 @@ static void coordinator_task(void *pv)
     cdc_write_str(" Step 16 Stages E–H: Core 1 FreeRTOS\r\n");
     cdc_write_str("========================================\r\n");
 
+    /* Report charger startup result (determined before scheduler started). */
+    cdc_write_str(g_battery_present
+        ? "[CHARGER] BQ27441 @ 0x55 ACK — battery present  → charging ENABLED\r\n"
+        : "[CHARGER] BQ27441 @ 0x55 NACK — no battery      → charging DISABLED\r\n");
+
     /* ── Stage E ── */
     cdc_write_str("\r\n[E] Stage E: Multi-task CDC output with mutex (30 s)\r\n");
     g_stage_e_done_count = 0;
@@ -508,11 +594,11 @@ static void coordinator_task(void *pv)
     xTaskCreate(stage_e_writer, "e_wrB", 512, (void *)(uintptr_t)'B',
                 tskIDLE_PRIORITY + 2, NULL);
 
-    /* Wait for both writers to finish (up to 40 s). */
+    /* Wait for both writers to finish (up to 5 s). */
     TickType_t e_start = xTaskGetTickCount();
     while (g_stage_e_done_count < 2) {
-        if ((xTaskGetTickCount() - e_start) > pdMS_TO_TICKS(40000)) break;
-        vTaskDelay(pdMS_TO_TICKS(100));
+        if ((xTaskGetTickCount() - e_start) > pdMS_TO_TICKS(5000)) break;
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 
     bool e_pass = (g_stage_e_done_count == 2);
@@ -533,6 +619,9 @@ static void coordinator_task(void *pv)
 
     cdc_write_str("\r\n========================================\r\n");
     cdc_write_str(" Step 16 Stages E–H complete.\r\n");
+    cdc_write_str(g_battery_present
+        ? "[CHARGER] BQ27441 @ 0x55 ACK — battery present  → charging ENABLED\r\n"
+        : "[CHARGER] BQ27441 @ 0x55 NACK — no battery      → charging DISABLED\r\n");
     cdc_write_str("========================================\r\n");
 
     vTaskDelete(NULL);
@@ -543,6 +632,23 @@ static void coordinator_task(void *pv)
  * ────────────────────────────────────────────────────────────────────────────*/
 static void core1_entry(void)
 {
+    /* Charger startup: disable charging, probe BQ27441, re-enable if battery
+     * present.  Must run before tusb_init() — i2c1 is exclusive to Bus B here. */
+    charger_startup_init();
+
+    /* Force USB re-enumeration without requiring a physical replug.
+     *
+     * J-Link resets Core 0 only; the USB peripheral retains its previous
+     * state, so Windows never sees a disconnect event.  Fix:
+     *   1. Assert USB peripheral reset — D+ pullup drops, Host detects
+     *      disconnect within ~5 ms (USB spec: >2.5 ms).
+     *   2. Hold reset for 20 ms to guarantee the Host OS processes disconnect.
+     *   3. Release reset; tusb_init() then performs a clean initialisation
+     *      and the Host sees a fresh connect event.                           */
+    reset_block(RESETS_RESET_USBCTRL_BITS);
+    busy_wait_ms(20);
+    unreset_block_wait(RESETS_RESET_USBCTRL_BITS);
+
     /* Manual TinyUSB init on Core 1 — registers USBCTRL_IRQ on Core 1's NVIC.
      * Bypasses pico_stdio_usb which hard-asserts Core 0 (SDK 2.2.0 Stage C). */
     tusb_init();
@@ -573,6 +679,11 @@ static void core1_entry(void)
  * ────────────────────────────────────────────────────────────────────────────*/
 int main(void)
 {
+    /* PSM-cycle Core 1: J-Link only resets Core 0; Core 1 may still be
+     * running the previous FreeRTOS scheduler.  Force it to a clean state
+     * before relaunching.                                                    */
+    multicore_reset_core1();
+
     multicore_launch_core1(core1_entry);
 
     /* Wait for Core 1 Stage G coordinator to signal readiness (up to 45 s).
