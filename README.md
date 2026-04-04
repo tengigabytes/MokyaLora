@@ -18,12 +18,12 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 |------|-----------|--------|
 | 1 | Power rails (1.8 V / 3.3 V) | ✅ PASS |
 | 2 | MCU boot + USB CDC | ✅ PASS |
-| 3 | I2C sensors (IMU / Mag / Baro / GNSS) | ✅ PASS |
+| 3 | I2C sensors (IMU / Mag / Baro / GNSS) | ⚠️ CONDITIONAL (GNSS I2C OK; outdoor RF pending) |
 | 4 | TFT LCD (ST7789VI, PIO 8080) | ✅ PASS (via FPC adapter — Issue 5) |
-| 5 | LoRa SX1262 (SPI, RX, RSSI) | ✅ PASS |
+| 5 | LoRa SX1262 (SPI, RX, RSSI) | ⚠️ CONDITIONAL (SPI/RX OK; TX link + RF performance pending) |
 | 6 | Keypad (6×6 matrix) | ✅ PASS |
 | 7 | Audio — NAU8315 I2S amp + speaker | ✅ PASS |
-| 8 | Battery (BQ25622 charger) + vibration motor | ✅ PASS |
+| 8 | Battery (BQ25622 charger) + vibration motor | ⚠️ CONDITIONAL (charger + motor OK; BQ27441 gauge characterisation pending) |
 | 9 | Flash (W25Q128JW) | ✅ PASS — PSRAM unresponsive (hardware fault, Issue 8) |
 | 10 | PDM microphone (IM69D130) | ⚠️ PARTIAL — capture/playback working; background noise under investigation |
 
