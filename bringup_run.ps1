@@ -48,6 +48,7 @@ $CmdTimeout = @{
     'mic_loop'  = 12
     'mic_rec'   = 10
     'tft'       = 35
+    'bq27441'   = 15
     'tft_fast'  = 60
     'core1'     = 5
 }

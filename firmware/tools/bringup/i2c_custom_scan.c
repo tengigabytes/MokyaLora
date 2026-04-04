@@ -192,6 +192,8 @@ static void handle_command(const char *cmd) {
         bus_b_init();
         bq25622_disable_charge();
         bus_b_deinit();
+    } else if (strcmp(cmd, "bq27441") == 0) {
+        bq27441_read();
     } else if (strcmp(cmd, "core1") == 0) {
         core1_test();
     } else if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
@@ -237,6 +239,7 @@ static void handle_command(const char *cmd) {
         printf("  charge_on   -- set VREG=4100mV IINDPM=100mA, enable BQ25622 charging\n");
         printf("  charge_off  -- disable BQ25622 charging\n");
         printf("  charge_scan -- charge_on + 500ms + scan Bus B (checks if BQ27441 wakes up)\n");
+        printf("  bq27441     -- Step 12: BQ27441 fuel gauge: CTRL_STATUS, FLAGS, V/I/SOC/SOH\n");
         printf("  core1       -- Step 16 Stage A: Core 1 boot/FIFO/SRAM/GPIO test\n");
     } else if (cmd[0] != '\0') {
         printf("Unknown command: '%s'  (type 'help' for list)\n", cmd);

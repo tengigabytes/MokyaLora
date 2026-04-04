@@ -370,21 +370,31 @@ the full debug capability needed for Core 0/1 firmware development is functional
 
 ### Step 12 — BQ27441 Fuel Gauge Characterisation
 
-**Result: ⏳ PENDING**
+**Result: ⚠️ CONDITIONAL** (I2C + CONFIG UPDATE + SOC/voltage validated; first charge/discharge cycle not yet performed)
 
-BQ27441 I2C presence confirmed (conditional on battery installed). Detailed gauge
-characterisation not yet performed.
+| Item | Method | Result |
+|------|--------|--------|
+| I2C presence (battery installed) | scan_b after charge_on + power-cycle | ✅ PASS — 0x55 ACK |
+| DEVICE_TYPE | CONTROL(0x0001) → read 0x00 | ✅ PASS — 0x0421 (BQ27441-G1) |
+| CONFIG UPDATE — clear BIE | SET_CFGUPDATE → write OpConfig subclass 64 block 0 → SOFT_RESET | ✅ PASS — OpConfig 0x25F8 → 0x05F8; checksum 0x6A → 0x8A; exit OK |
+| BAT_INSERT after BIE=0 | CONTROL(0x000C) | ✅ PASS — BAT_DET=1 confirmed |
+| INITCOMP | Poll CTRL_STATUS bit7 after BAT_INSERT | ✅ PASS — set after 1600 ms |
+| Voltage readout | `Voltage()` (0x04) | ✅ PASS — **3965 mV** (18650, reasonable) |
+| Temperature | `Temperature()` (0x02) | ✅ PASS — **28.7 °C** (internal sensor) |
+| SOC readout | `StateOfCharge()` (0x1C) | ✅ PASS — **77 %** (consistent with battery condition) |
+| Remaining capacity | `RemainingCapacity()` (0x0C) | ✅ MEASURED — **932 mAh** (ROM default DesignCap=1000 mAh; will improve after learning) |
+| Full charge capacity | `FullChargeCapacity()` (0x0E) | ✅ MEASURED — **1213 mAh** (first-boot OCV estimate; accurate after full cycle) |
+| Average current | `AverageCurrent()` (0x10) | ⚠️ NOTE — +0 mA (charging disabled at boot; gauge averaging window not yet established) |
+| State of Health | `StateOfHealth()` (0x20) | ⚠️ NOTE — 0 % / Unknown (expected on first boot; requires impedance data from full cycle) |
+| Gauge learning cycle | Charge to full + discharge to empty | ⏳ PENDING — SOC and capacity accuracy improves after first cycle |
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| SOC readout | Read `StateOfCharge()` (0x1C) | 0–100 % consistent with charge level |
-| Voltage readout | Read `Voltage()` (0x08) | ~3.7 V for BL-4C at mid-charge |
-| Remaining capacity | Read `RemainingCapacity()` (0x10) | mAh consistent with SOC |
-| Average current | Read `AverageCurrent()` (0x14) | Positive during charge, negative during discharge |
-| Full charge capacity | Read `FullChargeCapacity()` (0x12) | Should match BL-4C ~890 mAh after learning |
-| Gauge learning cycle | Charge to full + discharge to empty | SOC tracking accuracy improves after first cycle |
-
-> BQ27441 requires at least one full charge/discharge cycle for the Impedance Track algorithm to calibrate capacity accurately. First readout may show default design capacity.
+**Firmware notes:**
+- BQ27441 in SHUTDOWN mode when battery first installed (I2C silent). Root cause: BIN pin unconnected in Rev A; BIE=1 (hardware detection default) → gauge never set BAT_DET → INITCOMP stuck at 0. Removing and re-inserting battery caused POR, exiting SHUTDOWN.
+- Root cause of earlier NACK (Issue 9) revised: not a SLEEP wakeup issue. SLEEP and HIBERNATE both respond to I2C via ≤100 µs clock stretch. SHUTDOWN requires GPOUT wakeup; in this case POR (battery removal) resolved it.
+- Fix: CONFIG UPDATE sequence clears BIE (OpConfig bit13) so BAT_INSERT command (0x000C) is accepted regardless of BIN pin state. SOFT_RESET (0x0042) applies the change and clears ITPOR.
+- Production driver must run this CONFIG UPDATE once (check ITPOR=1 at POR) and also write DesignCapacity=890 mAh / DesignEnergy=3293 mWh (subclass 82) for accurate BL-4C SOC.
+- GPOUT pin connection to MCU GPIO recommended in Rev B to enable clean SHUTDOWN wakeup without requiring battery removal.
+- `bq27441` bringup command added to `bringup_power.c`; automatically performs CONFIG UPDATE + BAT_INSERT if BAT_DET=0; timeout extended to 15 s in `bringup_run.ps1`.
 
 ### Step 13 — TFT LCD Fast Refresh
 
@@ -607,7 +617,7 @@ Key findings:
 | 6 | 2026-04-02 | U5 (LM27965) Bank B | LED D37 and keypad backlight share Bank B → not independently controllable | Routing error | Accept Rev A limitation | Move D37 to unused Bank A channel in Rev B |
 | 7 | 2026-04-02 | U15 (TPS62840) / 1.8 V rail | Pi Debug Probe incompatible (requires 3.3 V VTREF) | 1.8 V logic vs 3.3 V-only debug tool | Using J-Link (supports 1.8 V VTREF) | Evaluate switchable VTREF option |
 | 8 | 2026-04-03 | U3 (APS6404L PSRAM) | No response on SPI or QPI — returns 0xFFFFFFFF | Suspected open trace: GPIO0 (pin 77) → U3 CE# (pin 1), or VCC_1V8 open at U3 | None — requires physical inspection | Verify trace continuity + VCC; bodge wire if open; replace U3 if VCC shorted |
-| 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | I2C NACK even with charging current flowing (IBAT=+52 mA confirmed via BQ25622 ADC) — gauge remains undetectable | BQ27441 SLEEP mode wakeup requires specific I2C sequence (subclass access or CONTROL command); passive current flow is insufficient | Battery detection re-targeted to BQ25622 STATUS0.VSYS_STAT (pending) | Implement BQ27441 wakeup sequence per datasheet; consider GPOUT→MCU GPIO for wakeup |
+| 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | I2C NACK with battery installed — gauge in SHUTDOWN mode; BIN pin unconnected → BIE=1 → BAT_DET never set → INITCOMP stuck at 0 | BIN pin not connected in Rev A; SLEEP/HIBERNATE both respond to I2C (datasheet confirmed); SHUTDOWN requires GPOUT or battery removal (POR) to exit | CONFIG UPDATE clears BIE (OpConfig 0x25F8→0x05F8); BAT_INSERT (0x000C) sets BAT_DET=1; INITCOMP completes in ~1.6 s. Bringup command `bq27441` handles this automatically | Connect GPOUT to MCU GPIO in Rev B for clean SHUTDOWN wakeup; production driver must run CONFIG UPDATE + set DesignCapacity=890 mAh on ITPOR=1 |
 
 ---
 
