@@ -187,6 +187,155 @@ static void tft_fill(uint16_t colour) {
 }
 
 // ---------------------------------------------------------------------------
+// Partial-update helpers
+// ---------------------------------------------------------------------------
+
+// Set CASET/RASET address window (inclusive)
+static void tft_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
+    tft_cmd(0x2A);
+    tft_dat(x0 >> 8); tft_dat(x0 & 0xFF);
+    tft_dat(x1 >> 8); tft_dat(x1 & 0xFF);
+    tft_cmd(0x2B);
+    tft_dat(y0 >> 8); tft_dat(y0 & 0xFF);
+    tft_dat(y1 >> 8); tft_dat(y1 & 0xFF);
+}
+
+// Fill a rectangle with a solid colour
+static void tft_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t colour) {
+    if (!w || !h) return;
+    tft_set_window(x, y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
+    tft_cmd(0x2C);
+    uint8_t hi = colour >> 8, lo = colour & 0xFF;
+    for (uint32_t i = 0; i < (uint32_t)w * h; i++) {
+        pio_sm_put_blocking(TFT_PIO, tft_sm, hi);
+        pio_sm_put_blocking(TFT_PIO, tft_sm, lo);
+    }
+    tft_flush();
+}
+
+// Convert hue 0-359 → RGB565 (full saturation, full value)
+static uint16_t hue_to_rgb565(int h) {
+    int sector = h / 60;
+    int frac   = (h % 60) * 255 / 59;
+    uint8_t r, g, b;
+    switch (sector) {
+        case 0: r = 255;        g = (uint8_t)frac;       b = 0;               break;
+        case 1: r = 255 - frac; g = 255;                 b = 0;               break;
+        case 2: r = 0;          g = 255;                 b = (uint8_t)frac;   break;
+        case 3: r = 0;          g = 255 - frac;          b = 255;             break;
+        case 4: r = (uint8_t)frac; g = 0;               b = 255;             break;
+        default:r = 255;        g = 0;                   b = 255 - frac;      break;
+    }
+    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic sub-tests
+// ---------------------------------------------------------------------------
+
+// Sub-test 1: 8 SMPTE-style vertical colour bars (each 30 px wide)
+static void tft_subtest_colorbars(void) {
+    printf("  [dynamic 1/4] SMPTE colour bars...");
+    static const uint16_t bars[8] = {
+        0xFFFF,  // White
+        0xFFE0,  // Yellow
+        0x07FF,  // Cyan
+        0x07E0,  // Green
+        0xF81F,  // Magenta
+        0xF800,  // Red
+        0x001F,  // Blue
+        0x0000,  // Black
+    };
+    for (int i = 0; i < 8; i++) {
+        uint16_t x = (uint16_t)(i * 30);
+        tft_fill_rect(x, 0, 30, 320, bars[i]);
+    }
+    printf(" done\n");
+    sleep_ms(2500);
+}
+
+// Sub-test 2: Full-screen hue gradient, then animate a scroll for ~3 s
+static void tft_subtest_gradient(void) {
+    printf("  [dynamic 2/4] Hue gradient + scroll...");
+
+    // Precompute all 360 hues and per-column base hue
+    static uint16_t rainbow[360];
+    static uint16_t col_hue[240];
+    for (int i = 0; i < 360; i++) rainbow[i] = hue_to_rgb565(i);
+    for (int x = 0; x < 240; x++) col_hue[x] = (uint16_t)(x * 360 / 240);
+
+    // Static gradient (one pass)
+    tft_set_window(0, 0, 239, 319);
+    tft_cmd(0x2C);
+    for (int y = 0; y < 320; y++) {
+        for (int x = 0; x < 240; x++) {
+            uint16_t c = rainbow[col_hue[x]];
+            pio_sm_put_blocking(TFT_PIO, tft_sm, c >> 8);
+            pio_sm_put_blocking(TFT_PIO, tft_sm, c & 0xFF);
+        }
+    }
+    tft_flush();
+    sleep_ms(1500);
+
+    // Scroll: 90 frames, hue offset advances 4° per frame (~3 s)
+    for (int offset = 0; offset < 360; offset += 4) {
+        tft_set_window(0, 0, 239, 319);
+        tft_cmd(0x2C);
+        for (int y = 0; y < 320; y++) {
+            for (int x = 0; x < 240; x++) {
+                int idx = col_hue[x] + offset;
+                if (idx >= 360) idx -= 360;
+                uint16_t c = rainbow[idx];
+                pio_sm_put_blocking(TFT_PIO, tft_sm, c >> 8);
+                pio_sm_put_blocking(TFT_PIO, tft_sm, c & 0xFF);
+            }
+        }
+        tft_flush();
+    }
+    printf(" done\n");
+}
+
+// Sub-test 3: Black-and-white checkerboard (32×32 px blocks)
+static void tft_subtest_checkerboard(void) {
+    printf("  [dynamic 3/4] Checkerboard (32×32 blocks)...");
+    tft_set_window(0, 0, 239, 319);
+    tft_cmd(0x2C);
+    for (int y = 0; y < 320; y++) {
+        for (int x = 0; x < 240; x++) {
+            uint16_t c = (((x >> 5) ^ (y >> 5)) & 1) ? 0xFFFF : 0x0000;
+            pio_sm_put_blocking(TFT_PIO, tft_sm, c >> 8);
+            pio_sm_put_blocking(TFT_PIO, tft_sm, c & 0xFF);
+        }
+    }
+    tft_flush();
+    printf(" done\n");
+    sleep_ms(2500);
+}
+
+// Sub-test 4: Bouncing yellow block on blue background (~80 frames)
+static void tft_subtest_bounce(void) {
+    printf("  [dynamic 4/4] Bouncing block (80 frames)...\n");
+    const uint16_t BW = 32, BH = 32;
+    const uint16_t BG = 0x001F;  // blue
+    const uint16_t FG = 0xFFE0;  // yellow
+
+    tft_fill(BG);
+
+    int bx = 0, by = 0, dx = 4, dy = 3;
+    for (int f = 0; f < 80; f++) {
+        tft_fill_rect((uint16_t)bx, (uint16_t)by, BW, BH, BG);  // erase
+        bx += dx;  by += dy;
+        if (bx < 0)              { bx = 0;            dx = -dx; }
+        if (by < 0)              { by = 0;             dy = -dy; }
+        if (bx + (int)BW > 240)  { bx = 240 - BW;     dx = -dx; }
+        if (by + (int)BH > 320)  { by = 320 - BH;     dy = -dy; }
+        tft_fill_rect((uint16_t)bx, (uint16_t)by, BW, BH, FG);  // draw
+        sleep_ms(40);
+    }
+    printf("    done\n");
+}
+
+// ---------------------------------------------------------------------------
 // tft_test — public entry point
 // ---------------------------------------------------------------------------
 
@@ -232,7 +381,7 @@ void tft_test(void) {
     bus_b_deinit();
     printf("  Backlight on (40%%)\n");
 
-    // Colour fill sequence — verify visually on display
+    // --- Step A: solid colour fills (basic pixel sanity) ---
     static const struct { uint16_t colour; const char *name; } seq[] = {
         { 0xF800, "Red"   },
         { 0x07E0, "Green" },
@@ -244,8 +393,24 @@ void tft_test(void) {
         printf("  Fill %-6s (0x%04X) ...", seq[i].name, seq[i].colour);
         tft_fill(seq[i].colour);
         printf(" done\n");
-        sleep_ms(1500);
+        sleep_ms(1000);
     }
+
+    // --- Step B: dynamic tests ---
+    tft_subtest_colorbars();
+    tft_subtest_gradient();
+    tft_subtest_checkerboard();
+    tft_subtest_bounce();
+
+    // --- Step C: backlight fade (white screen, 32 codes up then down) ---
+    printf("  [backlight] Fade in/out...");
+    tft_fill(0xFFFF);
+    bus_b_init();
+    for (int c = 0; c <= 0x1F; c++) { lm_write(LM27965_BANKA, (uint8_t)c); sleep_ms(40); }
+    for (int c = 0x1F; c >= 0; c--) { lm_write(LM27965_BANKA, (uint8_t)c); sleep_ms(40); }
+    lm_write(LM27965_BANKA, 0x16);  // restore 40%
+    bus_b_deinit();
+    printf(" done\n");
 
     // Backlight off
     bus_b_init();

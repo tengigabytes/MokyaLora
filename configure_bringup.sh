@@ -10,7 +10,7 @@ powershell.exe -NoProfile -Command "
 \$env:PICO_SDK_PATH = 'C:\pico-sdk'
 \$env:PATH += ';C:\Program Files\Arm\GNU Toolchain mingw-w64-x86_64-arm-none-eabi\bin;C:\ProgramData\chocolatey\bin'
 \$vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvarsall.bat'
-cmd /c \"\`\"\$vcvars\`\" x64 && rmdir /s /q build\firmware 2>nul & cmake -S firmware -B build/firmware -G Ninja -DCMAKE_TOOLCHAIN_FILE=C:/pico-sdk/cmake/preload/toolchains/pico_arm_cortex_m33_gcc.cmake -DPICO_PLATFORM=rp2350 -DPICO_BOARD=none\"
+cmd /c \"\`\"\$vcvars\`\" x64 && rmdir /s /q build\firmware 2>nul & cmake -S firmware -B build/firmware -G Ninja -DCMAKE_TOOLCHAIN_FILE=C:/pico-sdk/cmake/preload/toolchains/pico_arm_cortex_m33_gcc.cmake -DPICO_PLATFORM=rp2350 -DPICO_BOARD=none -DPICO_FLASH_SIZE_BYTES=16777216\"
 " 2>&1
 
 echo ""

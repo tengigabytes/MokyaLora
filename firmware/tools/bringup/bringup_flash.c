@@ -1,6 +1,65 @@
 #include "bringup.h"
 
 // ---------------------------------------------------------------------------
+// Internal SRAM test (RP2350B, 520 KB)
+//
+// Uses a 16 KB static buffer in .bss to avoid stack/heap conflicts.
+// Tests with 5 patterns: 0xAAAAAAAA, 0x55555555, 0xFF00FF00, 0x00FF00FF,
+// and an address-based pattern. Reports buffer address so the bank is visible.
+// ---------------------------------------------------------------------------
+
+#define SRAM_TEST_WORDS 4096   // 16 KB
+
+static uint32_t sram_test_buf[SRAM_TEST_WORDS];
+
+void sram_test(void) {
+    printf("\n--- Internal SRAM test (RP2350B) ---\n");
+    printf("  Buffer @ 0x%08X  size=%u KB\n",
+           (unsigned)(uintptr_t)sram_test_buf,
+           (unsigned)(SRAM_TEST_WORDS * 4 / 1024));
+
+    static const uint32_t patterns[] = {
+        0xAAAAAAAAu, 0x55555555u, 0xFF00FF00u, 0x00FF00FFu
+    };
+    int total_errors = 0;
+
+    for (int p = 0; p < (int)(sizeof(patterns)/sizeof(patterns[0])); p++) {
+        uint32_t pat = patterns[p];
+        for (int i = 0; i < SRAM_TEST_WORDS; i++) sram_test_buf[i] = pat;
+        int errs = 0;
+        for (int i = 0; i < SRAM_TEST_WORDS; i++) {
+            if (sram_test_buf[i] != pat) {
+                if (errs < 2)
+                    printf("  ERR pat=0x%08X @ +0x%04X: rd=0x%08X\n",
+                           (unsigned)pat, i * 4, (unsigned)sram_test_buf[i]);
+                errs++;
+            }
+        }
+        printf("  Pattern 0x%08X: %s%s\n", (unsigned)pat,
+               errs == 0 ? "PASS" : "FAIL",
+               errs ? "" : "");
+        total_errors += errs;
+    }
+
+    // Address-based pattern
+    for (int i = 0; i < SRAM_TEST_WORDS; i++) sram_test_buf[i] = 0xA5000000u | (uint32_t)i;
+    int errs = 0;
+    for (int i = 0; i < SRAM_TEST_WORDS; i++) {
+        uint32_t expected = 0xA5000000u | (uint32_t)i;
+        if (sram_test_buf[i] != expected) {
+            if (errs < 2)
+                printf("  ERR addr-pat @ +0x%04X: exp=0x%08X rd=0x%08X\n",
+                       i * 4, (unsigned)expected, (unsigned)sram_test_buf[i]);
+            errs++;
+        }
+    }
+    printf("  Address pattern:       %s\n", errs == 0 ? "PASS" : "FAIL");
+    total_errors += errs;
+
+    printf("  Result: %s\n", total_errors == 0 ? "PASS" : "FAIL");
+}
+
+// ---------------------------------------------------------------------------
 // Flash test (W25Q128JW, 16 MB)
 // Expected JEDEC ID: MFR=0xEF, Type=0x60, Cap=0x18
 // ---------------------------------------------------------------------------
@@ -81,10 +140,10 @@ static void __no_inline_not_in_flash_func(psram_enter_qpi)(void) {
     } while (0)
 
     _CS1_SEND(0x66);  // Reset Enable
-    _CS1_SEND(0x99);  // Reset — tRST = 50 µs min
+    _CS1_SEND(0x99);  // Reset — tRST = 100 µs min (APS6404L spec)
 
-    // Busy-wait ~50 µs at 125 MHz (no sleep_ms from flash here)
-    for (volatile uint32_t i = 0; i < 6250; i++) __asm volatile ("nop");
+    // Busy-wait ~100 µs at 125 MHz (no sleep_ms from flash here)
+    for (volatile uint32_t i = 0; i < 12500; i++) __asm volatile ("nop");
 
     _CS1_SEND(0x35);  // Enter QPI mode
 
@@ -112,26 +171,43 @@ void psram_test(void) {
            (unsigned)qmi_hw->m[1].rfmt,
            (unsigned)qmi_hw->m[1].rcmd);
 
-    // Step 1a: QPI probe — bootrom may have already put PSRAM in QPI mode.
+    // Step 1a: SPI single-wire write+read probe.
+    // Write a known pattern first, then read back — avoids false failure if the
+    // location happens to contain 0xFFFFFFFF after power-on.
+    // QMI always drives 24-bit address; no ADDR_LEN field in RP2350 QMI.
     qmi_hw->m[1].timing = qmi_hw->m[0].timing;
     volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
-    uint32_t qpi_probe = psram[0];
-    printf("  QPI probe (bootrom config, rcmd=0xEB @ 0): 0x%08X  [%s]\n",
-           (unsigned)qpi_probe,
-           qpi_probe != 0xFFFFFFFF ? "bus alive (QPI mode)" : "no response");
 
-    // Step 1b: SPI single-wire probe — reset to SPI mode first, then probe.
-    qmi_hw->m[1].rfmt   = QMI_M1_RFMT_PREFIX_LEN_BITS;  // all fields 0 = single-wire
-    qmi_hw->m[1].rcmd   = 0x03;
-    qmi_hw->m[1].wfmt   = QMI_M1_WFMT_PREFIX_LEN_BITS;
-    qmi_hw->m[1].wcmd   = 0x02;
-    uint32_t spi_probe = psram[0];
-    printf("  SPI probe  (single-wire, rcmd=0x03 @ 0):  0x%08X  [%s]\n",
-           (unsigned)spi_probe,
-           spi_probe != 0xFFFFFFFF ? "bus alive (SPI mode)" : "no response");
+    qmi_hw->m[1].rfmt = QMI_M1_RFMT_PREFIX_LEN_BITS;  // 8-bit prefix, single-wire
+    qmi_hw->m[1].rcmd = 0x03;
+    qmi_hw->m[1].wfmt = QMI_M1_WFMT_PREFIX_LEN_BITS;
+    qmi_hw->m[1].wcmd = 0x02;
 
-    if (qpi_probe == 0xFFFFFFFF && spi_probe == 0xFFFFFFFF) {
-        printf("  Both probes failed -> hardware issue (CS1/QSPI lines or chip)\n");
+    // Write two distinct words, read them back
+    psram[0] = 0xA55A1234u;
+    psram[1] = 0x12345678u;
+    uint32_t spi_rd0 = psram[0];
+    uint32_t spi_rd1 = psram[1];
+    bool spi_ok = (spi_rd0 == 0xA55A1234u) && (spi_rd1 == 0x12345678u);
+    printf("  SPI wr+rd [0]: wr=0xA55A1234 rd=0x%08X\n", (unsigned)spi_rd0);
+    printf("  SPI wr+rd [1]: wr=0x12345678 rd=0x%08X\n", (unsigned)spi_rd1);
+    printf("  SPI probe: %s\n", spi_ok ? "PASS" : "FAIL");
+
+    // Step 1b: QPI probe using bootrom config (Quad I/O Read, command on single wire).
+    // Bootrom rfmt=0x000492A8: CMD(SPI)+ADDR(quad)+MODE-BYTE(quad)+4dummy+DATA(quad).
+    // Device does NOT need to be in QPI mode for this — works from default SPI state.
+    // Re-use the pattern just written in Step 1a to check readback via quad path.
+    qmi_hw->m[1].rfmt = 0x000492A8u;  // bootrom Quad I/O Read config
+    qmi_hw->m[1].rcmd = 0xEB;
+    uint32_t qpi_rd0 = psram[0];
+    uint32_t qpi_rd1 = psram[1];
+    bool qpi_ok = (qpi_rd0 == 0xA55A1234u) && (qpi_rd1 == 0x12345678u);
+    printf("  QPI wr+rd [0]: exp=0xA55A1234 rd=0x%08X\n", (unsigned)qpi_rd0);
+    printf("  QPI wr+rd [1]: exp=0x12345678 rd=0x%08X\n", (unsigned)qpi_rd1);
+    printf("  QPI probe: %s\n", qpi_ok ? "PASS" : "FAIL");
+
+    if (!spi_ok && !qpi_ok) {
+        printf("  Both probes failed -> hardware issue (CS1/QSPI lines, VCC, or chip)\n");
         return;
     }
 
@@ -143,7 +219,7 @@ void psram_test(void) {
         QMI_M1_RFMT_PREFIX_LEN_BITS                   |  // 8-bit prefix
         (2u << QMI_M0_RFMT_PREFIX_WIDTH_LSB)           |  // quad prefix
         (2u << QMI_M0_RFMT_ADDR_WIDTH_LSB)             |  // quad addr
-        (6u << QMI_M0_RFMT_DUMMY_LEN_LSB)              |  // 6 dummy cycles
+        (6u << QMI_M0_RFMT_DUMMY_LEN_LSB)              |  // 6 dummy cycles (mode+wait)
         (2u << QMI_M0_RFMT_DUMMY_WIDTH_LSB)            |  // quad dummy
         (2u << QMI_M0_RFMT_DATA_WIDTH_LSB);               // quad data
     qmi_hw->m[1].rcmd = 0xEB;
