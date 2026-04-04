@@ -139,6 +139,12 @@ Never add a Meshtastic #include to core1/ or mie/.
 
 **Phase 2** (future): Core 0 / Core 1 firmware development starts after Rev A PCB arrives.
 
+## Build & Flash Rules
+
+- Always verify a build compiles successfully before moving on to additional changes.
+- If a build fails, fix it immediately — do not layer more changes on top of a broken build.
+- After adding new features, check memory usage: flash size constraints are common on embedded targets.
+
 ## Build Commands
 
 ```sh
@@ -181,3 +187,31 @@ Key message types:
 - `IPC_MSG_LOG_LINE` — bidirectional debug log
 
 **NEVER** add a Meshtastic `#include` to `core1/`, `mie/`, or `shared/ipc/`.
+
+## Driver Development Rules
+
+When writing drivers or bringup firmware, **never assume** any of the following — ask the user instead:
+- Register addresses or field definitions (REG MAP)
+- Initialization or operation sequences
+- Hardware configuration (pin states, timing, protocol modes, default values)
+- Any device-specific detail not already confirmed in the codebase or bringup log
+
+If uncertain, stop and ask. The user will provide the correct information or point to the relevant datasheet section.
+
+## Hardware Debug Protocol
+
+When debugging a hardware peripheral that is not responding correctly, follow this sequence **without skipping steps**:
+
+1. **Read first.** Before writing any code, read all relevant datasheet excerpts in `docs/datasheets/` for the component. Do NOT write code that references register fields or configuration parameters that have not been verified to exist in the datasheet — invented fields are silent bugs on real hardware.
+2. **List root causes.** Enumerate all plausible root causes ranked by likelihood. For each, cite the specific datasheet section that supports the hypothesis.
+3. **Propose diagnostics.** For each hypothesis, propose a minimal diagnostic test (e.g., read a register, toggle a pin, measure a signal) that would confirm or eliminate it.
+4. **Wait for approval.** Present the full diagnostic plan and wait for the user to approve before writing any code.
+5. **Implement one at a time.** After approval, implement and run one diagnostic test at a time. Never assume a fix — prove each hypothesis before moving on.
+
+## Session Hygiene
+
+At the following natural breakpoints, remind the user to commit any open changes, then start a fresh session:
+- A discrete feature or driver is complete and tested.
+- The conversation has grown long (many tool calls, large context).
+
+Suggested reminder phrasing: "這個功能已完成，建議 commit 後重開 session 保持 context 乾淨。"
