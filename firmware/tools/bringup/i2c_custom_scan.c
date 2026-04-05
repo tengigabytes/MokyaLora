@@ -173,10 +173,14 @@ static void handle_command(const char *cmd) {
         psram_test();
     } else if (strcmp(cmd, "psram_full") == 0) {
         psram_full_test();
+    } else if (strcmp(cmd, "psram_sweep") == 0) {
+        psram_speed_test();
+    } else if (strcmp(cmd, "flash_sweep") == 0) {
+        flash_speed_test();
     } else if (strcmp(cmd, "psram_jlink") == 0) {
         psram_jlink_prep();
     } else if (strcmp(cmd, "psram_diag") == 0) {
-        psram_diag();
+        psram_diag_test();
     } else if (strcmp(cmd, "psram_probe") == 0) {
         psram_probe();
     } else if (strcmp(cmd, "key") == 0) {
@@ -242,8 +246,10 @@ static void handle_command(const char *cmd) {
         printf("  flash       -- read Flash JEDEC ID + unique ID (W25Q128JW)\n");
         printf("  psram       -- init + 4 KB pattern test (APS6404L, CS=GPIO0)\n");
         printf("  psram_full  -- full 8 MB two-pass write+verify test (address pattern)\n");
+        printf("  psram_sweep -- PSRAM speed sweep: CLKDIV x RXDELAY, 256 KB per combo\n");
+        printf("  flash_sweep -- Flash speed sweep: CLKDIV x RXDELAY from RAM (safe)\n");
         printf("  psram_jlink -- write sentinel to PSRAM[0..3], print J-Link mem32 command\n");
-        printf("  psram_diag  -- GPIO0 CS diagnostic: SIO override + QMI state (Issue 8)\n");
+        printf("  psram_diag  -- CLKDIV=1 error analysis: address pattern, timing tuning\n");
         printf("  psram_probe -- QMI direct mode SPI probe: reset + read 8 bytes from CS1\n");
         printf("  tft         -- ST7789VI LCD: init + fill Red/Green/Blue/White/Black (1.5s each)\n");
         printf("  tft_fast    -- Step 13: TE freq, baseline FPS, DMA FPS, clkdiv=3 test, TE-gated fill\n");

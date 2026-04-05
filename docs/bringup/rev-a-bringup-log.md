@@ -285,7 +285,7 @@ Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). 
 | 1 | GPIO0 = SIO output HIGH (FUNCSEL=5) + internal pull-up (PUE=1, PDE=0) |
 | 2 | Enter QMI direct mode, set `ASSERT_CS1N` (for clock generation) |
 | 3 | SIO CS toggle: Reset Enable (0x66), Reset (0x99), wait 100 µs, Read ID (0x9F) |
-| 4 | Configure M1: timing (copy from M0), rfmt/rcmd=0x03 (SPI Read), wfmt/wcmd=0x02 (SPI Write) |
+| 4 | Enter QPI (0x35); configure M1: timing (base from M0, CLKDIV=2, RXDELAY=0, COOLDOWN=2), rfmt/rcmd=0xEB (QPI Fast Read, 7 dummy clocks), wfmt/wcmd=0x38 (QPI Write) |
 | 5 | Switch GPIO0 to XIP_CS1 (FUNCSEL=9) while still in direct mode (M1 idle) |
 | 6 | Clear `ASSERT_CS1N`, exit direct mode → M1 XIP engine takes over GPIO0 |
 | 7 | Enable `XIP_CTRL_WRITABLE_M1` for write access via uncached alias (0x15000000) |
@@ -295,6 +295,53 @@ Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). 
 - `psram_jlink` bringup command: writes four sentinel words (`DEADBEEF A5A5A5A5 CAFEBABE 12345678`) to PSRAM XIP uncached base, reads back via firmware, prints J-Link `mem32` command for out-of-band verification.
 - RP2350 `XIP_NOCACHE_NOALLOC_BASE` = `0x14000000` (not `0x13000000` as on RP2040); PSRAM uncached XIP address = `0x15000000`.
 - J-Link SWD PSRAM access: QMI M1 XIP engine continues to service AHB-AP bus requests while the CPU is halted via SWD. `mem32 0x15000000 N` works reliably for runtime PSRAM inspection and debug.
+
+**XIP speed optimization (2026-04-05):**
+
+PSRAM init upgraded from SPI mode to QPI mode (Enter QPI 0x35, read cmd 0xEB, write cmd 0x38).
+DUMMY_LEN empirically determined as 28 bits (7 QPI clocks) — APS6404L needs one extra clock beyond the 6 specified in datasheet (mode byte slot consumed in QPI).
+
+Systematic CLKDIV × RXDELAY sweep (`psram_sweep`, 256 KB per combination, RXDELAY 0–7):
+
+| CLKDIV | RXDELAY | SCK (MHz) | Throughput | Result | Notes |
+|--------|---------|-----------|------------|--------|-------|
+| 1 | 0 | 75 | 300 Mbit/s | ❌ FAIL | ~150–260 errors / 256 KB (0.3 %), random bit errors |
+| 1 | 1 | 75 | 300 Mbit/s | ❌ FAIL | ~190–240 errors / 256 KB (0.3 %) |
+| 1 | 2–7 | 75 | — | ❌ FAIL | 100 % errors — QMI sampling past valid window |
+| **2** | **0** | **37.5** | **150 Mbit/s** | **✅ PASS** | **0 errors / 256 KB; 8 MB full validation: 0 errors** |
+| 2 | 1–7 | 37.5 | — | ❌ FAIL | 100 % errors |
+| 3 | 0–7 | 25 | — | ❌ FAIL | 100 % errors — RXDELAY=0 already past valid window |
+
+Flash (`W25Q128JW`) speed sweep (`flash_sweep`, single-word vector table read):
+
+| CLKDIV | RXDELAY | SCK (MHz) | Throughput | Result | Notes |
+|--------|---------|-----------|------------|--------|-------|
+| 1 | 0–3 | 75 | 300 Mbit/s | ❌ FAIL | Reads 0x00000000 |
+| 2 | 0 | 37.5 | 150 Mbit/s | ❌ FAIL | Byte-shifted: `0x82000200` |
+| **2** | **1–3** | **37.5** | **150 Mbit/s** | **✅ PASS** | Expected `0x20082000` confirmed |
+| 3–4 | 0–3 | 25/18.75 | 100/75 Mbit/s | ✅ PASS | Conservative, all pass |
+
+**CLKDIV=1 (75 MHz) error analysis** (`psram_diag`, read-only at 75 MHz after safe 37.5 MHz write):
+- 10-run reproducibility: 132–260 errors per 256 KB (0.2–0.4 %), non-deterministic across boot cycles.
+- COOLDOWN (0–3), MIN_DESELECT (1–31), PAGEBREAK (none/256/1024/4096) tuning: no improvement — errors are not boundary-related.
+- Write+read both at 75 MHz: only 38–64 errors (read/write phase offsets partially cancel), confirming consistent clock-phase shift rather than random noise.
+- APS6404L-SQH is rated for 144 MHz — 75 MHz is 52 % of IC rating. Bottleneck is QMI sampling + PCB signal integrity, not PSRAM IC speed.
+- Note: earlier sweep runs showed inflated error counts because COOLDOWN=0/MIN_DESELECT=1 test combos violated APS6404L tCPH ≥ 18 ns, corrupting PSRAM QPI state for subsequent reads.
+
+**CLKDIV=3 (25 MHz) QPI failure root cause:**
+- Original PSRAM init (SPI mode, cmd=0x03) used M0.timing copy (CLKDIV=3/RXDELAY=2) and worked at 25 MHz.
+- QPI mode has higher QMI internal pipeline latency than SPI (simultaneous 4-line latch vs single-line). At CLKDIV=3, RXDELAY=0 already exceeds the valid sampling window — would need negative RXDELAY (impossible). SPI mode is unaffected because single-line capture has lower pipeline depth.
+- M0 (Flash) boot2 timing: `0x60007203` = CLKDIV=3, RXDELAY=2, COOLDOWN=1. Flash uses Quad SPI (cmd=single-wire), not full QPI — same lower pipeline depth as SPI.
+- Confirmed by diagnostic: RXDELAY phase-shift pattern shows each +1 CLKDIV shifts the baseline sample point by one RXDELAY step (3.33 ns), leaving no valid RXDELAY at CLKDIV=3.
+
+**Final production configuration:**
+
+| Bus | Device | Mode | CLKDIV | RXDELAY | SCK | Throughput | Source |
+|-----|--------|------|--------|---------|-----|------------|--------|
+| M0 (Flash) | W25Q128JW | Quad SPI | 3 | 2 | 25 MHz | 100 Mbit/s | boot2 default |
+| M1 (PSRAM) | APS6404L | QPI | 2 | 0 | 37.5 MHz | 150 Mbit/s | `psram_init()` |
+
+PSRAM QPI at 37.5 MHz = 150 Mbit/s — a **6× improvement** over the original SPI 25 MHz (25 Mbit/s). Flash can be upgraded to CLKDIV=2/RXDELAY=1 (37.5 MHz, 150 Mbit/s) from RAM in future firmware.
 
 **Rev B note:** Add external 4.7 kΩ pull-up to VCC_1V8 on **both** QSPI chip selects: QSPI_SS (Flash CS0) and GPIO0 (PSRAM CS1). GPIO0 boots with PDE=1 (pull-down), causing PSRAM CE# LOW at power-on → bus contention with Flash on shared QSPI bus. Both CS lines should be held HIGH during boot to prevent either device from being spuriously selected.
 
