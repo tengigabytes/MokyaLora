@@ -492,6 +492,115 @@ exit:
     #undef CS_HIGH
 }
 
+// ---------------------------------------------------------------------------
+// PSRAM full capacity test (APS6404L, 8 MB)
+//
+// Two-pass test: write address-based pattern across all 8 MB, then verify.
+// Reports progress every 1 MB. Requires psram_init() to have been called.
+// ---------------------------------------------------------------------------
+
+#define PSRAM_SIZE_MB    8u
+#define PSRAM_FULL_WORDS (PSRAM_SIZE_MB * 1024u * 1024u / 4u)  // 2,097,152
+#define PSRAM_STEP_WORDS (1024u * 1024u / 4u)                   // 1 MB in words (= 0x40000)
+
+void psram_full_test(void) {
+    printf("\n--- PSRAM Full Capacity Test (APS6404L, 8 MB) ---\n");
+
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    uint32_t funcsel = gpio0_ctrl & 0x1Fu;
+    if (funcsel != 9) {
+        printf("  PSRAM not initialized (GPIO0 FUNCSEL=%u, expected 9). Run 'psram' first.\n",
+               (unsigned)funcsel);
+        return;
+    }
+
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+
+    // Pass 1: write address-based pattern across all 8 MB
+    printf("  Pass 1 — Write (8 MB):\n");
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
+        psram[i] = 0xA5000000u | i;
+        if ((i & (PSRAM_STEP_WORDS - 1u)) == 0u)
+            printf("    %u / 8 MB written\n", (unsigned)(i / PSRAM_STEP_WORDS));
+    }
+    printf("    8 / 8 MB written\n");
+
+    // Pass 2: verify all 8 MB
+    printf("  Pass 2 — Verify (8 MB):\n");
+    uint32_t errors = 0;
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
+        uint32_t expected = 0xA5000000u | i;
+        uint32_t actual   = psram[i];
+        if (actual != expected) {
+            if (errors < 4)
+                printf("  ERR @ +0x%06X: wr=0x%08X rd=0x%08X\n",
+                       (unsigned)(i * 4u), (unsigned)expected, (unsigned)actual);
+            errors++;
+        }
+        if ((i & (PSRAM_STEP_WORDS - 1u)) == 0u)
+            printf("    %u / 8 MB verified  errors=%u\n",
+                   (unsigned)(i / PSRAM_STEP_WORDS), (unsigned)errors);
+    }
+    printf("    8 / 8 MB verified  errors=%u\n", (unsigned)errors);
+
+    printf("\n  Capacity: %u MB (%u words)\n",
+           (unsigned)PSRAM_SIZE_MB, (unsigned)PSRAM_FULL_WORDS);
+    printf("  Errors  : %u\n", (unsigned)errors);
+    printf("  Result  : %s\n",
+           errors == 0 ? "PASS — full 8 MB accessible and data-correct"
+                       : "FAIL — data errors detected");
+}
+
+// ---------------------------------------------------------------------------
+// PSRAM J-Link probe prep
+//
+// Writes four sentinel words to PSRAM[0..3], reads them back, then prints the
+// J-Link Commander commands needed to verify PSRAM is accessible via SWD
+// while the MCU is halted.
+// ---------------------------------------------------------------------------
+
+void psram_jlink_prep(void) {
+    printf("\n--- PSRAM J-Link access probe ---\n");
+
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    if ((gpio0_ctrl & 0x1Fu) != 9) {
+        printf("  PSRAM not initialized (GPIO0 FUNCSEL=%u). Run 'psram' first.\n",
+               (unsigned)(gpio0_ctrl & 0x1Fu));
+        return;
+    }
+
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+
+    static const uint32_t sentinel[4] = {
+        0xDEADBEEFu, 0xA5A5A5A5u, 0xCAFEBABEu, 0x12345678u
+    };
+    for (int i = 0; i < 4; i++) psram[i] = sentinel[i];
+
+    uint32_t rb[4];
+    for (int i = 0; i < 4; i++) rb[i] = psram[i];
+
+    bool all_ok = true;
+    printf("  XIP uncached base : 0x%08X\n", (unsigned)PSRAM_NOCACHE);
+    printf("  Sentinel write+readback:\n");
+    for (int i = 0; i < 4; i++) {
+        bool ok = (rb[i] == sentinel[i]);
+        if (!ok) all_ok = false;
+        printf("    [%d] wr=0x%08X  rd=0x%08X  %s\n", i,
+               (unsigned)sentinel[i], (unsigned)rb[i], ok ? "OK" : "MISMATCH");
+    }
+    printf("  Firmware readback: %s\n\n", all_ok ? "PASS" : "FAIL");
+
+    printf("  J-Link Commander commands (halt MCU, read, resume):\n");
+    printf("    connect\n");
+    printf("    h\n");
+    printf("    mem32 0x%08X 4\n", (unsigned)PSRAM_NOCACHE);
+    printf("    Expected: %08X %08X %08X %08X\n",
+           (unsigned)sentinel[0], (unsigned)sentinel[1],
+           (unsigned)sentinel[2], (unsigned)sentinel[3]);
+    printf("    g\n");
+    printf("    qc\n");
+}
+
 void psram_probe(void) {
     printf("\n--- PSRAM SPI probe (SIO CS + QMI clock, GPIO0) ---\n");
 

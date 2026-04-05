@@ -269,6 +269,8 @@ void sram_test(void);
 void flash_test(void);
 bool psram_init(void);      // call once at boot — returns true if APS6404L found
 void psram_test(void);
+void psram_full_test(void); // full 8 MB two-pass write+verify test
+void psram_jlink_prep(void);// write sentinel, print J-Link mem32 command
 void psram_diag(void);
 void psram_probe(void);
 

@@ -171,6 +171,10 @@ static void handle_command(const char *cmd) {
         flash_test();
     } else if (strcmp(cmd, "psram") == 0) {
         psram_test();
+    } else if (strcmp(cmd, "psram_full") == 0) {
+        psram_full_test();
+    } else if (strcmp(cmd, "psram_jlink") == 0) {
+        psram_jlink_prep();
     } else if (strcmp(cmd, "psram_diag") == 0) {
         psram_diag();
     } else if (strcmp(cmd, "psram_probe") == 0) {
@@ -237,6 +241,8 @@ static void handle_command(const char *cmd) {
         printf("  sram        -- RP2350B internal SRAM 16 KB pattern test (5 patterns)\n");
         printf("  flash       -- read Flash JEDEC ID + unique ID (W25Q128JW)\n");
         printf("  psram       -- init + 4 KB pattern test (APS6404L, CS=GPIO0)\n");
+        printf("  psram_full  -- full 8 MB two-pass write+verify test (address pattern)\n");
+        printf("  psram_jlink -- write sentinel to PSRAM[0..3], print J-Link mem32 command\n");
         printf("  psram_diag  -- GPIO0 CS diagnostic: SIO override + QMI state (Issue 8)\n");
         printf("  psram_probe -- QMI direct mode SPI probe: reset + read 8 bytes from CS1\n");
         printf("  tft         -- ST7789VI LCD: init + fill Red/Green/Blue/White/Black (1.5s each)\n");
