@@ -267,6 +267,8 @@ Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). 
 | APS6404L PSRAM Read ID | ✅ PASS | `0D 5D 4B 12 A4 31 D5 9F` — APS6404L confirmed (MF=0x0D AP Memory, KGD=0x5D) |
 | APS6404L PSRAM SPI write+readback | ✅ PASS | Wrote `DE AD BE EF` @ 0x000000, read back `DE AD BE EF` — MATCH (`psram_probe` direct mode) |
 | APS6404L PSRAM XIP write+readback | ✅ PASS | XIP pair: `0xA55A1234` + `0x12345678` — MATCH; 4 KB pattern test (1024 words) — PASS |
+| APS6404L PSRAM full capacity (8 MB) | ✅ PASS | Two-pass write+verify (address pattern `0xA5000000\|i`): 2,097,152 words checked — **0 errors** |
+| J-Link SWD read of PSRAM | ✅ PASS | `mem32 0x15000000 4` → `DEADBEEF A5A5A5A5 CAFEBABE 12345678` — matches firmware-written sentinel; QMI M1 XIP responds to AHB-AP while CPU halted |
 
 **PSRAM diagnostics (Issue 8 resolved — 3 bugs found and fixed):**
 
@@ -287,6 +289,12 @@ Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). 
 | 5 | Switch GPIO0 to XIP_CS1 (FUNCSEL=9) while still in direct mode (M1 idle) |
 | 6 | Clear `ASSERT_CS1N`, exit direct mode → M1 XIP engine takes over GPIO0 |
 | 7 | Enable `XIP_CTRL_WRITABLE_M1` for write access via uncached alias (0x15000000) |
+
+**Additional firmware notes (2026-04-05):**
+- `psram_full` bringup command: two-pass (write all 8 MB → verify all 8 MB) test using address-based pattern. Progress printed every 1 MB. Confirms full chip capacity and data retention across the entire 8 MB range.
+- `psram_jlink` bringup command: writes four sentinel words (`DEADBEEF A5A5A5A5 CAFEBABE 12345678`) to PSRAM XIP uncached base, reads back via firmware, prints J-Link `mem32` command for out-of-band verification.
+- RP2350 `XIP_NOCACHE_NOALLOC_BASE` = `0x14000000` (not `0x13000000` as on RP2040); PSRAM uncached XIP address = `0x15000000`.
+- J-Link SWD PSRAM access: QMI M1 XIP engine continues to service AHB-AP bus requests while the CPU is halted via SWD. `mem32 0x15000000 N` works reliably for runtime PSRAM inspection and debug.
 
 **Rev B note:** Add external 4.7 kΩ pull-up to VCC_1V8 on **both** QSPI chip selects: QSPI_SS (Flash CS0) and GPIO0 (PSRAM CS1). GPIO0 boots with PDE=1 (pull-down), causing PSRAM CE# LOW at power-on → bus contention with Flash on shared QSPI bus. Both CS lines should be held HIGH during boot to prevent either device from being spuriously selected.
 
