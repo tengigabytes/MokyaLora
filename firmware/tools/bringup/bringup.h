@@ -11,6 +11,7 @@
 #include "hardware/flash.h"
 #include "hardware/sync.h"
 #include "hardware/structs/qmi.h"
+#include "hardware/structs/xip.h"
 #include "hardware/regs/qmi.h"
 #include "hardware/dma.h"
 
@@ -172,10 +173,12 @@
 #define REG_PART_INFO       0x38  // PN[5:3] DEV_REV[2:0]  0x02 = BQ25622
 
 // PSRAM (APS6404L, 8 MB, CS = GPIO 0 / QMI CS1n)
-// Physical map: CS0=flash 0x000000-0xFFFFFF, CS1=PSRAM 0x800000-0xFFFFFF (M1)
-// Uncached XIP alias: XIP_NOCACHE_NOALLOC_BASE + 0x800000
+// XIP virtual address bit 24 selects M0 (CS0/Flash) or M1 (CS1/PSRAM):
+//   M0: 0x0000000-0x0FFFFFF (Flash, 16 MB)
+//   M1: 0x1000000-0x1FFFFFF (PSRAM, 16 MB window, 8 MB populated)
+// Uncached XIP alias: XIP_NOCACHE_NOALLOC_BASE + 0x1000000
 #define PSRAM_CS_PIN       0
-#define PSRAM_NOCACHE      (XIP_NOCACHE_NOALLOC_BASE + 0x800000u)
+#define PSRAM_NOCACHE      (XIP_NOCACHE_NOALLOC_BASE + 0x1000000u)
 #define PSRAM_TEST_WORDS   1024    // 4 KB pattern test
 
 // SX1262 / LoRa (SPI1, GPIO 23–29)
@@ -264,7 +267,10 @@ void mic_dump(void);
 // bringup_flash.c
 void sram_test(void);
 void flash_test(void);
+bool psram_init(void);      // call once at boot — returns true if APS6404L found
 void psram_test(void);
+void psram_diag(void);
+void psram_probe(void);
 
 // bringup_lora.c
 void lora_test(void);

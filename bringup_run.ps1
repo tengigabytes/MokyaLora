@@ -28,7 +28,9 @@ param(
 $CmdTimeout = @{
     'lora_rx'   = 35
     'lora_dump' = 8
-    'psram'     = 5
+    'psram'       = 5
+    'psram_diag'  = 5
+    'psram_probe' = 8
     'lora'      = 3
     'gnss_info' = 3
     'led'       = 12

@@ -171,6 +171,10 @@ static void handle_command(const char *cmd) {
         flash_test();
     } else if (strcmp(cmd, "psram") == 0) {
         psram_test();
+    } else if (strcmp(cmd, "psram_diag") == 0) {
+        psram_diag();
+    } else if (strcmp(cmd, "psram_probe") == 0) {
+        psram_probe();
     } else if (strcmp(cmd, "key") == 0) {
         key_monitor();
     } else if (strcmp(cmd, "tft") == 0) {
@@ -233,6 +237,8 @@ static void handle_command(const char *cmd) {
         printf("  sram        -- RP2350B internal SRAM 16 KB pattern test (5 patterns)\n");
         printf("  flash       -- read Flash JEDEC ID + unique ID (W25Q128JW)\n");
         printf("  psram       -- init + 4 KB pattern test (APS6404L, CS=GPIO0)\n");
+        printf("  psram_diag  -- GPIO0 CS diagnostic: SIO override + QMI state (Issue 8)\n");
+        printf("  psram_probe -- QMI direct mode SPI probe: reset + read 8 bytes from CS1\n");
         printf("  tft         -- ST7789VI LCD: init + fill Red/Green/Blue/White/Black (1.5s each)\n");
         printf("  tft_fast    -- Step 13: TE freq, baseline FPS, DMA FPS, clkdiv=3 test, TE-gated fill\n");
         printf("  key         -- keyboard monitor (prints key name on press; Enter to exit)\n");
@@ -302,6 +308,10 @@ static void bus_b_i2c_recovery(void) {
 }
 
 void bringup_repl_init(void) {
+    // PSRAM init first — GPIO0 boots with pull-down (CE# LOW = bus contention).
+    // Must fix GPIO0 before any other peripheral touches the QSPI bus.
+    psram_init();
+
     // Immediately clear any I2C bus lockup on Bus B before anything else.
     // BQ27441 may have locked up if SDA/SCL glitched during cold boot
     // (1.8V pull-up rail not yet stable when gauge powered from battery).
