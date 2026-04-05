@@ -488,21 +488,34 @@ the full debug capability needed for Core 0/1 firmware development is functional
 
 ### Step 14 — GNSS Outdoor RF Test
 
-**Result: ⏳ PENDING**
+**Result: ❌ FAIL**
 
-Indoor test confirmed I2C streaming and NMEA output. RF chain performance requires outdoor
-test with clear sky view.
+Outdoor test performed with `gnss_tft_standalone.elf`. Teseo-LIV3FL NMEA streaming
+confirmed over I2C; zero satellites tracked after >10 minutes with clear sky view.
+RF chain issue suspected.
 
-| Item | Expected result |
-|------|----------------|
-| Cold start TTFF (open sky) | < 60 s (Teseo-LIV3FL datasheet: typ. 27 s) |
-| Warm start TTFF | < 5 s |
-| Position accuracy (static) | CEP50 < 2.5 m (Teseo-LIV3FL spec) |
-| Satellite count | ≥ 6 SVs tracked (GPS + GLONASS) |
-| SNR per satellite | > 30 dB-Hz for healthy signal |
+| Item | Result | Notes |
+|------|--------|-------|
+| Cold start TTFF | ❌ No fix | 0 satellites tracked after >10 min outdoors |
+| Satellite count | ❌ 0 SVs | `$GPGGA` reports 0 sats; all `$GNGSA` slots empty; DOP = 99.0 |
+| SNR per satellite | ❌ N/A | No `$GSV` output — nothing tracked |
+| LNA enable state | ✅ PASS | BGA123N6 VPON = 1.8 V (ON-Mode, threshold ≥ 0.8 V) |
+| Teseo NMEA / I2C | ✅ PASS | UTC incrementing; GGA/RMC/GSA streaming at 1 Hz |
 
-> RF chain: Teseo-LIV3FL → BGA725L6 LNA → B39162B4327P810 SAW filter → chip antenna.
-> Verify LNA enable/disable control and SAW passband.
+**Firmware notes:**
+- `gnss_tft_standalone.elf`: boots directly to live TFT display; no REPL required.
+- New fixed-field layout: fix status, UTC, lat/lon/alt/HDOP, speed, TTFF, 12-row satellite SNR table sorted by C/N₀.
+- `$PSTMSETPAR` sent at startup to enable NMEA_GNGSV_ENABLE + GLONASS + Galileo (ID 200, 227); saved to NVM via `$PSTMSAVEPAR`.
+- RTC date = 2017-09-03 — stale; Teseo executing full cold start every boot.
+
+**Root cause investigation (ongoing):**
+- LNA (BGA123N6) confirmed powered and enabled; not the cause.
+- 0 satellites tracked strongly suggests no RF signal reaching Teseo RF_IN.
+- Planned: bypass BGA123N6 by jumper wire (SAW output → Teseo RF_IN direct) with VPON pulled to GND.
+- Chip antenna ground clearance (open item in rf-matching.md) also under investigation.
+
+> RF chain: Chip antenna (M830120) → B39162B4327P810 SAW → BGA123N6 LNA → Teseo-LIV3FL RF_IN.
+> **Note:** design docs (rf-matching.md, hardware-requirements.md) incorrectly list BGA725L6; actual populated part is BGA123N6.
 
 ### Step 15 — LoRa RF Performance
 
@@ -685,6 +698,7 @@ Key findings:
 | 8 | 2026-04-03 | U3 (APS6404L PSRAM) | GPIO0 (CS1) stuck LOW; XIP reads return 0xFFFFFFFF | Three firmware bugs: (1) SIO register addresses used RP2040 offsets; (2) QMI `ASSERT_CS1N` does not control GPIO0; (3) PSRAM XIP address used `+0x800000` (M0) instead of `+0x1000000` (M1) | All three fixed. `psram_init()` runs at boot: SIO CS + QMI clock for init, then XIP_CS1 handoff. Direct-mode probe PASS, XIP 4 KB pattern PASS | Rev B: add 4.7k–10kΩ pull-up on GPIO0 to VCC_1V8 |
 | 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | BIN pin unconnected → BIE=1 → BAT_DET never set → INITCOMP stuck at 0 | BIN pin not connected in Rev A; BIE default=1 (hardware detection mode) | CONFIG UPDATE clears BIE (OpConfig 0x25F8→0x05F8); BAT_INSERT (0x000C) sets BAT_DET=1; INITCOMP completes in ~1.6 s. Bringup command `bq27441` handles this automatically | Connect BIN pin or remove fuel gauge from BOM (see Issue 10) |
 | 10 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | Cold boot I2C NACK — gauge completely unresponsive after any power-on that includes battery insertion. 9-clock bus recovery ineffective. Observations: (1) USB on + no battery + charger toggle → gauge responds (charger supplies VSYS → gauge POR with clean bus); (2) while gauge already running, insert battery → still responds; (3) cold boot with battery (USB+battery both removed then reinserted) → permanent NACK; (4) USB on + charge off + insert battery → permanent NACK, even after charger re-toggle | Under investigation. Suspected ESD latchup on I2C input pins: battery insertion causes fast VBAT edge → internal 1.8V LDO ramps from 0V while external SDA/SCL pull-ups already at 1.8V → ESD protection diodes forward-bias → I2C input circuitry latch. Not yet confirmed with scope measurement | Rev A workaround: boot without battery → charge_on → insert battery (gauge already running, no POR). Standard I2C bus recovery (9 clocks + STOP) does not resolve the condition | **Consider removing BQ27441 from Rev B BOM.** If retained: add 1MΩ pull-down on SDA/SCL (TI recommendation), ensure power sequencing (1.8V pull-up rail not before gauge VDD), connect GPOUT to MCU GPIO |
+| 11 | 2026-04-05 | U10/U11 GNSS RF chain | 0 satellites tracked after >10 min outdoor cold start; GNSS completely non-functional | Unknown. LNA (BGA123N6) ON confirmed (VPON = 1.8 V). Candidates: (1) chip antenna ground clearance insufficient (open item in rf-matching.md); (2) SAW → LNA or LNA → Teseo impedance mismatch; (3) BOM part incorrect (design docs listed BGA725L6; actual part is BGA123N6) | Under investigation. Next step: bypass BGA123N6 (jumper SAW output → Teseo RF_IN; pull VPON to GND) | Fix antenna ground clearance; verify SAW and LNA BOM vs schematic; correct rf-matching.md and hardware-requirements.md (BGA725L6 → BGA123N6) |
 
 ---
 

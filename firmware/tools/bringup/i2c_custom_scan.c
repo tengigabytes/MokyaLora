@@ -189,6 +189,8 @@ static void handle_command(const char *cmd) {
         tft_test();
     } else if (strcmp(cmd, "tft_fast") == 0) {
         tft_fast_test();
+    } else if (strcmp(cmd, "gnss_tft") == 0) {
+        gnss_tft_test();
     } else if (strcmp(cmd, "charge_on") == 0) {
         bus_b_init();
         bq25622_enable_charge();
@@ -253,6 +255,7 @@ static void handle_command(const char *cmd) {
         printf("  psram_probe -- QMI direct mode SPI probe: reset + read 8 bytes from CS1\n");
         printf("  tft         -- ST7789VI LCD: init + fill Red/Green/Blue/White/Black (1.5s each)\n");
         printf("  tft_fast    -- Step 13: TE freq, baseline FPS, DMA FPS, clkdiv=3 test, TE-gated fill\n");
+        printf("  gnss_tft    -- Step 14: GNSS outdoor test; streams NMEA + live display on TFT (Enter to stop)\n");
         printf("  key         -- keyboard monitor (prints key name on press; Enter to exit)\n");
         printf("  charge_on   -- set VREG=4100mV IINDPM=100mA, enable BQ25622 charging\n");
         printf("  charge_off  -- disable BQ25622 charging\n");
