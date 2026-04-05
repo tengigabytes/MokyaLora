@@ -294,6 +294,11 @@ void lora_dump(void);
 void tft_test(void);
 void tft_fast_test(void);
 
+// bringup_gnss_tft.c — Step 14: Teseo-LIV3FL outdoor GNSS + live TFT display
+// Streams NMEA over I2C Bus A; renders GPS fix, lat/lon/alt/UTC, TTFF, and
+// raw NMEA sentences on the ST7789VI using a built-in 5x8 bitmap font.
+void gnss_tft_test(void);
+
 // bringup_core1.c — Step 16 Stage A: bare-metal Core 1 validation
 // Tests: boot, FIFO echo, shared SRAM spinlock, GPIO from Core 1
 void core1_test(void);

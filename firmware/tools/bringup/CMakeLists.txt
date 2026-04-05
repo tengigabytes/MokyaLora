@@ -10,6 +10,7 @@ set(BRINGUP_SOURCES
     bringup_flash.c
     bringup_lora.c
     bringup_tft.c
+    bringup_gnss_tft.c
     bringup_core1.c
 )
 
@@ -51,6 +52,36 @@ pico_enable_stdio_uart(i2c_custom_scan 0)
 
 # Generate .uf2 / .elf / .bin / .map outputs
 pico_add_extra_outputs(i2c_custom_scan)
+
+# ── Step 14 standalone: boots directly into GNSS TFT display (no REPL) ──────
+# Minimal dependency set: only bringup_power (bus_b/LM27965) + bringup_gnss_tft.
+# No USB stdio required — exits via physical BACK key.
+add_executable(gnss_tft_standalone
+    bringup_power.c
+    bringup_gnss_tft.c
+    gnss_tft_main.c
+)
+
+pico_generate_pio_header(gnss_tft_standalone
+    ${CMAKE_CURRENT_LIST_DIR}/tft_8080.pio
+)
+
+target_link_libraries(gnss_tft_standalone
+    pico_stdlib
+    hardware_i2c
+    hardware_pwm
+    hardware_pio
+    hardware_spi
+    hardware_flash
+    hardware_dma
+    hardware_sync
+    m
+)
+
+# USB stdio enabled but not required — printf visible when cable is plugged in.
+pico_enable_stdio_usb(gnss_tft_standalone 1)
+pico_enable_stdio_uart(gnss_tft_standalone 0)
+pico_add_extra_outputs(gnss_tft_standalone)
 
 # ── Step 16 Stage B-0: Core 1 bringup REPL (same code, Core 1 owns periph) ───
 add_executable(core1_bringup_test
