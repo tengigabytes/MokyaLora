@@ -264,22 +264,31 @@ Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). 
 | Flash SR1/SR2/SR3 | ✅ PASS | SR2 QE bit set (QSPI enabled); boot config intact |
 | Flash XIP read | ✅ PASS | First 32 bytes match programmed firmware image |
 | Internal SRAM (16 KB pattern test) | ✅ PASS | 5 patterns including address-based — all PASS; static used 313 KB / 520 KB (60%), free 206 KB |
-| APS6404L PSRAM | ❌ FAIL | No response on SPI or QPI — hardware fault; see Issue 8 |
+| APS6404L PSRAM Read ID | ✅ PASS | `0D 5D 4B 12 A4 31 D5 9F` — APS6404L confirmed (MF=0x0D AP Memory, KGD=0x5D) |
+| APS6404L PSRAM SPI write+readback | ✅ PASS | Wrote `DE AD BE EF` @ 0x000000, read back `DE AD BE EF` — MATCH (`psram_probe` direct mode) |
+| APS6404L PSRAM XIP write+readback | ✅ PASS | XIP pair: `0xA55A1234` + `0x12345678` — MATCH; 4 KB pattern test (1024 words) — PASS |
 
-**PSRAM diagnostics:**
+**PSRAM diagnostics (Issue 8 resolved — 3 bugs found and fixed):**
 
-Firmware and QMI configuration confirmed correct:
+| Bug | Root cause | Fix |
+|-----|-----------|-----|
+| SIO register addresses | Used RP2040 offsets; RP2350 has interleaved `GPIO_HI_*` regs | `OUT_SET=0x18, OUT_CLR=0x20, OE_SET=0x38` |
+| QMI CS1N ≠ GPIO0 | `ASSERT_CS1N` only drives internal QSPI CS1 pad, not GPIO0 | SIO drives physical CE# + `ASSERT_CS1N` for clock generation |
+| PSRAM XIP address | Used `+0x800000` (still M0/Flash); XIP bit 24 selects M0/M1 | Changed to `+0x1000000` (bit 24=1 → M1/CS1) |
 
-| Diagnostic item | Value | Conclusion |
-|----------------|-------|-----------|
-| GPIO0_CTRL FUNCSEL | 9 (`XIP_CS1`) | GPIO assignment correct ✅ |
-| QMI M1 rfmt (post-flash bootrom) | 0x000492A8 | Bootrom pre-configured M1 for QPI |
-| SPI write+readback | 0xFFFFFFFF | No response — write not persisted |
-| QPI Quad I/O probe (rcmd=0xEB) | 0xFFFFFFFF | No response |
+**Boot-time PSRAM init** (`psram_init()` in `bringup_sram.c`, called at top of `bringup_repl_init()`):
 
-XIP (CS0) and PSRAM (CS1) channels are fully independent — XIP activity does not block CS1. Issue is hardware, not firmware.
+| Step | Action |
+|------|--------|
+| 1 | GPIO0 = SIO output HIGH (FUNCSEL=5) + internal pull-up (PUE=1, PDE=0) |
+| 2 | Enter QMI direct mode, set `ASSERT_CS1N` (for clock generation) |
+| 3 | SIO CS toggle: Reset Enable (0x66), Reset (0x99), wait 100 µs, Read ID (0x9F) |
+| 4 | Configure M1: timing (copy from M0), rfmt/rcmd=0x03 (SPI Read), wfmt/wcmd=0x02 (SPI Write) |
+| 5 | Switch GPIO0 to XIP_CS1 (FUNCSEL=9) while still in direct mode (M1 idle) |
+| 6 | Clear `ASSERT_CS1N`, exit direct mode → M1 XIP engine takes over GPIO0 |
+| 7 | Enable `XIP_CTRL_WRITABLE_M1` for write access via uncached alias (0x15000000) |
 
-**Next action (Issue 8):** DMM continuity: GPIO0 (RP2350B pin 77) → U3 CE# (pin 1); verify VCC_1V8 at U3; inspect solder joints under microscope. Bodge wire if trace is open.
+**Rev B note:** Add external 4.7 kΩ pull-up to VCC_1V8 on **both** QSPI chip selects: QSPI_SS (Flash CS0) and GPIO0 (PSRAM CS1). GPIO0 boots with PDE=1 (pull-down), causing PSRAM CE# LOW at power-on → bus contention with Flash on shared QSPI bus. Both CS lines should be held HIGH during boot to prevent either device from being spuriously selected.
 
 ### Step 10 — Microphone (IM69D130 PDM)
 
@@ -618,7 +627,7 @@ Key findings:
 | 5 | 2026-04-02 | LCD FPC (Molex 54132-4062) | FPC pinout incompatible with NHD-2.4-240320AF-CSXP | Pinout mismatch | FPC adapter board for Rev A | Re-verify FPC pinout; correct in Rev B |
 | 6 | 2026-04-02 | U5 (LM27965) Bank B | LED D37 and keypad backlight share Bank B → not independently controllable | Routing error | Accept Rev A limitation | Move D37 to unused Bank A channel in Rev B |
 | 7 | 2026-04-02 | U15 (TPS62840) / 1.8 V rail | Pi Debug Probe incompatible (requires 3.3 V VTREF) | 1.8 V logic vs 3.3 V-only debug tool | Using J-Link (supports 1.8 V VTREF) | Evaluate switchable VTREF option |
-| 8 | 2026-04-03 | U3 (APS6404L PSRAM) | No response on SPI or QPI — returns 0xFFFFFFFF | Suspected open trace: GPIO0 (pin 77) → U3 CE# (pin 1), or VCC_1V8 open at U3 | None — requires physical inspection | Verify trace continuity + VCC; bodge wire if open; replace U3 if VCC shorted |
+| 8 | 2026-04-03 | U3 (APS6404L PSRAM) | GPIO0 (CS1) stuck LOW; XIP reads return 0xFFFFFFFF | Three firmware bugs: (1) SIO register addresses used RP2040 offsets; (2) QMI `ASSERT_CS1N` does not control GPIO0; (3) PSRAM XIP address used `+0x800000` (M0) instead of `+0x1000000` (M1) | All three fixed. `psram_init()` runs at boot: SIO CS + QMI clock for init, then XIP_CS1 handoff. Direct-mode probe PASS, XIP 4 KB pattern PASS | Rev B: add 4.7k–10kΩ pull-up on GPIO0 to VCC_1V8 |
 | 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | BIN pin unconnected → BIE=1 → BAT_DET never set → INITCOMP stuck at 0 | BIN pin not connected in Rev A; BIE default=1 (hardware detection mode) | CONFIG UPDATE clears BIE (OpConfig 0x25F8→0x05F8); BAT_INSERT (0x000C) sets BAT_DET=1; INITCOMP completes in ~1.6 s. Bringup command `bq27441` handles this automatically | Connect BIN pin or remove fuel gauge from BOM (see Issue 10) |
 | 10 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | Cold boot I2C NACK — gauge completely unresponsive after any power-on that includes battery insertion. 9-clock bus recovery ineffective. Observations: (1) USB on + no battery + charger toggle → gauge responds (charger supplies VSYS → gauge POR with clean bus); (2) while gauge already running, insert battery → still responds; (3) cold boot with battery (USB+battery both removed then reinserted) → permanent NACK; (4) USB on + charge off + insert battery → permanent NACK, even after charger re-toggle | Under investigation. Suspected ESD latchup on I2C input pins: battery insertion causes fast VBAT edge → internal 1.8V LDO ramps from 0V while external SDA/SCL pull-ups already at 1.8V → ESD protection diodes forward-bias → I2C input circuitry latch. Not yet confirmed with scope measurement | Rev A workaround: boot without battery → charge_on → insert battery (gauge already running, no POR). Standard I2C bus recovery (9 clocks + STOP) does not resolve the condition | **Consider removing BQ27441 from Rev B BOM.** If retained: add 1MΩ pull-down on SDA/SCL (TI recommendation), ensure power sequencing (1.8V pull-up rail not before gauge VDD), connect GPOUT to MCU GPIO |
 
