@@ -1,4 +1,5 @@
 #include "bringup.h"
+#include "hardware/clocks.h"
 
 // ---------------------------------------------------------------------------
 // Internal SRAM test (RP2350B, 520 KB)
@@ -260,6 +261,14 @@ static bool __no_inline_not_in_flash_func(cs1_tx)(uint8_t b) {
     return qmi_wait_busy();
 }
 
+// TX one byte in quad mode, OE=1, NOPUSH=1 (no RX capture). Returns true if OK.
+static bool __no_inline_not_in_flash_func(cs1_tx_qpi)(uint8_t b) {
+    qmi_hw->direct_tx = QMI_DIRECT_TX_NOPUSH_BITS | QMI_DIRECT_TX_OE_BITS |
+                        (QMI_DIRECT_TX_IWIDTH_VALUE_Q << QMI_DIRECT_TX_IWIDTH_LSB) | b;
+    while (!(qmi_hw->direct_csr & QMI_DIRECT_CSR_TXEMPTY_BITS));
+    return qmi_wait_busy();
+}
+
 // TX dummy, OE=1, NOPUSH=0 (capture RX). Returns true if OK.
 static bool __no_inline_not_in_flash_func(cs1_rx)(uint8_t *out) {
     qmi_hw->direct_tx = (1u << 19) | 0x00u;
@@ -322,6 +331,12 @@ static void __no_inline_not_in_flash_func(psram_init_run)(
     #define CS_INIT_LOW()  (SIO_GPIO_OUT_CLR = GPIO0_BIT)
     #define CS_INIT_HIGH() (SIO_GPIO_OUT_SET = GPIO0_BIT)
 
+    // QPI warm-reset (device may already be in QPI mode after a warm reboot)
+    CS_INIT_LOW(); cs1_tx_qpi(0x66); CS_INIT_HIGH();
+    CS_INIT_LOW(); cs1_tx_qpi(0x99); CS_INIT_HIGH();
+    for (volatile uint32_t i = 0; i < 12500; i++) __asm volatile ("nop");
+
+    // SPI reset (bring device to known SPI state)
     // Reset Enable (0x66)
     CS_INIT_LOW(); ok = cs1_tx(0x66); CS_INIT_HIGH();
     if (!ok) { r->busy_timeout = true; goto exit; }
@@ -343,12 +358,42 @@ static void __no_inline_not_in_flash_func(psram_init_run)(
 
     r->id_ok = (r->id[0] == 0x0D && r->id[1] == 0x5D);
 
-    // Phase 2: configure M1 for SPI read/write (conservative, single-wire)
-    qmi_hw->m[1].timing = qmi_hw->m[0].timing;  // copy Flash timing
-    qmi_hw->m[1].rfmt   = QMI_M1_RFMT_PREFIX_LEN_BITS;   // 8-bit cmd, single-wire
-    qmi_hw->m[1].rcmd   = 0x03;                           // SPI Read
-    qmi_hw->m[1].wfmt   = QMI_M1_WFMT_PREFIX_LEN_BITS;   // 8-bit cmd, single-wire
-    qmi_hw->m[1].wcmd   = 0x02;                           // SPI Write
+    // Enter QPI mode (0x35, SPI single-wire)
+    CS_INIT_LOW(); ok = cs1_tx(0x35); CS_INIT_HIGH();
+    if (!ok) { r->busy_timeout = true; goto exit; }
+
+    // Phase 2: configure M1 for QPI at 37.5 MHz (CLKDIV=2, RXDELAY=0, COOLDOWN=2)
+    // Sweep test confirmed: CLKDIV=2/RXDELAY=0 is the only zero-error setting.
+    // CLKDIV=1 (75 MHz) has ~200-300 marginal errors per 256 KB; CLKDIV=3 fails
+    // completely due to QMI sampling phase exceeding RXDELAY range.
+    // Base timing from M0 (preserves MIN_DESELECT, SELECT_HOLD etc.), then
+    // override COOLDOWN=2 (meets tCPH≥18ns), RXDELAY=0, CLKDIV=2 (SCK=37.5MHz).
+    qmi_hw->m[1].timing = (qmi_hw->m[0].timing &
+                            ~(QMI_M1_TIMING_COOLDOWN_BITS |
+                              QMI_M1_TIMING_RXDELAY_BITS  |
+                              QMI_M1_TIMING_CLKDIV_BITS))
+                         | (2u << QMI_M1_TIMING_COOLDOWN_LSB)
+                         | (0u << QMI_M1_TIMING_RXDELAY_LSB)
+                         | (2u << QMI_M1_TIMING_CLKDIV_LSB);
+
+    // rfmt: cmd=Q/8b, addr=Q, dummy=Q/28bits (7 quad clocks), data=Q
+    // APS6404L 0xEB QPI: 6 wait cycles spec; empirically requires 7 QPI clocks
+    // (likely because mode byte M[7:0] occupies 2 of the 6 wait slots in SPI mode,
+    // leaving 4+1 dummy clocks needed for QPI XIP without mode byte).
+    qmi_hw->m[1].rfmt = (QMI_M1_RFMT_PREFIX_LEN_VALUE_8  << QMI_M1_RFMT_PREFIX_LEN_LSB)  |
+                        (QMI_M1_RFMT_PREFIX_WIDTH_VALUE_Q << QMI_M1_RFMT_PREFIX_WIDTH_LSB) |
+                        (QMI_M1_RFMT_ADDR_WIDTH_VALUE_Q   << QMI_M1_RFMT_ADDR_WIDTH_LSB)   |
+                        (QMI_M1_RFMT_DUMMY_WIDTH_VALUE_Q  << QMI_M1_RFMT_DUMMY_WIDTH_LSB)  |
+                        (QMI_M1_RFMT_DATA_WIDTH_VALUE_Q   << QMI_M1_RFMT_DATA_WIDTH_LSB)   |
+                        (QMI_M1_RFMT_DUMMY_LEN_VALUE_28   << QMI_M1_RFMT_DUMMY_LEN_LSB);
+    qmi_hw->m[1].rcmd = 0xEBu;  // QPI Fast Read
+
+    // wfmt: cmd=Q/8b, addr=Q, no dummy, data=Q
+    qmi_hw->m[1].wfmt = (QMI_M1_WFMT_PREFIX_LEN_VALUE_8  << QMI_M1_WFMT_PREFIX_LEN_LSB)  |
+                        (QMI_M1_WFMT_PREFIX_WIDTH_VALUE_Q << QMI_M1_WFMT_PREFIX_WIDTH_LSB) |
+                        (QMI_M1_WFMT_ADDR_WIDTH_VALUE_Q   << QMI_M1_WFMT_ADDR_WIDTH_LSB)   |
+                        (QMI_M1_WFMT_DATA_WIDTH_VALUE_Q   << QMI_M1_WFMT_DATA_WIDTH_LSB);
+    qmi_hw->m[1].wcmd = 0x38u;  // QPI Write
 
     r->m1_timing = qmi_hw->m[1].timing;
     r->m1_rfmt   = qmi_hw->m[1].rfmt;
@@ -549,6 +594,312 @@ void psram_full_test(void) {
     printf("  Result  : %s\n",
            errors == 0 ? "PASS — full 8 MB accessible and data-correct"
                        : "FAIL — data errors detected");
+}
+
+// ---------------------------------------------------------------------------
+// PSRAM XIP speed sweep — test CLKDIV × RXDELAY combinations
+//
+// For each combination, writes and reads back a test pattern to measure
+// the actual error rate.  Reports a table so the user can find the
+// fastest reliable configuration for both PSRAM and Flash.
+//
+// Two test modes per PSRAM combo:
+//   (a) Write at the candidate speed, read at the candidate speed.
+//   (b) Write at safe speed (CLKDIV=3), read at candidate speed.
+// Mode (b) isolates READ errors from WRITE errors.
+//
+// For Flash (M0): changes M0.timing from RAM with XIP paused, then
+// returns to Flash and reads a known constant.  If the fetch fails the
+// CPU faults, so this is tested last and only on user request.
+// ---------------------------------------------------------------------------
+
+#define SWEEP_WORDS  65536u   // 256 KB per pass — large enough to catch marginals
+
+// Change M1 CLKDIV + RXDELAY.  Must pause XIP via direct mode to avoid
+// corrupting any in-flight M1 transaction.  Runs from RAM.
+static void __no_inline_not_in_flash_func(psram_set_timing)(
+        uint8_t clkdiv, uint8_t rxdelay) {
+    uint32_t irq_save = save_and_disable_interrupts();
+    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+
+    qmi_hw->m[1].timing = (qmi_hw->m[1].timing &
+                            ~(QMI_M1_TIMING_CLKDIV_BITS | QMI_M1_TIMING_RXDELAY_BITS))
+                         | ((uint32_t)clkdiv << QMI_M1_TIMING_CLKDIV_LSB)
+                         | ((uint32_t)rxdelay << QMI_M1_TIMING_RXDELAY_LSB);
+
+    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    restore_interrupts(irq_save);
+}
+
+// Run a 256 KB write+verify pass.  Returns error count.
+static uint32_t psram_sweep_pass(void) {
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+    for (uint32_t i = 0; i < SWEEP_WORDS; i++)
+        psram[i] = 0xA5000000u | i;
+    uint32_t errors = 0;
+    for (uint32_t i = 0; i < SWEEP_WORDS; i++) {
+        if (psram[i] != (0xA5000000u | i))
+            errors++;
+    }
+    return errors;
+}
+
+// Run a 256 KB verify-only pass (data already written).  Returns error count.
+static uint32_t psram_verify_pass(void) {
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+    uint32_t errors = 0;
+    for (uint32_t i = 0; i < SWEEP_WORDS; i++) {
+        if (psram[i] != (0xA5000000u | i))
+            errors++;
+    }
+    return errors;
+}
+
+void psram_speed_test(void) {
+    printf("\n--- PSRAM QPI Speed Sweep (256 KB per test) ---\n");
+
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    if ((gpio0_ctrl & 0x1Fu) != 9) {
+        printf("  PSRAM not initialized. Run 'psram' first.\n");
+        return;
+    }
+
+    // Read actual sys_clk frequency
+    uint32_t sys_hz = clock_get_hz(clk_sys);
+    printf("  sys_clk = %u MHz\n", (unsigned)(sys_hz / 1000000u));
+    printf("  Test size = %u KB (%u words)\n\n", SWEEP_WORDS * 4 / 1024, SWEEP_WORDS);
+
+    printf("  M0.timing (boot2) = 0x%08X\n", (unsigned)qmi_hw->m[0].timing);
+    printf("  M0.rfmt = 0x%08X  M0.rcmd = 0x%02X\n",
+           (unsigned)qmi_hw->m[0].rfmt, (unsigned)qmi_hw->m[0].rcmd);
+    printf("  M1.timing (init)  = 0x%08X\n", (unsigned)qmi_hw->m[1].timing);
+    printf("  M1.rfmt = 0x%08X  M1.rcmd = 0x%02X\n\n",
+           (unsigned)qmi_hw->m[1].rfmt, (unsigned)qmi_hw->m[1].rcmd);
+
+    printf("  CLKDIV  RXDELAY  SCK_MHz  M1.timing   word0_rd    wr+rd_err  rdonly_err  result\n");
+    printf("  ------  -------  -------  ----------  ----------  ---------  ----------  ------\n");
+
+    static const uint8_t clkdivs[]  = {3, 2, 1};
+    static const uint8_t rxdelays[] = {0, 1, 2, 3, 4, 5, 6, 7};
+
+    uint32_t orig_timing = qmi_hw->m[1].timing;
+
+    for (int c = 0; c < 3; c++) {
+        for (int r = 0; r < 8; r++) {
+            uint8_t cd = clkdivs[c];
+            uint8_t rd = rxdelays[r];
+            uint32_t sck_mhz = sys_hz / (2u * cd) / 1000000u;
+
+            // (a) write+read at candidate speed
+            psram_set_timing(cd, rd);
+            uint32_t tim_val = qmi_hw->m[1].timing;
+            volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+            psram[0] = 0xDEADBEEFu;
+            uint32_t word0 = psram[0];
+            uint32_t wr_err = psram_sweep_pass();
+
+            // (b) write at safe speed, read at candidate speed
+            psram_set_timing(2, 0);                   // safe: 37.5 MHz, RXDELAY=0
+            for (uint32_t i = 0; i < SWEEP_WORDS; i++)
+                psram[i] = 0xA5000000u | i;
+            psram_set_timing(cd, rd);                  // switch to candidate
+            uint32_t rd_err = psram_verify_pass();
+
+            bool pass = (wr_err == 0) && (rd_err == 0);
+            printf("  %6u  %7u  %7u  0x%08X  0x%08X  %9u  %10u  %s\n",
+                   cd, rd, sck_mhz, (unsigned)tim_val, (unsigned)word0,
+                   (unsigned)wr_err, (unsigned)rd_err,
+                   pass ? "PASS" : "FAIL");
+        }
+    }
+
+    // Restore original timing
+    qmi_hw->m[1].timing = orig_timing;
+    printf("\n  M1.timing restored to 0x%08X\n", (unsigned)orig_timing);
+    printf("  Current: CLKDIV=%u RXDELAY=%u SCK=%u MHz\n",
+           (unsigned)(orig_timing & 0xFF),
+           (unsigned)((orig_timing >> 8) & 0x7),
+           (unsigned)(sys_hz / (2u * (orig_timing & 0xFF)) / 1000000u));
+}
+
+// ---------------------------------------------------------------------------
+// PSRAM QPI CLKDIV=1 diagnostic — analyse error patterns and timing tuning.
+//
+// Tests:
+//  1) Error address analysis at CLKDIV=1/RXDELAY=0 — page boundary vs random
+//  2) Sweep COOLDOWN (0-3) × MIN_DESELECT (1,3,5,7) at CLKDIV=1/RXDELAY=0
+//  3) Sweep PAGEBREAK (0-3) at CLKDIV=1/RXDELAY=0
+//  4) Multiple runs to check error reproducibility
+// ---------------------------------------------------------------------------
+
+// Change M1 timing with full field control.  Runs from RAM.
+static void __no_inline_not_in_flash_func(psram_set_full_timing)(
+        uint32_t timing) {
+    uint32_t irq_save = save_and_disable_interrupts();
+    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    qmi_hw->m[1].timing = timing;
+    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    restore_interrupts(irq_save);
+}
+
+void psram_diag_test(void) {
+    printf("\n--- PSRAM QPI CLKDIV=1 Diagnostic ---\n");
+
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    if ((gpio0_ctrl & 0x1Fu) != 9) {
+        printf("  PSRAM not initialized. Run 'psram' first.\n");
+        return;
+    }
+
+    uint32_t sys_hz = clock_get_hz(clk_sys);
+    uint32_t orig_timing = qmi_hw->m[1].timing;
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+
+    // ---- Test 1: RXDELAY=0 (10 runs, write@safe read@75MHz) ----
+    printf("\n  [1] CLKDIV=1/RXDELAY=0 (75 MHz), 10 runs\n");
+    for (int run = 0; run < 10; run++) {
+        psram_set_timing(2, 0);
+        for (uint32_t i = 0; i < SWEEP_WORDS; i++)
+            psram[i] = 0xA5000000u | i;
+        psram_set_timing(1, 0);
+        uint32_t errs = psram_verify_pass();
+        printf("      Run %2d: %u errors\n", run + 1, (unsigned)errs);
+    }
+
+    // ---- Test 2: RXDELAY=1 (10 runs, write@safe read@75MHz) ----
+    printf("\n  [2] CLKDIV=1/RXDELAY=1 (75 MHz), 10 runs\n");
+    for (int run = 0; run < 10; run++) {
+        psram_set_timing(2, 0);
+        for (uint32_t i = 0; i < SWEEP_WORDS; i++)
+            psram[i] = 0xA5000000u | i;
+        psram_set_timing(1, 1);
+        uint32_t errs = psram_verify_pass();
+        printf("      Run %2d: %u errors\n", run + 1, (unsigned)errs);
+    }
+
+    // ---- Test 3: CLKDIV=2/RXDELAY=0 baseline (5 runs for reference) ----
+    printf("\n  [3] CLKDIV=2/RXDELAY=0 (37.5 MHz) baseline, 5 runs\n");
+    for (int run = 0; run < 5; run++) {
+        psram_set_timing(2, 0);
+        for (uint32_t i = 0; i < SWEEP_WORDS; i++)
+            psram[i] = 0xA5000000u | i;
+        uint32_t errs = psram_verify_pass();
+        printf("      Run %2d: %u errors\n", run + 1, (unsigned)errs);
+    }
+
+    // ---- Test 4: CLKDIV=1/RXDELAY=0, write+read both at 75 MHz (5 runs) ----
+    printf("\n  [4] CLKDIV=1/RXDELAY=0 write+read both at 75 MHz, 5 runs\n");
+    for (int run = 0; run < 5; run++) {
+        psram_set_timing(1, 0);
+        uint32_t errs = psram_sweep_pass();
+        printf("      Run %2d: %u errors\n", run + 1, (unsigned)errs);
+    }
+
+    // Restore original timing
+    psram_set_full_timing(orig_timing);
+    printf("\n  Restored M1.timing = 0x%08X\n", (unsigned)orig_timing);
+}
+
+// ---------------------------------------------------------------------------
+// Flash (M0) XIP speed test — change M0 timing from RAM, test Flash reads.
+//
+// This function runs entirely from RAM (no_inline_not_in_flash) so that XIP
+// can be safely paused while M0.timing is changed.  It reads back a known
+// Flash constant after the change to verify correctness.
+// ---------------------------------------------------------------------------
+
+// Known sentinel in Flash — address and value set by the linker.
+// We use the first word of the vector table (Initial MSP) which is always
+// 0x20082000 for RP2350B with 520 KB SRAM.
+#define FLASH_TEST_ADDR   0x10000000u
+#define FLASH_TEST_EXPECT (*(volatile uint32_t *)FLASH_TEST_ADDR)
+
+struct flash_speed_result {
+    uint8_t  clkdiv;
+    uint8_t  rxdelay;
+    uint32_t sck_mhz;
+    uint32_t read_val;
+    uint32_t expected;
+    bool     pass;
+};
+
+static void __no_inline_not_in_flash_func(flash_speed_run)(
+        struct flash_speed_result *results, int count,
+        const uint8_t *clkdivs, const uint8_t *rxdelays,
+        uint32_t sys_hz) {
+    // Read expected value BEFORE changing timing (while XIP still works)
+    uint32_t expected = *(volatile uint32_t *)FLASH_TEST_ADDR;
+
+    for (int i = 0; i < count; i++) {
+        uint8_t cd = clkdivs[i];
+        uint8_t rd = rxdelays[i];
+
+        // Pause XIP
+        uint32_t irq_save = save_and_disable_interrupts();
+        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+
+        // Save and change M0 timing
+        uint32_t orig = qmi_hw->m[0].timing;
+        qmi_hw->m[0].timing = (orig & ~(QMI_M0_TIMING_CLKDIV_BITS |
+                                         QMI_M0_TIMING_RXDELAY_BITS))
+                             | ((uint32_t)cd << QMI_M0_TIMING_CLKDIV_LSB)
+                             | ((uint32_t)rd << QMI_M0_TIMING_RXDELAY_LSB);
+
+        // Resume XIP with new timing
+        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        restore_interrupts(irq_save);
+
+        // Read test word from Flash (uses new timing)
+        uint32_t val = *(volatile uint32_t *)FLASH_TEST_ADDR;
+
+        // Revert to original timing immediately (from RAM — safe even if
+        // the read above returned garbage, because we are still in RAM)
+        irq_save = save_and_disable_interrupts();
+        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        qmi_hw->m[0].timing = orig;
+        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        restore_interrupts(irq_save);
+
+        results[i].clkdiv  = cd;
+        results[i].rxdelay = rd;
+        results[i].sck_mhz = sys_hz / (2u * cd) / 1000000u;
+        results[i].read_val = val;
+        results[i].expected = expected;
+        results[i].pass     = (val == expected);
+    }
+}
+
+void flash_speed_test(void) {
+    printf("\n--- Flash (M0) XIP Speed Test ---\n");
+
+    uint32_t sys_hz = clock_get_hz(clk_sys);
+    printf("  sys_clk = %u MHz\n", (unsigned)(sys_hz / 1000000u));
+    printf("  Test: read vector table MSP @ 0x%08X\n", FLASH_TEST_ADDR);
+    printf("  Expected value: 0x%08X\n\n", (unsigned)FLASH_TEST_EXPECT);
+
+    // Build test matrix: CLKDIV=1..4 × RXDELAY=0..3
+    #define FLASH_COMBOS 16
+    uint8_t cd_arr[FLASH_COMBOS], rd_arr[FLASH_COMBOS];
+    struct flash_speed_result res[FLASH_COMBOS];
+    int idx = 0;
+    for (uint8_t cd = 1; cd <= 4; cd++)
+        for (uint8_t rd = 0; rd <= 3; rd++) {
+            cd_arr[idx] = cd;
+            rd_arr[idx] = rd;
+            idx++;
+        }
+
+    flash_speed_run(res, FLASH_COMBOS, cd_arr, rd_arr, sys_hz);
+
+    printf("  CLKDIV  RXDELAY  SCK_MHz  read_val    result\n");
+    printf("  ------  -------  -------  ----------  ------\n");
+    for (int i = 0; i < FLASH_COMBOS; i++) {
+        printf("  %6u  %7u  %7u  0x%08X  %s\n",
+               res[i].clkdiv, res[i].rxdelay, res[i].sck_mhz,
+               (unsigned)res[i].read_val,
+               res[i].pass ? "PASS" : "FAIL");
+    }
+    #undef FLASH_COMBOS
 }
 
 // ---------------------------------------------------------------------------
