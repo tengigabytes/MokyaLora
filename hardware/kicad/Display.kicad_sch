@@ -5566,7 +5566,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/LTW-482DS5 .PDF"
+		(property "Datasheet" "https://optoelectronics.liteon.com/upload/download/DS22-2010-0080/LTW-482DS5.pdf"
 			(at 232.664 111.506 0)
 			(effects
 				(font
@@ -5661,7 +5661,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/LTW-482DS5 .PDF"
+		(property "Datasheet" "https://optoelectronics.liteon.com/upload/download/DS22-2010-0080/LTW-482DS5.pdf"
 			(at 232.664 81.026 0)
 			(effects
 				(font
@@ -5972,7 +5972,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 134.62 93.98 0)
 			(effects
 				(font
@@ -6077,7 +6077,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/schematic.pdf"
+		(property "Datasheet" "https://www.ti.com/lit/gpn/lm27965"
 			(at 150.114 52.324 0)
 			(effects
 				(font
@@ -6589,7 +6589,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-078K25L.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-078K25L"
 			(at 177.8 101.6 0)
 			(effects
 				(font
@@ -6760,7 +6760,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0603KRX7R7BB105.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0603KRX7R7BB105"
 			(at 177.8 93.98 0)
 			(effects
 				(font
@@ -7080,7 +7080,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/LTW-482DS5 .PDF"
+		(property "Datasheet" "https://optoelectronics.liteon.com/upload/download/DS22-2010-0080/LTW-482DS5.pdf"
 			(at 232.664 101.346 0)
 			(effects
 				(font
@@ -7494,7 +7494,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0603KRX7R7BB105.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0603KRX7R7BB105"
 			(at 137.16 81.28 0)
 			(effects
 				(font
@@ -7842,7 +7842,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0603KRX7R7BB105.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0603KRX7R7BB105"
 			(at 137.16 71.12 0)
 			(effects
 				(font
@@ -7946,7 +7946,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/LTW-482DS5 .PDF"
+		(property "Datasheet" "https://optoelectronics.liteon.com/upload/download/DS22-2010-0080/LTW-482DS5.pdf"
 			(at 232.664 91.186 0)
 			(effects
 				(font
@@ -8137,7 +8137,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0603KRX7R7BB105.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0603KRX7R7BB105"
 			(at 137.16 63.5 0)
 			(effects
 				(font
@@ -8819,7 +8819,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/LTW-482DS5 .PDF"
+		(property "Datasheet" "https://optoelectronics.liteon.com/upload/download/DS22-2010-0080/LTW-482DS5.pdf"
 			(at 232.664 70.866 0)
 			(effects
 				(font
@@ -9077,7 +9077,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/NHD-2.4-240320AF-CSXP-CTP.pdf"
+		(property "Datasheet" "https://newhavendisplay.com/content/specs/NHD-2.4-240320AF-CSXP.pdf"
 			(at 97.028 35.306 0)
 			(effects
 				(font
@@ -9381,7 +9381,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/LTST-C235KGKRKT.pdf"
+		(property "Datasheet" "https://optoelectronics.liteon.com/upload/download/ds22-2009-0219/ltst-c235kgkrkt.pdf"
 			(at 182.626 100.076 0)
 			(effects
 				(font
@@ -9482,7 +9482,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/LTW-482DS5 .PDF"
+		(property "Datasheet" "https://optoelectronics.liteon.com/upload/download/DS22-2010-0080/LTW-482DS5.pdf"
 			(at 232.664 60.706 0)
 			(effects
 				(font
@@ -9579,7 +9579,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-078K25L.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-078K25L"
 			(at 144.78 93.98 0)
 			(effects
 				(font

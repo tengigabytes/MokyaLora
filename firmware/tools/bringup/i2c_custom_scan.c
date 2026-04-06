@@ -1,4 +1,5 @@
 #include "bringup.h"
+#include "bringup_menu.h"
 
 // ---------------------------------------------------------------------------
 // Keypad scan (GPIO polling, bringup only — not the PIO+DMA production scan)
@@ -18,7 +19,7 @@ static const char *const key_names[KEY_ROWS][KEY_COLS] = {
 
 // Diode orientation: Anode=COL, Cathode=ROW.
 // ROW = OUTPUT (drive LOW to select), COL = INPUT pull-up (read LOW when pressed).
-static void key_gpio_init(void) {
+void key_gpio_init(void) {
     for (int c = 0; c < KEY_COLS; c++) {
         gpio_init(KEY_COL_BASE + c);
         gpio_set_dir(KEY_COL_BASE + c, GPIO_IN);
@@ -31,7 +32,7 @@ static void key_gpio_init(void) {
     }
 }
 
-static void key_gpio_deinit(void) {
+void key_gpio_deinit(void) {
     for (int c = 0; c < KEY_COLS; c++)
         gpio_disable_pulls(KEY_COL_BASE + c);
     for (int r = 0; r < KEY_ROWS; r++) {
@@ -42,7 +43,7 @@ static void key_gpio_deinit(void) {
 }
 
 // Drive each ROW LOW; read which COLs are pulled low through diode (Vf ~0.3V < VIL 0.54V).
-static void key_scan_matrix(uint8_t pressed[KEY_ROWS]) {
+void key_scan_matrix(uint8_t pressed[KEY_ROWS]) {
     for (int r = 0; r < KEY_ROWS; r++) pressed[r] = 0;
     for (int r = 0; r < KEY_ROWS; r++) {
         gpio_put(KEY_ROW_BASE + r, 0);
@@ -56,7 +57,7 @@ static void key_scan_matrix(uint8_t pressed[KEY_ROWS]) {
 }
 
 // Monitor key presses for up to 60 s; exit on Enter key from serial.
-static void key_monitor(void) {
+void key_monitor(void) {
     printf("\n--- Keyboard monitor (press keys; Enter to exit) ---\n");
     key_gpio_init();
     sleep_ms(10);
@@ -93,7 +94,7 @@ static void key_monitor(void) {
 // Command dispatch
 // ---------------------------------------------------------------------------
 
-static void handle_command(const char *cmd) {
+void handle_command(const char *cmd) {
     if (strcmp(cmd, "baro") == 0) {
         baro_read();
     } else if (strcmp(cmd, "mag") == 0) {
@@ -195,6 +196,8 @@ static void handle_command(const char *cmd) {
         tft_test();
     } else if (strcmp(cmd, "tft_fast") == 0) {
         tft_fast_test();
+    } else if (strcmp(cmd, "rotate") == 0) {
+        menu_tft_rotate();
     } else if (strcmp(cmd, "gnss_tft") == 0) {
         gnss_tft_test();
     } else if (strcmp(cmd, "charge_on") == 0) {
@@ -263,6 +266,7 @@ static void handle_command(const char *cmd) {
         printf("  psram_probe -- QMI direct mode SPI probe: reset + read 8 bytes from CS1\n");
         printf("  tft         -- ST7789VI LCD: init + fill Red/Green/Blue/White/Black (1.5s each)\n");
         printf("  tft_fast    -- Step 13: TE freq, baseline FPS, DMA FPS, clkdiv=3 test, TE-gated fill\n");
+        printf("  rotate      -- Cycle TFT rotation: 0/90/180/270 degrees\n");
         printf("  gnss_tft    -- Step 14: GNSS outdoor test; streams NMEA + live display on TFT (Enter to stop)\n");
         printf("  key         -- keyboard monitor (prints key name on press; Enter to exit)\n");
         printf("  charge_on   -- set VREG=4100mV IINDPM=100mA, enable BQ25622 charging\n");
@@ -330,6 +334,9 @@ static void bus_b_i2c_recovery(void) {
     gpio_disable_pulls(sda);
 }
 
+// Global menu context — shared between init and loop
+static menu_ctx_t g_menu;
+
 void bringup_repl_init(void) {
     // PSRAM init first — GPIO0 boots with pull-down (CE# LOW = bus contention).
     // Must fix GPIO0 before any other peripheral touches the QSPI bus.
@@ -356,31 +363,79 @@ void bringup_repl_init(void) {
     printf("* MokyaLora RP2350 Bring-Up Shell     *\n");
     printf("***************************************\n");
     printf("Type 'help' for commands.\n> ");
+
+    // Initialize LCD menu system (TFT + backlight + keyboard)
+    menu_init(&g_menu);
 }
 
-/* bringup_repl_loop — the interactive REPL loop.
- * Can be called from Core 0 or Core 1 after bringup_repl_init() has run on
- * Core 0 (USB CDC is already live at this point). */
+/* bringup_repl_loop — main loop with LCD menu + serial REPL.
+ * Polls both USB CDC serial and keypad at ~50 Hz.
+ * Serial commands always take priority (for bringup_run.ps1 compatibility).
+ * When serial is idle >2 s, the LCD menu becomes active. */
 void bringup_repl_loop(void) {
     char line[32];
     int pos = 0;
 
-    while (true) {
-        int c = getchar_timeout_us(10000);
-        if (c == PICO_ERROR_TIMEOUT) continue;
+    // Draw initial menu
+    if (g_menu.lcd_dirty) {
+        menu_draw(&g_menu);
+        g_menu.lcd_dirty = false;
+    }
 
-        if (c == '\r' || c == '\n') {
-            line[pos] = '\0';
-            pos = 0;
-            printf("\n");
-            handle_command(line);
-            printf("> ");
-        } else if (c == '\b' || c == 127) {
-            if (pos > 0) { pos--; printf("\b \b"); }
-        } else if (pos < (int)(sizeof(line) - 1)) {
-            line[pos++] = (char)c;
-            printf("%c", c);
+    while (true) {
+        // --- 1. Poll serial (highest priority, non-blocking) ---
+        int c = getchar_timeout_us(0);
+        if (c != PICO_ERROR_TIMEOUT) {
+            g_menu.serial_last_ms = to_ms_since_boot(get_absolute_time());
+
+            if (g_menu.state != MS_SERIAL_ACTIVE) {
+                g_menu.state = MS_SERIAL_ACTIVE;
+                menu_show_serial_banner(&g_menu);
+            }
+
+            // Normal REPL character accumulation
+            if (c == '\r' || c == '\n') {
+                line[pos] = '\0';
+                pos = 0;
+                printf("\n");
+                handle_command(line);
+                printf("> ");
+                g_menu.serial_last_ms = to_ms_since_boot(get_absolute_time());
+            } else if (c == '\b' || c == 127) {
+                if (pos > 0) { pos--; printf("\b \b"); }
+            } else if (pos < (int)(sizeof(line) - 1)) {
+                line[pos++] = (char)c;
+                printf("%c", c);
+            }
         }
+
+        // --- 2. Serial timeout → return to menu ---
+        if (g_menu.state == MS_SERIAL_ACTIVE) {
+            uint32_t now = to_ms_since_boot(get_absolute_time());
+            if (now - g_menu.serial_last_ms > 2000) {
+                g_menu.state = MS_MENU;
+                // Only force TFT reinit if PIO was released (by tft/tft_fast/gnss_tft).
+                // Normal serial commands don't touch TFT — just redraw the menu.
+                g_menu.lcd_dirty = true;
+            }
+        }
+
+        // --- 3. Poll keyboard (only in MENU state) ---
+        if (g_menu.state == MS_MENU) {
+            menu_key_t key = menu_scan_key();
+            if (key != KEY_NONE) {
+                menu_handle_key(&g_menu, key);
+            }
+        }
+
+        // --- 4. Redraw LCD if dirty ---
+        if (g_menu.lcd_dirty) {
+            menu_draw(&g_menu);
+            g_menu.lcd_dirty = false;
+        }
+
+        // --- 5. Yield (~50 Hz loop) ---
+        sleep_ms(20);
     }
 }
 

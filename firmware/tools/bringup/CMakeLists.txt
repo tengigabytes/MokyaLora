@@ -12,6 +12,7 @@ set(BRINGUP_SOURCES
     bringup_tft.c
     bringup_gnss_tft.c
     bringup_core1.c
+    bringup_menu.c
 )
 
 # ── Core 0 bringup (normal: Core 0 owns all peripherals) ─────────────────────
@@ -59,6 +60,7 @@ pico_add_extra_outputs(i2c_custom_scan)
 add_executable(gnss_tft_standalone
     bringup_power.c
     bringup_gnss_tft.c
+    bringup_menu.c
     gnss_tft_main.c
 )
 

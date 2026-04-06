@@ -3205,7 +3205,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 101.6 73.66 0)
 			(effects
 				(font
@@ -4064,7 +4064,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX5R5BB224.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX5R5BB224"
 			(at 134.62 71.12 0)
 			(effects
 				(font
@@ -4244,7 +4244,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 251.46 63.5 0)
 			(effects
 				(font
@@ -4491,7 +4491,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX5R5BB105.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX5R5BB105"
 			(at 129.54 63.5 0)
 			(effects
 				(font
@@ -4597,7 +4597,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX5R5BB105.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX5R5BB105"
 			(at 111.76 73.66 0)
 			(effects
 				(font
@@ -4837,7 +4837,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 139.7 63.5 0)
 			(effects
 				(font
@@ -5170,7 +5170,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX5R5BB105.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX5R5BB105"
 			(at 205.74 63.5 0)
 			(effects
 				(font
@@ -5276,7 +5276,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 177.8 63.5 0)
 			(effects
 				(font
@@ -5879,7 +5879,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 101.6 83.82 0)
 			(effects
 				(font
@@ -5985,7 +5985,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 215.9 63.5 0)
 			(effects
 				(font

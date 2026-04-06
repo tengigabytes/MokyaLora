@@ -1,0 +1,9 @@
+﻿MokyaLora Bringup Test Report
+Date: 2026-04-06 21:17:49
+Duration: 16s
+Pass: 4  Fail: 0  Skip: 0
+---
+PASS  [memory] sram  
+PASS  [memory] flash  
+PASS  [memory] psram  
+PASS  [memory] psram_full  

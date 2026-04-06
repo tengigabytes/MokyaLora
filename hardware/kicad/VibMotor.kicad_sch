@@ -1574,7 +1574,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W10KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W10KL"
 			(at 127 109.22 0)
 			(effects
 				(font
@@ -1739,7 +1739,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 144.78 91.44 0)
 			(effects
 				(font
@@ -1837,7 +1837,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/schematic.pdf"
+		(property "Datasheet" "https://toshiba.semicon-storage.com/info/SSM3K56ACT_datasheet_en_20221125.pdf?did=30688&prodName=SSM3K56ACT"
 			(at 134.62 89.408 0)
 			(effects
 				(font
