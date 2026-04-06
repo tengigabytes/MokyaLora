@@ -4469,7 +4469,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FRNPO9BN121.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FRNPO9BN121"
 			(at 121.92 76.2 0)
 			(effects
 				(font
@@ -4641,7 +4641,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/Qualcomm_B4327.pdf"
+		(property "Datasheet" "https://www.mouser.com/catalog/specsheets/Qualcomm_B4327.pdf?_gl=1*spkz81*_gcl_au*NDQxMTMwMTAyLjE3NzUyMjc3NTIuNTgyODQzNjI0LjE3NzUyODk1NDAuMTc3NTI4OTk3NA..*_ga*NDEwNzc4ODI3LjE3Njc0NTExOTE.*_ga_15W4STQT4T*czE3NzU0NzQwNzIkbzg5JGcwJHQxNzc1NDc0MDczJGo1OSRsMCRoMA.."
 			(at 118.11 268.58 0)
 			(effects
 				(font
@@ -4872,7 +4872,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W10KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W10KL"
 			(at 121.92 101.6 0)
 			(effects
 				(font
@@ -5300,7 +5300,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402JRX7R9BB102.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402JRX7R9BB102"
 			(at 157.48 91.44 0)
 			(effects
 				(font
@@ -5703,7 +5703,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-072K2L.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-072K2L"
 			(at 60.96 88.9 0)
 			(effects
 				(font
@@ -5983,7 +5983,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-072K2L.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-072K2L"
 			(at 50.8 88.9 0)
 			(effects
 				(font
@@ -6136,7 +6136,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/schematic.pdf"
+		(property "Datasheet" "https://pim.murata.com/en-global/pim/details/?productCategoryId=inductor&partNum=LQW15AN8N2G80D"
 			(at 208.28 78.74 0)
 			(effects
 				(font
@@ -6534,7 +6534,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402BRNPO9BNR50.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402BRNPO9BNR50"
 			(at 198.12 78.74 0)
 			(effects
 				(font
@@ -6639,7 +6639,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/36103166S.pdf"
+		(property "Datasheet" "https://www.we-online.com/components/products/datasheet/36103166S.pdf?srsltid=AfmBOorkxmgholk5iEGCIZT1iJLRAe5YCvFKz0Y4DClfoKtWs86hH67e"
 			(at 213.36 129.54 0)
 			(effects
 				(font
@@ -7686,7 +7686,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402BRNPO9BN2R0.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402BRNPO9BN2R0"
 			(at 210.82 76.2 0)
 			(effects
 				(font
@@ -8022,7 +8022,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402BRNPO9BNR50.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402BRNPO9BNR50"
 			(at 218.44 78.74 0)
 			(effects
 				(font
@@ -8129,7 +8129,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/36003160S.pdf"
+		(property "Datasheet" "https://www.we-online.com/components/products/datasheet/36003160S.pdf?srsltid=AfmBOoogvhmG1ES6d7rJVY3_Eqg7Tv7BIX78mxtCoV-1NWNkBNt3o7Lk"
 			(at 264.16 124.46 0)
 			(effects
 				(font
@@ -8308,7 +8308,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402BRNPO9BNR50.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402BRNPO9BNR50"
 			(at 187.96 78.74 0)
 			(effects
 				(font
@@ -8414,7 +8414,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R8BB103.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R8BB103"
 			(at 78.74 81.28 0)
 			(effects
 				(font
@@ -8518,7 +8518,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/U.FL-R-SMT-1%2801%29_CL0331-0472-2-01_2DDrawing_0000940668.pdf"
+		(property "Datasheet" "https://www.hirose.com/zh/product/document?clcode=CL0331-0472-2-01&productname=U.FL-R-SMT-1(01)&series=U.FL&documenttype=2DDrawing&lang=zh&documentid=0000940668"
 			(at 213.36 50.292 0)
 			(effects
 				(font
@@ -8614,7 +8614,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/infineon-bga123n6-datasheet-en.pdf"
+		(property "Datasheet" "https://www.infineon.com/assets/row/public/documents/24/49/infineon-bga123n6-datasheet-en.pdf?fileId=8ac78c8c7f2a768a017f975b343074f4"
 			(at 181.61 268.58 0)
 			(effects
 				(font
@@ -8744,7 +8744,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402BRNPO9BNR50.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402BRNPO9BNR50"
 			(at 226.06 63.5 0)
 			(effects
 				(font

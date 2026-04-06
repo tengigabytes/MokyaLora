@@ -311,3 +311,17 @@ void core1_test(void);
 void bringup_repl_init(void);
 void bringup_repl_loop(void);
 void bringup_repl_run(void);
+
+// i2c_custom_scan.c — command dispatch (called by menu and serial REPL)
+void handle_command(const char *cmd);
+
+// i2c_custom_scan.c — keypad matrix (6x6 GPIO polling)
+void key_gpio_init(void);
+void key_gpio_deinit(void);
+void key_scan_matrix(uint8_t pressed[KEY_ROWS]);
+void key_monitor(void);
+
+// bringup_gnss_tft.c — BACK key helpers (shared for menu test interruption)
+void back_key_init(void);
+void back_key_deinit(void);
+bool back_key_pressed(void);

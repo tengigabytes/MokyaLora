@@ -1,0 +1,10 @@
+﻿MokyaLora Bringup Test Report
+Date: 2026-04-06 21:06:46
+Duration: 7.4s
+Pass: 5  Fail: 0  Skip: 0
+---
+PASS  [sensors] imu  
+PASS  [sensors] baro  
+PASS  [sensors] mag  
+PASS  [sensors] gnss_info  
+PASS  [sensors] scan_a  

@@ -785,6 +785,62 @@ When Core 1 firmware is developed, the following applies:
 - `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/variant.h`
 - `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/platformio.ini`
 
+### Step 18 — Interactive Menu System (LCD + Keyboard)
+
+**Result: ✅ PASS** (2026-04-06)
+
+Standalone interactive menu system on TFT display with physical keyboard navigation.
+Device can now be operated without a serial connection.
+
+#### Features Implemented
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| LCD menu | 8 category pages (Sensors, Power, Audio, Memory, LoRa, Display, Keyboard, Core 1) with all 51+ bringup commands accessible | ✅ Working |
+| Keyboard nav | UP/DOWN/OK/BACK key navigation with 80 ms debounce, edge detection | ✅ Working |
+| Serial priority | Any serial byte switches to MS_SERIAL_ACTIVE; returns to menu after 2 s idle | ✅ Working |
+| Screen rotation | MADCTL-based 0°/90°/180°/270° rotation with dynamic layout (CASET/RASET swap) | ✅ Working |
+| TFT lifecycle | Menu claims PIO1; tests claim/release their own; menu_tft_reinit() restores after test return | ✅ Working |
+
+**Architecture:** State machine (MS_MENU / MS_TEST_RUNNING / MS_SERIAL_ACTIVE) integrated into main REPL loop. 50 Hz polling of serial + keyboard. Shared 5×8 font and TFT drawing primitives extracted from `bringup_gnss_tft.c`.
+
+**Firmware files:**
+- `firmware/tools/bringup/bringup_menu.c` (NEW)
+- `firmware/tools/bringup/bringup_menu.h` (NEW)
+- `firmware/tools/bringup/i2c_custom_scan.c` (main loop rewrite)
+
+**Backward compatibility:** `bringup_run.ps1` serial automation fully preserved — all commands produce identical output.
+
+---
+
+### Step 19 — Automated Regression Test Suite
+
+**Result: ⚠️ PARTIAL** (2026-04-06)
+
+PowerShell test harness (`bringup_test_all.ps1`) executes all bringup commands over serial and validates output against regex patterns.
+
+#### Test Results
+
+| Group | Tests | Result | Notes |
+|-------|-------|--------|-------|
+| Sensors | 5 (imu, baro, mag, gnss_info, scan_a) | ✅ 5/5 PASS | |
+| Power | 4 (scan_b, status, adc, bq27441) | ✅ 4/4 PASS | |
+| Audio | 2 (amp_test, mic) | ✅ 2/2 PASS | |
+| Memory | 4 (sram, flash, psram, psram_full) | ⚠️ 2/4 PASS | psram and psram_full return empty output in full run (Issue 13) |
+| LoRa | 2 (lora, lora_dump) | ✅ 2/2 PASS | |
+| Display | 2 (tft, tft_fast) | ✅ 2/2 PASS | |
+| Core 1 | 1 (core1) | ✅ 1/1 PASS | |
+| **Total** | **20** | **18/20 reliable** | Memory group alone: 4/4 PASS |
+
+**Key finding:** PSRAM tests pass 100% when run in isolation (`-Group memory`) or via `bringup_run.ps1` with identical command sequence. Failure is specific to `bringup_test_all.ps1` when running 12+ commands before PSRAM — USB CDC serial timing issue, not a firmware bug.
+
+**TFT test restructure:** `tft_test` now performs only 5 solid color fills (Red/Green/Blue/White/Black). All pattern tests (colour bars, checkerboard, bouncing block, backlight fade) moved to `tft_fast_test` as DMA sub-tests.
+
+**Firmware file:** `firmware/tools/bringup/bringup_tft.c` (restructured)
+**Test script:** `bringup_test_all.ps1` (NEW)
+
+---
+
 ---
 
 ## Issues Log
@@ -803,6 +859,7 @@ When Core 1 firmware is developed, the following applies:
 | 10 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | Cold boot I2C NACK — gauge completely unresponsive after any power-on that includes battery insertion. 9-clock bus recovery ineffective. Observations: (1) USB on + no battery + charger toggle → gauge responds (charger supplies VSYS → gauge POR with clean bus); (2) while gauge already running, insert battery → still responds; (3) cold boot with battery (USB+battery both removed then reinserted) → permanent NACK; (4) USB on + charge off + insert battery → permanent NACK, even after charger re-toggle | Under investigation. Suspected ESD latchup on I2C input pins: battery insertion causes fast VBAT edge → internal 1.8V LDO ramps from 0V while external SDA/SCL pull-ups already at 1.8V → ESD protection diodes forward-bias → I2C input circuitry latch. Not yet confirmed with scope measurement | Rev A workaround: boot without battery → charge_on → insert battery (gauge already running, no POR). Standard I2C bus recovery (9 clocks + STOP) does not resolve the condition | **Consider removing BQ27441 from Rev B BOM.** If retained: add 1MΩ pull-down on SDA/SCL (TI recommendation), ensure power sequencing (1.8V pull-up rail not before gauge VDD), connect GPOUT to MCU GPIO |
 | 11 | 2026-04-05 | U10/U11 GNSS RF chain | 0 satellites tracked after >10 min outdoor cold start; GNSS completely non-functional | Unknown. LNA (BGA123N6) ON confirmed (VPON = 1.8 V). Candidates: (1) chip antenna ground clearance insufficient (open item in rf-matching.md); (2) SAW → LNA or LNA → Teseo impedance mismatch; (3) BOM part incorrect (design docs listed BGA725L6; actual part is BGA123N6) | Under investigation. Next step: bypass BGA123N6 (jumper SAW output → Teseo RF_IN; pull VPON to GND) | Fix antenna ground clearance; verify SAW and LNA BOM vs schematic; correct rf-matching.md and hardware-requirements.md (BGA725L6 → BGA123N6) |
 | 12 | 2026-04-06 | Meshtastic / SPI1 | SX1262 radio init fails (Error 4, NO_INTERFACE) under Meshtastic firmware | `rpipico2` board defaults `PIN_WIRE1_SDA=26, PIN_WIRE1_SCL=27`; Meshtastic `Wire1.begin()` reconfigures GPIO 26/27 funcsel from SPI to I2C before `SPI1.begin()` runs | `MESHTASTIC_EXCLUDE_I2C=1` disables all Wire init on Core 0 (I2C peripherals are Core 1's domain). Initial workaround was `I2C_SDA1=6, I2C_SCL1=7` redirect | No HW change needed; firmware-only fix. Document SPI1/Wire1 pin conflict in variant README |
+| 13 | 2026-04-06 | PSRAM / USB CDC serial | `psram` and `psram_full` commands return empty output in `bringup_test_all.ps1` when run after 12+ prior commands; pass 100% in isolation or via `bringup_run.ps1` | USB CDC serial timing: after many sequential commands, trailing CDC packet bytes from previous responses pollute or delay the next command's buffer. PSRAM tests (which involve QSPI bus reconfiguration) may have longer response latency that exceeds the script's read window | Under investigation. Firmware confirmed working — issue is host-side script timing only. Workaround: skip memory group (`-Skip memory`) for 16/16 PASS, or run memory group separately (`-Group memory`) for 4/4 PASS | No HW change needed; script-side fix required |
 
 ---
 
