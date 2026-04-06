@@ -519,17 +519,19 @@ RF chain issue suspected.
 
 ### Step 15 — LoRa RF Performance
 
-**Result: ⏳ PENDING**
+**Result: ✅ PARTIAL PASS** (validated via Meshtastic mesh — see Step 17)
 
-SPI interface and RX mode entry confirmed. Actual RF link performance not yet verified.
+SPI interface and RX mode entry confirmed in Step 12. RF link validated by running
+Meshtastic firmware and successfully exchanging text messages with nearby nodes.
 
-| Item | Method | Expected result |
-|------|--------|----------------|
-| TX packet — loopback | Two boards; one TX, one RX | Packet received, CRC OK |
-| RSSI at known distance | 10 m line-of-sight | RSSI consistent with path loss model |
-| Sensitivity | Long-range test (SF12, BW125) | −148 dBm datasheet spec |
-| OCP investigation | Read 0x08E7; confirm expected value | Determine if 105 mA setting is intentional or POR anomaly |
-| Frequency accuracy | Compare TX frequency against reference | TCXO ±0.5 ppm spec |
+| Item | Method | Expected result | Actual result |
+|------|--------|----------------|---------------|
+| TX/RX packet | Meshtastic mesh exchange with nearby node (TNGBpicoC_ebe7) | Bidirectional text messages | ✅ PASS — messages sent and received via Web Console |
+| Channel utilization | `meshtastic --info` | Non-zero airtime | ✅ PASS — channelUtilization=0.40%, airUtilTx=0.011% |
+| RSSI at known distance | ⏳ | RSSI consistent with path loss model | PENDING — not yet measured |
+| Sensitivity | ⏳ | Long-range test (SF12, BW125) | PENDING — outdoor range test required |
+| OCP investigation | ⏳ | Read 0x08E7; confirm expected value | PENDING |
+| Frequency accuracy | ⏳ | TCXO ±0.5 ppm spec | PENDING — spectrum analyser required |
 
 ### Step 16 — Core 1 Functionality
 
@@ -682,6 +684,107 @@ Key findings:
 > IPC via HW FIFO + shared SRAM with MIT-licensed `ipc_protocol.h` as sole
 > crossing point. Step 16 complete.
 
+### Step 17 — Meshtastic Firmware Integration
+
+**Result: ✅ PASS** (2026-04-06)
+
+Meshtastic firmware (v2.7.15 dev branch) compiled and running on MokyaLora Rev A
+as a minimal LoRa-only modem. Text messaging with nearby mesh nodes confirmed.
+
+#### Build Configuration
+
+- **Source:** `tengigabytes/firmware` branch `feat/rp2350b-mokya`, based on Meshtastic `v2.7.15.d18f3f7a6` (develop)
+- **PlatformIO env:** `rp2350b-mokya` (extends `rp2350_base`, board=`rpipico2`)
+- **Variant:** `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/`
+- **hwModel:** `RPI_PICO2` (79)
+- **Build size:** Flash 286 KB (7.8%), RAM 62 KB (12.0%)
+
+#### Variant Configuration Summary
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| SPI1 (LoRa) | SCK=26, MISO=24, MOSI=27, CS=25 | `HW_SPI1_DEVICE` |
+| SX1262 control | RESET=23, DIO1=29 (IRQ), BUSY=28 | DIO0=NC, DIO2=NC (HW RF switch) |
+| TCXO | `SX126X_DIO3_TCXO_VOLTAGE 1.8` | DIO3 drives 1.8 V TCXO supply |
+| RF switch | `SX126X_DIO2_AS_RF_SWITCH` | DIO2 → PE4259 directly, no MCU GPIO |
+| I2C | Excluded entirely | `MESHTASTIC_EXCLUDE_I2C=1` |
+| Display | Excluded | `MESHTASTIC_EXCLUDE_SCREEN=1` |
+| GPS | Excluded | `MESHTASTIC_EXCLUDE_GPS=1` |
+| Bluetooth | Excluded | `MESHTASTIC_EXCLUDE_BLUETOOTH=1` |
+| WiFi/MQTT | Excluded | `MESHTASTIC_EXCLUDE_WIFI=1`, `MESHTASTIC_EXCLUDE_MQTT=1` |
+| Battery ADC | Disabled | `#undef BATTERY_PIN` (BQ25622 handles via I2C on Core 1) |
+| Serial | USB CDC (`DEBUG_RP2040_PORT=Serial`) | Protobuf API over USB |
+
+#### Excluded Modules
+
+All optional modules disabled for minimal LoRa modem build:
+`AUDIO`, `DETECTIONSENSOR`, `ENVIRONMENTAL_SENSOR`, `HEALTH_TELEMETRY`,
+`EXTERNALNOTIFICATION`, `PAXCOUNTER`, `POWER_TELEMETRY`, `RANGETEST`,
+`REMOTEHARDWARE`, `STOREFORWARD`, `ATAK`, `CANNEDMESSAGES`, `INPUTBROKER`,
+`SERIAL`, `POWERSTRESS`, `POWERMON`, `POWER_FSM`, `TZ`.
+
+**Retained:** Admin (serial config), TextMessage, PKI/PKC, Traceroute, NeighborInfo, Waypoint.
+
+#### Functional Test Results
+
+| Item | Method | Result | Notes |
+|------|--------|--------|-------|
+| USB CDC serial | Connect via COM11, 115200 | ✅ PASS | VID 2E8A, PID 000F |
+| Protobuf API (read) | `meshtastic --port COM11 --info` | ✅ PASS | All config sections readable |
+| Protobuf API (write) | Web Console set region/channels | ✅ PASS | Config persisted across reboot |
+| Node discovery | Nearby node TNGBpicoC_ebe7 (`!538eebe7`) | ✅ PASS | Appeared in NodeDB automatically |
+| Text message TX/RX | Web Console bidirectional messaging | ✅ PASS | Messages exchanged with nearby node |
+| Channel utilization | `meshtastic --info` | ✅ PASS | channelUtilization=0.40%, airUtilTx=0.011% |
+| PKI encryption | `hasPKC: true` in metadata | ✅ PASS | Public key generated and advertised |
+| Multi-channel | 4 channels configured (Primary + 3 secondary) | ✅ PASS | All channels operational |
+
+#### Bug Found and Fixed: Wire1 / SPI1 GPIO Conflict (Issue 12)
+
+**Symptom:** SX1262 radio returns `RADIOLIB_ERR_CHIP_NOT_FOUND` (Error 4, NO_INTERFACE) during `lora.begin()`.
+
+**Root cause:** `rpipico2` board defaults define `PIN_WIRE1_SDA=26`, `PIN_WIRE1_SCL=27`.
+Meshtastic `main.cpp` calls `Wire1.begin()` at startup, which reconfigures GPIO 26/27
+funcsel from SPI (funcsel=1) to I2C (funcsel=3). This destroys SPI1 SCK and MOSI
+used by LoRa, because `Wire1.begin()` runs before `SPI1.begin()`.
+
+**Diagnosis:** SWD register read of GPIO 26 CTRL confirmed funcsel=3 (I2C) instead
+of funcsel=1 (SPI). Non-destructive SWD read (no MCU reset) used to preserve USB
+CDC session during inspection.
+
+**Fix (initial):** Added `I2C_SDA1=6`, `I2C_SCL1=7` to `variant.h` — redirects Wire1 to
+power-bus pins (away from SPI1).
+
+**Fix (final):** Replaced with `MESHTASTIC_EXCLUDE_I2C=1` in `platformio.ini` — disables
+all Wire init entirely. Cleaner solution: Core 0 has no I2C peripherals to manage;
+I2C will be handled by Core 1.
+
+#### Known Issues
+
+| Issue | Impact | Notes |
+|-------|--------|-------|
+| Protobuf parse error on first `FromRadio` message | Low | Python CLI (2.7.8) and Web Console see `DecodeError` on one message; CLI recovers gracefully. Caused by firmware (2.7.15 dev) protobuf schema being newer than client. Does not affect functionality |
+| Web Console settings page fails to load | Medium | Settings page spins indefinitely; messaging works fine. Same root cause: protobuf version mismatch between firmware (2.7.15 dev) and Web Console (stable). Workaround: use `meshtastic` Python CLI for config |
+| Config reset on reflash | Expected | J-Link flash erases NVS; region and channels must be reconfigured. Not a bug |
+
+#### Integration Notes for Core 1
+
+When Core 1 firmware is developed, the following applies:
+
+1. **Core 0 owns USB CDC** — Meshtastic uses `pico_stdio_usb` (Serial). Core 1 must use
+   manual TinyUSB (Plan B architecture from Step 16 Stage B2) or defer USB to Core 0.
+2. **I2C is Core 1's domain** — all I2C peripherals (sensors, power ICs, GNSS) excluded
+   from Core 0 via `MESHTASTIC_EXCLUDE_I2C`. Core 1 manages both buses.
+3. **IPC required for:** GPS position (Core 1 → Core 0 via `IPC_MSG_POSITION`), device
+   status, text message display, and config forwarding.
+4. **No GPIO conflicts** with current Core 0 config — SPI1 (GPIO 24-28) and DIO1 (GPIO 29)
+   are the only pins used. All other GPIOs are free for Core 1.
+5. **SPI1 bus sharing:** if Core 1 needs SPI1 access (e.g., for additional peripherals),
+   a mutex or IPC arbitration will be required. Currently Core 0 exclusively owns SPI1.
+
+**Firmware files:**
+- `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/variant.h`
+- `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/platformio.ini`
+
 ---
 
 ## Issues Log
@@ -699,6 +802,7 @@ Key findings:
 | 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | BIN pin unconnected → BIE=1 → BAT_DET never set → INITCOMP stuck at 0 | BIN pin not connected in Rev A; BIE default=1 (hardware detection mode) | CONFIG UPDATE clears BIE (OpConfig 0x25F8→0x05F8); BAT_INSERT (0x000C) sets BAT_DET=1; INITCOMP completes in ~1.6 s. Bringup command `bq27441` handles this automatically | Connect BIN pin or remove fuel gauge from BOM (see Issue 10) |
 | 10 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | Cold boot I2C NACK — gauge completely unresponsive after any power-on that includes battery insertion. 9-clock bus recovery ineffective. Observations: (1) USB on + no battery + charger toggle → gauge responds (charger supplies VSYS → gauge POR with clean bus); (2) while gauge already running, insert battery → still responds; (3) cold boot with battery (USB+battery both removed then reinserted) → permanent NACK; (4) USB on + charge off + insert battery → permanent NACK, even after charger re-toggle | Under investigation. Suspected ESD latchup on I2C input pins: battery insertion causes fast VBAT edge → internal 1.8V LDO ramps from 0V while external SDA/SCL pull-ups already at 1.8V → ESD protection diodes forward-bias → I2C input circuitry latch. Not yet confirmed with scope measurement | Rev A workaround: boot without battery → charge_on → insert battery (gauge already running, no POR). Standard I2C bus recovery (9 clocks + STOP) does not resolve the condition | **Consider removing BQ27441 from Rev B BOM.** If retained: add 1MΩ pull-down on SDA/SCL (TI recommendation), ensure power sequencing (1.8V pull-up rail not before gauge VDD), connect GPOUT to MCU GPIO |
 | 11 | 2026-04-05 | U10/U11 GNSS RF chain | 0 satellites tracked after >10 min outdoor cold start; GNSS completely non-functional | Unknown. LNA (BGA123N6) ON confirmed (VPON = 1.8 V). Candidates: (1) chip antenna ground clearance insufficient (open item in rf-matching.md); (2) SAW → LNA or LNA → Teseo impedance mismatch; (3) BOM part incorrect (design docs listed BGA725L6; actual part is BGA123N6) | Under investigation. Next step: bypass BGA123N6 (jumper SAW output → Teseo RF_IN; pull VPON to GND) | Fix antenna ground clearance; verify SAW and LNA BOM vs schematic; correct rf-matching.md and hardware-requirements.md (BGA725L6 → BGA123N6) |
+| 12 | 2026-04-06 | Meshtastic / SPI1 | SX1262 radio init fails (Error 4, NO_INTERFACE) under Meshtastic firmware | `rpipico2` board defaults `PIN_WIRE1_SDA=26, PIN_WIRE1_SCL=27`; Meshtastic `Wire1.begin()` reconfigures GPIO 26/27 funcsel from SPI to I2C before `SPI1.begin()` runs | `MESHTASTIC_EXCLUDE_I2C=1` disables all Wire init on Core 0 (I2C peripherals are Core 1's domain). Initial workaround was `I2C_SDA1=6, I2C_SCL1=7` redirect | No HW change needed; firmware-only fix. Document SPI1/Wire1 pin conflict in variant README |
 
 ---
 

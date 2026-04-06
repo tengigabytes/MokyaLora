@@ -209,6 +209,7 @@
 #define SX1262_OP_CLEAR_IRQ_STATUS      0x02u
 #define SX1262_OP_GET_RX_BUFFER_STATUS  0x13u
 #define SX1262_OP_READ_BUFFER           0x1Eu
+#define SX1262_OP_GET_RSSI_INST         0x15u   // GetRssiInst: NOP + RSSI byte (-value/2 dBm)
 
 // ---------------------------------------------------------------------------
 // Public function declarations (defined in the respective bringup_*.c files)
