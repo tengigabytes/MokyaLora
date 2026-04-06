@@ -287,13 +287,34 @@ void lora_rx(uint32_t freq_hz, uint8_t sf, uint8_t bw_code,
         printf("  LDRO=%u\n", ldro);
     }
 
-    // SetPacketParams: preamble=8, explicit header, max payload=255, CRC on, IQ normal
-    { uint8_t p[6] = {0x00, 0x08, 0x00, 0xFF, 0x01, 0x00};
+    // SetPacketParams: preamble=16 (Meshtastic default), explicit header, max payload=255, CRC on, IQ normal
+    { uint8_t p[6] = {0x00, 0x10, 0x00, 0xFF, 0x01, 0x00};
       sx1262_cmd_buf(SX1262_OP_SET_PACKET_PARAMS, p, 6); }
+
+    // SetSyncWord to 0x2B (Meshtastic private — RadioLibInterface.h:84).
+    // SX1262 2-byte encoding: reg[0x0740] = (sw & 0xF0)|0x04 = 0x24
+    //                         reg[0x0741] = ((sw<<4)&0xF0)|0x04 = 0xB4
+    // Default POR value 0x1424 = syncWord 0x12 (generic private) — WRONG for Meshtastic.
+    { uint8_t p[5] = {0x0Du, 0x07, 0x40, 0x24, 0xB4};
+      sx1262_wait_busy(10);
+      sx1262_cs_assert();
+      spi_write_blocking(spi1, p, 5);
+      sx1262_cs_deassert(); }
+    printf("  SyncWord set: 0x2B → reg[0x0740/41]=0x24 0xB4 (Meshtastic)\n");
 
     // SetBufferBaseAddress(TX=0, RX=0)
     { uint8_t p[2] = {0x00, 0x00};
       sx1262_cmd_buf(SX1262_OP_SET_BUFFER_BASE_ADDR, p, 2); }
+
+    // SetDioIrqParams — enable IRQ bits in IrqMask (POR default = 0x0000, nothing reported).
+    // Without this, GetIrqStatus always returns 0 and RxDone is never seen.
+    // IrqMask: bit1=RxDone, bit2=PreambleDet, bit5=HeaderErr, bit6=CrcErr, bit9=Timeout → 0x0266
+    // DIO1Mask: same (DIO1 pulses on these events); DIO2/DIO3: 0 (RF switch / unused)
+    { uint8_t p[8] = {0x02, 0x66,   // IrqMask
+                      0x02, 0x66,   // DIO1Mask
+                      0x00, 0x00,   // DIO2Mask
+                      0x00, 0x00};  // DIO3Mask
+      sx1262_cmd_buf(0x08u, p, 8); }
 
     // ClearIrqStatus(all)
     { uint8_t p[2] = {0xFF, 0xFF};
@@ -316,10 +337,54 @@ void lora_rx(uint32_t freq_hz, uint8_t sf, uint8_t bw_code,
     printf("  GetStatus after SetRx: 0x%02X  ChipMode=%u (%s)\n",
            st, (st >> 4) & 7, ((st >> 4) & 7) == 5 ? "RX OK" : "unexpected");
 
-    printf("  Listening for %lu s...\n", (unsigned long)timeout_s);
+    bool continuous = (timeout_s == 0);
+    if (continuous) {
+        printf("  Listening continuously. Type 'exit' + Enter to stop.\n");
+    } else {
+        printf("  Listening for %lu s...\n", (unsigned long)timeout_s);
+    }
+
+    // Drain any residual serial bytes left from command dispatch
+    while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
+
     uint32_t deadline = to_ms_since_boot(get_absolute_time()) + timeout_s * 1000;
+    uint32_t rssi_deadline = to_ms_since_boot(get_absolute_time()) + 1000;
     int packets = 0;
-    while (to_ms_since_boot(get_absolute_time()) < deadline) {
+    char ibuf[8] = {0};
+    int ilen = 0;
+
+    for (;;) {
+        // Exit condition: timed mode deadline, or SX1262 HW timeout IRQ
+        if (!continuous) {
+            if (to_ms_since_boot(get_absolute_time()) >= deadline) break;
+        }
+
+        // Check for "exit\r" or "exit\n" on serial (continuous mode only)
+        if (continuous) {
+            int ch = getchar_timeout_us(0);
+            if (ch != PICO_ERROR_TIMEOUT) {
+                if (ch == '\r' || ch == '\n') {
+                    ibuf[ilen] = '\0';
+                    if (strcmp(ibuf, "exit") == 0) break;
+                    ilen = 0;
+                } else if (ilen < 7) {
+                    ibuf[ilen++] = (char)ch;
+                }
+            }
+        }
+
+        // Periodic RSSI heartbeat (continuous mode, every 5 s)
+        if (continuous && to_ms_since_boot(get_absolute_time()) >= rssi_deadline) {
+            uint8_t tx[2] = {SX1262_OP_GET_RSSI_INST, 0x00};
+            uint8_t rx[2] = {0};
+            sx1262_wait_busy(10);
+            sx1262_cs_assert();
+            spi_write_read_blocking(spi1, tx, rx, 2);
+            sx1262_cs_deassert();
+            printf("  [RSSI] %d dBm  pkts=%d\n", -(int)rx[1] / 2, packets);
+            rssi_deadline = to_ms_since_boot(get_absolute_time()) + 1000;
+        }
+
         uint16_t irq = sx1262_get_irq();
         if (irq & (1u << 1)) {  // RxDone
             uint8_t plen, poff;
@@ -347,7 +412,13 @@ void lora_rx(uint32_t freq_hz, uint8_t sf, uint8_t bw_code,
                                (uint8_t)(rx_timeout >> 8),
                                (uint8_t)(rx_timeout)};
               sx1262_cmd_buf(SX1262_OP_SET_RX, p, 3); }
-        } else if (irq & (1u << 10)) {  // Timeout
+        } else if (irq & (1u << 5)) {  // HeaderErr — preamble found but header undecodable
+            printf("  [HDR_ERR] irq=0x%04X  (preamble detected; wrong SF or SyncWord?)\n", irq);
+            { uint8_t p[2] = {0xFF, 0xFF}; sx1262_cmd_buf(SX1262_OP_CLEAR_IRQ_STATUS, p, 2); }
+        } else if (irq & (1u << 2)) {  // PreambleDetected — RF activity on this freq/SF
+            printf("  [PREAMBLE] irq=0x%04X  (LoRa preamble on air — SF/BW match)\n", irq);
+            { uint8_t p[2] = {0xFF, 0xFF}; sx1262_cmd_buf(SX1262_OP_CLEAR_IRQ_STATUS, p, 2); }
+        } else if (!continuous && (irq & (1u << 10))) {  // HW Timeout (timed mode only)
             break;
         }
         sleep_ms(10);
