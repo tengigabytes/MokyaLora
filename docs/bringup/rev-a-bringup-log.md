@@ -1160,8 +1160,8 @@ MIE dictionary lookup is inherently random-access (~600 bytes/query, <0.4 ms via
 1. Shut down all peripherals in sequence, measuring system current after each step:
    - TFT: send `SLPIN` (0x10) + backlight off (LM27965 ENA=0)
    - SX1262: `SetStandby(RC)` then `SetSleep(coldStart=0, rtcTimeout=0)` — opcode 0x84, ~160 nA
-   - Teseo-LIV3FL: enter low-power mode (standby/hibernate — **verify datasheet** for available modes and I2C command format; NMEA `$PSTMSETMODE` may only work over UART)
-   - BGA123N6 GNSS LNA: always-on from 1.8 V rail — cannot be software-disabled (Rev A limitation; Rev B should add enable GPIO)
+   - Teseo-LIV3FL: send `$PSTMLOWPOWERONOFF` via I2C to enter low-power mode. This also **disables the GNSS LNA (BGA123N6)**, eliminating ~5 mA LNA drain. Verify wakeup method (same command to toggle back, or POR required).
+   - BGA123N6 GNSS LNA: disabled automatically by Teseo `$PSTMLOWPOWERONOFF` — no separate GPIO control needed
    - Sensors: LSM6DSV16X → power-down (CTRL1/CTRL2 = 0x00); LPS22HH → power-down (CTRL_REG1 = 0x00); LIS2MDL → idle
    - Audio: **Rev B removes mic + speaker** — skip for Rev B onwards. Rev A: NAU8315 SD_MODE pin → LOW (shutdown); IM69D130 → stop PDM CLK
    - LED driver (LM27965): all banks off, minimum current
@@ -1192,8 +1192,8 @@ Review each rail and load for low-power mode capability:
 | W25Q128JW Flash | 1.8 V | ~15 mA (read) | Deep Power Down: 1 µA | Opcode 0xB9 | Must exit DPD before XIP resumes |
 | APS6404L PSRAM | 1.8 V | ~4 mA (standby) | Half-sleep: 40 µA | CE# HIGH (GPIO 0) | Already idle when CS deasserted |
 | SX1262 | 1.8 V | ~4.5 mA (Rx) | Sleep cold: 160 nA | SetSleep (0x84) | DIO1 wake still functional |
-| Teseo-LIV3FL | 1.8 V + 3.3 V | ~26 mA (tracking) | Standby/Hibernate: TBD | **Verify datasheet** | NMEA cmd may require UART; I2C transport uncertain |
-| BGA123N6 LNA | 1.8 V | ~5 mA | **No shutdown** | None (always-on) | **Rev B: add EN GPIO** |
+| Teseo-LIV3FL | 1.8 V + 3.3 V | ~26 mA (tracking) | Low-power: TBD µA | `$PSTMLOWPOWERONOFF` | Also disables LNA; verify I2C transport and wakeup |
+| BGA123N6 LNA | 1.8 V | ~5 mA | Off (via Teseo LP) | Teseo `$PSTMLOWPOWERONOFF` | LNA power gated by Teseo low-power mode |
 | LSM6DSV16X IMU | 1.8 V | ~0.5 mA (120 Hz) | Power-down: 3 µA | CTRL1 = 0x00 | |
 | LIS2MDL Mag | 1.8 V | ~0.2 mA | Idle: 2 µA | — | Idle on POR |
 | LPS22HH Baro | 3.3 V | ~12 µA (one-shot) | Power-down: 1 µA | CTRL_REG1 = 0x00 | |
@@ -1207,11 +1207,11 @@ Review each rail and load for low-power mode capability:
 | BQ27441 Gauge | — | ~0.1 mA | Sleep mode: ~1 µA | Automatic | |
 
 **Key findings (pre-test):**
-- **GNSS LNA always-on (~5 mA)** is the largest uncontrollable leak. Rev B must add enable GPIO.
-- **Teseo-LIV3FL low-power mode** needs datasheet verification — if no software standby available, ~26 mA is a major leak.
+- **GNSS LNA controlled by Teseo** — `$PSTMLOWPOWERONOFF` disables both Teseo and LNA, eliminating ~31 mA (26 mA Teseo + 5 mA LNA). No dedicated EN GPIO needed.
 - **3.3 V LDO always-on** wastes ~12 µA Iq even when no 3.3 V loads are active. Rev B could gate via GPIO.
 - **NAU8315 + IM69D130 removed in Rev B** — eliminates ~4.2 mA idle drain and associated GPIO/PIO.
-- Best-case dormant estimate (Rev B, all peripherals off, LNA gated): **< 50 µA**. Rev A with LNA always-on: **~5 mA floor**.
+- **Rev B adds NAND Flash** — power consumption TBD; need to verify standby current and whether CE# deassert is sufficient for low-power.
+- Best-case dormant estimate (all peripherals off, GNSS LP): **< 50 µA** (need to verify Teseo LP mode residual current).
 
 #### Bringup Menu Items (to implement)
 
@@ -1223,7 +1223,8 @@ Review each rail and load for low-power mode capability:
 - [ ] RP2350 DORMANT API: verify which Pico SDK 2.x header provides `sleep_goto_dormant_until_pin()` or equivalent POWMAN function.
 - [ ] Keypad wake in DORMANT: can a single matrix key (e.g., PWR_BTN at GPIO 33) generate a DORMANT wake event? GPIO 33 is a dedicated SIO pin, not part of the keypad matrix — confirm it is directly wired to a physical button.
 - [ ] NAU8315 SD_MODE pin: is it routed to a GPIO or tied to VDD? (Rev A only — **removed from Rev B BOM**).
-- [ ] Teseo-LIV3FL low-power modes: verify from datasheet what standby/hibernate modes are available and whether they can be commanded via I2C (not UART). Current drain in tracking mode (~26 mA) is significant.
+- [ ] Teseo-LIV3FL `$PSTMLOWPOWERONOFF`: confirm this command works over I2C transport (not just UART). Verify residual current in low-power mode and wakeup procedure (toggle command again? hardware reset?).
+- [ ] Rev B NAND Flash: determine part number, interface (SPI/QSPI/parallel), standby current, and power-down mode for inclusion in power audit.
 
 ---
 

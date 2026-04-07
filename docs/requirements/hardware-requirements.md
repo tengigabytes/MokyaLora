@@ -301,3 +301,31 @@ RP2350 SDK peripheral note all live in
 8. **Motor protection:** flyback diode reverse-parallel across motor terminals is mandatory.
 9. **GPS I2C mode:** Teseo-LIV3FL Protocol Select pin must be configured for I2C mode.
 10. **USB-C CC pins:** CC1 and CC2 must each have an independent 5.1 kΩ pull-down to GND to enable PD charger 5 V output.
+
+---
+
+## 12. Rev B Changes (Planned)
+
+Changes based on Rev A bringup findings:
+
+| Change | Reason | Reference |
+|--------|--------|-----------|
+| **Add NAND Flash** | Additional non-volatile storage (offline maps, message DB, large asset storage) | New requirement |
+| **Remove NAU8315 amp + CMS-131304 speaker** | Audio not needed for core Meshtastic feature phone use case | User decision |
+| **Remove IM69D130 PDM mic** | Audio not needed | User decision |
+| Fix LIS2MDL I2C routing (SCL/SDA swap) | Issue 3 |  Bringup log |
+| Fix LPS22HH I2C routing + SA0 net | Issue 4 | Bringup log |
+| Fix LCD FPC pinout | Issue 5 | Bringup log |
+| Move D37 LED to LM27965 Bank A | Issue 6 | Bringup log |
+| BQ25622 nCE → GND | Issue 2 | Bringup log |
+| PSRAM GPIO 0 pull-up (4.7–10 kΩ) | Issue 8 | Bringup log |
+| Consider 3.3 V LDO EN GPIO | Power optimization — allow software power-gating of 3.3 V rail | Step 26 audit |
+
+### NAND Flash (TBD)
+
+- **Part:** TBD — select SPI NAND for minimal GPIO usage (shares SPI bus or dedicated CS)
+- **Interface:** SPI or QSPI
+- **Capacity:** TBD (512 MB–2 GB range typical for maps + message DB)
+- **Power:** verify standby current; must support CE# deassert or Deep Power Down for low-power mode
+- **Use cases:** offline vector maps, message history database, firmware OTA staging, large asset storage
+- **Flash memory map impact:** LittleFS partition on NOR Flash (W25Q128JW) may be reduced or eliminated if NAND takes over user data storage; NOR retains firmware + MIE dictionary
