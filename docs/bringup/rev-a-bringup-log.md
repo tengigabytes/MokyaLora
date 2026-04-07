@@ -862,6 +862,12 @@ Consolidated redundant bringup menu commands, fixed a PIO state-machine leak tha
 | LED control rewrite | `lm27965_cycle()` — fixed cycle demo, no individual control | `led_control()` — interactive TFT UI: UP/DN select bank, LT/RT adjust duty, OK toggle on/off; per-bank A (TFT-BL, 0-31), B (Kbd+Grn, 0-31), C (Red, 0-3) | ✅ PASS |
 | BQ25622 IINDPM | 100 mA — too low for system without battery, caused VSYS droop and screen flicker on Charge ON | 500 mA — sufficient headroom for system load + charge current | ✅ PASS |
 | Power menu cleanup | 10 entries (5 readback + 5 control) | 8 entries: Bus B Diag, Charger Diag, Gauge Diag, Charge ON/OFF/scan, LED control, Motor breathe | ✅ PASS |
+| Memory menu consolidation | 9 serial-only commands (`sram`, `psram`, `psram_full`, `psram_speed`, `psram_diag`, `flash_speed`, etc.) | 5 TFT entries: Memory Diag, PSRAM full 8MB, PSRAM Speed, PSRAM Tuning, PSRAM Debug — all display results on TFT with BACK key | ✅ PASS |
+| Memory Diag (TFT) | N/A | Single-screen 5-test diagnostic: SRAM 16KB 5-pattern, Flash JEDEC, Flash QE bit, PSRAM Init QPI, PSRAM 4KB pattern; per-test PASS/FAIL rows | ✅ PASS |
+| PSRAM full 8MB (TFT) | Serial-only | 8MB write+verify with per-MB TFT progress, BACK key cancellation | ✅ PASS |
+| PSRAM Speed (CPU XIP) | DMA-based speed test (unreliable, see Issue 14) | CPU volatile access only: Write 8MB 4041 ms (2027 KB/s), Read+Verify 8MB 5019 ms (1632 KB/s), 0 errors | ✅ PASS |
+| PSRAM Tuning (TFT) | Serial-only | Merged psram_speed + psram_diag + flash_speed; TFT shows best CLKDIV/RXDELAY/MHz for PSRAM and Flash | ✅ PASS |
+| PSRAM Debug (TFT) | 3 tests (SPI ID, SPI Wr/Rd, XIP Sentinel) | Simplified to 2 tests: Init QPI + XIP Sentinel (SPI probe redundant if XIP works) | ✅ PASS |
 
 #### TFT layout (Bus A Diag, scale=2, 20×20 chars)
 
@@ -924,6 +930,31 @@ Row 7:  " LT/RT duty OK=togg "   (gray hint)
 Row 9:  " BACK to return     "   (gray hint)
 ```
 
+#### TFT layout (Memory Diag, scale=2)
+
+```
+Row 0:  " Memory Diagnostic  "   (yellow on dark blue)
+Row 2:  " SRAM 16KB  PASS    "   (green / red)
+Row 3:  " JEDEC      PASS    "
+Row 4:  " QE Bit     PASS    "
+Row 5:  " PSRAM Init PASS    "
+Row 6:  " PSRAM 4KB  PASS    "
+Row 8:  " 5/5 PASS           "
+Row 10: " BACK to return     "   (gray hint)
+```
+
+#### TFT layout (PSRAM Speed, scale=2)
+
+```
+Row 0:  " PSRAM Speed Test   "   (yellow on dark blue)
+Row 2:  " Wr: 4041ms 2027KB/s"
+Row 3:  " Rd: 5019ms 1632KB/s"   (green if 0 errors, red otherwise)
+Row 7:  " Wr:1926ns 288clk   "
+Row 8:  " Rd:2393ns 358clk   "
+Row 10: " PASS  err=0        "   (green / red)
+Row 12: " BACK to return     "   (gray hint)
+```
+
 **Firmware files:**
 - `firmware/tools/bringup/bringup_sensors.c` — `scan_bus_a()` replaces `dump_bus_a()`
 - `firmware/tools/bringup/bringup_menu.c` — `cmd_scan_a()` wrapper with BACK wait; "Bus A Diag" menu entry; Power page updated: 5 readback → 3 TFT diag, LED cycle → LED control
@@ -934,7 +965,8 @@ Row 9:  " BACK to return     "   (gray hint)
 - `firmware/tools/bringup/bringup_lora.c` — `back_key_pressed()` in `lora_rx`
 - `firmware/tools/bringup/bringup_power.c` — `scan_bus_b()`, `charger_diag()`, `gauge_diag()`, `led_control()` (replaces `lm27965_cycle()`); IINDPM 100→500 mA; `back_key_pressed()` in `motor_breathe`
 - `firmware/tools/bringup/bringup.h` — added `scan_bus_b`, `charger_diag`, `gauge_diag`, `led_control` declarations
-- `firmware/tools/bringup/i2c_custom_scan.c` — `dump_a` removed; `scan_a` calls `scan_bus_a()`; `scan_b` calls `scan_bus_b()`; `led` calls `led_control()`
+- `firmware/tools/bringup/bringup_sram.c` — `cmd_memory_diag()`, `cmd_psram_full_tft()`, `cmd_psram_tuning()`, `cmd_psram_debug()`, `cmd_psram_dma_test()` (CPU-only speed test), `psram_rd_diag()` (serial DMA diagnostic)
+- `firmware/tools/bringup/i2c_custom_scan.c` — `dump_a` removed; `scan_a` calls `scan_bus_a()`; `scan_b` calls `scan_bus_b()`; `led` calls `led_control()`; added `mem_diag`, `psram_full_tft`, `psram_tuning`, `psram_debug`, `psram_dma`, `psram_rd_diag` serial commands
 
 ---
 
@@ -957,6 +989,7 @@ Row 9:  " BACK to return     "   (gray hint)
 | 11 | 2026-04-05 | U10/U11 GNSS RF chain | 0 satellites tracked after >10 min outdoor cold start; GNSS completely non-functional | Unknown. LNA (BGA123N6) ON confirmed (VPON = 1.8 V). Candidates: (1) chip antenna ground clearance insufficient (open item in rf-matching.md); (2) SAW → LNA or LNA → Teseo impedance mismatch; (3) BOM part incorrect (design docs listed BGA725L6; actual part is BGA123N6) | Under investigation. Next step: bypass BGA123N6 (jumper SAW output → Teseo RF_IN; pull VPON to GND) | Fix antenna ground clearance; verify SAW and LNA BOM vs schematic; correct rf-matching.md and hardware-requirements.md (BGA725L6 → BGA123N6) |
 | 12 | 2026-04-06 | Meshtastic / SPI1 | SX1262 radio init fails (Error 4, NO_INTERFACE) under Meshtastic firmware | `rpipico2` board defaults `PIN_WIRE1_SDA=26, PIN_WIRE1_SCL=27`; Meshtastic `Wire1.begin()` reconfigures GPIO 26/27 funcsel from SPI to I2C before `SPI1.begin()` runs | `MESHTASTIC_EXCLUDE_I2C=1` disables all Wire init on Core 0 (I2C peripherals are Core 1's domain). Initial workaround was `I2C_SDA1=6, I2C_SCL1=7` redirect | No HW change needed; firmware-only fix. Document SPI1/Wire1 pin conflict in variant README |
 | 13 | 2026-04-06 | PSRAM / USB CDC serial | `psram` and `psram_full` commands return empty output in `bringup_test_all.ps1` when run after 12+ prior commands; pass 100% in isolation or via `bringup_run.ps1` | USB CDC serial timing: after many sequential commands, trailing CDC packet bytes from previous responses pollute or delay the next command's buffer. PSRAM tests (which involve QSPI bus reconfiguration) may have longer response latency that exceeds the script's read window | Under investigation. Firmware confirmed working — issue is host-side script timing only. Workaround: skip memory group (`-Skip memory`) for 16/16 PASS, or run memory group separately (`-Group memory`) for 4/4 PASS | No HW change needed; script-side fix required |
+| 14 | 2026-04-07 | U3 (APS6404L PSRAM) / DMA | DMA transfers to/from PSRAM through XIP address space produce ~37.5% word errors (786432/2097152). Both DMA write+CPU verify and CPU write+DMA read fail identically. CPU volatile access (same XIP uncached alias) is 100% reliable | Unknown. Suspected: DMA bus master cannot reliably arbitrate XIP/QMI path to M1 (PSRAM). ATRANS mapping and XIP_CTRL configuration appear correct. XIP cache does not cover M1 — only M0 (Flash) | Workaround: use CPU volatile access only for PSRAM (Write 2027 KB/s, Read 1632 KB/s at CLKDIV=2, 37.5 MHz QPI). `psram_rd_diag()` serial command preserved for future DMA investigation | Investigate further if DMA-to-PSRAM bandwidth is needed for display framebuffer or audio. May require RP2350B errata check or Raspberry Pi forum inquiry |
 
 ---
 

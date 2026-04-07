@@ -187,6 +187,18 @@ void handle_command(const char *cmd) {
         psram_diag_test();
     } else if (strcmp(cmd, "psram_probe") == 0) {
         psram_probe();
+    } else if (strcmp(cmd, "mem_diag") == 0) {
+        cmd_memory_diag();
+    } else if (strcmp(cmd, "psram_full_tft") == 0) {
+        cmd_psram_full_tft();
+    } else if (strcmp(cmd, "psram_tuning") == 0) {
+        cmd_psram_tuning();
+    } else if (strcmp(cmd, "psram_debug") == 0) {
+        cmd_psram_debug();
+    } else if (strcmp(cmd, "psram_dma") == 0) {
+        cmd_psram_dma_test();
+    } else if (strcmp(cmd, "psram_rd_diag") == 0) {
+        psram_rd_diag();
     } else if (strcmp(cmd, "key") == 0) {
         key_monitor();
     } else if (strcmp(cmd, "tft") == 0) {
