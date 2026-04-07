@@ -308,18 +308,20 @@ RP2350 SDK peripheral note all live in
 
 Changes based on Rev A bringup findings:
 
-| Change | Reason | Reference |
-|--------|--------|-----------|
-| **Add NAND Flash** | Additional non-volatile storage (offline maps, message DB, large asset storage) | New requirement |
-| **Remove NAU8315 amp + CMS-131304 speaker** | Audio not needed for core Meshtastic feature phone use case | User decision |
-| **Remove IM69D130 PDM mic** | Audio not needed | User decision |
-| Fix LIS2MDL I2C routing (SCL/SDA swap) | Issue 3 |  Bringup log |
-| Fix LPS22HH I2C routing + SA0 net | Issue 4 | Bringup log |
-| Fix LCD FPC pinout | Issue 5 | Bringup log |
-| Move D37 LED to LM27965 Bank A | Issue 6 | Bringup log |
-| BQ25622 nCE → GND | Issue 2 | Bringup log |
-| PSRAM GPIO 0 pull-up (4.7–10 kΩ) | Issue 8 | Bringup log |
-| Consider 3.3 V LDO EN GPIO | Power optimization — allow software power-gating of 3.3 V rail | Step 26 audit |
+| Change | Reason | Priority | Reference |
+|--------|--------|----------|-----------|
+| **TPS7A2033 EN → GPIO** | Gate 3.3 V rail in DORMANT; saves 65+ µA + Teseo leakage | **Critical** | Power review §8.4 |
+| **Add NAND Flash** | Non-volatile storage (maps, message DB, OTA) | **High** | New requirement |
+| **Remove NAU8315 amp + CMS-131304 speaker** | Audio not needed | High | User decision |
+| **Remove IM69D130 PDM mic** | Audio not needed | High | User decision |
+| **LM27965 HWEN → GPIO** | Full LED driver shutdown in DORMANT; saves ~5 µA | Medium | Power review §8.4 |
+| Fix LIS2MDL I2C routing (SCL/SDA swap) | Issue 3 | High | Bringup log |
+| Fix LPS22HH I2C routing + SA0 net | Issue 4 | High | Bringup log |
+| Fix LCD FPC pinout | Issue 5 | High | Bringup log |
+| Move D37 LED to LM27965 Bank A | Issue 6 | Medium | Bringup log |
+| BQ25622 nCE → GND | Issue 2 | High | Bringup log |
+| PSRAM GPIO 0 pull-up (4.7–10 kΩ) | Issue 8 | Medium | Bringup log |
+| Consider I2C Bus B pull-up load switch | Protect against BQ27441 latchup drain (Issue 10) | Low | Power review §8.4 |
 
 ### NAND Flash (TBD)
 
