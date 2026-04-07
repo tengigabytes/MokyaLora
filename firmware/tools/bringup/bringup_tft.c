@@ -262,25 +262,47 @@ void tft_test(void) {
         { 0xFFFF, "White" },
         { 0x0000, "Black" },
     };
+    uint32_t fill_ms[5] = {0};
     for (int i = 0; i < 5; i++) {
         if (back_key_pressed()) break;
         printf("  Fill %-6s (0x%04X) ...", seq[i].name, seq[i].colour);
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
         tft_fill(seq[i].colour);
-        printf(" done\n");
+        fill_ms[i] = to_ms_since_boot(get_absolute_time()) - t0;
+        printf(" %lu ms  (%.2f FPS)\n", fill_ms[i],
+               fill_ms[i] ? 1000.0f / (float)fill_ms[i] : 0.0f);
         sleep_ms(1000);
     }
 
-    // Backlight off
-    bus_b_init();
-    lm_write(LM27965_GP, 0x20);
-    bus_b_deinit();
-
+    // Release test PIO, switch to menu TFT for result display
     gpio_put(TFT_nCS_PIN, 1);
     tft_pio_stop();
-
     gpio_set_function(TFT_nCS_PIN,  GPIO_FUNC_NULL);
     gpio_set_function(TFT_DCX_PIN,  GPIO_FUNC_NULL);
     gpio_set_function(TFT_nRST_PIN, GPIO_FUNC_NULL);
+
+    // Show results on TFT
+    if (menu_tft_reinit()) {
+        #define TS 2
+        #define TCH (8 * TS)
+        #define TCOLS (240 / (6 * TS))
+        char ln[22];
+        menu_clear(MC_BG);
+        menu_str(0, 0, " TFT Test (CPU)     ", TCOLS, MC_TITLE, MC_TITBG, TS);
+        menu_str(0, 2 * TCH, " Mode  ms   FPS ", TCOLS, MC_HINT, MC_BG, TS);
+        for (int i = 0; i < 5; i++) {
+            float fps = fill_ms[i] ? 1000.0f / (float)fill_ms[i] : 0.0f;
+            snprintf(ln, sizeof(ln), " %-5s %3lu %5.1f",
+                     seq[i].name, fill_ms[i], (double)fps);
+            menu_str(0, (3 + i) * TCH, ln, TCOLS, MC_FG, MC_BG, TS);
+        }
+        menu_str(0, 9 * TCH, " clkdiv=4  128ns", TCOLS, MC_HINT, MC_BG, TS);
+        menu_str(0, 18 * TCH, " BACK to return ", TCOLS, MC_HINT, MC_BG, TS);
+        while (!back_key_pressed()) sleep_ms(50);
+        #undef TS
+        #undef TCH
+        #undef TCOLS
+    }
 
     printf("Done\n");
 }
@@ -377,6 +399,12 @@ void tft_fast_test(void) {
 
     int dma_ch = dma_claim_unused_channel(true);
 
+    // Result storage for summary screen
+    typedef struct { const char *label; float fps; } fast_result_t;
+    fast_result_t results[12];
+    int n_results = 0;
+    float te_hz = 0.0f;
+
     // -------------------------------------------------------------------------
     // Sub-test A — TE pin frequency check
     // -------------------------------------------------------------------------
@@ -391,14 +419,15 @@ void tft_fast_test(void) {
             if (cur && !prev) rising++;
             prev = cur;
         }
-        float freq = rising / 2.0f;
-        printf("  TE rising edges in 2 s: %lu  →  %.1f Hz\n", rising, freq);
+        te_hz = rising / 2.0f;
+        printf("  TE rising edges in 2 s: %lu  →  %.1f Hz\n", rising, te_hz);
         if (rising == 0)
             printf("  WARNING: no TE signal — check TEON command and GPIO22\n");
-        else if (freq >= 55.0f && freq <= 65.0f)
+        else if (te_hz >= 55.0f && te_hz <= 65.0f)
             printf("  Result: PASS (~60 Hz)\n");
         else
             printf("  Result: NOTE — outside 55-65 Hz expected range\n");
+        results[n_results++] = (fast_result_t){"TE freq", te_hz};
     }
 
     // -------------------------------------------------------------------------
@@ -411,11 +440,13 @@ void tft_fast_test(void) {
         uint32_t t0 = to_ms_since_boot(get_absolute_time());
         for (int i = 0; i < 10; i++) tft_fill(colours[i & 1]);
         uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        float fps_b = 10000.0f / (float)elapsed;
         printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
-               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+               elapsed, fps_b, elapsed / 10.0f);
         printf("  Theoretical byte rate: %.3f MB/s  (%.0f ns/byte)\n",
                (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f,
                (float)elapsed * 1e6f / (240.0f * 320 * 2 * 10));
+        results[n_results++] = (fast_result_t){"CPU cd=4", fps_b};
     }
 
     // -------------------------------------------------------------------------
@@ -427,10 +458,12 @@ void tft_fast_test(void) {
         uint32_t t0 = to_ms_since_boot(get_absolute_time());
         for (int i = 0; i < 10; i++) tft_fill_dma(dma_ch, i & 1 ? 0x07E0 : 0xFFE0);
         uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        float fps_c = 10000.0f / (float)elapsed;
         printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
-               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+               elapsed, fps_c, elapsed / 10.0f);
         float byte_rate_mb = (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f;
         printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+        results[n_results++] = (fast_result_t){"DMA cd=4", fps_c};
     }
 
     // -------------------------------------------------------------------------
@@ -450,10 +483,12 @@ void tft_fast_test(void) {
         uint32_t t0 = to_ms_since_boot(get_absolute_time());
         for (int i = 0; i < 10; i++) tft_fill_dma(dma_ch, i & 1 ? 0xF81F : 0x07FF);
         uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        float fps_d = 10000.0f / (float)elapsed;
         printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
-               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+               elapsed, fps_d, elapsed / 10.0f);
         float byte_rate_mb = (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f;
         printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+        results[n_results++] = (fast_result_t){"DMA cd=3", fps_d};
 
         // Restore safe clkdiv
         tft_flush();
@@ -497,8 +532,10 @@ void tft_fast_test(void) {
             tft_fill_dma(dma_ch, te_colours[i & 1]);
         }
         uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        float fps_e = 10000.0f / (float)elapsed;
         printf("  10 TE-gated frames in %lu ms  →  %.2f FPS\n",
-               elapsed, 10000.0f / (float)elapsed);
+               elapsed, fps_e);
+        results[n_results++] = (fast_result_t){"TE-gate", fps_e};
         if (elapsed <= 10 * 17 + 50)
             printf("  Result: transfer fits within one frame period — tear-free capable\n");
         else
@@ -658,10 +695,12 @@ void tft_fast_test(void) {
         }
         uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
 
+        float fps_j = 10000.0f / (float)elapsed;
         printf("  10 frames in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
-               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+               elapsed, fps_j, elapsed / 10.0f);
         float byte_rate_mb = (float)FB_PIX_BYTES * 10.0f / (elapsed / 1000.0f) / 1e6f;
         printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+        results[n_results++] = (fast_result_t){"FB cd=4", fps_j};
     }
 
     // -------------------------------------------------------------------------
@@ -693,10 +732,12 @@ void tft_fast_test(void) {
         }
         uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
 
+        float fps_k = 10000.0f / (float)elapsed;
         printf("  10 frames in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
-               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+               elapsed, fps_k, elapsed / 10.0f);
         float byte_rate_mb = (float)FB_PIX_BYTES * 10.0f / (elapsed / 1000.0f) / 1e6f;
         printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+        results[n_results++] = (fast_result_t){"FB cd=3", fps_k};
 
         tft_flush();
         pio_sm_set_clkdiv(TFT_PIO, tft_sm, TFT_CLK_DIV);
@@ -707,15 +748,41 @@ void tft_fast_test(void) {
 fast_cleanup:
     dma_channel_unclaim(dma_ch);
 
-    bus_b_init();
-    lm_write(LM27965_GP, 0x20);
-    bus_b_deinit();
-
+    // Release test PIO, switch to menu TFT for result display
     gpio_put(TFT_nCS_PIN, 1);
     tft_pio_stop();
     gpio_set_function(TFT_nCS_PIN,  GPIO_FUNC_NULL);
     gpio_set_function(TFT_DCX_PIN,  GPIO_FUNC_NULL);
     gpio_set_function(TFT_nRST_PIN, GPIO_FUNC_NULL);
+
+    // Show results on TFT
+    if (n_results > 0 && menu_tft_reinit()) {
+        #define FS 2
+        #define FCH (8 * FS)
+        #define FCOLS (240 / (6 * FS))
+        char ln[22];
+        menu_clear(MC_BG);
+        menu_str(0, 0, " TFT Fast Results   ", FCOLS, MC_TITLE, MC_TITBG, FS);
+        menu_str(0, 2 * FCH, " Mode      FPS  ", FCOLS, MC_HINT, MC_BG, FS);
+        int rows = n_results < 7 ? n_results : 7;
+        for (int i = 0; i < rows; i++) {
+            snprintf(ln, sizeof(ln), " %-8s %5.1f",
+                     results[i].label, (double)results[i].fps);
+            menu_str(0, (3 + i) * FCH, ln, FCOLS, MC_FG, MC_BG, FS);
+        }
+        // Overflow: show remaining on next rows if > 7
+        for (int i = 7; i < n_results && i < 10; i++) {
+            snprintf(ln, sizeof(ln), " %-8s %5.1f",
+                     results[i].label, (double)results[i].fps);
+            menu_str(0, (3 + i) * FCH, ln, FCOLS, MC_FG, MC_BG, FS);
+            rows = i + 1;
+        }
+        menu_str(0, (3 + rows + 1) * FCH, " BACK to return ", FCOLS, MC_HINT, MC_BG, FS);
+        while (!back_key_pressed()) sleep_ms(50);
+        #undef FS
+        #undef FCH
+        #undef FCOLS
+    }
 
     printf("Done\n");
 }

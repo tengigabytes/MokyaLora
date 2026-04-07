@@ -869,6 +869,9 @@ Consolidated redundant bringup menu commands, fixed a PIO state-machine leak tha
 | PSRAM Speed (CPU XIP) | DMA-based speed test (unreliable, see Issue 14) | CPU volatile access only: Write 8MB 4041 ms (2027 KB/s), Read+Verify 8MB 5019 ms (1632 KB/s), 0 errors | ✅ PASS |
 | PSRAM Tuning (TFT) | Serial-only | Merged psram_speed + psram_diag + flash_speed; TFT shows best CLKDIV/RXDELAY/MHz for PSRAM and Flash | ✅ PASS |
 | PSRAM Debug (TFT) | 3 tests (SPI ID, SPI Wr/Rd, XIP Sentinel) | Simplified to 2 tests: Init QPI + XIP Sentinel (SPI probe redundant if XIP works) | ✅ PASS |
+| TFT Test result page | `tft_test`: no timing, serial-only | Each fill shows ms + FPS on serial; LCD result summary (5 colours × ms/FPS table, scale=2, BACK wait) | ✅ PASS |
+| TFT Fast result page | `tft_fast_test`: serial-only FPS | LCD result summary after all sub-tests (7 modes × FPS table: TE freq, CPU cd=4, DMA cd=4/3, TE-gate, FB cd=4/3; scale=2, BACK wait) | ✅ PASS |
+| TFT backlight-off fix | `tft_test` / `tft_fast_test` turned backlight off at exit → black screen when returning to menu after result page | Removed backlight-off — menu system manages backlight lifecycle | ✅ PASS |
 
 TFT screen layouts for all diagnostic screens: see [tft-layouts.md](tft-layouts.md).
 
@@ -1092,8 +1095,12 @@ SRAM framebuffer comparison (via `tft_fast` sub-tests J/K, DMA → PIO → LCD):
 
 MIE dictionary lookup is inherently random-access (~600 bytes/query, <0.4 ms via CPU read). DMA provides no benefit for this access pattern. The DMA-to-PSRAM read bug has **zero impact** on the production firmware architecture.
 
+**Bug fix (2026-04-07):** `psram_rd_diag()` XIP_CTRL decode used bit 10 for WRITABLE_M1; correct position is bit 11 (SDK `XIP_CTRL_WRITABLE_M1_MSB=11`, mask `0x00000800`). Display showed `WRITABLE_M1=0` when the actual value was 1. Fixed — no functional impact (decode-only bug, read path unaffected).
+
+**Regression test (2026-04-07):** All memory commands re-run after Step 25 changes — sram, flash, psram, psram_full, mem_diag, psram_rd_diag, psram_dma_diag: results identical to initial Step 25 findings. No regression.
+
 **Firmware files:**
-- `firmware/tools/bringup/bringup_memory_tft.c` — Added `psram_dma_diag()` (6 sub-tests A–F), `psram_fps_bench()` (CPU vs DMA framerate), `shared_sram_buf[]` (150 KB shared buffer)
+- `firmware/tools/bringup/bringup_memory_tft.c` — Added `psram_dma_diag()` (6 sub-tests A–F), `psram_fps_bench()` (CPU vs DMA framerate), `shared_sram_buf[]` (150 KB shared buffer); fixed WRITABLE_M1 decode (bit 10 → bit 11)
 - `firmware/tools/bringup/bringup_tft.c` — Added sub-tests J (SRAM framebuffer DMA clkdiv=4) and K (clkdiv=3) to `tft_fast_test()`
 - `firmware/tools/bringup/i2c_custom_scan.c` — Registered `psram_dma_diag` and `psram_fps` serial commands
 - `bringup_run.ps1` — Added timeout entries for `psram_dma_diag` (30 s), `psram_rd_diag` (15 s), `psram_fps` (120 s)

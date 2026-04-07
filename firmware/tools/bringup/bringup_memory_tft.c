@@ -621,7 +621,7 @@ void psram_rd_diag(void) {
     printf("  XIP_CTRL   = 0x%08X\n", (unsigned)xc);
     printf("    EN=%u  WRITABLE_M1=%u  POWER_DOWN=%u\n",
            (unsigned)(xc & 1),
-           (unsigned)((xc >> 10) & 1),
+           (unsigned)((xc >> 11) & 1),
            (unsigned)((xc >> 3) & 1));
     printf("    SPLIT_WAYS=%u  MAINT_NONSEC=%u\n",
            (unsigned)((xc >> 4) & 1),
