@@ -120,6 +120,7 @@ void key_gpio_init(void);
 void key_gpio_deinit(void);
 void key_scan_matrix(uint8_t pressed[KEY_ROWS]);
 void key_monitor(void);
+void key_tft_test(void);
 
 // bringup_gnss_tft.c — BACK key helpers (shared for menu test interruption)
 void back_key_init(void);

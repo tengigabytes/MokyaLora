@@ -147,6 +147,7 @@ Never add a Meshtastic #include to core1/ or mie/.
 
 - Always verify a build compiles successfully before moving on to additional changes.
 - If a build fails, fix it immediately — do not layer more changes on top of a broken build.
+- **Auto-flash:** After each bringup firmware change, always build **and flash** (`bash build_and_flash_bringup.sh`) — do not stop at compile-only. The user expects the board to be running the latest code immediately.
 - After adding new features, check memory usage: flash size constraints are common on embedded targets.
 
 ## Build Commands

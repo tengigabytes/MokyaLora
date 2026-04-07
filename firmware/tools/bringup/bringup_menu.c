@@ -154,6 +154,7 @@ static const menu_page_t page_display = {
 // --- Keyboard page ---
 static const menu_item_t page_keyboard_items[] = {
     {"Key monitor",    key_monitor,     NULL},
+    {"Key TFT test",   key_tft_test,    NULL},
 };
 static const menu_page_t page_keyboard = {
     "Keyboard", page_keyboard_items, sizeof(page_keyboard_items) / sizeof(page_keyboard_items[0])
