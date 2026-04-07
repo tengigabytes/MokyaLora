@@ -358,6 +358,7 @@ void lora_rx(uint32_t freq_hz, uint8_t sf, uint8_t bw_code,
         if (!continuous) {
             if (to_ms_since_boot(get_absolute_time()) >= deadline) break;
         }
+        if (back_key_pressed()) break;
 
         // Check for "exit\r" or "exit\n" on serial (continuous mode only)
         if (continuous) {

@@ -129,3 +129,5 @@ void menu_handle_key(menu_ctx_t *ctx, menu_key_t key);
 #define MC_TITBG  0x0010   // dark blue (title bar)
 #define MC_HINT   0x7BEF   // medium gray (hint bar)
 #define MC_SEP    0x4208   // dark gray (separator)
+#define MC_OK     0x07E0   // green  (pass indicator)
+#define MC_ERR    0xF800   // red    (fail indicator)

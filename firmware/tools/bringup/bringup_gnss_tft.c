@@ -279,16 +279,21 @@ static void parse_gsv(const char *s, char sys) {
 #define C_DKGRY 0x4208u   // dark gray
 
 // Row Y-coordinates (16 px per row at scale 2)
-#define Y_HDR      0    // Row 0: header bar
-#define Y_FIX     16    // Row 1: fix status + sat count
-#define Y_UTC_R   32    // Row 2: UTC time
-#define Y_LAT     48    // Row 3: latitude
-#define Y_LON     64    // Row 4: longitude
-#define Y_ALT     80    // Row 5: altitude + HDOP
-#define Y_SPD     96    // Row 6: speed + TTFF
-#define Y_SAT_HDR 112   // Row 7: satellite table header
-#define Y_SAT_DATA 128  // Row 8+: satellite data rows
-#define MAX_SAT_ROWS 12 // Rows 8-19 (Y=128..304)
+#define ROW_H     16    // row height in pixels (8 * scale2)
+#define Y_HDR      (0 * ROW_H)
+#define Y_FIX      (1 * ROW_H)
+#define Y_UTC_R    (2 * ROW_H)
+#define Y_LAT      (3 * ROW_H)
+#define Y_LON      (4 * ROW_H)
+#define Y_ALT      (5 * ROW_H)
+#define Y_SPD      (6 * ROW_H)
+#define Y_SAT_HDR  (7 * ROW_H)
+#define Y_SAT_DATA (8 * ROW_H)
+
+// Dynamic screen geometry — set once at gnss_tft_test entry
+static int g_scr_w;     // screen width in pixels
+static int g_cols;       // text columns (width / 12)
+static int g_sat_rows;   // satellite rows that fit on screen
 
 // ---------------------------------------------------------------------------
 // GPS status rows rendering
@@ -296,11 +301,11 @@ static void parse_gsv(const char *s, char sys) {
 
 static void draw_status_rows(void) {
     const GnssData *d = &g_gd;
-    char buf[21];
+    char buf[40];
     uint32_t now = to_ms_since_boot(get_absolute_time());
+    int C = g_cols;
 
-    // Row 1 (Y=16): fix status + satellites used / visible
-    // Format: "%-8s SAT:xx/xx  " = 8+1+4+2+1+2+2 = 20
+    // Row 1: fix status + satellites used / visible
     const char *fstr; uint16_t fcol;
     switch (d->fix_quality) {
         case 1: fstr = "GPS SPS "; fcol = C_GREEN; break;
@@ -309,37 +314,36 @@ static void draw_status_rows(void) {
         case 5: fstr = "RTK FLT "; fcol = C_YELL;  break;
         default:fstr = "NO FIX  "; fcol = C_RED;   break;
     }
-    snprintf(buf, sizeof(buf), "%-8s SAT:%02d/%02d  ", fstr, d->num_sats, g_sat_count);
-    g_str(0, Y_FIX, buf, 20, fcol, C_BG, 2);
+    snprintf(buf, sizeof(buf), "%-8s SAT:%02d/%02d", fstr, d->num_sats, g_sat_count);
+    g_str(0, Y_FIX, buf, C, fcol, C_BG, 2);
 
-    // Row 2 (Y=32): UTC time — "UTC: HH:MM:SS       " = 5+15 = 20
-    snprintf(buf, sizeof(buf), "UTC: %-15s", d->utc[0] ? d->utc : "--:--:--");
-    g_str(0, Y_UTC_R, buf, 20, C_WHITE, C_BG, 2);
+    // Row 2: UTC time
+    snprintf(buf, sizeof(buf), "UTC: %s", d->utc[0] ? d->utc : "--:--:--");
+    g_str(0, Y_UTC_R, buf, C, C_WHITE, C_BG, 2);
 
-    // Rows 3-4 (Y=48,64): latitude + longitude (show dashes before first fix)
+    // Rows 3-4: latitude + longitude
     if (d->gga_valid && d->fix_quality > 0) {
         double la = d->lat < 0.0 ? -d->lat : d->lat;
         double lo = d->lon < 0.0 ? -d->lon : d->lon;
-        // "LAT:%10.6fX     " = 4+10+1+5 = 20
-        snprintf(buf, sizeof(buf), "LAT:%10.6f%c     ", la, d->lat_ns);
-        g_str(0, Y_LAT, buf, 20, C_WHITE, C_BG, 2);
-        snprintf(buf, sizeof(buf), "LON:%10.6f%c     ", lo, d->lon_ew);
-        g_str(0, Y_LON, buf, 20, C_WHITE, C_BG, 2);
+        snprintf(buf, sizeof(buf), "LAT:%10.6f%c", la, d->lat_ns);
+        g_str(0, Y_LAT, buf, C, C_WHITE, C_BG, 2);
+        snprintf(buf, sizeof(buf), "LON:%10.6f%c", lo, d->lon_ew);
+        g_str(0, Y_LON, buf, C, C_WHITE, C_BG, 2);
     } else {
-        g_str(0, Y_LAT, "LAT: ----.------    ", 20, C_GRAY, C_BG, 2);
-        g_str(0, Y_LON, "LON: -----.------   ", 20, C_GRAY, C_BG, 2);
+        g_str(0, Y_LAT, "LAT: ----.------", C, C_GRAY, C_BG, 2);
+        g_str(0, Y_LON, "LON: -----.------", C, C_GRAY, C_BG, 2);
     }
 
-    // Row 5 (Y=80): altitude + HDOP — "ALT:%7.1fm H:%4.1f " = 4+7+4+4+1 = 20
+    // Row 5: altitude + HDOP
     if (d->gga_valid && d->fix_quality > 0) {
-        snprintf(buf, sizeof(buf), "ALT:%7.1fm H:%4.1f ",
+        snprintf(buf, sizeof(buf), "ALT:%7.1fm H:%4.1f",
                  (double)d->altitude, (double)d->hdop);
-        g_str(0, Y_ALT, buf, 20, C_WHITE, C_BG, 2);
+        g_str(0, Y_ALT, buf, C, C_WHITE, C_BG, 2);
     } else {
-        g_str(0, Y_ALT, "ALT: -----.-m H:--- ", 20, C_GRAY, C_BG, 2);
+        g_str(0, Y_ALT, "ALT: -----.-m H:---", C, C_GRAY, C_BG, 2);
     }
 
-    // Row 6 (Y=96): speed + TTFF/elapsed — "SPD:%5.1f TTFF:%-5s" = 4+5+6+5 = 20
+    // Row 6: speed + TTFF/elapsed
     char ttff_s[8];
     if (d->ttff_done) {
         unsigned s = (unsigned)((d->fix_ms - d->boot_ms) / 1000u);
@@ -352,7 +356,7 @@ static void draw_status_rows(void) {
         snprintf(buf, sizeof(buf), "SPD:%5.1f TTFF:%-5s", (double)d->speed_kmh, ttff_s);
     else
         snprintf(buf, sizeof(buf), "SPD:---.- TTFF:%-5s", ttff_s);
-    g_str(0, Y_SPD, buf, 20, d->ttff_done ? C_CYAN : C_GRAY, C_BG, 2);
+    g_str(0, Y_SPD, buf, C, d->ttff_done ? C_CYAN : C_GRAY, C_BG, 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -365,8 +369,10 @@ static void draw_status_rows(void) {
 // Colour:     gray=no signal, red<25, yellow<35, green>=35
 
 static void draw_sat_table(void) {
+    int C = g_cols;
+
     // Row 7: table header, cyan on dark blue
-    g_str(0, Y_SAT_HDR, "SYS  EL  AZ SN SIGB ", 20, C_CYAN, C_DKBLU, 2);
+    g_str(0, Y_SAT_HDR, "SYS  EL  AZ SN SIGB", C, C_CYAN, C_DKBLU, 2);
 
     // Sort a local copy by SNR descending (best signal at top)
     SatInfo sorted[MAX_SATS];
@@ -383,11 +389,11 @@ static void draw_sat_table(void) {
         }
     }
 
-    char buf[21];
-    for (int i = 0; i < MAX_SAT_ROWS; i++) {
-        int y = Y_SAT_DATA + i * 16;
+    char buf[40];
+    for (int i = 0; i < g_sat_rows; i++) {
+        int y = Y_SAT_DATA + i * ROW_H;
         if (i >= cnt) {
-            g_rect(0, y, 240, 16, C_BG);
+            g_rect(0, y, g_scr_w, ROW_H, C_BG);
             continue;
         }
         const SatInfo *sv = &sorted[i];
@@ -401,7 +407,7 @@ static void draw_sat_table(void) {
         uint16_t col = (sv->snr == 0) ? C_GRAY :
                        (sv->snr < 25) ? C_RED  :
                        (sv->snr < 35) ? C_YELL : C_GREEN;
-        g_str(0, y, buf, 20, col, C_BG, 2);
+        g_str(0, y, buf, C, col, C_BG, 2);
     }
 }
 
@@ -472,6 +478,10 @@ void gnss_tft_test(void) {
     printf("Streaming NMEA from Teseo-LIV3FL; rendering on ST7789VI.\n");
     printf("Press BACK key (or Enter) to stop.\n");
 
+    // Release menu PIO SM before claiming our own — avoids double-drive
+    // on TFT data pins and SM leak when called from the interactive menu.
+    menu_tft_stop();
+
     // --- TFT GPIO init ---
     gpio_init(TFT_nCS_PIN);  gpio_set_dir(TFT_nCS_PIN,  GPIO_OUT); gpio_put(TFT_nCS_PIN,  1);
     gpio_init(TFT_DCX_PIN);  gpio_set_dir(TFT_DCX_PIN,  GPIO_OUT); gpio_put(TFT_DCX_PIN,  1);
@@ -493,9 +503,16 @@ void gnss_tft_test(void) {
     // BACK key — exit trigger when running standalone (no USB)
     back_key_init();
 
+    // --- Init dynamic screen geometry ---
+    g_scr_w   = menu_tft_width();
+    g_cols    = g_scr_w / (6 * 2);   // char width = 6 * scale(2) = 12
+    g_sat_rows = (menu_tft_height() - Y_SAT_DATA) / ROW_H;
+    if (g_sat_rows < 0) g_sat_rows = 0;
+    if (g_sat_rows > MAX_SATS) g_sat_rows = MAX_SATS;
+
     // --- Draw initial screen ---
-    g_rect(0, 0, 240, 320, C_BG);
-    g_str(0, Y_HDR, "  MOKYA  GPS  LIVE  ", 20, C_YELL, C_DKBLU, 2);
+    menu_clear(C_BG);
+    g_str(0, Y_HDR, " MOKYA GPS LIVE", g_cols, C_YELL, C_DKBLU, 2);
 
     // --- Init GNSS data state ---
     memset(&g_gd, 0, sizeof(g_gd));

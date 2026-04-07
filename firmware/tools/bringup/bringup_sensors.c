@@ -1,4 +1,5 @@
 #include "bringup.h"
+#include "bringup_menu.h"
 
 // ---------------------------------------------------------------------------
 // I2C sensor bus helpers (Bus A: GPIO 34/35)
@@ -26,7 +27,7 @@ void baro_read(void) {
     //   STATUS    (0x27): [1]=t_da [0]=p_da
     //   PRESS_OUT: 0x28(XL) 0x29(L) 0x2A(H)  → uint24; hPa = raw/4096.0
     //   TEMP_OUT:  0x2B(L)  0x2C(H)           → int16; °C = raw/100.0
-    printf("\n--- LPS22HH Barometer one-shot read ---\n");
+    printf("\n--- LPS22HH Barometer live display (BACK to exit) ---\n");
 
     i2c_init(i2c1, 400 * 1000);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
@@ -41,33 +42,80 @@ void baro_read(void) {
         if (!(c & 0x04)) break;
         sleep_ms(1);
     }
-    dev_write(i2c1, 0x5D, 0x11, 0x10);  // IF_ADD_INC=1
-    dev_write(i2c1, 0x5D, 0x10, 0x02);  // BDU=1, ODR=power-down (one-shot)
-    dev_write(i2c1, 0x5D, 0x11, 0x11);  // ONE_SHOT trigger
+    dev_write(i2c1, 0x5D, 0x11, 0x12);  // IF_ADD_INC=1, LOW_NOISE_EN=1
+    dev_write(i2c1, 0x5D, 0x10, 0x32);  // BDU=1, ODR=25Hz
 
+    // Wait for first data ready
     uint8_t status = 0;
     for (int i = 0; i < 100; i++) {
         dev_read(i2c1, 0x5D, 0x27, &status);
         if ((status & 0x03) == 0x03) break;
         sleep_ms(5);
     }
-    printf("  STATUS   : 0x%02X  P_DA=%d T_DA=%d\n", status, status&1, (status>>1)&1);
 
-    uint8_t reg = 0x28;
-    uint8_t raw[5] = {0};
-    i2c_write_timeout_us(i2c1, 0x5D, &reg, 1, true, 50000);
-    i2c_read_timeout_us(i2c1, 0x5D, raw, 5, false, 100000);
+    // TFT rendering constants (scale=2: 12x16 px per char)
+    const int S = 2;
+    const int CW = 6 * S;
+    const int CH = 8 * S;
+    const int W = menu_tft_width();
+    const int COLS = W / CW;
 
-    uint32_t p_raw = (uint32_t)raw[0] | ((uint32_t)raw[1]<<8) | ((uint32_t)raw[2]<<16);
-    int16_t  t_raw = (int16_t)((uint16_t)raw[3] | ((uint16_t)raw[4]<<8));
-    printf("  Pressure : %.2f hPa  (raw=0x%06X)\n", p_raw/4096.0f, (unsigned)p_raw);
-    printf("  Temp     : %.2f °C   (raw=0x%04X)\n", t_raw/100.0f, (uint16_t)t_raw);
+    // Draw static header
+    menu_clear(MC_BG);
+    menu_str(0, 0,      " Baro Live          ", COLS, MC_TITLE, MC_TITBG, S);
+    menu_str(0, 2 * CH, " Pressure (hPa)     ", COLS, MC_HINT,  MC_BG,   S);
+    menu_str(0, 5 * CH, " Temperature (C)    ", COLS, MC_HINT,  MC_BG,   S);
+    menu_str(0, 8 * CH, " Altitude est (m)   ", COLS, MC_HINT,  MC_BG,   S);
 
+    int samples = 0;
+    char line[40];
+
+    while (true) {
+        if (back_key_pressed()) break;
+
+        dev_read(i2c1, 0x5D, 0x27, &status);
+        if ((status & 0x03) != 0x03) {
+            sleep_ms(10);
+            continue;
+        }
+
+        uint8_t reg = 0x28;
+        uint8_t raw[5] = {0};
+        i2c_write_timeout_us(i2c1, 0x5D, &reg, 1, true, 50000);
+        i2c_read_timeout_us(i2c1, 0x5D, raw, 5, false, 100000);
+
+        uint32_t p_raw = (uint32_t)raw[0] | ((uint32_t)raw[1]<<8) | ((uint32_t)raw[2]<<16);
+        int16_t  t_raw = (int16_t)((uint16_t)raw[3] | ((uint16_t)raw[4]<<8));
+        float pressure = p_raw / 4096.0f;
+        float temp     = t_raw / 100.0f;
+        // Barometric altitude estimate: ISA formula, sea-level 1013.25 hPa
+        float altitude = 44330.0f * (1.0f - powf(pressure / 1013.25f, 0.1903f));
+
+        // Update TFT
+        snprintf(line, sizeof(line), " %.2f              ", pressure);
+        menu_str(0, 3 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        snprintf(line, sizeof(line), " %.2f              ", temp);
+        menu_str(0, 6 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        snprintf(line, sizeof(line), " %.1f              ", altitude);
+        menu_str(0, 9 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        if (++samples % 5 == 0) {
+            printf("  P: %.2f hPa  T: %.2f C  Alt: %.1f m\n",
+                   pressure, temp, altitude);
+        }
+
+        sleep_ms(100);  // ~10 Hz display update
+    }
+
+    // --- Cleanup ---
     dev_write(i2c1, 0x5D, 0x10, 0x00);  // power down
 
     i2c_deinit(i2c1);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
     gpio_set_function(BUS_A_SCL, GPIO_FUNC_NULL);
+    printf("Done\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +129,8 @@ void mag_read(void) {
     //   CFG_REG_C (0x62): [4]=bdu
     //   STATUS    (0x67): [3]=ZYXDA
     //   OUT: 0x68(X_L)..0x6D(Z_H)  — 1.5 mGauss/LSB
-    printf("\n--- LIS2MDL Magnetometer one-shot read ---\n");
+    //   TEMP_OUT: 0x6E(L) 0x6F(H)  — 8 LSB/°C, 25°C = 0
+    printf("\n--- LIS2MDL Magnetometer live display (BACK to exit) ---\n");
 
     i2c_init(i2c1, 400 * 1000);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
@@ -96,35 +145,92 @@ void mag_read(void) {
         if (!(c & 0x20)) break;
         sleep_ms(1);
     }
-    dev_write(i2c1, 0x1E, 0x60, 0x80);  // comp_temp_en=1, odr=10Hz, continuous
+    dev_write(i2c1, 0x1E, 0x60, 0x8C);  // comp_temp_en=1, odr=50Hz, continuous
     dev_write(i2c1, 0x1E, 0x61, 0x02);  // OFF_CANC every ODR
     dev_write(i2c1, 0x1E, 0x62, 0x10);  // BDU=1
 
+    // Wait for first data ready
     uint8_t status = 0;
     for (int i = 0; i < 40; i++) {
         dev_read(i2c1, 0x1E, 0x67, &status);
         if (status & 0x08) break;
         sleep_ms(5);
     }
-    printf("  STATUS   : 0x%02X  ZYXDA=%d\n", status, (status>>3)&1);
 
-    uint8_t reg = 0x68;
-    uint8_t raw[6] = {0};
-    i2c_write_timeout_us(i2c1, 0x1E, &reg, 1, true, 50000);
-    i2c_read_timeout_us(i2c1, 0x1E, raw, 6, false, 100000);
+    // TFT rendering constants
+    const int S = 2;
+    const int CH = 8 * S;
+    const int W = menu_tft_width();
+    const int COLS = W / (6 * S);
 
-    int16_t mx=(int16_t)((raw[1]<<8)|raw[0]);
-    int16_t my=(int16_t)((raw[3]<<8)|raw[2]);
-    int16_t mz=(int16_t)((raw[5]<<8)|raw[4]);
-    printf("  Mag      : X=%+6d  Y=%+6d  Z=%+6d  raw\n", mx, my, mz);
-    printf("           → X=%+8.1f  Y=%+8.1f  Z=%+8.1f  mGauss (1.5mG/LSB)\n",
-           mx*1.5f, my*1.5f, mz*1.5f);
+    menu_clear(MC_BG);
+    menu_str(0, 0,      " Mag Live           ", COLS, MC_TITLE, MC_TITBG, S);
+    menu_str(0, 2 * CH, " Mag (mGauss)       ", COLS, MC_HINT,  MC_BG,   S);
+    menu_str(0, 6 * CH, " Heading            ", COLS, MC_HINT,  MC_BG,   S);
+    menu_str(0, 9 * CH, " Field strength     ", COLS, MC_HINT,  MC_BG,   S);
 
+    int samples = 0;
+    char line[40];
+
+    while (true) {
+        if (back_key_pressed()) break;
+
+        dev_read(i2c1, 0x1E, 0x67, &status);
+        if (!(status & 0x08)) {
+            sleep_ms(10);
+            continue;
+        }
+
+        uint8_t reg = 0x68;
+        uint8_t raw[6] = {0};
+        i2c_write_timeout_us(i2c1, 0x1E, &reg, 1, true, 50000);
+        i2c_read_timeout_us(i2c1, 0x1E, raw, 6, false, 100000);
+
+        int16_t mx = (int16_t)((raw[1]<<8)|raw[0]);
+        int16_t my = (int16_t)((raw[3]<<8)|raw[2]);
+        int16_t mz = (int16_t)((raw[5]<<8)|raw[4]);
+        float fmx = mx * 1.5f;
+        float fmy = my * 1.5f;
+        float fmz = mz * 1.5f;
+
+        // Heading from X/Y (assuming device flat, Z up)
+        float heading = atan2f(-fmy, fmx) * 180.0f / (float)M_PI;
+        if (heading < 0) heading += 360.0f;
+
+        // Total field strength
+        float total = sqrtf(fmx * fmx + fmy * fmy + fmz * fmz);
+
+        // Update TFT — mag axes
+        snprintf(line, sizeof(line), " X %+8.1f         ", fmx);
+        menu_str(0, 3 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " Y %+8.1f         ", fmy);
+        menu_str(0, 4 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " Z %+8.1f         ", fmz);
+        menu_str(0, 5 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        // Heading
+        snprintf(line, sizeof(line), " %6.1f deg         ", heading);
+        menu_str(0, 7 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        // Field strength
+        snprintf(line, sizeof(line), " %.0f mG             ", total);
+        menu_str(0, 10 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        if (++samples % 5 == 0) {
+            printf("  M: %+8.1f %+8.1f %+8.1f mG  hdg=%.1f  |B|=%.0f\n",
+                   fmx, fmy, fmz, heading, total);
+        }
+
+        sleep_ms(50);  // ~20 Hz
+    }
+
+    // --- Cleanup ---
     dev_write(i2c1, 0x1E, 0x60, 0x02);  // power down (md=10)
 
     i2c_deinit(i2c1);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
     gpio_set_function(BUS_A_SCL, GPIO_FUNC_NULL);
+    printf("Done\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +246,7 @@ void imu_read(void) {
     //   CTRL8 (0x17): [1:0]=fs_xl (0=±2g, 0.061mg/LSB)
     //   STATUS (0x1E): [2]=TDA [1]=GDA [0]=XLDA
     //   Data: 0x20(TEMP_L)..0x2D(OUTZ_H_A) — 14 bytes burst
-    printf("\n--- LSM6DSV16X IMU one-shot read ---\n");
-    printf("  (No UUID; WHO_AM_I=0x70 is the only chip identifier)\n");
+    printf("\n--- LSM6DSV16X IMU live display (BACK to exit) ---\n");
 
     i2c_init(i2c1, 400 * 1000);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
@@ -162,43 +267,103 @@ void imu_read(void) {
     dev_write(i2c1, 0x6A, 0x10, 0x06);  // odr_xl=120Hz, HP mode
     dev_write(i2c1, 0x6A, 0x11, 0x06);  // odr_g=120Hz,  HP mode
 
+    // Wait for first data ready
     uint8_t status = 0;
     for (int i = 0; i < 40; i++) {
         dev_read(i2c1, 0x6A, 0x1E, &status);
         if ((status & 0x03) == 0x03) break;
         sleep_ms(5);
     }
-    printf("  STATUS   : 0x%02X  XLDA=%d GDA=%d TDA=%d\n",
-           status, status&1, (status>>1)&1, (status>>2)&1);
 
-    uint8_t reg = 0x20;
-    uint8_t raw[14] = {0};
-    i2c_write_timeout_us(i2c1, 0x6A, &reg, 1, true, 50000);
-    i2c_read_timeout_us(i2c1, 0x6A, raw, 14, false, 100000);
+    // TFT rendering constants (scale=2: 12x16 px per char)
+    const int S = 2;
+    const int CW = 6 * S;   // 12 px char width
+    const int CH = 8 * S;   // 16 px char height
+    const int W = menu_tft_width();
+    const int COLS = W / CW;
 
-    int16_t t_raw = (int16_t)((raw[1]<<8)|raw[0]);
-    printf("  Temp     : %+.1f °C\n", 25.0f + t_raw/256.0f);
+    // Draw static header
+    menu_clear(MC_BG);
+    menu_str(0, 0,      " IMU Live           ", COLS, MC_TITLE, MC_TITBG, S);
+    menu_str(0, 2 * CH, " Accel (g)    +/-2g ", COLS, MC_HINT,  MC_BG,   S);
+    menu_str(0, 6 * CH, " Gyro (dps) +/-250  ", COLS, MC_HINT,  MC_BG,   S);
+    menu_str(0, 10* CH, " Temp               ", COLS, MC_HINT,  MC_BG,   S);
 
-    int16_t gx=(int16_t)((raw[3]<<8)|raw[2]);
-    int16_t gy=(int16_t)((raw[5]<<8)|raw[4]);
-    int16_t gz=(int16_t)((raw[7]<<8)|raw[6]);
-    printf("  Gyro     : X=%+6d  Y=%+6d  Z=%+6d  raw\n", gx, gy, gz);
-    printf("           → X=%+7.2f  Y=%+7.2f  Z=%+7.2f  dps (±250dps)\n",
-           gx*0.00875f, gy*0.00875f, gz*0.00875f);
+    int samples = 0;
+    char line[40];
 
-    int16_t ax=(int16_t)((raw[9]<<8)|raw[8]);
-    int16_t ay=(int16_t)((raw[11]<<8)|raw[10]);
-    int16_t az=(int16_t)((raw[13]<<8)|raw[12]);
-    printf("  Accel    : X=%+6d  Y=%+6d  Z=%+6d  raw\n", ax, ay, az);
-    printf("           → X=%+6.3f  Y=%+6.3f  Z=%+6.3f  g (±2g, expect ~1g on one axis)\n",
-           ax*0.000061f, ay*0.000061f, az*0.000061f);
+    // --- Main loop: read + draw at ~20 Hz ---
+    while (true) {
+        if (back_key_pressed()) break;
 
+        // Wait for data ready (both XL + G)
+        dev_read(i2c1, 0x6A, 0x1E, &status);
+        if ((status & 0x03) != 0x03) {
+            sleep_ms(5);
+            continue;
+        }
+
+        // Burst read 14 bytes: temp(2) + gyro(6) + accel(6)
+        uint8_t reg = 0x20;
+        uint8_t raw[14] = {0};
+        i2c_write_timeout_us(i2c1, 0x6A, &reg, 1, true, 50000);
+        i2c_read_timeout_us(i2c1, 0x6A, raw, 14, false, 100000);
+
+        int16_t t_raw = (int16_t)((raw[1]<<8)|raw[0]);
+        int16_t gx = (int16_t)((raw[3]<<8)|raw[2]);
+        int16_t gy = (int16_t)((raw[5]<<8)|raw[4]);
+        int16_t gz = (int16_t)((raw[7]<<8)|raw[6]);
+        int16_t ax = (int16_t)((raw[9]<<8)|raw[8]);
+        int16_t ay = (int16_t)((raw[11]<<8)|raw[10]);
+        int16_t az = (int16_t)((raw[13]<<8)|raw[12]);
+
+        float fax = ax * 0.000061f;
+        float fay = ay * 0.000061f;
+        float faz = az * 0.000061f;
+        float fgx = gx * 0.00875f;
+        float fgy = gy * 0.00875f;
+        float fgz = gz * 0.00875f;
+        float temp = 25.0f + t_raw / 256.0f;
+
+        // Update TFT — accel
+        snprintf(line, sizeof(line), " X %+7.3f          ", fax);
+        menu_str(0, 3 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " Y %+7.3f          ", fay);
+        menu_str(0, 4 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " Z %+7.3f          ", faz);
+        menu_str(0, 5 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        // Update TFT — gyro
+        snprintf(line, sizeof(line), " X %+8.2f         ", fgx);
+        menu_str(0, 7 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " Y %+8.2f         ", fgy);
+        menu_str(0, 8 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " Z %+8.2f         ", fgz);
+        menu_str(0, 9 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        // Update TFT — temp
+        snprintf(line, sizeof(line), " %+.1f C             ", temp);
+        menu_str(0, 11 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        // Serial output (throttled: every 10th sample)
+        if (++samples % 10 == 0) {
+            printf("  A: %+6.3f %+6.3f %+6.3f g  "
+                   "G: %+7.2f %+7.2f %+7.2f dps  "
+                   "T: %.1f C\n",
+                   fax, fay, faz, fgx, fgy, fgz, temp);
+        }
+
+        sleep_ms(50);  // ~20 Hz display update
+    }
+
+    // --- Cleanup ---
     dev_write(i2c1, 0x6A, 0x10, 0x00);  // power down XL
     dev_write(i2c1, 0x6A, 0x11, 0x00);  // power down G
 
     i2c_deinit(i2c1);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
     gpio_set_function(BUS_A_SCL, GPIO_FUNC_NULL);
+    printf("Done\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -229,8 +394,19 @@ static void dump_gnss(i2c_inst_t *i2c) {
     gnss_print_buf(buf, r);
 }
 
+// NMEA sentence types to track on fixed display rows
+// Each type gets one TFT row showing the latest sentence content.
+#define NMEA_SLOT_COUNT  14
+static const char *nmea_slot_prefix[NMEA_SLOT_COUNT] = {
+    "GNGGA", "GNRMC", "GNGLL", "GNVTG",
+    "GPGGA", "GPRMC",
+    "GPGSV", "GLGSV", "GAGSV", "GBGSV", "GNGSV",
+    "GNGSA",
+    "PSTM",  "GPGSA",
+};
+
 void gnss_info(void) {
-    printf("\n--- Teseo-LIV3FL GNSS Info ---\n");
+    printf("\n--- NMEA Polling (BACK to exit) ---\n");
 
     i2c_init(i2c1, 100 * 1000);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
@@ -238,28 +414,86 @@ void gnss_info(void) {
     gpio_pull_up(BUS_A_SDA);
     gpio_pull_up(BUS_A_SCL);
 
-    // Send $PSTMGETSWVER — checksum 0x28 (XOR of chars between $ and *)
-    const char *ver_cmd = "$PSTMGETSWVER*28\r\n";
-    int wr = i2c_write_timeout_us(i2c1, 0x3A,
-                                   (const uint8_t *)ver_cmd,
-                                   (int)strlen(ver_cmd), false, 100000);
-    printf("  $PSTMGETSWVER write: %s\n",
-           wr < 0 ? "NACK (device busy or not accepting cmds)" : "ACK");
+    // TFT setup
+    const int S = 2;
+    const int CH = 8 * S;     // 16 px row height
+    const int W = menu_tft_width();
+    const int H = menu_tft_height();
+    const int COLS = W / (6 * S);
+    const int max_rows = H / CH - 1;  // minus header row
+    int slots = NMEA_SLOT_COUNT;
+    if (slots > max_rows) slots = max_rows;
 
-    sleep_ms(1000);  // allow device to enqueue reply
-    uint8_t buf[300];
-    memset(buf, 0xFF, sizeof(buf));
-    int r = i2c_read_timeout_us(i2c1, 0x3A, buf, sizeof(buf), false, 500000);
-    if (r < 0) {
-        printf("  read error (%d)\n", r);
-    } else {
-        printf("  NMEA stream (%d bytes):\n", r);
-        gnss_print_buf(buf, r);
+    menu_clear(MC_BG);
+    menu_str(0, 0, " NMEA Polling", COLS, MC_TITLE, MC_TITBG, S);
+
+    // Draw initial slot labels
+    for (int i = 0; i < slots; i++) {
+        char lbl[40];
+        snprintf(lbl, sizeof(lbl), "%-6s ---", nmea_slot_prefix[i]);
+        menu_str(0, (1 + i) * CH, lbl, COLS, MC_HINT, MC_BG, S);
     }
+
+    // Simple NMEA accumulator (no dependency on gnss_tft module)
+    char nbuf[256];
+    int nlen = 0;
+
+    uint32_t pkt_count = 0;
+
+    while (true) {
+        if (back_key_pressed()) break;
+
+        // Read raw bytes from Teseo-LIV3FL
+        uint8_t raw[128];
+        int r = i2c_read_timeout_us(i2c1, 0x3A, raw, sizeof(raw), false, 200000);
+        if (r <= 0) { sleep_ms(20); continue; }
+
+        // Accumulate into sentence buffer
+        for (int i = 0; i < r; i++) {
+            char c = (char)raw[i];
+            if (c == (char)0xFF) continue;  // idle filler
+            if (c == '$') nlen = 0;         // start new sentence
+            if (nlen < (int)sizeof(nbuf) - 1) {
+                nbuf[nlen++] = c;
+                nbuf[nlen]   = '\0';
+            }
+            if (c != '\n') continue;
+
+            // Complete sentence: nbuf starts with '$', ends with \r\n
+            // Strip leading '$' and trailing \r\n for matching
+            if (nlen < 6 || nbuf[0] != '$') { nlen = 0; continue; }
+            char *body = nbuf + 1;  // skip '$'
+            // Trim trailing \r\n
+            for (int k = nlen - 1; k > 0 && (nbuf[k]=='\r'||nbuf[k]=='\n'); k--)
+                nbuf[k] = '\0';
+
+            // Match against slot prefixes
+            for (int s = 0; s < slots; s++) {
+                int plen = (int)strlen(nmea_slot_prefix[s]);
+                if (strncmp(body, nmea_slot_prefix[s], plen) == 0) {
+                    // Truncate to fit screen width, show on this slot's row
+                    char line[40];
+                    snprintf(line, sizeof(line), "%.*s", COLS, body);
+                    menu_str(0, (1 + s) * CH, line, COLS, MC_FG, MC_BG, S);
+                    pkt_count++;
+                    break;
+                }
+            }
+
+            // Also print to serial
+            printf("  $%s\n", body);
+            nlen = 0;
+        }
+
+        sleep_ms(10);
+    }
+
+    printf("  Total sentences: %lu\n", (unsigned long)pkt_count);
 
     i2c_deinit(i2c1);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
     gpio_set_function(BUS_A_SCL, GPIO_FUNC_NULL);
+    printf("Done\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -312,23 +546,102 @@ static void dump_lps22hh(i2c_inst_t *i2c) {
     printf("    TEMP_RAW  : 0x%04X = %.2f °C (valid if ODR!=0)\n", (uint16_t)t_raw, t_raw/100.0f);
 }
 
-void dump_bus_a(void) {
-    printf("\n=== Bus A register dump (Sensors, GPIO 34/35) ===\n");
+void scan_bus_a(void) {
+    const int S = 2;
+    const int CW = 6 * S;
+    const int CH = 8 * S;
+    const int W  = menu_tft_width();
+    const int COLS = W / CW;
+
+    // --- TFT header ---
+    menu_clear(MC_BG);
+    menu_str(0, 0, " Bus A Diagnostic   ", COLS, MC_TITLE, MC_TITBG, S);
+
+    // --- I2C address scan (serial grid + collect found set) ---
+    printf("\n--- Bus A scan+dump (Sensors, GPIO 34/35) ---\n");
     i2c_init(i2c1, 100 * 1000);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
     gpio_set_function(BUS_A_SCL, GPIO_FUNC_I2C);
     gpio_pull_up(BUS_A_SDA);
     gpio_pull_up(BUS_A_SCL);
 
-    dump_lsm6dsv16x(i2c1);
-    dump_lis2mdl(i2c1);
-    dump_lps22hh(i2c1);
-    dump_gnss(i2c1);
+    bool found[128] = {false};
+    printf("   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
+    for (int addr = 0; addr < 128; ++addr) {
+        if (addr % 16 == 0) printf("%02x ", addr);
+        int ret;
+        uint8_t rxdata;
+        if ((addr & 0x78) == 0 || (addr & 0x78) == 0x78)
+            ret = PICO_ERROR_GENERIC;
+        else
+            ret = i2c_read_timeout_us(i2c1, addr, &rxdata, 1, false, 50000);
+        if (ret >= 0) found[addr] = true;
+        printf(ret < 0 ? "." : "@");
+        printf(addr % 16 == 15 ? "\n" : "  ");
+    }
+
+    // --- Per-device probe: WHO_AM_I + register dump + TFT line ---
+    typedef struct {
+        uint8_t addr;
+        const char *name;
+        uint8_t who_reg;
+        uint8_t who_expect;
+    } dev_entry_t;
+    static const dev_entry_t devs[] = {
+        {0x6A, "IMU  6A", 0x0F, 0x70},
+        {0x1E, "Mag  1E", 0x4F, 0x40},
+        {0x5D, "Baro 5D", 0x0F, 0xB3},
+        {0x3A, "GNSS 3A", 0x00, 0x00},  // no WHO_AM_I
+    };
+    int pass = 0;
+    for (int i = 0; i < 4; i++) {
+        const dev_entry_t *d = &devs[i];
+        int row = 2 + i;
+        char line[24];
+
+        if (!found[d->addr]) {
+            snprintf(line, sizeof(line), " %s  MISSING", d->name);
+            menu_str(0, row * CH, line, COLS, MC_ERR, MC_BG, S);
+            printf("\n  [0x%02X] %s — NOT FOUND\n", d->addr, d->name);
+            continue;
+        }
+
+        if (d->addr == 0x3A) {
+            // GNSS has no WHO_AM_I — ACK is sufficient
+            snprintf(line, sizeof(line), " %s  ACK OK", d->name);
+            menu_str(0, row * CH, line, COLS, MC_OK, MC_BG, S);
+            pass++;
+            dump_gnss(i2c1);
+        } else {
+            uint8_t v;
+            dev_read(i2c1, d->addr, d->who_reg, &v);
+            bool ok = (v == d->who_expect);
+            snprintf(line, sizeof(line), " %s  ID:%02X %s",
+                     d->name, v, ok ? "OK" : "BAD");
+            menu_str(0, row * CH, line, COLS,
+                     ok ? MC_OK : MC_ERR, MC_BG, S);
+            if (ok) pass++;
+        }
+
+        // Full register dump to serial
+        if (d->addr == 0x6A) dump_lsm6dsv16x(i2c1);
+        else if (d->addr == 0x1E) dump_lis2mdl(i2c1);
+        else if (d->addr == 0x5D) dump_lps22hh(i2c1);
+    }
+
+    // --- Summary row on TFT ---
+    char summary[24];
+    snprintf(summary, sizeof(summary), " Result: %d/4 pass", pass);
+    menu_str(0, 7 * CH, summary, COLS,
+             pass == 4 ? MC_OK : MC_ERR, MC_BG, S);
+
+    menu_str(0, 9 * CH, " BACK to return     ", COLS, MC_HINT, MC_BG, S);
+
+    printf("\n  === %d/4 devices OK ===\n\n", pass);
 
     i2c_deinit(i2c1);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
     gpio_set_function(BUS_A_SCL, GPIO_FUNC_NULL);
-    printf("\n");
 }
 
 // ---------------------------------------------------------------------------

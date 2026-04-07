@@ -71,6 +71,7 @@ void key_monitor(void) {
     while (to_ms_since_boot(get_absolute_time()) < deadline) {
         int ch = getchar_timeout_us(0);
         if (ch == '\r' || ch == '\n') break;
+        if (back_key_pressed()) break;
 
         uint8_t cur[KEY_ROWS];
         key_scan_matrix(cur);
@@ -103,13 +104,10 @@ void handle_command(const char *cmd) {
         imu_read();
     } else if (strcmp(cmd, "gnss_info") == 0) {
         gnss_info();
-    } else if (strcmp(cmd, "dump_a") == 0) {
-        dump_bus_a();
     } else if (strcmp(cmd, "dump_b") == 0) {
         dump_bus_b();
     } else if (strcmp(cmd, "scan_a") == 0) {
-        perform_scan(i2c1, BUS_A_SDA, BUS_A_SCL, "Bus A (Sensors, i2c1)");
-        printf("Expected: 0x6A(IMU)  0x1E(Mag)  0x5D(Baro)  0x3A(GNSS)\n");
+        scan_bus_a();
     } else if (strcmp(cmd, "scan_b") == 0) {
         perform_scan(i2c1, BUS_B_SDA, BUS_B_SCL, "Bus B (Power, i2c1)");
         printf("Expected: 0x6B(Charger)  0x55(FuelGauge)  0x36(LED)\n");
@@ -225,9 +223,8 @@ void handle_command(const char *cmd) {
         printf("  baro        -- LPS22HH pressure+temp one-shot read\n");
         printf("  mag         -- LIS2MDL magnetometer one-shot read\n");
         printf("  gnss_info   -- Teseo-LIV3FL: send $PSTMGETSWVER + read 300-byte NMEA stream\n");
-        printf("  dump_a      -- dump Bus A device registers (IMU/Mag/Baro/GNSS)\n");
+        printf("  scan_a      -- Bus A diagnostic: scan + WHO_AM_I + reg dump (TFT)\n");
         printf("  dump_b      -- dump Bus B device registers (Charger/LED)\n");
-        printf("  scan_a      -- scan Bus A (sensors, GPIO 34/35)\n");
         printf("  scan_b      -- scan Bus B (power, GPIO 6/7)\n");
         printf("  status      -- BQ25622 charger status\n");
         printf("  adc         -- BQ25622 ADC: IBUS/IBAT/VBUS/VPMID/VBAT/VSYS\n");

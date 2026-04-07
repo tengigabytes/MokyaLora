@@ -120,8 +120,8 @@ static uint m_sm, m_off;
 static bool m_pio_active = false;
 
 // Screen rotation state (0=0°, 1=90°, 2=180°, 3=270°)
-static uint8_t m_rotation = 0;
-static int m_width = 240, m_height = 320;
+static uint8_t m_rotation = 1;          // default: landscape 90°
+static int m_width = 320, m_height = 240;
 static void apply_rotation(void);  // forward decl
 
 bool menu_tft_start(void) {
@@ -243,7 +243,7 @@ void menu_tft_hw_init(void) {
     menu_tft_cmd(0x01); sleep_ms(150);  // SWRESET
     menu_tft_cmd(0x11); sleep_ms(120);  // SLPOUT
     menu_tft_cmd(0x3A); menu_tft_dat(0x55);    // COLMOD: RGB565
-    menu_tft_cmd(0x36); menu_tft_dat(0x00);    // MADCTL: portrait, RGB
+    menu_tft_cmd(0x36); menu_tft_dat(0x60);    // MADCTL: landscape 90°, RGB
     menu_tft_cmd(0xB2);
     menu_tft_dat(0x0C); menu_tft_dat(0x0C); menu_tft_dat(0x00);
     menu_tft_dat(0x33); menu_tft_dat(0x33);
@@ -267,10 +267,10 @@ void menu_tft_hw_init(void) {
     menu_tft_dat(0x3F); menu_tft_dat(0x44); menu_tft_dat(0x51);
     menu_tft_dat(0x2F); menu_tft_dat(0x1F); menu_tft_dat(0x1F);
     menu_tft_dat(0x20); menu_tft_dat(0x23);
-    menu_tft_cmd(0x2A);
-    menu_tft_dat(0x00); menu_tft_dat(0x00); menu_tft_dat(0x00); menu_tft_dat(0xEF);
-    menu_tft_cmd(0x2B);
+    menu_tft_cmd(0x2A);  // CASET: 0..319 (landscape)
     menu_tft_dat(0x00); menu_tft_dat(0x00); menu_tft_dat(0x01); menu_tft_dat(0x3F);
+    menu_tft_cmd(0x2B);  // RASET: 0..239 (landscape)
+    menu_tft_dat(0x00); menu_tft_dat(0x00); menu_tft_dat(0x00); menu_tft_dat(0xEF);
     menu_tft_cmd(0x21);               // INVON
     menu_tft_cmd(0x29); sleep_ms(20); // DISPON
 }
@@ -294,8 +294,8 @@ bool menu_tft_init(void) {
 
     menu_tft_hw_init();
 
-    // Reset rotation to portrait
-    m_rotation = 0; m_width = 240; m_height = 320;
+    // Set default rotation to landscape 90°
+    m_rotation = 1; m_width = 320; m_height = 240;
 
     // Backlight on via LM27965 Bank A
     bus_b_init();
@@ -326,8 +326,8 @@ bool menu_tft_reinit(void) {
     // Full ST7789 re-init
     menu_tft_hw_init();
 
-    // Restore current rotation (MADCTL was reset by SWRESET in hw_init)
-    if (m_rotation != 0) apply_rotation();
+    // Restore current rotation (hw_init sets landscape 90° by default)
+    if (m_rotation != 1) apply_rotation();
 
     // Backlight on
     bus_b_init();
@@ -399,8 +399,10 @@ static void cmd_charge_scan(void) {
 }
 static void cmd_led(void)        { bus_b_init(); lm27965_cycle(); bus_b_deinit(); }
 static void cmd_scan_a(void) {
-    perform_scan(i2c1, BUS_A_SDA, BUS_A_SCL, "Bus A (Sensors, i2c1)");
-    printf("Expected: 0x6A(IMU)  0x1E(Mag)  0x5D(Baro)  0x3A(GNSS)\n");
+    scan_bus_a();
+    // Keep results visible until BACK key (back_key_init already
+    // called by menu_handle_key before invoking run callback).
+    while (!back_key_pressed()) sleep_ms(50);
 }
 static void cmd_scan_b(void) {
     perform_scan(i2c1, BUS_B_SDA, BUS_B_SCL, "Bus B (Power, i2c1)");
@@ -421,10 +423,9 @@ static const menu_item_t page_sensors_items[] = {
     {"IMU read",       imu_read,     NULL},
     {"Baro read",      baro_read,    NULL},
     {"Mag read",       mag_read,     NULL},
-    {"GNSS info",      gnss_info,    NULL},
+    {"NMEA polling",   gnss_info,    NULL},
     {"GNSS TFT live",  gnss_tft_test, NULL},
-    {"Scan Bus A",     cmd_scan_a,   NULL},
-    {"Dump Bus A",     dump_bus_a,   NULL},
+    {"Bus A Diag",     cmd_scan_a,   NULL},
 };
 static const menu_page_t page_sensors = {
     "Sensors", page_sensors_items, sizeof(page_sensors_items) / sizeof(page_sensors_items[0])
@@ -710,6 +711,7 @@ void menu_handle_key(menu_ctx_t *ctx, menu_key_t key) {
             printf("--- [MENU] Done: %s ---\n", item->label);
 
             back_key_deinit();
+            key_gpio_init();   // Restore Row 0 GPIO as OUTPUT after back_key_deinit changed it to INPUT
 
             // Return to menu — force TFT reinit because tests (tft, tft_fast,
             // gnss_tft) may have released PIO GPIO or changed backlight state.
