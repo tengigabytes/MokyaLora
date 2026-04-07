@@ -2,6 +2,9 @@
 #include "bringup_menu.h"
 #include "hardware/clocks.h"
 
+// Shared 150 KB buffer — used by psram_fps_bench and bringup_tft.c sub-test J/K
+uint32_t shared_sram_buf[240u * 320u * 2u / 4u];
+
 // ===========================================================================
 // TFT consolidated diagnostics (Step 20)
 // ===========================================================================
@@ -730,4 +733,627 @@ void psram_rd_diag(void) {
 
     dma_channel_unclaim(dma_ch);
     printf("\n=== Done ===\n");
+}
+
+// ---------------------------------------------------------------------------
+// PSRAM DMA Error Pattern Diagnostic — Issue 14 investigation
+//
+// Five sub-tests to identify why DMA produces ~37.5% word errors:
+//   A. Small DMA write (8 words) + CPU verify — show exact error positions
+//   B. DMA write 4 KB + CPU verify — error address & value dump
+//   C. CPU write + DMA read — compare DMA-read buffer to expected
+//   D. XIP Stream FIFO read — use the SDK-intended DMA read path
+//   E. Cache-disabled DMA — rule out XIP cache interference
+// Serial-only output.
+// ---------------------------------------------------------------------------
+void psram_dma_diag(void) {
+    printf("\n========================================\n");
+    printf("  PSRAM DMA Error Pattern Diagnostic\n");
+    printf("  (Issue 14 investigation)\n");
+    printf("========================================\n");
+
+    // Check PSRAM init
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    if ((gpio0_ctrl & 0x1Fu) != 9) {
+        printf("  PSRAM not initialized. Run 'psram' first.\n");
+        return;
+    }
+
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+    uint32_t sys_hz = clock_get_hz(clk_sys);
+    printf("  sys_clk = %u MHz\n", (unsigned)(sys_hz / 1000000u));
+    printf("  PSRAM base = 0x%08X (NOCACHE)\n", (unsigned)(uintptr_t)psram);
+
+    // Dump key registers first
+    printf("\n--- Register State ---\n");
+    uint32_t xc = xip_ctrl_hw->ctrl;
+    printf("  XIP_CTRL      = 0x%08X\n", (unsigned)xc);
+    printf("    EN_SEC=%u EN_NONSEC=%u WRITABLE_M1=%u POWER_DOWN=%u\n",
+           (unsigned)(xc & 1), (unsigned)((xc >> 1) & 1),
+           (unsigned)((xc >> 11) & 1), (unsigned)((xc >> 3) & 1));
+    printf("    NO_UNCACHED_SEC=%u NO_UNCACHED_NONSEC=%u\n",
+           (unsigned)((xc >> 4) & 1), (unsigned)((xc >> 5) & 1));
+    printf("    NO_UNTRANSLATED_SEC=%u NO_UNTRANSLATED_NONSEC=%u\n",
+           (unsigned)((xc >> 6) & 1), (unsigned)((xc >> 7) & 1));
+    uint32_t mt = qmi_hw->m[1].timing;
+    printf("  M1.timing     = 0x%08X (CLKDIV=%u RXDELAY=%u)\n",
+           (unsigned)mt, (unsigned)(mt & 0xFF), (unsigned)((mt >> 8) & 0x7));
+
+    // =====================================================================
+    // Test A: Small DMA write (8 words = 1 cache line) + CPU verify
+    // =====================================================================
+    printf("\n--- Test A: DMA write 8 words + CPU verify ---\n");
+    {
+        #define TESTA_WORDS 8
+        uint32_t pattern = 0xDEADBEEFu;
+
+        // Clear region first via CPU
+        for (int i = 0; i < TESTA_WORDS; i++)
+            psram[i] = 0x00000000u;
+        // Verify clear
+        for (int i = 0; i < TESTA_WORDS; i++) {
+            uint32_t v = psram[i];
+            if (v != 0) printf("  [clear] word[%d] = 0x%08X (expected 0)\n", i, (unsigned)v);
+        }
+
+        // DMA write pattern
+        int ch = dma_claim_unused_channel(true);
+        dma_channel_config cfg = dma_channel_get_default_config(ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+        channel_config_set_read_increment(&cfg, false);
+        channel_config_set_write_increment(&cfg, true);
+
+        dma_channel_configure(ch, &cfg,
+                              (void *)psram, &pattern,
+                              TESTA_WORDS, true);
+        dma_channel_wait_for_finish_blocking(ch);
+
+        // CPU verify every word
+        uint32_t errs_a = 0;
+        printf("  Pattern=0x%08X  Words=%d\n", (unsigned)pattern, TESTA_WORDS);
+        for (int i = 0; i < TESTA_WORDS; i++) {
+            uint32_t rd = psram[i];
+            bool ok = (rd == pattern);
+            printf("  [%d] addr=0x%08X  got=0x%08X  %s\n",
+                   i, (unsigned)(uintptr_t)&psram[i],
+                   (unsigned)rd, ok ? "OK" : "ERR");
+            if (!ok) errs_a++;
+        }
+        printf("  Result: %u/%d errors\n", (unsigned)errs_a, TESTA_WORDS);
+
+        dma_channel_unclaim(ch);
+    }
+
+    // =====================================================================
+    // Test B: DMA write 4 KB + CPU verify — error position analysis
+    // =====================================================================
+    printf("\n--- Test B: DMA write 4KB + CPU verify (error map) ---\n");
+    {
+        #define TESTB_WORDS 1024  // 4 KB
+        uint32_t pattern = 0xA5A5A5A5u;
+
+        // Clear via CPU
+        for (uint32_t i = 0; i < TESTB_WORDS; i++)
+            psram[i] = 0x00000000u;
+
+        // DMA write
+        int ch = dma_claim_unused_channel(true);
+        dma_channel_config cfg = dma_channel_get_default_config(ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+        channel_config_set_read_increment(&cfg, false);
+        channel_config_set_write_increment(&cfg, true);
+
+        dma_channel_configure(ch, &cfg,
+                              (void *)psram, &pattern,
+                              TESTB_WORDS, true);
+        dma_channel_wait_for_finish_blocking(ch);
+
+        // CPU verify — collect stats
+        uint32_t errs_b = 0;
+        uint32_t err_val_zero = 0, err_val_ff = 0, err_val_other = 0;
+        // Print first 32 errors with full detail
+        printf("  First errors (up to 32):\n");
+        for (uint32_t i = 0; i < TESTB_WORDS; i++) {
+            uint32_t rd = psram[i];
+            if (rd != pattern) {
+                if (errs_b < 32)
+                    printf("    [%4u] off=0x%04X mod8=%u got=0x%08X\n",
+                           (unsigned)i, (unsigned)(i * 4),
+                           (unsigned)(i % 8), (unsigned)rd);
+                if (rd == 0x00000000u) err_val_zero++;
+                else if (rd == 0xFFFFFFFFu) err_val_ff++;
+                else err_val_other++;
+                errs_b++;
+            }
+        }
+        printf("  Total: %u/%u errors (%.1f%%)\n",
+               (unsigned)errs_b, TESTB_WORDS,
+               TESTB_WORDS ? (errs_b * 100.0f / TESTB_WORDS) : 0.0f);
+        printf("  Error values: 0x00=%u  0xFF=%u  other=%u\n",
+               (unsigned)err_val_zero, (unsigned)err_val_ff, (unsigned)err_val_other);
+
+        // Print mod-8 histogram (cache line position analysis)
+        uint32_t mod8_errs[8] = {0};
+        // Re-scan for mod8
+        for (uint32_t i = 0; i < TESTB_WORDS; i++) {
+            if (psram[i] != pattern)
+                mod8_errs[i % 8]++;
+        }
+        printf("  Mod-8 histogram (cache line positions):\n");
+        for (int m = 0; m < 8; m++)
+            printf("    pos[%d]: %u errs / %u words\n",
+                   m, (unsigned)mod8_errs[m], (unsigned)(TESTB_WORDS / 8));
+
+        dma_channel_unclaim(ch);
+    }
+
+    // =====================================================================
+    // Test C: CPU write + DMA read into SRAM — error position analysis
+    // =====================================================================
+    printf("\n--- Test C: CPU write + DMA read 4KB (error map) ---\n");
+    {
+        #define TESTC_WORDS 1024
+        static uint32_t rd_buf[TESTC_WORDS];
+        uint32_t pattern = 0x12345678u;
+
+        // CPU write
+        for (uint32_t i = 0; i < TESTC_WORDS; i++)
+            psram[i] = pattern;
+        // Quick CPU verify to confirm write worked
+        uint32_t cpu_errs = 0;
+        for (uint32_t i = 0; i < TESTC_WORDS; i++)
+            if (psram[i] != pattern) cpu_errs++;
+        printf("  CPU write+verify: %u errors (sanity check)\n", (unsigned)cpu_errs);
+
+        // DMA read from PSRAM into SRAM
+        memset(rd_buf, 0, sizeof(rd_buf));
+        int ch = dma_claim_unused_channel(true);
+        dma_channel_config cfg = dma_channel_get_default_config(ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, true);
+
+        dma_channel_configure(ch, &cfg,
+                              rd_buf, (void *)psram,
+                              TESTC_WORDS, true);
+        dma_channel_wait_for_finish_blocking(ch);
+
+        uint32_t errs_c = 0;
+        uint32_t err_val_zero = 0, err_val_ff = 0, err_val_other = 0;
+        printf("  First errors (up to 32):\n");
+        for (uint32_t i = 0; i < TESTC_WORDS; i++) {
+            if (rd_buf[i] != pattern) {
+                if (errs_c < 32)
+                    printf("    [%4u] off=0x%04X mod8=%u got=0x%08X\n",
+                           (unsigned)i, (unsigned)(i * 4),
+                           (unsigned)(i % 8), (unsigned)rd_buf[i]);
+                if (rd_buf[i] == 0x00000000u) err_val_zero++;
+                else if (rd_buf[i] == 0xFFFFFFFFu) err_val_ff++;
+                else err_val_other++;
+                errs_c++;
+            }
+        }
+        printf("  Total: %u/%u errors (%.1f%%)\n",
+               (unsigned)errs_c, TESTC_WORDS,
+               TESTC_WORDS ? (errs_c * 100.0f / TESTC_WORDS) : 0.0f);
+        printf("  Error values: 0x00=%u  0xFF=%u  other=%u\n",
+               (unsigned)err_val_zero, (unsigned)err_val_ff, (unsigned)err_val_other);
+
+        // Mod-8 histogram
+        uint32_t mod8_errs[8] = {0};
+        for (uint32_t i = 0; i < TESTC_WORDS; i++)
+            if (rd_buf[i] != pattern)
+                mod8_errs[i % 8]++;
+        printf("  Mod-8 histogram:\n");
+        for (int m = 0; m < 8; m++)
+            printf("    pos[%d]: %u errs / %u words\n",
+                   m, (unsigned)mod8_errs[m], (unsigned)(TESTC_WORDS / 8));
+
+        dma_channel_unclaim(ch);
+    }
+
+    // =====================================================================
+    // Test D: Address-based pattern — CPU write word[i]=i, DMA read
+    //         Reveals whether DMA reads adjacent word data (burst offset)
+    // =====================================================================
+    printf("\n--- Test D: Address-pattern CPU write + DMA read 256B ---\n");
+    {
+        #define TESTD_WORDS 64  // 256 bytes — small enough to print all
+        static uint32_t rd_buf[TESTD_WORDS];
+
+        // CPU write address-based pattern
+        for (uint32_t i = 0; i < TESTD_WORDS; i++)
+            psram[i] = i;
+
+        // Quick CPU verify
+        uint32_t cpu_errs = 0;
+        for (uint32_t i = 0; i < TESTD_WORDS; i++)
+            if (psram[i] != i) cpu_errs++;
+        printf("  CPU write+verify: %u errors\n", (unsigned)cpu_errs);
+
+        // DMA read
+        memset(rd_buf, 0xFF, sizeof(rd_buf));
+        int ch = dma_claim_unused_channel(true);
+        dma_channel_config cfg = dma_channel_get_default_config(ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, true);
+
+        dma_channel_configure(ch, &cfg,
+                              rd_buf, (void *)psram,
+                              TESTD_WORDS, true);
+        dma_channel_wait_for_finish_blocking(ch);
+
+        // Print ALL words: expected vs got
+        uint32_t errs_d = 0;
+        printf("  idx | expected | DMA got  | delta\n");
+        printf("  ----|----------|----------|------\n");
+        for (uint32_t i = 0; i < TESTD_WORDS; i++) {
+            bool ok = (rd_buf[i] == i);
+            if (!ok) errs_d++;
+            // Print first 64 words (all of them)
+            if (!ok || i < 16 || (i % 8 == 0))
+                printf("  %3u | %08X | %08X | %s%s\n",
+                       (unsigned)i, (unsigned)i, (unsigned)rd_buf[i],
+                       ok ? "OK" : "ERR",
+                       !ok ? "" : "");
+            // For errors, show the signed delta
+            if (!ok) {
+                int32_t delta = (int32_t)rd_buf[i] - (int32_t)i;
+                printf("       ^ delta = %+d (0x%X)\n",
+                       (int)delta, (unsigned)(uint32_t)delta);
+            }
+        }
+        printf("  Total: %u/%u errors\n", (unsigned)errs_d, TESTD_WORDS);
+
+        dma_channel_unclaim(ch);
+    }
+
+    // =====================================================================
+    // Test E: Single-word DMA reads — 1 word at a time, no burst
+    //         If 0 errors → confirms burst/back-to-back is the trigger
+    // =====================================================================
+    printf("\n--- Test E: Single-word DMA reads (1 at a time) ---\n");
+    {
+        #define TESTE_WORDS 64
+        static uint32_t rd_word;
+        uint32_t pattern = 0x12345678u;
+
+        // CPU write
+        for (uint32_t i = 0; i < TESTE_WORDS; i++)
+            psram[i] = pattern;
+
+        int ch = dma_claim_unused_channel(true);
+        uint32_t errs_e = 0;
+
+        for (uint32_t i = 0; i < TESTE_WORDS; i++) {
+            rd_word = 0;
+            dma_channel_config cfg = dma_channel_get_default_config(ch);
+            channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+            channel_config_set_read_increment(&cfg, false);
+            channel_config_set_write_increment(&cfg, false);
+
+            dma_channel_configure(ch, &cfg,
+                                  &rd_word, (void *)&psram[i],
+                                  1, true);
+            dma_channel_wait_for_finish_blocking(ch);
+
+            if (rd_word != pattern) {
+                printf("    [%3u] mod8=%u got=0x%08X ERR\n",
+                       (unsigned)i, (unsigned)(i % 8), (unsigned)rd_word);
+                errs_e++;
+            }
+        }
+        printf("  Total: %u/%u errors\n", (unsigned)errs_e, TESTE_WORDS);
+        if (errs_e == 0)
+            printf("  >>> Single-word DMA reads are clean — burst is the trigger <<<\n");
+
+        dma_channel_unclaim(ch);
+    }
+
+    // =====================================================================
+    // Test F: Small burst sizes — find the threshold where errors start
+    //         DMA read N words at a time: N = 2, 4, 8, 16, 32
+    // =====================================================================
+    printf("\n--- Test F: Burst size sweep (find error threshold) ---\n");
+    {
+        uint32_t pattern = 0xABCD1234u;
+        #define TESTF_TOTAL 256  // words to test per burst size
+        static uint32_t rd_buf[TESTF_TOTAL];
+
+        // CPU write
+        for (uint32_t i = 0; i < TESTF_TOTAL; i++)
+            psram[i] = pattern;
+
+        int ch = dma_claim_unused_channel(true);
+
+        uint32_t burst_sizes[] = {2, 4, 8, 16, 32, 64, 256};
+        for (int b = 0; b < 7; b++) {
+            uint32_t bsz = burst_sizes[b];
+            memset(rd_buf, 0, sizeof(rd_buf));
+            uint32_t errs = 0;
+
+            // DMA read in chunks of bsz words
+            for (uint32_t off = 0; off < TESTF_TOTAL; off += bsz) {
+                dma_channel_config cfg = dma_channel_get_default_config(ch);
+                channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+                channel_config_set_read_increment(&cfg, true);
+                channel_config_set_write_increment(&cfg, true);
+
+                uint32_t count = bsz;
+                if (off + count > TESTF_TOTAL) count = TESTF_TOTAL - off;
+                dma_channel_configure(ch, &cfg,
+                                      &rd_buf[off], (void *)&psram[off],
+                                      count, true);
+                dma_channel_wait_for_finish_blocking(ch);
+            }
+
+            for (uint32_t i = 0; i < TESTF_TOTAL; i++)
+                if (rd_buf[i] != pattern) errs++;
+
+            printf("  burst=%3u words: %u/%u errors (%.1f%%)\n",
+                   (unsigned)bsz, (unsigned)errs, TESTF_TOTAL,
+                   TESTF_TOTAL ? (errs * 100.0f / TESTF_TOTAL) : 0.0f);
+        }
+
+        dma_channel_unclaim(ch);
+    }
+
+    printf("\n========================================\n");
+    printf("  Diagnostic complete\n");
+    printf("========================================\n");
+}
+
+// ---------------------------------------------------------------------------
+// PSRAM Framerate Benchmark — measure actual full-frame read throughput
+//
+// Simulates 240×320 RGB565 framebuffer (150 KB) reads from PSRAM.
+// Compares CPU volatile read vs DMA burst=4 chaining.
+// ---------------------------------------------------------------------------
+void psram_fps_bench(void) {
+    printf("\n========================================\n");
+    printf("  PSRAM Framerate Benchmark\n");
+    printf("  240x320 RGB565 = 150 KB / frame\n");
+    printf("========================================\n");
+
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    if ((gpio0_ctrl & 0x1Fu) != 9) {
+        printf("  PSRAM not initialized. Run 'psram' first.\n");
+        return;
+    }
+
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+    uint32_t sys_hz = clock_get_hz(clk_sys);
+    printf("  sys_clk = %u MHz\n", (unsigned)(sys_hz / 1000000u));
+
+    // 240 × 320 × 2 bytes = 153600 bytes = 38400 words
+    #define FB_BYTES  153600u
+    #define FB_WORDS  (FB_BYTES / 4u)
+
+    // Fill PSRAM with test pattern (simulated framebuffer)
+    printf("\n  Filling 150 KB framebuffer with pattern...\n");
+    uint32_t pattern = 0xA5A5A5A5u;
+    for (uint32_t i = 0; i < FB_WORDS; i++)
+        psram[i] = pattern;
+
+    // SRAM destination buffer — shared with bringup_tft.c (sub-test J/K)
+    uint32_t *sram_buf = shared_sram_buf;
+
+    // =====================================================================
+    // Method 1: CPU volatile read (memcpy-style, word-at-a-time)
+    // =====================================================================
+    printf("\n--- Method 1: CPU volatile read ---\n");
+    {
+        // Warm-up pass
+        for (uint32_t i = 0; i < FB_WORDS; i++)
+            sram_buf[i] = psram[i];
+
+        // Timed: 10 frames
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            for (uint32_t i = 0; i < FB_WORDS; i++)
+                sram_buf[i] = psram[i];
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        uint32_t ms_per_frame = elapsed / 10;
+        uint32_t kbps = elapsed ? (FB_BYTES * 10u / elapsed) : 0;
+        uint32_t fps10 = elapsed ? (10000u / elapsed) : 0;
+
+        // Verify
+        uint32_t errs = 0;
+        for (uint32_t i = 0; i < FB_WORDS; i++)
+            if (sram_buf[i] != pattern) errs++;
+
+        printf("  10 frames in %u ms → %u ms/frame\n",
+               (unsigned)elapsed, (unsigned)ms_per_frame);
+        printf("  Throughput: %u KB/s\n", (unsigned)kbps);
+        printf("  Framerate:  %u.%u FPS\n",
+               (unsigned)(fps10 / 10), (unsigned)(fps10 % 10));
+        printf("  Errors: %u\n", (unsigned)errs);
+    }
+
+    // =====================================================================
+    // Method 2: DMA burst=4 words (16 bytes per transfer, loop)
+    // =====================================================================
+    printf("\n--- Method 2: DMA burst=4 words (loop) ---\n");
+    {
+        #define BURST4 4u
+        int ch = dma_claim_unused_channel(true);
+
+        // Warm-up
+        memset(sram_buf, 0, sizeof(sram_buf));
+        for (uint32_t off = 0; off < FB_WORDS; off += BURST4) {
+            dma_channel_config cfg = dma_channel_get_default_config(ch);
+            channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+            channel_config_set_read_increment(&cfg, true);
+            channel_config_set_write_increment(&cfg, true);
+            dma_channel_configure(ch, &cfg,
+                                  &sram_buf[off], (void *)&psram[off],
+                                  BURST4, true);
+            dma_channel_wait_for_finish_blocking(ch);
+        }
+
+        // Timed: 10 frames
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            for (uint32_t off = 0; off < FB_WORDS; off += BURST4) {
+                dma_channel_config cfg = dma_channel_get_default_config(ch);
+                channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+                channel_config_set_read_increment(&cfg, true);
+                channel_config_set_write_increment(&cfg, true);
+                dma_channel_configure(ch, &cfg,
+                                      &sram_buf[off], (void *)&psram[off],
+                                      BURST4, true);
+                dma_channel_wait_for_finish_blocking(ch);
+            }
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        uint32_t ms_per_frame = elapsed / 10;
+        uint32_t kbps = elapsed ? (FB_BYTES * 10u / elapsed) : 0;
+        uint32_t fps10 = elapsed ? (10000u / elapsed) : 0;
+
+        uint32_t errs = 0;
+        for (uint32_t i = 0; i < FB_WORDS; i++)
+            if (sram_buf[i] != pattern) errs++;
+
+        printf("  10 frames in %u ms → %u ms/frame\n",
+               (unsigned)elapsed, (unsigned)ms_per_frame);
+        printf("  Throughput: %u KB/s\n", (unsigned)kbps);
+        printf("  Framerate:  %u.%u FPS\n",
+               (unsigned)(fps10 / 10), (unsigned)(fps10 % 10));
+        printf("  Errors: %u\n", (unsigned)errs);
+
+        dma_channel_unclaim(ch);
+    }
+
+    // =====================================================================
+    // Method 3: DMA burst=4, pre-computed config (reduce setup overhead)
+    // =====================================================================
+    printf("\n--- Method 3: DMA burst=4 (pre-computed config) ---\n");
+    {
+        int ch = dma_claim_unused_channel(true);
+        dma_channel_config cfg = dma_channel_get_default_config(ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, true);
+        uint32_t ctrl_val = cfg.ctrl;
+
+        // Timed: 10 frames, minimal overhead per chunk
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            for (uint32_t off = 0; off < FB_WORDS; off += BURST4) {
+                dma_channel_hw_addr(ch)->read_addr  = (uintptr_t)&psram[off];
+                dma_channel_hw_addr(ch)->write_addr = (uintptr_t)&sram_buf[off];
+                dma_channel_hw_addr(ch)->transfer_count = BURST4;
+                dma_channel_hw_addr(ch)->ctrl_trig  = ctrl_val;
+                while (dma_channel_is_busy(ch)) tight_loop_contents();
+            }
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        uint32_t ms_per_frame = elapsed / 10;
+        uint32_t kbps = elapsed ? (FB_BYTES * 10u / elapsed) : 0;
+        uint32_t fps10 = elapsed ? (10000u / elapsed) : 0;
+
+        uint32_t errs = 0;
+        for (uint32_t i = 0; i < FB_WORDS; i++)
+            if (sram_buf[i] != pattern) errs++;
+
+        printf("  10 frames in %u ms → %u ms/frame\n",
+               (unsigned)elapsed, (unsigned)ms_per_frame);
+        printf("  Throughput: %u KB/s\n", (unsigned)kbps);
+        printf("  Framerate:  %u.%u FPS\n",
+               (unsigned)(fps10 / 10), (unsigned)(fps10 % 10));
+        printf("  Errors: %u\n", (unsigned)errs);
+
+        dma_channel_unclaim(ch);
+    }
+
+    // =====================================================================
+    // Method 4: DMA burst=2 words (smallest safe burst, more overhead)
+    // =====================================================================
+    printf("\n--- Method 4: DMA burst=2 (pre-computed config) ---\n");
+    {
+        #define BURST2 2u
+        int ch = dma_claim_unused_channel(true);
+        dma_channel_config cfg = dma_channel_get_default_config(ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, true);
+        uint32_t ctrl_val = cfg.ctrl;
+
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            for (uint32_t off = 0; off < FB_WORDS; off += BURST2) {
+                dma_channel_hw_addr(ch)->read_addr  = (uintptr_t)&psram[off];
+                dma_channel_hw_addr(ch)->write_addr = (uintptr_t)&sram_buf[off];
+                dma_channel_hw_addr(ch)->transfer_count = BURST2;
+                dma_channel_hw_addr(ch)->ctrl_trig  = ctrl_val;
+                while (dma_channel_is_busy(ch)) tight_loop_contents();
+            }
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        uint32_t ms_per_frame = elapsed / 10;
+        uint32_t kbps = elapsed ? (FB_BYTES * 10u / elapsed) : 0;
+        uint32_t fps10 = elapsed ? (10000u / elapsed) : 0;
+
+        uint32_t errs = 0;
+        for (uint32_t i = 0; i < FB_WORDS; i++)
+            if (sram_buf[i] != pattern) errs++;
+
+        printf("  10 frames in %u ms → %u ms/frame\n",
+               (unsigned)elapsed, (unsigned)ms_per_frame);
+        printf("  Throughput: %u KB/s\n", (unsigned)kbps);
+        printf("  Framerate:  %u.%u FPS\n",
+               (unsigned)(fps10 / 10), (unsigned)(fps10 % 10));
+        printf("  Errors: %u\n", (unsigned)errs);
+
+        dma_channel_unclaim(ch);
+    }
+
+    // =====================================================================
+    // Reference: DMA full burst (uncorrected — shows max DMA bandwidth)
+    // =====================================================================
+    printf("\n--- Reference: DMA full burst (ERRORS EXPECTED) ---\n");
+    {
+        int ch = dma_claim_unused_channel(true);
+        dma_channel_config cfg = dma_channel_get_default_config(ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_32);
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, true);
+
+        memset(sram_buf, 0, sizeof(sram_buf));
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            dma_channel_configure(ch, &cfg,
+                                  sram_buf, (void *)psram,
+                                  FB_WORDS, true);
+            dma_channel_wait_for_finish_blocking(ch);
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        uint32_t ms_per_frame = elapsed / 10;
+        uint32_t kbps = elapsed ? (FB_BYTES * 10u / elapsed) : 0;
+        uint32_t fps10 = elapsed ? (10000u / elapsed) : 0;
+
+        uint32_t errs = 0;
+        for (uint32_t i = 0; i < FB_WORDS; i++)
+            if (sram_buf[i] != pattern) errs++;
+
+        printf("  10 frames in %u ms → %u ms/frame\n",
+               (unsigned)elapsed, (unsigned)ms_per_frame);
+        printf("  Throughput: %u KB/s\n", (unsigned)kbps);
+        printf("  Framerate:  %u.%u FPS\n",
+               (unsigned)(fps10 / 10), (unsigned)(fps10 % 10));
+        printf("  Errors: %u (expected ~25%%)\n", (unsigned)errs);
+
+        dma_channel_unclaim(ch);
+    }
+
+    printf("\n========================================\n");
+    printf("  Benchmark complete\n");
+    printf("========================================\n");
 }

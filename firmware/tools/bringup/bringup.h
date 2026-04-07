@@ -93,6 +93,8 @@ void cmd_psram_tuning(void);  // merged sweep+diag+flash_sweep with TFT
 void cmd_psram_debug(void);   // merged probe+jlink with TFT
 void cmd_psram_dma_test(void);// DMA vs CPU throughput comparison
 void psram_rd_diag(void);    // read vs write speed diagnostic (serial)
+void psram_dma_diag(void);   // DMA error pattern diagnostic (Issue 14)
+void psram_fps_bench(void);  // framerate benchmark: CPU vs DMA burst=4
 
 // bringup_tft.c — ST7789VI 2.4" IPS, 8080 8-bit parallel (pio1)
 void tft_test(void);
