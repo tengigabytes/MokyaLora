@@ -179,6 +179,7 @@
 // Uncached XIP alias: XIP_NOCACHE_NOALLOC_BASE + 0x1000000
 #define PSRAM_CS_PIN       0
 #define PSRAM_NOCACHE      (XIP_NOCACHE_NOALLOC_BASE + 0x1000000u)
+#define PSRAM_CACHED       (XIP_BASE + 0x1000000u)
 #define PSRAM_TEST_WORDS   1024    // 4 KB pattern test
 
 // SX1262 / LoRa (SPI1, GPIO 23–29)
@@ -268,7 +269,7 @@ void mic_loopback(void);
 void mic_rec(void);
 void mic_dump(void);
 
-// bringup_flash.c
+// bringup_sram.c — memory tests (SRAM, Flash, PSRAM)
 void sram_test(void);
 void flash_test(void);
 bool psram_init(void);      // call once at boot — returns true if APS6404L found
@@ -280,6 +281,14 @@ void flash_speed_test(void);// sweep M0 CLKDIV×RXDELAY from RAM, test Flash rea
 void psram_jlink_prep(void);// write sentinel, print J-Link mem32 command
 void psram_diag(void);
 void psram_probe(void);
+
+// bringup_sram.c — TFT consolidated diagnostics (Step 20)
+void cmd_memory_diag(void);   // SRAM+Flash+PSRAM one-screen diagnostic
+void cmd_psram_full_tft(void);// 8 MB test with TFT progress
+void cmd_psram_tuning(void);  // merged sweep+diag+flash_sweep with TFT
+void cmd_psram_debug(void);   // merged probe+jlink with TFT
+void cmd_psram_dma_test(void);// DMA vs CPU throughput comparison
+void psram_rd_diag(void);    // read vs write speed diagnostic (serial)
 
 // bringup_lora.c
 void lora_test(void);

@@ -471,15 +471,11 @@ static const menu_page_t page_audio = {
 
 // --- Memory page ---
 static const menu_item_t page_memory_items[] = {
-    {"SRAM test",      sram_test,        NULL},
-    {"Flash JEDEC",    flash_test,       NULL},
-    {"PSRAM test",     psram_test,       NULL},
-    {"PSRAM full 8MB", psram_full_test,  NULL},
-    {"PSRAM sweep",    psram_speed_test, NULL},
-    {"PSRAM diag",     psram_diag_test,  NULL},
-    {"PSRAM probe",    psram_probe,      NULL},
-    {"PSRAM J-Link",   psram_jlink_prep, NULL},
-    {"Flash sweep",    flash_speed_test, NULL},
+    {"Memory Diag",    cmd_memory_diag,    NULL},
+    {"PSRAM full 8MB", cmd_psram_full_tft, NULL},
+    {"PSRAM Speed",    cmd_psram_dma_test, NULL},
+    {"PSRAM Tuning",   cmd_psram_tuning,   NULL},
+    {"PSRAM Debug",    cmd_psram_debug,    NULL},
 };
 static const menu_page_t page_memory = {
     "Memory", page_memory_items, sizeof(page_memory_items) / sizeof(page_memory_items[0])
