@@ -36,6 +36,7 @@ void lm27965_cycle(void) {
     };
 
     for (int cycle = 0; cycle < 3; cycle++) {
+        if (back_key_pressed()) break;
         for (int i = 0; i < 4; i++) {
             lm_write(LM27965_GP, seq[i].gp);
             printf("  [%d] %s\n", cycle, seq[i].name);
@@ -620,6 +621,7 @@ void motor_breathe(void) {
     pwm_set_chan_level(slice, chan, 0);
 
     for (int b = 0; b < 5; b++) {
+        if (back_key_pressed()) break;
         for (int d = 0; d <= 1000; d += 20) {
             pwm_set_chan_level(slice, chan, d > 999 ? 999 : d);
             sleep_ms(20);

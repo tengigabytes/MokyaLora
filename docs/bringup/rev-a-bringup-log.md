@@ -841,6 +841,46 @@ PowerShell test harness (`bringup_test_all.ps1`) executes all bringup commands o
 
 ---
 
+### Step 20 — Menu Diagnostic Consolidation & PIO Fix
+
+**Result: ✅ PASS** (2026-04-07)
+
+Consolidated redundant bringup menu commands, fixed a PIO state-machine leak that caused TFT black-screen hangs, and added BACK key interrupt support to all long-running test functions.
+
+#### Changes
+
+| Item | Before | After | Result |
+|------|--------|-------|--------|
+| `scan_a` + `dump_a` | Two separate commands (serial-only output) | Single `scan_a` / "Bus A Diag" — I2C scan + WHO_AM_I probe + register dump; results on TFT (green/red per device) and serial | ✅ PASS |
+| Bus A Diag TFT display | N/A | Title, 4 device rows (addr + name + ID status), summary "Result: X/4 pass", BACK hint; waits for BACK key before returning to menu | ✅ PASS |
+| PIO double-claim fix | `gnss_tft_test`, `tft_test`, `tft_fast_test` each called `menu_tft_start()` without releasing the menu's existing PIO SM → two SMs driving same TFT data pins → bus contention, SM leak, black screen | Added `menu_tft_stop()` at entry of all three functions; menu reclaims PIO via `menu_tft_reinit()` on return | ✅ PASS |
+| BACK key interrupt | Long-running tests (audio, LoRa RX, LED cycle, motor breathe, mic) could only be stopped via serial | Added `back_key_pressed()` checks to: `amp_test`, `amp_breathe`, `amp_bee`, `mic_raw`, `mic_loopback`, `lora_rx`, `lm27965_cycle`, `motor_breathe` | ✅ PASS |
+
+#### TFT layout (Bus A Diag, scale=2, 20×20 chars)
+
+```
+Row 0:  " Bus A Diagnostic   "   (yellow on dark blue)
+Row 2:  " IMU  6A  ID:70 OK  "   (green / red)
+Row 3:  " Mag  1E  ID:40 OK  "
+Row 4:  " Baro 5D  ID:B3 OK  "
+Row 5:  " GNSS 3A  ACK OK    "
+Row 7:  " Result: 4/4 pass   "
+Row 9:  " BACK to return     "   (gray hint)
+```
+
+**Firmware files:**
+- `firmware/tools/bringup/bringup_sensors.c` — `scan_bus_a()` replaces `dump_bus_a()`
+- `firmware/tools/bringup/bringup_menu.c` — `cmd_scan_a()` wrapper with BACK wait; "Bus A Diag" menu entry
+- `firmware/tools/bringup/bringup_gnss_tft.c` — `menu_tft_stop()` at entry
+- `firmware/tools/bringup/bringup_tft.c` — `menu_tft_stop()` at entry of `tft_test()` and `tft_fast_test()`
+- `firmware/tools/bringup/bringup_menu.h` — `MC_OK` (green) and `MC_ERR` (red) colour constants
+- `firmware/tools/bringup/bringup_audio.c` — `back_key_pressed()` in `amp_test`, `amp_breathe`, `amp_bee`, `mic_raw`, `mic_loopback`
+- `firmware/tools/bringup/bringup_lora.c` — `back_key_pressed()` in `lora_rx`
+- `firmware/tools/bringup/bringup_power.c` — `back_key_pressed()` in `lm27965_cycle`, `motor_breathe`
+- `firmware/tools/bringup/i2c_custom_scan.c` — `dump_a` removed; `scan_a` calls `scan_bus_a()`
+
+---
+
 ---
 
 ## Issues Log

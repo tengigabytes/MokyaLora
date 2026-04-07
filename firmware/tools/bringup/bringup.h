@@ -233,7 +233,7 @@ void baro_read(void);
 void mag_read(void);
 void imu_read(void);
 void gnss_info(void);
-void dump_bus_a(void);
+void scan_bus_a(void);
 void perform_scan(i2c_inst_t *i2c, uint sda, uint scl, const char *bus_name);
 
 // Set to 1 to compile embedded WAV files (~12 MB flash, slow build).

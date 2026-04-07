@@ -1,4 +1,5 @@
 #include "bringup.h"
+#include "bringup_menu.h"
 #include "tft_8080.pio.h"
 
 // ---------------------------------------------------------------------------
@@ -217,6 +218,9 @@ void tft_test(void) {
     printf("  clkdiv=%.0f  write cycle=%.0f ns\n",
            TFT_CLK_DIV, 4.0f * TFT_CLK_DIV * 1000.0f / 125.0f);
 
+    // Release menu PIO SM to avoid double-drive on TFT pins
+    menu_tft_stop();
+
     // SIO-controlled pins
     gpio_init(TFT_nCS_PIN);  gpio_set_dir(TFT_nCS_PIN,  GPIO_OUT); gpio_put(TFT_nCS_PIN,  1);
     gpio_init(TFT_DCX_PIN);  gpio_set_dir(TFT_DCX_PIN,  GPIO_OUT); gpio_put(TFT_DCX_PIN,  1);
@@ -259,6 +263,7 @@ void tft_test(void) {
         { 0x0000, "Black" },
     };
     for (int i = 0; i < 5; i++) {
+        if (back_key_pressed()) break;
         printf("  Fill %-6s (0x%04X) ...", seq[i].name, seq[i].colour);
         tft_fill(seq[i].colour);
         printf(" done\n");
@@ -339,6 +344,9 @@ static void tft_fill_dma(int dma_ch, uint16_t colour) {
 void tft_fast_test(void) {
     printf("\n--- TFT Fast Refresh Test (Step 13) ---\n");
 
+    // Release menu PIO SM to avoid double-drive on TFT pins
+    menu_tft_stop();
+
     // --- Hardware init (identical to tft_test) ---
     gpio_init(TFT_nCS_PIN);  gpio_set_dir(TFT_nCS_PIN,  GPIO_OUT); gpio_put(TFT_nCS_PIN,  1);
     gpio_init(TFT_DCX_PIN);  gpio_set_dir(TFT_DCX_PIN,  GPIO_OUT); gpio_put(TFT_DCX_PIN,  1);
@@ -378,6 +386,7 @@ void tft_fast_test(void) {
         uint32_t rising  = 0;
         bool prev = gpio_get(TFT_TE_PIN);
         while (to_ms_since_boot(get_absolute_time()) - t_start < 2000) {
+            if (back_key_pressed()) goto fast_cleanup;
             bool cur = gpio_get(TFT_TE_PIN);
             if (cur && !prev) rising++;
             prev = cur;
@@ -395,6 +404,7 @@ void tft_fast_test(void) {
     // -------------------------------------------------------------------------
     // Sub-test B — Baseline FPS (CPU polling)
     // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
     printf("\n[B] Baseline FPS — CPU polling, clkdiv=%.0f (10 fills)...\n", TFT_CLK_DIV);
     {
         static const uint16_t colours[2] = {0xF800, 0x001F};  // red / blue
@@ -411,6 +421,7 @@ void tft_fast_test(void) {
     // -------------------------------------------------------------------------
     // Sub-test C — DMA solid fill, clkdiv=4 (128 ns write cycle)
     // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
     printf("\n[C] DMA solid fill — clkdiv=%.0f, 128 ns cycle (10 fills)...\n", TFT_CLK_DIV);
     {
         uint32_t t0 = to_ms_since_boot(get_absolute_time());
@@ -428,6 +439,7 @@ void tft_fast_test(void) {
     // ST7789VI twc spec: min 66 ns @ 3.3V VDDI; ~100 ns recommended @ 1.8V VDDI.
     // 96 ns is close to the 1.8V recommendation — observe for display glitches.
     // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
     printf("\n[D] DMA solid fill — clkdiv=3, 96 ns cycle (10 fills)...\n");
     printf("  (Watch for pixel glitches — 96 ns is near the 1.8V VDDI limit)\n");
     {
@@ -458,6 +470,7 @@ void tft_fast_test(void) {
     // Expected: throughput matches display refresh rate (~60 FPS if transfer
     // completes within one frame; otherwise the effective rate is lower).
     // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
     printf("\n[E] TE-gated DMA fill — 10 frames (wait TE rise before each)...\n");
     if (!gpio_get(TFT_TE_PIN) && true) {  // always run; print skip only if needed
         // Wait for at most 100 ms for first TE edge; skip if no signal
@@ -495,6 +508,7 @@ void tft_fast_test(void) {
     // -------------------------------------------------------------------------
     // Sub-test F — DMA colour bars (8 SMPTE bars, each 30 px wide)
     // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
     printf("\n[F] DMA colour bars (8 bars)...\n");
     {
         static const uint16_t bars[8] = {
@@ -513,6 +527,7 @@ void tft_fast_test(void) {
     // -------------------------------------------------------------------------
     // Sub-test G — DMA checkerboard (32x32 blocks)
     // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
     printf("\n[G] DMA checkerboard (32x32 blocks)...\n");
     {
         for (int by = 0; by < 320; by += 32) {
@@ -533,6 +548,7 @@ void tft_fast_test(void) {
     // -------------------------------------------------------------------------
     // Sub-test H — DMA bouncing block (80 frames on blue background)
     // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
     printf("\n[H] DMA bouncing block (80 frames)...\n");
     {
         const uint16_t BW = 32, BH = 32;
@@ -541,6 +557,7 @@ void tft_fast_test(void) {
 
         int bx = 0, by = 0, dx = 4, dy = 3;
         for (int f = 0; f < 80; f++) {
+            if (back_key_pressed()) break;
             // Erase old position
             tft_set_window((uint16_t)bx, (uint16_t)by,
                            (uint16_t)(bx + BW - 1), (uint16_t)(by + BH - 1));
@@ -565,6 +582,7 @@ void tft_fast_test(void) {
     // -------------------------------------------------------------------------
     // Sub-test I — Backlight fade in/out (32 brightness levels)
     // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
     printf("\n[I] Backlight fade in/out...");
     {
         tft_fill_dma(dma_ch, 0xFFFF);

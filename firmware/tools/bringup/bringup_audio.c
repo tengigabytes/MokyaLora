@@ -80,6 +80,7 @@ void amp_test(void) {
     uint32_t end_ms = to_ms_since_boot(get_absolute_time()) + 5000;
     int count = 0;
     while (to_ms_since_boot(get_absolute_time()) < end_ms) {
+        if (back_key_pressed()) break;
         for (int i = 0; i < TONE_TABLE_LEN; i++)
             pio_sm_put_blocking(pio0, (uint)sm, buf[i]);
         count++;
@@ -99,6 +100,7 @@ void amp_breathe(void) {
 
     uint32_t buf[TONE_TABLE_LEN];
     for (int b = 0; b < 5; b++) {
+        if (back_key_pressed()) break;
         for (int step = 0; step <= 20; step++) {
             amp_fill_sine(buf, MAX_AMPLITUDE * step / 20);
             for (int rep = 0; rep < 10; rep++)
@@ -265,6 +267,7 @@ void mic_raw(void) {
 
     while (to_ms_since_boot(get_absolute_time()) < deadline) {
         if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) break;
+        if (back_key_pressed()) break;
 
         int ones_min = 64, ones_max = 0;
         uint32_t total_ones = 0;
@@ -399,6 +402,7 @@ void mic_loopback(void) {
 
     while (to_ms_since_boot(get_absolute_time()) < deadline) {
         if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) break;
+        if (back_key_pressed()) break;
 
         // 2 PDM words = 64 bits = 1 sample at 48 828 Hz
         uint32_t w0 = pio_sm_get_blocking(pio1, mic_sm);
@@ -728,27 +732,33 @@ void amp_bee(void) {
     // 5 3 3- | 4 2 2- | 5 3 3- | 4 2 2-
     bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
     bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
+    if (back_key_pressed()) goto bee_done;
     bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
     bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
 
     // 1 3 5 5 | 3---
+    if (back_key_pressed()) goto bee_done;
     bee_note(sm,C,q,amp); bee_note(sm,E,q,amp); bee_note(sm,G,q,amp); bee_note(sm,G,q,amp);
     bee_note(sm,E,w,amp);
 
     // 2 2 2 2 | 2 3 4-
+    if (back_key_pressed()) goto bee_done;
     bee_note(sm,D,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,q,amp);
     bee_note(sm,D,q,amp); bee_note(sm,E,q,amp); bee_note(sm,F,h,amp);
 
     // 3 3 3 3 | 3 4 5-
+    if (back_key_pressed()) goto bee_done;
     bee_note(sm,E,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,q,amp);
     bee_note(sm,E,q,amp); bee_note(sm,F,q,amp); bee_note(sm,G,h,amp);
 
     // 5 3 3- | 4 2 2- | 1 3 5 5 | 1---
+    if (back_key_pressed()) goto bee_done;
     bee_note(sm,G,q,amp); bee_note(sm,E,q,amp); bee_note(sm,E,h,amp);
     bee_note(sm,F,q,amp); bee_note(sm,D,q,amp); bee_note(sm,D,h,amp);
     bee_note(sm,C,q,amp); bee_note(sm,E,q,amp); bee_note(sm,G,q,amp); bee_note(sm,G,q,amp);
     bee_note(sm,C,w,amp);
 
+bee_done:
     bee_silence(sm, 50);
     amp_pio_stop(sm);
     printf("Done\n");
