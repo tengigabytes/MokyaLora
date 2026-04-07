@@ -56,6 +56,176 @@ void key_scan_matrix(uint8_t pressed[KEY_ROWS]) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Key TFT test — visual keyboard layout matching physical device
+// ---------------------------------------------------------------------------
+//
+// Layout: top section = nav cluster (FUNC/BACK, D-pad, SET/DEL/VOL+/-)
+//         bottom section = 5x5 text key grid (rows 1-5, cols 0-4)
+//
+// Screen: 320x240 landscape.  Nav area: y 0-66.  Text area: y 70-240.
+
+// ASCII-safe labels [matrix_row][matrix_col]
+static const char *const key_tft_labels[KEY_ROWS][KEY_COLS] = {
+    {"FUNC", "BACK", "LEFT", "DEL",  "VOL-", " UP" },
+    {"1  2", "3  4", "5  6", "7  8", "9  0", " OK" },
+    {"Q  W", "E  R", "T  Y", "U  I", "O  P", "DOWN"},
+    {"A  S", "D  F", "G  H", "J  K", "  L ", "RGHT"},
+    {"Z  X", "C  V", "B  N", "  M ", "Bpmf", "SET" },
+    {"MODE", " TAB", "SPC ", " SYM", "Punc", "VOL+"},
+};
+
+// Calculator-mode labels (line 2) for text keys; NULL = no line 2
+static const char *const kt_calc[KEY_ROWS][KEY_COLS] = {
+    {NULL,   NULL,  NULL,  NULL,  NULL,  NULL },
+    {"[ANS]","[7]", "[8]", "[9]", "[/]", NULL },
+    {"[(]",  "[4]", "[5]", "[6]", "[x]", NULL },
+    {"[)]",  "[1]", "[2]", "[3]", "[-]", NULL },
+    {"[AC]", "[0]", "[.]", "[Ex]","[+]", NULL },
+    {NULL,   NULL,  NULL,  NULL,  NULL,  NULL },
+};
+
+// --- Nav key pixel positions (row 0 keys + col 5 keys) ---
+// Indexed: [0..5] = row 0 cols 0-5, [6..10] = rows 1-5 col 5
+static const struct { int16_t x, y, w, h; } kt_nav[] = {
+    {  2,  2, 56, 20 },  // [0] FUNC   (0,0)
+    {  2, 44, 56, 20 },  // [1] BACK   (0,1) — exit key
+    { 94, 23, 44, 20 },  // [2] LEFT   (0,2)
+    {226, 44, 42, 20 },  // [3] DEL    (0,3)
+    {274, 44, 44, 20 },  // [4] VOL-   (0,4)
+    {138,  2, 44, 20 },  // [5] UP     (0,5)
+    {138, 23, 44, 20 },  // [6] OK     (1,5)
+    {138, 44, 44, 20 },  // [7] DOWN   (2,5)
+    {182, 23, 44, 20 },  // [8] RIGHT  (3,5)
+    {226,  2, 42, 20 },  // [9] SET    (4,5)
+    {274,  2, 44, 20 },  // [10] VOL+  (5,5)
+};
+
+// --- Text key grid constants ---
+#define KT_TXT_Y   70
+#define KT_TXT_W   64    // 320 / 5
+#define KT_TXT_H   34    // (240 - 70) / 5
+
+// --- Colours ---
+#define KT_NAV_BG   0x2104   // dark gray (nav unpressed)
+#define KT_TXT_BG   0x18E3   // slightly lighter (text unpressed)
+#define KT_PRESS_BG 0x001F   // blue (pressed)
+#define KT_PRESS_FG 0xFFFF   // white (pressed text)
+#define KT_EXIT_BG  0x4000   // dark red (BACK key)
+#define KT_BORDER   0x4208   // key border
+#define KT_DIM      0x7BEF   // dim text (calc labels)
+
+static bool kt_is_nav(int r, int c) { return r == 0 || c == 5; }
+
+static void kt_get_rect(int r, int c, int *ox, int *oy, int *ow, int *oh) {
+    if (r == 0) {
+        *ox = kt_nav[c].x;   *oy = kt_nav[c].y;
+        *ow = kt_nav[c].w;   *oh = kt_nav[c].h;
+    } else if (c == 5) {
+        int i = 5 + r;       // rows 1-5 → indices 6-10
+        *ox = kt_nav[i].x;   *oy = kt_nav[i].y;
+        *ow = kt_nav[i].w;   *oh = kt_nav[i].h;
+    } else {
+        *ox = c * KT_TXT_W;
+        *oy = KT_TXT_Y + (r - 1) * KT_TXT_H;
+        *ow = KT_TXT_W;
+        *oh = KT_TXT_H;
+    }
+}
+
+static void kt_str(int x, int y, const char *s, uint16_t fg, uint16_t bg) {
+    for (int i = 0; s[i]; i++)
+        menu_char(x + i * 6, y, s[i], fg, bg, 1);
+}
+
+static void kt_draw_key(int r, int c, bool pressed) {
+    int x, y, w, h;
+    kt_get_rect(r, c, &x, &y, &w, &h);
+
+    bool is_back = (r == 0 && c == 1);
+    bool nav = kt_is_nav(r, c);
+
+    uint16_t bg, fg;
+    if (is_back)        { bg = KT_EXIT_BG;  fg = MC_ERR; }
+    else if (pressed)   { bg = KT_PRESS_BG;  fg = KT_PRESS_FG; }
+    else                { bg = nav ? KT_NAV_BG : KT_TXT_BG; fg = MC_FG; }
+
+    // Border (1 px) + fill
+    menu_rect(x, y, w, 1, KT_BORDER);
+    menu_rect(x, y + h - 1, w, 1, KT_BORDER);
+    menu_rect(x, y, 1, h, KT_BORDER);
+    menu_rect(x + w - 1, y, 1, h, KT_BORDER);
+    menu_rect(x + 1, y + 1, w - 2, h - 2, bg);
+
+    // Label line 1 (centred)
+    const char *l1 = key_tft_labels[r][c];
+    int len1 = (int)strlen(l1);
+    int tx = x + (w - len1 * 6) / 2;
+
+    if (nav) {
+        kt_str(tx, y + (h - 8) / 2, l1, fg, bg);
+    } else {
+        kt_str(tx, y + 4, l1, fg, bg);
+        // Line 2: calculator symbol (dimmed)
+        const char *l2 = kt_calc[r][c];
+        if (l2) {
+            int len2 = (int)strlen(l2);
+            int tx2 = x + (w - len2 * 6) / 2;
+            kt_str(tx2, y + h - 12, l2, pressed ? KT_PRESS_FG : KT_DIM, bg);
+        }
+    }
+}
+
+void key_tft_test(void) {
+    printf("\n--- Key TFT test (press keys; BACK to exit) ---\n");
+    key_gpio_init();
+    sleep_ms(10);
+
+    menu_clear(MC_BG);
+
+    // Separator between nav and text sections
+    menu_rect(0, 67, 320, 2, MC_SEP);
+
+    // Draw all keys unpressed
+    for (int r = 0; r < KEY_ROWS; r++)
+        for (int c = 0; c < KEY_COLS; c++)
+            kt_draw_key(r, c, false);
+
+    // Drain residual serial bytes
+    while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
+
+    uint8_t prev[KEY_ROWS] = {0};
+    uint32_t deadline = to_ms_since_boot(get_absolute_time()) + 120000;
+
+    while (to_ms_since_boot(get_absolute_time()) < deadline) {
+        int ch = getchar_timeout_us(0);
+        if (ch == '\r' || ch == '\n') break;
+
+        uint8_t cur[KEY_ROWS];
+        key_scan_matrix(cur);
+
+        // BACK key (R0C1) → exit
+        if (cur[0] & (1u << 1)) break;
+
+        // Redraw changed keys (skip BACK)
+        for (int r = 0; r < KEY_ROWS; r++) {
+            uint8_t changed = (uint8_t)(cur[r] ^ prev[r]);
+            if (!changed) continue;
+            for (int c = 0; c < KEY_COLS; c++) {
+                if (!(changed & (1u << c))) continue;
+                if (r == 0 && c == 1) continue;
+                bool p = (cur[r] & (1u << c)) != 0;
+                kt_draw_key(r, c, p);
+                if (p) printf("  %s  (R%dC%d)\n", key_names[r][c], r, c);
+            }
+        }
+        memcpy(prev, cur, KEY_ROWS);
+        sleep_ms(20);
+    }
+
+    printf("Done\n");
+}
+
 // Monitor key presses for up to 60 s; exit on Enter key from serial.
 void key_monitor(void) {
     printf("\n--- Keyboard monitor (press keys; Enter to exit) ---\n");
@@ -201,6 +371,8 @@ void handle_command(const char *cmd) {
         psram_rd_diag();
     } else if (strcmp(cmd, "key") == 0) {
         key_monitor();
+    } else if (strcmp(cmd, "key_tft") == 0) {
+        key_tft_test();
     } else if (strcmp(cmd, "tft") == 0) {
         tft_test();
     } else if (strcmp(cmd, "tft_fast") == 0) {
@@ -277,6 +449,7 @@ void handle_command(const char *cmd) {
         printf("  rotate      -- Cycle TFT rotation: 0/90/180/270 degrees\n");
         printf("  gnss_tft    -- Step 14: GNSS outdoor test; streams NMEA + live display on TFT (Enter to stop)\n");
         printf("  key         -- keyboard monitor (prints key name on press; Enter to exit)\n");
+        printf("  key_tft     -- visual keyboard test on TFT (keys light up; BACK to exit)\n");
         printf("  charge_on   -- set VREG=4100mV IINDPM=100mA, enable BQ25622 charging\n");
         printf("  charge_off  -- disable BQ25622 charging\n");
         printf("  charge_scan -- charge_on + 500ms + scan Bus B (checks if BQ27441 wakes up)\n");
