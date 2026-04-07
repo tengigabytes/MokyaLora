@@ -1151,6 +1151,153 @@ MIE dictionary lookup is inherently random-access (~600 bytes/query, <0.4 ms via
 - `firmware/tools/bringup/i2c_custom_scan.c` — Registered `psram_dma_diag` and `psram_fps` serial commands
 - `bringup_run.ps1` — Added timeout entries for `psram_dma_diag` (30 s), `psram_rd_diag` (15 s), `psram_fps` (120 s)
 
+### Step 26 — Sleep / Dormant Mode & Dark Current (Planned)
+
+**Goal:** Validate both WFI (light sleep) and DORMANT (deep sleep) modes. Measure quiescent current at each stage. Verify all wakeup sources.
+
+#### Phase 1 — Peripheral Shutdown & WFI
+
+1. Shut down all peripherals in sequence, measuring system current after each step:
+   - TFT: send `SLPIN` (0x10) + backlight off (LM27965 ENA=0)
+   - SX1262: `SetStandby(RC)` then `SetSleep(coldStart=0, rtcTimeout=0)` — opcode 0x84, ~160 nA
+   - Teseo-LIV3FL: send `$PSTMSETMODE,0` (standby) or power-gate if possible
+   - BGA123N6 GNSS LNA: always-on from 1.8 V rail — cannot be software-disabled (Rev A limitation; Rev B should add enable GPIO)
+   - Sensors: LSM6DSV16X → power-down (CTRL1/CTRL2 = 0x00); LPS22HH → power-down (CTRL_REG1 = 0x00); LIS2MDL → idle
+   - Audio: NAU8315 SD_MODE pin → LOW (shutdown); IM69D130 → stop PDM CLK (mic enters low-power)
+   - LED driver (LM27965): all banks off, minimum current
+   - Charger (BQ25622): disable watchdog timer, reduce ADC scan rate
+   - Motor PWM: off (duty = 0, slice disabled)
+2. Enter `__wfi()` — CPU clock-gates, peripherals retain state.
+3. **Wakeup sources (WFI):** any enabled interrupt (USB, GPIO, timer).
+4. Measure total system current at: (a) all peripherals on idle, (b) each peripheral off in sequence, (c) WFI.
+
+#### Phase 2 — DORMANT Mode
+
+1. After Phase 1 peripheral shutdown, switch system clock to XOSC or ROSC.
+2. Configure GPIO wake sources:
+   - **GPIO 33 (PWR_BTN):** edge-triggered (falling edge = button press)
+   - **GPIO 29 (LORA_DIO1):** rising edge (SX1262 RX interrupt while in sleep-with-warm-start)
+   - **Keypad:** drive one column LOW, configure corresponding row as wake GPIO (subset wake — e.g., OK key only)
+3. Enter DORMANT via RP2350 POWMAN API (exact SDK function TBD — verify `pico/sleep.h` or `hardware/powman.h` availability in Pico SDK 2.x).
+4. On wake: re-init clocks → re-init peripherals → report wake source and elapsed time.
+5. Measure dormant current — target < 10 µA system-wide (per power-architecture.md Rail A spec).
+
+#### Power Tree Low-Power Audit
+
+Review each rail and load for low-power mode capability:
+
+| Component | Rail | Active Current | Low-Power Mode | Software Control | Notes |
+|-----------|------|---------------|----------------|-----------------|-------|
+| RP2350B | 1.8 V | ~25 mA | DORMANT: ~20 µA (POWMAN) | POWMAN API | Verify with scope |
+| W25Q128JW Flash | 1.8 V | ~15 mA (read) | Deep Power Down: 1 µA | Opcode 0xB9 | Must exit DPD before XIP resumes |
+| APS6404L PSRAM | 1.8 V | ~4 mA (standby) | Half-sleep: 40 µA | CE# HIGH (GPIO 0) | Already idle when CS deasserted |
+| SX1262 | 1.8 V | ~4.5 mA (Rx) | Sleep cold: 160 nA | SetSleep (0x84) | DIO1 wake still functional |
+| Teseo-LIV3FL | 1.8 V + 3.3 V | ~26 mA (tracking) | Standby: ~15 µA | `$PSTMSETMODE,0` | Verify I2C command works |
+| BGA123N6 LNA | 1.8 V | ~5 mA | **No shutdown** | None (always-on) | **Rev B: add EN GPIO** |
+| LSM6DSV16X IMU | 1.8 V | ~0.5 mA (120 Hz) | Power-down: 3 µA | CTRL1 = 0x00 | |
+| LIS2MDL Mag | 1.8 V | ~0.2 mA | Idle: 2 µA | — | Idle on POR |
+| LPS22HH Baro | 3.3 V | ~12 µA (one-shot) | Power-down: 1 µA | CTRL_REG1 = 0x00 | |
+| NHD LCD Panel | 1.8 V + 3.3 V | ~10 mA | SLPIN: < 50 µA | 0x10 command | Backlight is separate |
+| LM27965 LED | 1.8 V | ~1 mA | All off: < 1 µA | GP reg = 0x20 | |
+| NAU8315 Amp | VSYS | ~3.2 mA (idle) | SD_MODE LOW: 0.1 µA | GPIO (not connected Rev A?) | Verify SD_MODE pin routing |
+| IM69D130 Mic | 1.8 V | ~1 mA (PDM active) | CLK stop: < 5 µA | Stop PIO CLK | |
+| TPS62840 Buck | — | Iq = 60 nA | Always-on | — | Ultra-low Iq by design |
+| TPS7A2033 LDO | — | Iq = 12 µA | Always-on (EN tied) | None | **Rev B: consider EN GPIO** |
+| BQ25622 Charger | — | ~1 mA | HIZ mode: ~10 µA | REG00 EN_HIZ | |
+| BQ27441 Gauge | — | ~0.1 mA | Sleep mode: ~1 µA | Automatic | |
+
+**Key findings (pre-test):**
+- **GNSS LNA always-on (~5 mA)** is the largest uncontrollable leak. Rev B must add enable GPIO.
+- **3.3 V LDO always-on** wastes ~12 µA Iq even when no 3.3 V loads are active. Rev B could gate via GPIO.
+- **NAU8315 SD_MODE** pin routing needs verification — if not connected to a GPIO, amp draws 3.2 mA idle.
+- Best-case dormant estimate (all peripherals off, LNA excluded): **< 50 µA**. With LNA: **~5 mA floor**.
+
+#### Bringup Menu Items (to implement)
+
+- Power > "Sleep test" — Phase 1 (peripheral shutdown + WFI), display current measurement prompts on serial
+- Power > "Dormant test" — Phase 2 (DORMANT mode entry, GPIO wake), requires POWMAN API investigation
+
+#### Open Questions
+
+- [ ] RP2350 DORMANT API: verify which Pico SDK 2.x header provides `sleep_goto_dormant_until_pin()` or equivalent POWMAN function.
+- [ ] Keypad wake in DORMANT: can a single matrix key (e.g., PWR_BTN at GPIO 33) generate a DORMANT wake event? GPIO 33 is a dedicated SIO pin, not part of the keypad matrix — confirm it is directly wired to a physical button.
+- [ ] NAU8315 SD_MODE pin: is it routed to a GPIO or tied to VDD? If tied to VDD, amp cannot be software-shutdown (Rev B fix needed).
+
+---
+
+### Step 27 — LoRa Antenna VNA S11 (Planned)
+
+**Goal:** Measure LoRa antenna (Kyocera AVX M620720) return loss with VNA.
+
+#### Test Setup
+
+1. SX1262 transmits CW (continuous wave) at 920.125 MHz, +22 dBm via bringup command `lora_cw` (already implemented — Step 26 firmware).
+2. Connect VNA to LoRa antenna feed point (or use a coaxial probe on the chip antenna pad).
+3. Measure S11 across 800–1000 MHz band.
+
+#### Expected Results
+
+| Parameter | Target | Note |
+|-----------|--------|------|
+| S11 @ 920 MHz | < -10 dB | Acceptable match |
+| S11 @ 920 MHz | < -15 dB | Good match |
+| Bandwidth (S11 < -10 dB) | > 20 MHz | Covers TW 920–925 MHz ISM band |
+
+#### TX Power Verification
+
+1. Run `lora_txpow` to sweep CW power levels: -9, 0, 5, 10, 14, 17, 20, 22 dBm.
+2. Measure output power at antenna port with spectrum analyser or RF power meter.
+3. Compare measured power vs. SetTxParams setting — verify PA linearity and losses.
+
+#### Notes
+
+- RF shield (Wurth 3600213120S) lid should be removed for antenna access during VNA measurement.
+- If S11 is poor, PCB tuning stub may be required (see rf-matching.md §1.4).
+- PE4259 RF switch insertion loss (typ. 0.6 dB) should be accounted for in power measurement.
+
+---
+
+### Step 28 — GNSS Antenna VNA S11 (Planned)
+
+**Goal:** Measure GNSS antenna (Kyocera AVX M830120) return loss with VNA. Physical test only — no firmware action required.
+
+#### RF Chain
+
+```
+M830120 Chip Antenna ──► SAW (B39162B4327P810) ──► LNA (BGA123N6) ──► Teseo-LIV3FL RF_IN
+```
+
+#### Test Setup — Antenna S11 Only
+
+1. Power off the board (or enter dormant) to avoid interference from active circuits.
+2. Connect VNA port 1 to the chip antenna feed point **before the SAW filter** (measure antenna + matching network only).
+3. Sweep 1500–1650 MHz (L1 band centred at 1575.42 MHz).
+
+| Parameter | Target | Note |
+|-----------|--------|------|
+| S11 @ 1575.42 MHz | < -10 dB | Acceptable match |
+| Bandwidth (S11 < -10 dB) | > 10 MHz | Covers L1 C/A code bandwidth |
+
+#### Including SAW / LNA in Measurement
+
+Measuring S11 through the SAW filter and LNA is significantly more complex:
+- **SAW (B39162B4327P810):** passive 2-port device — requires VNA S21 measurement with matched termination on both ports. Physical access to both pads is needed; Rev A may not have convenient test points.
+- **LNA (BGA123N6):** active device, requires DC bias (1.8 V) to be applied during measurement. VNA input power must be low enough to avoid saturating the LNA (typ. -30 dBm max input). S-parameter measurement of the full chain (SAW + LNA) requires a 2-port VNA with DC bias tee.
+- **Practical recommendation:** measure antenna S11 only for Rev A. Full RF chain characterisation (SAW insertion loss, LNA gain/NF) deferred to Rev B where dedicated test points can be added.
+
+#### Relevance to Issue 11
+
+Issue 11 reported 0 satellites after >10 min outdoor cold start. Possible RF causes:
+1. Antenna ground clearance insufficient → poor S11 (this test will confirm/eliminate)
+2. SAW → LNA impedance mismatch → signal loss (requires S21 measurement, deferred)
+3. BOM discrepancy: design docs listed BGA725L6, actual part is BGA123N6 — verify part characteristics match L1 band requirements
+
+#### Open Items
+
+- [ ] Identify accessible probe point on PCB between antenna and SAW input
+- [ ] Determine if Rev A has sufficient clearance for SMA probe clip or coax stub
+- [ ] Verify BGA123N6 datasheet confirms L1 band (1575 MHz) operation — BGA725L6 was originally specified
+
 ---
 
 ### Step 26 — PSRAM 75 MHz Validation on Board #2
