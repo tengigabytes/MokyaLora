@@ -855,6 +855,13 @@ Consolidated redundant bringup menu commands, fixed a PIO state-machine leak tha
 | Bus A Diag TFT display | N/A | Title, 4 device rows (addr + name + ID status), summary "Result: X/4 pass", BACK hint; waits for BACK key before returning to menu | ✅ PASS |
 | PIO double-claim fix | `gnss_tft_test`, `tft_test`, `tft_fast_test` each called `menu_tft_start()` without releasing the menu's existing PIO SM → two SMs driving same TFT data pins → bus contention, SM leak, black screen | Added `menu_tft_stop()` at entry of all three functions; menu reclaims PIO via `menu_tft_reinit()` on return | ✅ PASS |
 | BACK key interrupt | Long-running tests (audio, LoRa RX, LED cycle, motor breathe, mic) could only be stopped via serial | Added `back_key_pressed()` checks to: `amp_test`, `amp_breathe`, `amp_bee`, `mic_raw`, `mic_loopback`, `lora_rx`, `lm27965_cycle`, `motor_breathe` | ✅ PASS |
+| Power page TFT consolidation | `status`, `adc`, `bq27441`, `scan_b`, `dump_b` — 5 serial-only commands | 3 TFT diagnostic screens: "Bus B Diag" (scan+probe), "Charger Diag" (status+ADC, 1 Hz live), "Gauge Diag" (V/I/SOC/Temp/Cap/SOH, 1 Hz live) | ✅ PASS |
+| Bus B Diag TFT display | N/A | I2C scan + per-device probe (BQ25622 Part Info, BQ27441 Device Type, LM27965 GP read); TFT green/red + serial register dump | ✅ PASS |
+| Charger Diag TFT display | N/A | VBUS/VBAT/VSYS/IBUS/IBAT + charge state, 1 Hz refresh (overwrite values only, no full-screen clear to avoid flicker) | ✅ PASS |
+| Gauge Diag TFT display | N/A | VBAT/Current/SOC/Temp/Capacity/SOH, 1 Hz refresh; NACK path shows red error on TFT with BACK wait | ✅ PASS |
+| LED control rewrite | `lm27965_cycle()` — fixed cycle demo, no individual control | `led_control()` — interactive TFT UI: UP/DN select bank, LT/RT adjust duty, OK toggle on/off; per-bank A (TFT-BL, 0-31), B (Kbd+Grn, 0-31), C (Red, 0-3) | ✅ PASS |
+| BQ25622 IINDPM | 100 mA — too low for system without battery, caused VSYS droop and screen flicker on Charge ON | 500 mA — sufficient headroom for system load + charge current | ✅ PASS |
+| Power menu cleanup | 10 entries (5 readback + 5 control) | 8 entries: Bus B Diag, Charger Diag, Gauge Diag, Charge ON/OFF/scan, LED control, Motor breathe | ✅ PASS |
 
 #### TFT layout (Bus A Diag, scale=2, 20×20 chars)
 
@@ -868,16 +875,66 @@ Row 7:  " Result: 4/4 pass   "
 Row 9:  " BACK to return     "   (gray hint)
 ```
 
+#### TFT layout (Bus B Diag, scale=2, 20×20 chars)
+
+```
+Row 0:  " Bus B Diagnostic   "   (yellow on dark blue)
+Row 2:  " Chg  6B  PN:25622  "   (green / red)
+Row 3:  " Fuel 55  DT:0421   "   (green / red)
+Row 4:  " LED  36  GP:OK     "   (green / red)
+Row 6:  " Result: 3/3 pass   "
+Row 8:  " BACK to return     "   (gray hint)
+```
+
+#### TFT layout (Charger Diag, scale=2, 1 Hz live refresh)
+
+```
+Row 0:  " Charger Diag       "   (yellow on dark blue)
+Row 2:  " VBUS:  5023 mV     "
+Row 3:  " VBAT:  3842 mV     "
+Row 4:  " VSYS:  3845 mV     "
+Row 5:  " IBUS:  +102 mA     "
+Row 6:  " IBAT:   +96 mA     "
+Row 7:  " CHG:CC    VBUS:Adpt"   (green)
+Row 9:  " BACK to return     "   (gray hint)
+```
+
+#### TFT layout (Gauge Diag, scale=2, 1 Hz live refresh)
+
+```
+Row 0:  " Fuel Gauge Diag    "   (yellow on dark blue)
+Row 2:  " VBAT:  3842 mV     "
+Row 3:  " Curr:   +96 mA     "
+Row 4:  " SOC:    72 %       "   (green >20%, red ≤20%)
+Row 5:  " Temp:  28.3 C      "
+Row 6:  " Cap: 640/890 mAh   "
+Row 7:  " SOH: 100% Full     "
+Row 9:  " BACK to return     "   (gray hint)
+```
+
+#### TFT layout (LED Control, scale=2, interactive)
+
+```
+Row 0:  " LED Control        "   (yellow on dark blue)
+Row 2:  ">TFT-BL   ON  16/31"   (selected row highlighted)
+Row 3:  " Kbd+Grn  OFF 16/31"
+Row 4:  " Red      OFF  1/ 3"
+Row 6:  " UP/DN select       "   (gray hint)
+Row 7:  " LT/RT duty OK=togg "   (gray hint)
+Row 9:  " BACK to return     "   (gray hint)
+```
+
 **Firmware files:**
 - `firmware/tools/bringup/bringup_sensors.c` — `scan_bus_a()` replaces `dump_bus_a()`
-- `firmware/tools/bringup/bringup_menu.c` — `cmd_scan_a()` wrapper with BACK wait; "Bus A Diag" menu entry
+- `firmware/tools/bringup/bringup_menu.c` — `cmd_scan_a()` wrapper with BACK wait; "Bus A Diag" menu entry; Power page updated: 5 readback → 3 TFT diag, LED cycle → LED control
 - `firmware/tools/bringup/bringup_gnss_tft.c` — `menu_tft_stop()` at entry
 - `firmware/tools/bringup/bringup_tft.c` — `menu_tft_stop()` at entry of `tft_test()` and `tft_fast_test()`
 - `firmware/tools/bringup/bringup_menu.h` — `MC_OK` (green) and `MC_ERR` (red) colour constants
 - `firmware/tools/bringup/bringup_audio.c` — `back_key_pressed()` in `amp_test`, `amp_breathe`, `amp_bee`, `mic_raw`, `mic_loopback`
 - `firmware/tools/bringup/bringup_lora.c` — `back_key_pressed()` in `lora_rx`
-- `firmware/tools/bringup/bringup_power.c` — `back_key_pressed()` in `lm27965_cycle`, `motor_breathe`
-- `firmware/tools/bringup/i2c_custom_scan.c` — `dump_a` removed; `scan_a` calls `scan_bus_a()`
+- `firmware/tools/bringup/bringup_power.c` — `scan_bus_b()`, `charger_diag()`, `gauge_diag()`, `led_control()` (replaces `lm27965_cycle()`); IINDPM 100→500 mA; `back_key_pressed()` in `motor_breathe`
+- `firmware/tools/bringup/bringup.h` — added `scan_bus_b`, `charger_diag`, `gauge_diag`, `led_control` declarations
+- `firmware/tools/bringup/i2c_custom_scan.c` — `dump_a` removed; `scan_a` calls `scan_bus_a()`; `scan_b` calls `scan_bus_b()`; `led` calls `led_control()`
 
 ---
 

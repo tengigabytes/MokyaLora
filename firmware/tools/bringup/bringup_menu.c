@@ -385,8 +385,6 @@ int menu_tft_height(void) { return m_height; }
 // ---------------------------------------------------------------------------
 
 // Thin wrappers for commands that need bus_b_init/deinit bracketing
-static void cmd_status(void)     { bus_b_init(); bq25622_print_status(); bus_b_deinit(); }
-static void cmd_adc(void)        { bus_b_init(); bq25622_read_adc(); bus_b_deinit(); }
 static void cmd_charge_on(void)  { bus_b_init(); bq25622_enable_charge(); bus_b_deinit(); }
 static void cmd_charge_off(void) { bus_b_init(); bq25622_disable_charge(); bus_b_deinit(); }
 static void cmd_charge_scan(void) {
@@ -397,16 +395,26 @@ static void cmd_charge_scan(void) {
     perform_scan(i2c1, BUS_B_SDA, BUS_B_SCL, "Bus B (Power, i2c1) -- post charge_on");
     printf("Expected: 0x6B(Charger)  0x55(FuelGauge -- only if awake)  0x36(LED)\n");
 }
-static void cmd_led(void)        { bus_b_init(); lm27965_cycle(); bus_b_deinit(); }
+static void cmd_scan_b_tft(void) {
+    scan_bus_b();
+    while (!back_key_pressed()) sleep_ms(50);
+}
+static void cmd_charger_diag(void) {
+    charger_diag();
+}
+static void cmd_gauge_diag(void) {
+    gauge_diag();
+}
+static void cmd_led(void) {
+    bus_b_init();
+    led_control();
+    bus_b_deinit();
+}
 static void cmd_scan_a(void) {
     scan_bus_a();
     // Keep results visible until BACK key (back_key_init already
     // called by menu_handle_key before invoking run callback).
     while (!back_key_pressed()) sleep_ms(50);
-}
-static void cmd_scan_b(void) {
-    perform_scan(i2c1, BUS_B_SDA, BUS_B_SCL, "Bus B (Power, i2c1)");
-    printf("Expected: 0x6B(Charger)  0x55(FuelGauge)  0x36(LED)\n");
 }
 static void cmd_lora_rx_lf(void) {
     lora_rx(923875000UL, 11, 0x08, 0x01, 30);
@@ -433,16 +441,14 @@ static const menu_page_t page_sensors = {
 
 // --- Power page ---
 static const menu_item_t page_power_items[] = {
-    {"Charger status",  cmd_status,      NULL},
-    {"Charger ADC",     cmd_adc,         NULL},
+    {"Bus B Diag",      cmd_scan_b_tft,  NULL},
+    {"Charger Diag",    cmd_charger_diag,NULL},
+    {"Gauge Diag",      cmd_gauge_diag,  NULL},
     {"Charge ON",       cmd_charge_on,   NULL},
     {"Charge OFF",      cmd_charge_off,  NULL},
     {"Charge scan",     cmd_charge_scan, NULL},
-    {"BQ27441 gauge",   bq27441_read,    NULL},
-    {"LED cycle",       cmd_led,         NULL},
+    {"LED control",     cmd_led,         NULL},
     {"Motor breathe",   motor_breathe,   NULL},
-    {"Scan Bus B",      cmd_scan_b,      NULL},
-    {"Dump Bus B",      dump_bus_b,      NULL},
 };
 static const menu_page_t page_power = {
     "Power", page_power_items, sizeof(page_power_items) / sizeof(page_power_items[0])

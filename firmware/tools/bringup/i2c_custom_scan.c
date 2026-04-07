@@ -109,8 +109,7 @@ void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "scan_a") == 0) {
         scan_bus_a();
     } else if (strcmp(cmd, "scan_b") == 0) {
-        perform_scan(i2c1, BUS_B_SDA, BUS_B_SCL, "Bus B (Power, i2c1)");
-        printf("Expected: 0x6B(Charger)  0x55(FuelGauge)  0x36(LED)\n");
+        scan_bus_b();
     } else if (strcmp(cmd, "status") == 0) {
         bus_b_init();
         bq25622_print_status();
@@ -121,7 +120,7 @@ void handle_command(const char *cmd) {
         bus_b_deinit();
     } else if (strcmp(cmd, "led") == 0) {
         bus_b_init();
-        lm27965_cycle();
+        led_control();
         bus_b_deinit();
     } else if (strcmp(cmd, "motor") == 0) {
         motor_breathe();
@@ -225,10 +224,10 @@ void handle_command(const char *cmd) {
         printf("  gnss_info   -- Teseo-LIV3FL: send $PSTMGETSWVER + read 300-byte NMEA stream\n");
         printf("  scan_a      -- Bus A diagnostic: scan + WHO_AM_I + reg dump (TFT)\n");
         printf("  dump_b      -- dump Bus B device registers (Charger/LED)\n");
-        printf("  scan_b      -- scan Bus B (power, GPIO 6/7)\n");
+        printf("  scan_b      -- Bus B diagnostic: scan + probe + reg dump (TFT)\n");
         printf("  status      -- BQ25622 charger status\n");
         printf("  adc         -- BQ25622 ADC: IBUS/IBAT/VBUS/VPMID/VBAT/VSYS\n");
-        printf("  led         -- LED cycle (keyboard/red/green)\n");
+        printf("  led         -- LED interactive control: per-bank on/off + duty (TFT)\n");
         printf("  motor       -- vibration motor breathe x5\n");
         printf("  amp_test    -- NAU8315 constant tone 5 s at 80%% (hardware check)\n");
         printf("  amp         -- NAU8315 speaker breathe tone x5 (~444 Hz)\n");
