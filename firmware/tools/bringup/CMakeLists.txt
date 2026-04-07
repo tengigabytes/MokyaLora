@@ -4,12 +4,19 @@ cmake_minimum_required(VERSION 3.20)
 set(BRINGUP_SOURCES
     i2c_custom_scan.c
     bringup_power.c
+    bringup_led.c
+    bringup_charger.c
+    bringup_gauge.c
     bringup_sensors.c
-    bringup_audio.c
+    bringup_amp.c
+    bringup_mic.c
     bringup_sram.c
+    bringup_psram.c
+    bringup_memory_tft.c
     bringup_flash.c
     bringup_lora.c
     bringup_tft.c
+    bringup_tft_draw.c
     bringup_gnss_tft.c
     bringup_core1.c
     bringup_menu.c
@@ -59,7 +66,11 @@ pico_add_extra_outputs(i2c_custom_scan)
 # No USB stdio required — exits via physical BACK key.
 add_executable(gnss_tft_standalone
     bringup_power.c
+    bringup_led.c
+    bringup_charger.c
+    bringup_gauge.c
     bringup_gnss_tft.c
+    bringup_tft_draw.c
     bringup_menu.c
     gnss_tft_main.c
 )

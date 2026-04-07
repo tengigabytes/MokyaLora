@@ -391,10 +391,6 @@ Circuit: DATA line has a 100 Ω series resistor + 100 kΩ pull-down ∥ 47 pF to
 
 Attempted to replace CIC+IIR with ST OpenPDMFilter (Apache-2.0, sinc³ cascade, LUT-accelerated). After integration, all PDM FIFO reads returned `0x00000000`; PCM output was a constant −1024. `mic_raw` (not using the filter) continued to show valid 49.8 % density — hardware is not at fault. Root cause not determined. Reverted at commit 1853c9e.
 
----
-
-## Pending Steps
-
 ### Step 11 — J-Link Debug Validation
 
 **Result: ✅ PASS**
@@ -869,91 +865,7 @@ Consolidated redundant bringup menu commands, fixed a PIO state-machine leak tha
 | PSRAM Tuning (TFT) | Serial-only | Merged psram_speed + psram_diag + flash_speed; TFT shows best CLKDIV/RXDELAY/MHz for PSRAM and Flash | ✅ PASS |
 | PSRAM Debug (TFT) | 3 tests (SPI ID, SPI Wr/Rd, XIP Sentinel) | Simplified to 2 tests: Init QPI + XIP Sentinel (SPI probe redundant if XIP works) | ✅ PASS |
 
-#### TFT layout (Bus A Diag, scale=2, 20×20 chars)
-
-```
-Row 0:  " Bus A Diagnostic   "   (yellow on dark blue)
-Row 2:  " IMU  6A  ID:70 OK  "   (green / red)
-Row 3:  " Mag  1E  ID:40 OK  "
-Row 4:  " Baro 5D  ID:B3 OK  "
-Row 5:  " GNSS 3A  ACK OK    "
-Row 7:  " Result: 4/4 pass   "
-Row 9:  " BACK to return     "   (gray hint)
-```
-
-#### TFT layout (Bus B Diag, scale=2, 20×20 chars)
-
-```
-Row 0:  " Bus B Diagnostic   "   (yellow on dark blue)
-Row 2:  " Chg  6B  PN:25622  "   (green / red)
-Row 3:  " Fuel 55  DT:0421   "   (green / red)
-Row 4:  " LED  36  GP:OK     "   (green / red)
-Row 6:  " Result: 3/3 pass   "
-Row 8:  " BACK to return     "   (gray hint)
-```
-
-#### TFT layout (Charger Diag, scale=2, 1 Hz live refresh)
-
-```
-Row 0:  " Charger Diag       "   (yellow on dark blue)
-Row 2:  " VBUS:  5023 mV     "
-Row 3:  " VBAT:  3842 mV     "
-Row 4:  " VSYS:  3845 mV     "
-Row 5:  " IBUS:  +102 mA     "
-Row 6:  " IBAT:   +96 mA     "
-Row 7:  " CHG:CC    VBUS:Adpt"   (green)
-Row 9:  " BACK to return     "   (gray hint)
-```
-
-#### TFT layout (Gauge Diag, scale=2, 1 Hz live refresh)
-
-```
-Row 0:  " Fuel Gauge Diag    "   (yellow on dark blue)
-Row 2:  " VBAT:  3842 mV     "
-Row 3:  " Curr:   +96 mA     "
-Row 4:  " SOC:    72 %       "   (green >20%, red ≤20%)
-Row 5:  " Temp:  28.3 C      "
-Row 6:  " Cap: 640/890 mAh   "
-Row 7:  " SOH: 100% Full     "
-Row 9:  " BACK to return     "   (gray hint)
-```
-
-#### TFT layout (LED Control, scale=2, interactive)
-
-```
-Row 0:  " LED Control        "   (yellow on dark blue)
-Row 2:  ">TFT-BL   ON  16/31"   (selected row highlighted)
-Row 3:  " Kbd+Grn  OFF 16/31"
-Row 4:  " Red      OFF  1/ 3"
-Row 6:  " UP/DN select       "   (gray hint)
-Row 7:  " LT/RT duty OK=togg "   (gray hint)
-Row 9:  " BACK to return     "   (gray hint)
-```
-
-#### TFT layout (Memory Diag, scale=2)
-
-```
-Row 0:  " Memory Diagnostic  "   (yellow on dark blue)
-Row 2:  " SRAM 16KB  PASS    "   (green / red)
-Row 3:  " JEDEC      PASS    "
-Row 4:  " QE Bit     PASS    "
-Row 5:  " PSRAM Init PASS    "
-Row 6:  " PSRAM 4KB  PASS    "
-Row 8:  " 5/5 PASS           "
-Row 10: " BACK to return     "   (gray hint)
-```
-
-#### TFT layout (PSRAM Speed, scale=2)
-
-```
-Row 0:  " PSRAM Speed Test   "   (yellow on dark blue)
-Row 2:  " Wr: 4041ms 2027KB/s"
-Row 3:  " Rd: 5019ms 1632KB/s"   (green if 0 errors, red otherwise)
-Row 7:  " Wr:1926ns 288clk   "
-Row 8:  " Rd:2393ns 358clk   "
-Row 10: " PASS  err=0        "   (green / red)
-Row 12: " BACK to return     "   (gray hint)
-```
+TFT screen layouts for all diagnostic screens: see [tft-layouts.md](tft-layouts.md).
 
 **Firmware files:**
 - `firmware/tools/bringup/bringup_sensors.c` — `scan_bus_a()` replaces `dump_bus_a()`
@@ -961,14 +873,43 @@ Row 12: " BACK to return     "   (gray hint)
 - `firmware/tools/bringup/bringup_gnss_tft.c` — `menu_tft_stop()` at entry
 - `firmware/tools/bringup/bringup_tft.c` — `menu_tft_stop()` at entry of `tft_test()` and `tft_fast_test()`
 - `firmware/tools/bringup/bringup_menu.h` — `MC_OK` (green) and `MC_ERR` (red) colour constants
-- `firmware/tools/bringup/bringup_audio.c` — `back_key_pressed()` in `amp_test`, `amp_breathe`, `amp_bee`, `mic_raw`, `mic_loopback`
+- `firmware/tools/bringup/bringup_amp.c` — `back_key_pressed()` in `amp_test`, `amp_breathe`, `amp_bee` (split from bringup_audio.c in Step 21)
+- `firmware/tools/bringup/bringup_mic.c` — `back_key_pressed()` in `mic_raw`, `mic_loopback` (split from bringup_audio.c in Step 21)
 - `firmware/tools/bringup/bringup_lora.c` — `back_key_pressed()` in `lora_rx`
-- `firmware/tools/bringup/bringup_power.c` — `scan_bus_b()`, `charger_diag()`, `gauge_diag()`, `led_control()` (replaces `lm27965_cycle()`); IINDPM 100→500 mA; `back_key_pressed()` in `motor_breathe`
-- `firmware/tools/bringup/bringup.h` — added `scan_bus_b`, `charger_diag`, `gauge_diag`, `led_control` declarations
-- `firmware/tools/bringup/bringup_sram.c` — `cmd_memory_diag()`, `cmd_psram_full_tft()`, `cmd_psram_tuning()`, `cmd_psram_debug()`, `cmd_psram_dma_test()` (CPU-only speed test), `psram_rd_diag()` (serial DMA diagnostic)
+- `firmware/tools/bringup/bringup_power.c` — `scan_bus_b()`, `motor_breathe()` with `back_key_pressed()`; IINDPM 100→500 mA (split from original in Step 21)
+- `firmware/tools/bringup/bringup_charger.c` — `charger_diag()`, `bq25622_enable/disable_charge()` (split from bringup_power.c in Step 21)
+- `firmware/tools/bringup/bringup_gauge.c` — `gauge_diag()`, `bq27441_read()` with BIE fix (split from bringup_power.c in Step 21)
+- `firmware/tools/bringup/bringup_led.c` — `led_control()` (replaces `lm27965_cycle()`) (split from bringup_power.c in Step 21)
+- `firmware/tools/bringup/bringup.h` — umbrella header; added `scan_bus_b`, `charger_diag`, `gauge_diag`, `led_control` declarations
+- `firmware/tools/bringup/bringup_psram.c` — `psram_init()`, `psram_test()`, speed/diag sweep (split from bringup_sram.c in Step 21)
+- `firmware/tools/bringup/bringup_memory_tft.c` — `cmd_memory_diag()`, `cmd_psram_full_tft()`, `cmd_psram_tuning()`, `cmd_psram_debug()`, `cmd_psram_dma_test()` (CPU-only speed test), `psram_rd_diag()` (split from bringup_sram.c in Step 21)
+- `firmware/tools/bringup/bringup_flash.c` — `flash_test()`, `flash_speed_test()`, `flash_speed_run()` (expanded from 51→145 lines in Step 21)
 - `firmware/tools/bringup/i2c_custom_scan.c` — `dump_a` removed; `scan_a` calls `scan_bus_a()`; `scan_b` calls `scan_bus_b()`; `led` calls `led_control()`; added `mem_diag`, `psram_full_tft`, `psram_tuning`, `psram_debug`, `psram_dma`, `psram_rd_diag` serial commands
 
 ---
+
+### Step 21 — Bringup Code Modularisation
+
+**Result: ✅ PASS** (2026-04-07)
+
+Systematic split of overgrown bringup source files into per-subsystem modules aligned with the planned Core 1 HAL architecture. Umbrella header pattern preserves backward compatibility — no `.c` file `#include` changes required. Build verified; firmware flashed and running.
+
+#### Changes (5 phases)
+
+| Phase | Original File (lines) | Split Into | Retained (lines) |
+|-------|----------------------|------------|-------------------|
+| 1 — Headers | `bringup.h` (340) | `bringup_pins.h` (100), `bringup_lm27965.h` (25), `bringup_bq25622.h` (68), `bringup_bq27441.h` (54), `bringup_sx1262.h` (32), `bringup_power.h` (17) | `bringup.h` (127, umbrella) |
+| 2 — Power | `bringup_power.c` (1076) | `bringup_led.c` (158), `bringup_charger.c` (330), `bringup_gauge.c` (440) | `bringup_power.c` (168) |
+| 3 — Memory | `bringup_sram.c` (1721) | `bringup_psram.c` (804), `bringup_memory_tft.c` (733), `bringup_flash.c` expanded (145) | `bringup_sram.c` (86) |
+| 4 — Audio | `bringup_audio.c` (765) | `bringup_amp.c` (316), `bringup_mic.c` (467), `bringup_amp.h` (6) | deleted |
+| 5 — Menu/TFT | `bringup_menu.c` (778) | `bringup_tft_draw.c` (385) | `bringup_menu.c` (414) |
+
+**Summary:** 7 new headers + 8 new `.c` files. Longest file reduced from 1721 → 804 lines. Core source total ~8580 lines across 21 `.c` files and 10 headers. Zero behaviour change; binary output identical modulo linker order.
+
+**Firmware notes:**
+- Step 20 firmware file references updated: `bringup_audio.c` → `bringup_amp.c` + `bringup_mic.c`; `bringup_power.c` functions split into `bringup_led.c`, `bringup_charger.c`, `bringup_gauge.c`; `bringup_sram.c` memory/TFT functions split into `bringup_psram.c`, `bringup_memory_tft.c`, `bringup_flash.c`; `bringup_menu.c` TFT drawing split into `bringup_tft_draw.c`
+- `CMakeLists.txt` updated for all 3 build targets (`i2c_custom_scan`, `gnss_tft_standalone`, `core1_bringup_test`)
+- Cross-file dependencies resolved: `amp_pio_start/stop`, `bee_note` (amp→mic); `bq25622_reg_read/write`, `fg_read16/ctrl_write/ctrl_read`, `lm_read` (power subsystem); `psram_set_timing`, `psram_sweep_pass`, `flash_speed_run` (memory→TFT); `menu_tft_active()` getter (tft_draw→menu)
 
 ---
 
