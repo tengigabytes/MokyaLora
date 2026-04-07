@@ -1608,7 +1608,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/Infineon-IM69D130-DS-v01_00-EN.pdf"
+		(property "Datasheet" "https://www.infineon.com/assets/row/public/documents/24/49/infineon-im69d130-datasheet-en.pdf?fileId=5546d462602a9dc801607a0e46511a2e"
 			(at 124.46 68.834 0)
 			(effects
 				(font
@@ -1781,7 +1781,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-07100KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-07100KL"
 			(at 162.56 96.52 0)
 			(effects
 				(font
@@ -1878,7 +1878,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402JRNPO9BN470.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402JRNPO9BN470"
 			(at 172.72 96.52 0)
 			(effects
 				(font
@@ -1984,7 +1984,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 111.76 91.44 0)
 			(effects
 				(font
@@ -2153,7 +2153,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W100RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W100RL"
 			(at 152.4 93.98 0)
 			(effects
 				(font

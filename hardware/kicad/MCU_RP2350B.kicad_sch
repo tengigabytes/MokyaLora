@@ -7785,7 +7785,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FRNPO9BN150.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FRNPO9BN150"
 			(at 114.3 73.66 0)
 			(effects
 				(font
@@ -7890,7 +7890,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 25.4 63.5 0)
 			(effects
 				(font
@@ -7993,7 +7993,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 104.14 81.28 0)
 			(effects
 				(font
@@ -8361,7 +8361,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FRNPO9BN150.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FRNPO9BN150"
 			(at 114.3 81.28 0)
 			(effects
 				(font
@@ -8531,7 +8531,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 68.58 0)
 			(effects
 				(font
@@ -8728,7 +8728,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 25.4 73.66 0)
 			(effects
 				(font
@@ -8831,7 +8831,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AOTA-B201610S3R3-101-T.pdf"
+		(property "Datasheet" "https://abracon.com/datasheets/AOTA-B201610S3R3-101-T.pdf"
 			(at 33.02 48.26 0)
 			(effects
 				(font
@@ -8925,7 +8925,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 91.44 0)
 			(effects
 				(font
@@ -9230,7 +9230,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/eSH.pdf"
+		(property "Datasheet" "https://www.jst-mfg.com/product/index.php?series=231"
 			(at 116.84 91.44 0)
 			(effects
 				(font
@@ -9399,7 +9399,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 104.14 170.18 0)
 			(effects
 				(font
@@ -9503,7 +9503,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/RP-008373-DS-2-rp2350-datasheet.pdf"
+		(property "Datasheet" "https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008280-DS-1-hardware-design-with-rp2350.pdf?disposition=inline"
 			(at 64.77 25.4 0)
 			(effects
 				(font
@@ -9834,7 +9834,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 127 0)
 			(effects
 				(font
@@ -9928,7 +9928,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 88.9 0)
 			(effects
 				(font
@@ -10221,7 +10221,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 248.92 43.18 0)
 			(effects
 				(font
@@ -10315,7 +10315,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 119.38 0)
 			(effects
 				(font
@@ -10409,7 +10409,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 190.5 132.08 0)
 			(effects
 				(font
@@ -10569,7 +10569,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 53.34 0)
 			(effects
 				(font
@@ -10935,7 +10935,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 248.92 30.48 0)
 			(effects
 				(font
@@ -11031,7 +11031,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 25.4 83.82 0)
 			(effects
 				(font
@@ -11344,7 +11344,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 48.26 0)
 			(effects
 				(font
@@ -11450,7 +11450,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/CC0402KRX5R6BB475.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/CC0402KRX5R6BB475"
 			(at 25.4 50.8 0)
 			(effects
 				(font
@@ -11775,7 +11775,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 71.12 0)
 			(effects
 				(font
@@ -11869,7 +11869,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 66.04 0)
 			(effects
 				(font
@@ -11963,7 +11963,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 76.2 0)
 			(effects
 				(font
@@ -12060,7 +12060,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 58.42 0)
 			(effects
 				(font
@@ -12163,7 +12163,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 58.42 0)
 			(effects
 				(font
@@ -12327,7 +12327,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 104.14 144.78 0)
 			(effects
 				(font
@@ -12498,7 +12498,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/RP-008373-DS-2-rp2350-datasheet.pdf"
+		(property "Datasheet" "https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008280-DS-1-hardware-design-with-rp2350.pdf?disposition=inline"
 			(at 209.55 25.4 0)
 			(effects
 				(font
@@ -12832,7 +12832,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 38.1 0)
 			(effects
 				(font
@@ -13002,7 +13002,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 190.5 134.62 0)
 			(effects
 				(font
@@ -13096,7 +13096,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 43.18 0)
 			(effects
 				(font
@@ -13326,7 +13326,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/RP-008373-DS-2-rp2350-datasheet.pdf"
+		(property "Datasheet" "https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008280-DS-1-hardware-design-with-rp2350.pdf?disposition=inline"
 			(at 151.13 86.36 0)
 			(effects
 				(font
@@ -13798,7 +13798,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 73.66 0)
 			(effects
 				(font
@@ -13959,7 +13959,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 38.1 0)
 			(effects
 				(font
@@ -14195,7 +14195,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/CC0402KRX5R6BB475.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/CC0402KRX5R6BB475"
 			(at 35.56 35.56 0)
 			(effects
 				(font
@@ -14365,7 +14365,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 116.84 66.04 0)
 			(effects
 				(font
@@ -14592,7 +14592,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 45.72 0)
 			(effects
 				(font
@@ -14753,7 +14753,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 190.5 129.54 0)
 			(effects
 				(font
@@ -14917,7 +14917,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 88.9 0)
 			(effects
 				(font
@@ -15087,7 +15087,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 124.46 27.94 0)
 			(effects
 				(font
@@ -15181,7 +15181,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 248.92 35.56 0)
 			(effects
 				(font
@@ -15278,7 +15278,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/CC0402KRX5R6BB475.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/CC0402KRX5R6BB475"
 			(at 25.4 35.56 0)
 			(effects
 				(font
@@ -15448,7 +15448,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 248.92 33.02 0)
 			(effects
 				(font
@@ -15544,7 +15544,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/ABM8-272-T3.pdf"
+		(property "Datasheet" "https://abracon.com/parametric/crystals/ABM8-12.000MHZ-B2-T3"
 			(at 111.76 73.66 0)
 			(effects
 				(font
@@ -15847,7 +15847,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX5R5BB105.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX5R5BB105"
 			(at 114.3 144.78 0)
 			(effects
 				(font
@@ -16157,7 +16157,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 190.5 137.16 0)
 			(effects
 				(font
@@ -16251,7 +16251,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 248.92 45.72 0)
 			(effects
 				(font
@@ -16345,7 +16345,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 104.14 0)
 			(effects
 				(font
@@ -16442,7 +16442,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 99.06 0)
 			(effects
 				(font
@@ -16545,7 +16545,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W33RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W33RL"
 			(at 27.94 33.02 0)
 			(effects
 				(font
@@ -16639,7 +16639,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 116.84 60.96 0)
 			(effects
 				(font
@@ -16800,7 +16800,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 50.8 0)
 			(effects
 				(font
@@ -16961,7 +16961,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 116.84 0)
 			(effects
 				(font
@@ -17122,7 +17122,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 63.5 0)
 			(effects
 				(font
@@ -17216,7 +17216,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 114.3 0)
 			(effects
 				(font
@@ -17310,7 +17310,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 248.92 38.1 0)
 			(effects
 				(font
@@ -17406,7 +17406,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 25.4 104.14 0)
 			(effects
 				(font
@@ -17512,7 +17512,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 106.68 109.22 0)
 			(effects
 				(font
@@ -17689,7 +17689,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 101.6 0)
 			(effects
 				(font
@@ -17786,7 +17786,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 68.58 0)
 			(effects
 				(font
@@ -17889,7 +17889,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 124.46 0)
 			(effects
 				(font
@@ -17986,7 +17986,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 27.94 0)
 			(effects
 				(font
@@ -18089,7 +18089,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 96.52 0)
 			(effects
 				(font
@@ -18183,7 +18183,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 106.68 0)
 			(effects
 				(font
@@ -18277,7 +18277,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W10RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W10RL"
 			(at 104.14 33.02 0)
 			(effects
 				(font
@@ -18512,7 +18512,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/RP-008373-DS-2-rp2350-datasheet.pdf"
+		(property "Datasheet" "https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008280-DS-1-hardware-design-with-rp2350.pdf?disposition=inline"
 			(at 21.59 25.4 0)
 			(effects
 				(font
@@ -18846,7 +18846,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W10KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W10KL"
 			(at 106.68 101.6 0)
 			(effects
 				(font
@@ -19082,7 +19082,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/APM_PSRAM_E3_QSPI (APS6404L-SQN KGD_PKG) v4.0.pdf"
+		(property "Datasheet" "https://www.apmemory.com/tw/downloadFiles/0324112120g3605268"
 			(at 78.74 114.3 0)
 			(effects
 				(font
@@ -19197,7 +19197,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 55.88 0)
 			(effects
 				(font
@@ -19557,7 +19557,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 25.4 93.98 0)
 			(effects
 				(font
@@ -19794,7 +19794,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 248.92 40.64 0)
 			(effects
 				(font
@@ -20090,7 +20090,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 109.22 0)
 			(effects
 				(font
@@ -20193,7 +20193,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W1KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W1KL"
 			(at 248.92 27.94 0)
 			(effects
 				(font
@@ -20290,7 +20290,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 71.12 78.74 0)
 			(effects
 				(font
@@ -20527,7 +20527,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/RP-008373-DS-2-rp2350-datasheet.pdf"
+		(property "Datasheet" "https://pip-assets.raspberrypi.com/categories/1214-rp2350/documents/RP-008280-DS-1-hardware-design-with-rp2350.pdf?disposition=inline"
 			(at 151.13 25.4 0)
 			(effects
 				(font
@@ -20858,7 +20858,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W22RL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W22RL"
 			(at 190.5 60.96 0)
 			(effects
 				(font

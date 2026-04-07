@@ -1,4 +1,5 @@
 #include "bringup.h"
+#include "bringup_menu.h"
 #include "tft_8080.pio.h"
 
 // ---------------------------------------------------------------------------
@@ -200,140 +201,9 @@ static void tft_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     tft_dat(y1 >> 8); tft_dat(y1 & 0xFF);
 }
 
-// Fill a rectangle with a solid colour
-static void tft_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t colour) {
-    if (!w || !h) return;
-    tft_set_window(x, y, (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
-    tft_cmd(0x2C);
-    uint8_t hi = colour >> 8, lo = colour & 0xFF;
-    for (uint32_t i = 0; i < (uint32_t)w * h; i++) {
-        pio_sm_put_blocking(TFT_PIO, tft_sm, hi);
-        pio_sm_put_blocking(TFT_PIO, tft_sm, lo);
-    }
-    tft_flush();
-}
-
-// Convert hue 0-359 → RGB565 (full saturation, full value)
-static uint16_t hue_to_rgb565(int h) {
-    int sector = h / 60;
-    int frac   = (h % 60) * 255 / 59;
-    uint8_t r, g, b;
-    switch (sector) {
-        case 0: r = 255;        g = (uint8_t)frac;       b = 0;               break;
-        case 1: r = 255 - frac; g = 255;                 b = 0;               break;
-        case 2: r = 0;          g = 255;                 b = (uint8_t)frac;   break;
-        case 3: r = 0;          g = 255 - frac;          b = 255;             break;
-        case 4: r = (uint8_t)frac; g = 0;               b = 255;             break;
-        default:r = 255;        g = 0;                   b = 255 - frac;      break;
-    }
-    return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
-}
-
 // ---------------------------------------------------------------------------
-// Dynamic sub-tests
+// (Dynamic sub-tests moved to tft_fast_test — DMA-accelerated versions)
 // ---------------------------------------------------------------------------
-
-// Sub-test 1: 8 SMPTE-style vertical colour bars (each 30 px wide)
-static void tft_subtest_colorbars(void) {
-    printf("  [dynamic 1/4] SMPTE colour bars...");
-    static const uint16_t bars[8] = {
-        0xFFFF,  // White
-        0xFFE0,  // Yellow
-        0x07FF,  // Cyan
-        0x07E0,  // Green
-        0xF81F,  // Magenta
-        0xF800,  // Red
-        0x001F,  // Blue
-        0x0000,  // Black
-    };
-    for (int i = 0; i < 8; i++) {
-        uint16_t x = (uint16_t)(i * 30);
-        tft_fill_rect(x, 0, 30, 320, bars[i]);
-    }
-    printf(" done\n");
-    sleep_ms(2500);
-}
-
-// Sub-test 2: Full-screen hue gradient, then animate a scroll for ~3 s
-static void tft_subtest_gradient(void) {
-    printf("  [dynamic 2/4] Hue gradient + scroll...");
-
-    // Precompute all 360 hues and per-column base hue
-    static uint16_t rainbow[360];
-    static uint16_t col_hue[240];
-    for (int i = 0; i < 360; i++) rainbow[i] = hue_to_rgb565(i);
-    for (int x = 0; x < 240; x++) col_hue[x] = (uint16_t)(x * 360 / 240);
-
-    // Static gradient (one pass)
-    tft_set_window(0, 0, 239, 319);
-    tft_cmd(0x2C);
-    for (int y = 0; y < 320; y++) {
-        for (int x = 0; x < 240; x++) {
-            uint16_t c = rainbow[col_hue[x]];
-            pio_sm_put_blocking(TFT_PIO, tft_sm, c >> 8);
-            pio_sm_put_blocking(TFT_PIO, tft_sm, c & 0xFF);
-        }
-    }
-    tft_flush();
-    sleep_ms(1500);
-
-    // Scroll: 90 frames, hue offset advances 4° per frame (~3 s)
-    for (int offset = 0; offset < 360; offset += 4) {
-        tft_set_window(0, 0, 239, 319);
-        tft_cmd(0x2C);
-        for (int y = 0; y < 320; y++) {
-            for (int x = 0; x < 240; x++) {
-                int idx = col_hue[x] + offset;
-                if (idx >= 360) idx -= 360;
-                uint16_t c = rainbow[idx];
-                pio_sm_put_blocking(TFT_PIO, tft_sm, c >> 8);
-                pio_sm_put_blocking(TFT_PIO, tft_sm, c & 0xFF);
-            }
-        }
-        tft_flush();
-    }
-    printf(" done\n");
-}
-
-// Sub-test 3: Black-and-white checkerboard (32×32 px blocks)
-static void tft_subtest_checkerboard(void) {
-    printf("  [dynamic 3/4] Checkerboard (32×32 blocks)...");
-    tft_set_window(0, 0, 239, 319);
-    tft_cmd(0x2C);
-    for (int y = 0; y < 320; y++) {
-        for (int x = 0; x < 240; x++) {
-            uint16_t c = (((x >> 5) ^ (y >> 5)) & 1) ? 0xFFFF : 0x0000;
-            pio_sm_put_blocking(TFT_PIO, tft_sm, c >> 8);
-            pio_sm_put_blocking(TFT_PIO, tft_sm, c & 0xFF);
-        }
-    }
-    tft_flush();
-    printf(" done\n");
-    sleep_ms(2500);
-}
-
-// Sub-test 4: Bouncing yellow block on blue background (~80 frames)
-static void tft_subtest_bounce(void) {
-    printf("  [dynamic 4/4] Bouncing block (80 frames)...\n");
-    const uint16_t BW = 32, BH = 32;
-    const uint16_t BG = 0x001F;  // blue
-    const uint16_t FG = 0xFFE0;  // yellow
-
-    tft_fill(BG);
-
-    int bx = 0, by = 0, dx = 4, dy = 3;
-    for (int f = 0; f < 80; f++) {
-        tft_fill_rect((uint16_t)bx, (uint16_t)by, BW, BH, BG);  // erase
-        bx += dx;  by += dy;
-        if (bx < 0)              { bx = 0;            dx = -dx; }
-        if (by < 0)              { by = 0;             dy = -dy; }
-        if (bx + (int)BW > 240)  { bx = 240 - BW;     dx = -dx; }
-        if (by + (int)BH > 320)  { by = 320 - BH;     dy = -dy; }
-        tft_fill_rect((uint16_t)bx, (uint16_t)by, BW, BH, FG);  // draw
-        sleep_ms(40);
-    }
-    printf("    done\n");
-}
 
 // ---------------------------------------------------------------------------
 // tft_test — public entry point
@@ -347,6 +217,9 @@ void tft_test(void) {
            TFT_D0_PIN, TFT_D0_PIN + 7, TFT_nRST_PIN);
     printf("  clkdiv=%.0f  write cycle=%.0f ns\n",
            TFT_CLK_DIV, 4.0f * TFT_CLK_DIV * 1000.0f / 125.0f);
+
+    // Release menu PIO SM to avoid double-drive on TFT pins
+    menu_tft_stop();
 
     // SIO-controlled pins
     gpio_init(TFT_nCS_PIN);  gpio_set_dir(TFT_nCS_PIN,  GPIO_OUT); gpio_put(TFT_nCS_PIN,  1);
@@ -389,40 +262,527 @@ void tft_test(void) {
         { 0xFFFF, "White" },
         { 0x0000, "Black" },
     };
+    uint32_t fill_ms[5] = {0};
     for (int i = 0; i < 5; i++) {
+        if (back_key_pressed()) break;
         printf("  Fill %-6s (0x%04X) ...", seq[i].name, seq[i].colour);
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
         tft_fill(seq[i].colour);
-        printf(" done\n");
+        fill_ms[i] = to_ms_since_boot(get_absolute_time()) - t0;
+        printf(" %lu ms  (%.2f FPS)\n", fill_ms[i],
+               fill_ms[i] ? 1000.0f / (float)fill_ms[i] : 0.0f);
         sleep_ms(1000);
     }
 
-    // --- Step B: dynamic tests ---
-    tft_subtest_colorbars();
-    tft_subtest_gradient();
-    tft_subtest_checkerboard();
-    tft_subtest_bounce();
-
-    // --- Step C: backlight fade (white screen, 32 codes up then down) ---
-    printf("  [backlight] Fade in/out...");
-    tft_fill(0xFFFF);
-    bus_b_init();
-    for (int c = 0; c <= 0x1F; c++) { lm_write(LM27965_BANKA, (uint8_t)c); sleep_ms(40); }
-    for (int c = 0x1F; c >= 0; c--) { lm_write(LM27965_BANKA, (uint8_t)c); sleep_ms(40); }
-    lm_write(LM27965_BANKA, 0x16);  // restore 40%
-    bus_b_deinit();
-    printf(" done\n");
-
-    // Backlight off
-    bus_b_init();
-    lm_write(LM27965_GP, 0x20);
-    bus_b_deinit();
-
+    // Release test PIO, switch to menu TFT for result display
     gpio_put(TFT_nCS_PIN, 1);
     tft_pio_stop();
-
     gpio_set_function(TFT_nCS_PIN,  GPIO_FUNC_NULL);
     gpio_set_function(TFT_DCX_PIN,  GPIO_FUNC_NULL);
     gpio_set_function(TFT_nRST_PIN, GPIO_FUNC_NULL);
+
+    // Show results on TFT
+    if (menu_tft_reinit()) {
+        #define TS 2
+        #define TCH (8 * TS)
+        #define TCOLS (240 / (6 * TS))
+        char ln[22];
+        menu_clear(MC_BG);
+        menu_str(0, 0, " TFT Test (CPU)     ", TCOLS, MC_TITLE, MC_TITBG, TS);
+        menu_str(0, 2 * TCH, " Mode  ms   FPS ", TCOLS, MC_HINT, MC_BG, TS);
+        for (int i = 0; i < 5; i++) {
+            float fps = fill_ms[i] ? 1000.0f / (float)fill_ms[i] : 0.0f;
+            snprintf(ln, sizeof(ln), " %-5s %3lu %5.1f",
+                     seq[i].name, fill_ms[i], (double)fps);
+            menu_str(0, (3 + i) * TCH, ln, TCOLS, MC_FG, MC_BG, TS);
+        }
+        menu_str(0, 9 * TCH, " clkdiv=4  128ns", TCOLS, MC_HINT, MC_BG, TS);
+        menu_str(0, 18 * TCH, " BACK to return ", TCOLS, MC_HINT, MC_BG, TS);
+        while (!back_key_pressed()) sleep_ms(50);
+        #undef TS
+        #undef TCH
+        #undef TCOLS
+    }
+
+    printf("Done\n");
+}
+
+// ---------------------------------------------------------------------------
+// Step 13 — TFT LCD Fast Refresh
+//
+// Sub-tests:
+//   A  TE pin frequency check — verify ST7789VI TE toggles at ~60 Hz
+//   B  Baseline FPS           — 10 solid fills via CPU polling
+//   C  DMA solid fill FPS     — 10 fills via DMA + 2-byte ring (clkdiv=4)
+//   D  DMA at clkdiv=3        — 96 ns write cycle; compare FPS
+//   E  TE-gated DMA fill      — gate frame start on TE rising edge (10 frames)
+//
+// DMA notes:
+//   - DMA_SIZE_8 byte writes to a 32-bit FIFO register: RP2350 replicates the
+//     byte into all 4 byte lanes (→ FIFO word = 0xXXXXXXXX). The PIO autopull
+//     threshold is 8 bits, shift-right, so bits[7:0] are consumed first — the
+//     replicated byte in bits[7:0] is the correct value. ✓
+//   - Solid fill uses a 2-byte ring buffer {hi, lo} so no framebuffer is needed.
+//   - tft_solid_pix must be 2-byte aligned for ring_size=1 to wrap correctly.
+// ---------------------------------------------------------------------------
+
+// 2-byte ring source for solid-colour DMA fills
+static uint8_t __attribute__((aligned(2))) tft_solid_pix[2];
+
+// DMA transfer: solid colour via 2-byte ring buffer, N pixels.
+// Caller must have called tft_cmd(0x2C) (RAMWR) and have DCX=1 (data phase).
+static void tft_dma_solid_n(int dma_ch, uint16_t colour, uint32_t n_pixels) {
+    tft_solid_pix[0] = (uint8_t)(colour >> 8);
+    tft_solid_pix[1] = (uint8_t)(colour & 0xFF);
+
+    dma_channel_config cfg = dma_channel_get_default_config(dma_ch);
+    channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+    channel_config_set_dreq(&cfg, pio_get_dreq(TFT_PIO, tft_sm, true));
+    channel_config_set_read_increment(&cfg, true);
+    channel_config_set_write_increment(&cfg, false);
+    channel_config_set_ring(&cfg, false, 1);  // read ring: 2^1 = 2 bytes
+
+    dma_channel_configure(dma_ch, &cfg,
+        (volatile void *)&TFT_PIO->txf[tft_sm],
+        tft_solid_pix,
+        n_pixels * 2,
+        true);
+    dma_channel_wait_for_finish_blocking(dma_ch);
+    tft_flush();
+}
+
+// DMA transfer: full screen (240x320) solid colour.
+static void tft_dma_solid(int dma_ch, uint16_t colour) {
+    tft_dma_solid_n(dma_ch, colour, 240 * 320);
+}
+
+// Full solid-colour fill via DMA: issues RAMWR then calls tft_dma_solid()
+static void tft_fill_dma(int dma_ch, uint16_t colour) {
+    tft_set_window(0, 0, 239, 319);
+    tft_cmd(0x2C);
+    tft_dma_solid(dma_ch, colour);
+}
+
+void tft_fast_test(void) {
+    printf("\n--- TFT Fast Refresh Test (Step 13) ---\n");
+
+    // Release menu PIO SM to avoid double-drive on TFT pins
+    menu_tft_stop();
+
+    // --- Hardware init (identical to tft_test) ---
+    gpio_init(TFT_nCS_PIN);  gpio_set_dir(TFT_nCS_PIN,  GPIO_OUT); gpio_put(TFT_nCS_PIN,  1);
+    gpio_init(TFT_DCX_PIN);  gpio_set_dir(TFT_DCX_PIN,  GPIO_OUT); gpio_put(TFT_DCX_PIN,  1);
+    gpio_init(TFT_nRST_PIN); gpio_set_dir(TFT_nRST_PIN, GPIO_OUT); gpio_put(TFT_nRST_PIN, 1);
+    gpio_init(TFT_TE_PIN);   gpio_set_dir(TFT_TE_PIN,   GPIO_IN);
+
+    if (!tft_pio_start()) {
+        gpio_set_function(TFT_nCS_PIN,  GPIO_FUNC_NULL);
+        gpio_set_function(TFT_DCX_PIN,  GPIO_FUNC_NULL);
+        gpio_set_function(TFT_nRST_PIN, GPIO_FUNC_NULL);
+        return;
+    }
+
+    gpio_put(TFT_nRST_PIN, 0); sleep_ms(10);
+    gpio_put(TFT_nRST_PIN, 1); sleep_ms(120);
+    gpio_put(TFT_nCS_PIN, 0);
+
+    st7789_init();
+
+    // Enable TE output (V-blank only, mode=0).
+    // The init sequence does not send TEON — add it here before any TE tests.
+    tft_cmd(0x35); tft_dat(0x00);
+
+    bus_b_init();
+    lm_write(LM27965_BANKA, 0x16);
+    lm_write(LM27965_GP, 0x21);
+    bus_b_deinit();
+
+    int dma_ch = dma_claim_unused_channel(true);
+
+    // Result storage for summary screen
+    typedef struct { const char *label; float fps; } fast_result_t;
+    fast_result_t results[12];
+    int n_results = 0;
+    float te_hz = 0.0f;
+
+    // -------------------------------------------------------------------------
+    // Sub-test A — TE pin frequency check
+    // -------------------------------------------------------------------------
+    printf("\n[A] TE pin frequency (2 s window)...\n");
+    {
+        uint32_t t_start = to_ms_since_boot(get_absolute_time());
+        uint32_t rising  = 0;
+        bool prev = gpio_get(TFT_TE_PIN);
+        while (to_ms_since_boot(get_absolute_time()) - t_start < 2000) {
+            if (back_key_pressed()) goto fast_cleanup;
+            bool cur = gpio_get(TFT_TE_PIN);
+            if (cur && !prev) rising++;
+            prev = cur;
+        }
+        te_hz = rising / 2.0f;
+        printf("  TE rising edges in 2 s: %lu  →  %.1f Hz\n", rising, te_hz);
+        if (rising == 0)
+            printf("  WARNING: no TE signal — check TEON command and GPIO22\n");
+        else if (te_hz >= 55.0f && te_hz <= 65.0f)
+            printf("  Result: PASS (~60 Hz)\n");
+        else
+            printf("  Result: NOTE — outside 55-65 Hz expected range\n");
+        results[n_results++] = (fast_result_t){"TE freq", te_hz};
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test B — Baseline FPS (CPU polling)
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[B] Baseline FPS — CPU polling, clkdiv=%.0f (10 fills)...\n", TFT_CLK_DIV);
+    {
+        static const uint16_t colours[2] = {0xF800, 0x001F};  // red / blue
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int i = 0; i < 10; i++) tft_fill(colours[i & 1]);
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        float fps_b = 10000.0f / (float)elapsed;
+        printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, fps_b, elapsed / 10.0f);
+        printf("  Theoretical byte rate: %.3f MB/s  (%.0f ns/byte)\n",
+               (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f,
+               (float)elapsed * 1e6f / (240.0f * 320 * 2 * 10));
+        results[n_results++] = (fast_result_t){"CPU cd=4", fps_b};
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test C — DMA solid fill, clkdiv=4 (128 ns write cycle)
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[C] DMA solid fill — clkdiv=%.0f, 128 ns cycle (10 fills)...\n", TFT_CLK_DIV);
+    {
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int i = 0; i < 10; i++) tft_fill_dma(dma_ch, i & 1 ? 0x07E0 : 0xFFE0);
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        float fps_c = 10000.0f / (float)elapsed;
+        printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, fps_c, elapsed / 10.0f);
+        float byte_rate_mb = (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f;
+        printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+        results[n_results++] = (fast_result_t){"DMA cd=4", fps_c};
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test D — DMA solid fill, clkdiv=3 (96 ns write cycle)
+    //
+    // ST7789VI twc spec: min 66 ns @ 3.3V VDDI; ~100 ns recommended @ 1.8V VDDI.
+    // 96 ns is close to the 1.8V recommendation — observe for display glitches.
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[D] DMA solid fill — clkdiv=3, 96 ns cycle (10 fills)...\n");
+    printf("  (Watch for pixel glitches — 96 ns is near the 1.8V VDDI limit)\n");
+    {
+        tft_flush();
+        pio_sm_set_clkdiv(TFT_PIO, tft_sm, 3.0f);
+        pio_sm_clkdiv_restart(TFT_PIO, tft_sm);
+
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int i = 0; i < 10; i++) tft_fill_dma(dma_ch, i & 1 ? 0xF81F : 0x07FF);
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        float fps_d = 10000.0f / (float)elapsed;
+        printf("  10 fills in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, fps_d, elapsed / 10.0f);
+        float byte_rate_mb = (240.0f * 320 * 2 * 10) / (elapsed / 1000.0f) / 1e6f;
+        printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+        results[n_results++] = (fast_result_t){"DMA cd=3", fps_d};
+
+        // Restore safe clkdiv
+        tft_flush();
+        pio_sm_set_clkdiv(TFT_PIO, tft_sm, TFT_CLK_DIV);
+        pio_sm_clkdiv_restart(TFT_PIO, tft_sm);
+        printf("  clkdiv restored to %.0f\n", TFT_CLK_DIV);
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test E — TE-gated DMA fill (10 frames)
+    //
+    // Gates each frame transfer to the TE rising edge (start of V-blank).
+    // Frame starts in the safe blanking window — no mid-frame tearing.
+    // Expected: throughput matches display refresh rate (~60 FPS if transfer
+    // completes within one frame; otherwise the effective rate is lower).
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[E] TE-gated DMA fill — 10 frames (wait TE rise before each)...\n");
+    if (!gpio_get(TFT_TE_PIN) && true) {  // always run; print skip only if needed
+        // Wait for at most 100 ms for first TE edge; skip if no signal
+        uint32_t t_wait = to_ms_since_boot(get_absolute_time());
+        bool got_te = false;
+        bool prev = gpio_get(TFT_TE_PIN);
+        while (to_ms_since_boot(get_absolute_time()) - t_wait < 100) {
+            bool cur = gpio_get(TFT_TE_PIN);
+            if (cur && !prev) { got_te = true; break; }
+            prev = cur;
+        }
+        if (!got_te) {
+            printf("  SKIP: no TE signal within 100 ms timeout\n");
+            goto fast_cleanup;
+        }
+    }
+    {
+        static const uint16_t te_colours[2] = {0xFFFF, 0x0000};
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int i = 0; i < 10; i++) {
+            // Wait for TE rising edge (start of V-blank)
+            while ( gpio_get(TFT_TE_PIN)) tight_loop_contents();  // wait for low
+            while (!gpio_get(TFT_TE_PIN)) tight_loop_contents();  // wait for rise
+            tft_fill_dma(dma_ch, te_colours[i & 1]);
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+        float fps_e = 10000.0f / (float)elapsed;
+        printf("  10 TE-gated frames in %lu ms  →  %.2f FPS\n",
+               elapsed, fps_e);
+        results[n_results++] = (fast_result_t){"TE-gate", fps_e};
+        if (elapsed <= 10 * 17 + 50)
+            printf("  Result: transfer fits within one frame period — tear-free capable\n");
+        else
+            printf("  Result: transfer exceeds one frame — reduce clkdiv or use partial update\n");
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test F — DMA colour bars (8 SMPTE bars, each 30 px wide)
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[F] DMA colour bars (8 bars)...\n");
+    {
+        static const uint16_t bars[8] = {
+            0xFFFF, 0xFFE0, 0x07FF, 0x07E0, 0xF81F, 0xF800, 0x001F, 0x0000
+        };
+        for (int i = 0; i < 8; i++) {
+            uint16_t x = (uint16_t)(i * 30);
+            tft_set_window(x, 0, (uint16_t)(x + 29), 319);
+            tft_cmd(0x2C);
+            tft_dma_solid_n(dma_ch, bars[i], 30 * 320);
+        }
+        printf("  done\n");
+        sleep_ms(2000);
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test G — DMA checkerboard (32x32 blocks)
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[G] DMA checkerboard (32x32 blocks)...\n");
+    {
+        for (int by = 0; by < 320; by += 32) {
+            for (int bx = 0; bx < 240; bx += 32) {
+                uint16_t w = (uint16_t)((bx + 32 > 240) ? 240 - bx : 32);
+                uint16_t h = (uint16_t)((by + 32 > 320) ? 320 - by : 32);
+                uint16_t c = (((bx >> 5) ^ (by >> 5)) & 1) ? 0xFFFF : 0x0000;
+                tft_set_window((uint16_t)bx, (uint16_t)by,
+                               (uint16_t)(bx + w - 1), (uint16_t)(by + h - 1));
+                tft_cmd(0x2C);
+                tft_dma_solid_n(dma_ch, c, (uint32_t)w * h);
+            }
+        }
+        printf("  done\n");
+        sleep_ms(2000);
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test H — DMA bouncing block (80 frames on blue background)
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[H] DMA bouncing block (80 frames)...\n");
+    {
+        const uint16_t BW = 32, BH = 32;
+        const uint16_t BG = 0x001F, FG = 0xFFE0;
+        tft_fill_dma(dma_ch, BG);
+
+        int bx = 0, by = 0, dx = 4, dy = 3;
+        for (int f = 0; f < 80; f++) {
+            if (back_key_pressed()) break;
+            // Erase old position
+            tft_set_window((uint16_t)bx, (uint16_t)by,
+                           (uint16_t)(bx + BW - 1), (uint16_t)(by + BH - 1));
+            tft_cmd(0x2C);
+            tft_dma_solid_n(dma_ch, BG, (uint32_t)BW * BH);
+            // Move
+            bx += dx; by += dy;
+            if (bx < 0)             { bx = 0;        dx = -dx; }
+            if (by < 0)             { by = 0;        dy = -dy; }
+            if (bx + (int)BW > 240) { bx = 240 - BW; dx = -dx; }
+            if (by + (int)BH > 320) { by = 320 - BH; dy = -dy; }
+            // Draw new position
+            tft_set_window((uint16_t)bx, (uint16_t)by,
+                           (uint16_t)(bx + BW - 1), (uint16_t)(by + BH - 1));
+            tft_cmd(0x2C);
+            tft_dma_solid_n(dma_ch, FG, (uint32_t)BW * BH);
+            sleep_ms(30);
+        }
+        printf("  done\n");
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test I — Backlight fade in/out (32 brightness levels)
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[I] Backlight fade in/out...");
+    {
+        tft_fill_dma(dma_ch, 0xFFFF);
+        bus_b_init();
+        for (int c = 0; c <= 0x1F; c++) { lm_write(LM27965_BANKA, (uint8_t)c); sleep_ms(40); }
+        for (int c = 0x1F; c >= 0; c--) { lm_write(LM27965_BANKA, (uint8_t)c); sleep_ms(40); }
+        lm_write(LM27965_BANKA, 0x16);  // restore 40%
+        bus_b_deinit();
+        printf(" done\n");
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test J — SRAM framebuffer DMA (150 KB arbitrary pixel data → LCD)
+    //
+    // Answers: what FPS can a single SRAM framebuffer achieve?
+    // DMA source = 150 KB SRAM buffer (read-increment), sink = PIO TX FIFO.
+    // -------------------------------------------------------------------------
+    // 240 × 320 × 2 = 153,600 bytes — shared by sub-tests J and K
+    // Reuse the PSRAM benchmark SRAM buffer (declared in bringup_memory_tft.c)
+    #define FB_PIX_BYTES (240u * 320u * 2u)
+    extern uint32_t shared_sram_buf[];
+    uint8_t *fb = (uint8_t *)shared_sram_buf;
+
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[J] SRAM framebuffer DMA — 150 KB arbitrary data, clkdiv=4 (10 frames)...\n");
+    {
+
+        // Fill with a non-trivial pattern (gradient) so it's not optimised away
+        for (uint32_t i = 0; i < FB_PIX_BYTES; i += 2) {
+            uint16_t x = (uint16_t)((i / 2) % 240);
+            uint16_t y = (uint16_t)((i / 2) / 240);
+            // RGB565 gradient: R=x, G=y, B=x^y
+            uint16_t c = (uint16_t)(((x >> 3) << 11) | ((y >> 2) << 5) | ((x ^ y) >> 3));
+            fb[i]     = (uint8_t)(c >> 8);
+            fb[i + 1] = (uint8_t)(c & 0xFF);
+        }
+        printf("  Buffer filled with gradient pattern\n");
+
+        // Show the pattern once (visual confirmation)
+        tft_set_window(0, 0, 239, 319);
+        tft_cmd(0x2C);
+        {
+            dma_channel_config cfg = dma_channel_get_default_config(dma_ch);
+            channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+            channel_config_set_dreq(&cfg, pio_get_dreq(TFT_PIO, tft_sm, true));
+            channel_config_set_read_increment(&cfg, true);
+            channel_config_set_write_increment(&cfg, false);
+
+            dma_channel_configure(dma_ch, &cfg,
+                (volatile void *)&TFT_PIO->txf[tft_sm],
+                fb, FB_PIX_BYTES, true);
+            dma_channel_wait_for_finish_blocking(dma_ch);
+            tft_flush();
+        }
+        sleep_ms(1000);
+
+        // Timed: 10 full-frame DMA transfers
+        dma_channel_config cfg = dma_channel_get_default_config(dma_ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+        channel_config_set_dreq(&cfg, pio_get_dreq(TFT_PIO, tft_sm, true));
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, false);
+
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            tft_set_window(0, 0, 239, 319);
+            tft_cmd(0x2C);
+            dma_channel_configure(dma_ch, &cfg,
+                (volatile void *)&TFT_PIO->txf[tft_sm],
+                fb, FB_PIX_BYTES, true);
+            dma_channel_wait_for_finish_blocking(dma_ch);
+            tft_flush();
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        float fps_j = 10000.0f / (float)elapsed;
+        printf("  10 frames in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, fps_j, elapsed / 10.0f);
+        float byte_rate_mb = (float)FB_PIX_BYTES * 10.0f / (elapsed / 1000.0f) / 1e6f;
+        printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+        results[n_results++] = (fast_result_t){"FB cd=4", fps_j};
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test K — SRAM framebuffer DMA, clkdiv=3 (aggressive timing)
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[K] SRAM framebuffer DMA — clkdiv=3, 96 ns cycle (10 frames)...\n");
+    {
+        tft_flush();
+        pio_sm_set_clkdiv(TFT_PIO, tft_sm, 3.0f);
+        pio_sm_clkdiv_restart(TFT_PIO, tft_sm);
+
+        // fb[] reused from sub-test J (static, file scope above)
+        dma_channel_config cfg = dma_channel_get_default_config(dma_ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+        channel_config_set_dreq(&cfg, pio_get_dreq(TFT_PIO, tft_sm, true));
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, false);
+
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            tft_set_window(0, 0, 239, 319);
+            tft_cmd(0x2C);
+            dma_channel_configure(dma_ch, &cfg,
+                (volatile void *)&TFT_PIO->txf[tft_sm],
+                fb, FB_PIX_BYTES, true);
+            dma_channel_wait_for_finish_blocking(dma_ch);
+            tft_flush();
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        float fps_k = 10000.0f / (float)elapsed;
+        printf("  10 frames in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, fps_k, elapsed / 10.0f);
+        float byte_rate_mb = (float)FB_PIX_BYTES * 10.0f / (elapsed / 1000.0f) / 1e6f;
+        printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+        results[n_results++] = (fast_result_t){"FB cd=3", fps_k};
+
+        tft_flush();
+        pio_sm_set_clkdiv(TFT_PIO, tft_sm, TFT_CLK_DIV);
+        pio_sm_clkdiv_restart(TFT_PIO, tft_sm);
+        printf("  clkdiv restored to %.0f\n", TFT_CLK_DIV);
+    }
+
+fast_cleanup:
+    dma_channel_unclaim(dma_ch);
+
+    // Release test PIO, switch to menu TFT for result display
+    gpio_put(TFT_nCS_PIN, 1);
+    tft_pio_stop();
+    gpio_set_function(TFT_nCS_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(TFT_DCX_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(TFT_nRST_PIN, GPIO_FUNC_NULL);
+
+    // Show results on TFT
+    if (n_results > 0 && menu_tft_reinit()) {
+        #define FS 2
+        #define FCH (8 * FS)
+        #define FCOLS (240 / (6 * FS))
+        char ln[22];
+        menu_clear(MC_BG);
+        menu_str(0, 0, " TFT Fast Results   ", FCOLS, MC_TITLE, MC_TITBG, FS);
+        menu_str(0, 2 * FCH, " Mode      FPS  ", FCOLS, MC_HINT, MC_BG, FS);
+        int rows = n_results < 7 ? n_results : 7;
+        for (int i = 0; i < rows; i++) {
+            snprintf(ln, sizeof(ln), " %-8s %5.1f",
+                     results[i].label, (double)results[i].fps);
+            menu_str(0, (3 + i) * FCH, ln, FCOLS, MC_FG, MC_BG, FS);
+        }
+        // Overflow: show remaining on next rows if > 7
+        for (int i = 7; i < n_results && i < 10; i++) {
+            snprintf(ln, sizeof(ln), " %-8s %5.1f",
+                     results[i].label, (double)results[i].fps);
+            menu_str(0, (3 + i) * FCH, ln, FCOLS, MC_FG, MC_BG, FS);
+            rows = i + 1;
+        }
+        menu_str(0, (3 + rows + 1) * FCH, " BACK to return ", FCOLS, MC_HINT, MC_BG, FS);
+        while (!back_key_pressed()) sleep_ms(50);
+        #undef FS
+        #undef FCH
+        #undef FCOLS
+    }
 
     printf("Done\n");
 }

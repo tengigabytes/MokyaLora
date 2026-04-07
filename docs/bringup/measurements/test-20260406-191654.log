@@ -1,0 +1,28 @@
+﻿MokyaLora Bringup Test Report
+Date: 2026-04-06 19:16:54
+Duration: 447.1s
+Pass: 21  Fail: 2  Skip: 0
+---
+PASS  [sensors] imu  
+PASS  [sensors] baro  
+PASS  [sensors] mag  
+PASS  [sensors] gnss_info  
+FAIL  [sensors] scan_a  Missing patterns: 0x6A:\s*ok, 0x1E:\s*ok, 0x5D:\s*ok, 0x3A:\s*ok
+FAIL  [power] scan_b  Missing patterns: 0x6B:\s*ok, 0x36:\s*ok
+PASS  [power] status  
+PASS  [power] adc  
+PASS  [power] bq27441  
+PASS  [audio] amp_test  
+PASS  [audio] mic  
+PASS  [memory] sram  
+PASS  [memory] flash  
+PASS  [memory] psram  
+PASS  [memory] psram_full  
+PASS  [lora] lora  
+PASS  [lora] lora_dump  
+PASS  [display] tft  
+PASS  [display] tft_fast  
+PASS  [core1] c  
+PASS  [core1] 5  
+PASS  [core1] C  
+PASS  [core1] Core\s*1|FIFO|SRAM|GPIO|PASS|OK|pass|ok  

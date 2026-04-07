@@ -26,9 +26,18 @@ param(
 
 # Per-command receive timeout table (seconds)
 $CmdTimeout = @{
-    'lora_rx'   = 35
+    'lora_rx'     = 35
+    'lora_rx_mf'  = 35
+    'lora_rx_mf1' = 35
+    'lora_tx'     = 15
     'lora_dump' = 8
-    'psram'     = 5
+    'psram'       = 5
+    'psram_full'  = 60
+    'psram_sweep' = 120
+    'flash_sweep' = 15
+    'psram_jlink' = 5
+    'psram_diag'  = 60
+    'psram_probe' = 8
     'lora'      = 3
     'gnss_info' = 3
     'led'       = 12
@@ -48,6 +57,12 @@ $CmdTimeout = @{
     'mic_loop'  = 12
     'mic_rec'   = 10
     'tft'       = 35
+    'bq27441'   = 15
+    'tft_fast'  = 60
+    'core1'     = 5
+    'psram_dma_diag' = 30
+    'psram_rd_diag'  = 15
+    'psram_fps'      = 120
 }
 $DefaultTimeout = 2
 

@@ -2097,7 +2097,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 93.98 106.68 0)
 			(effects
 				(font
@@ -2193,7 +2193,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 175.26 38.1 0)
 			(effects
 				(font
@@ -2493,7 +2493,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 114.3 106.68 0)
 			(effects
 				(font
@@ -2589,7 +2589,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 114.3 83.82 0)
 			(effects
 				(font
@@ -2685,7 +2685,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 154.94 152.4 0)
 			(effects
 				(font
@@ -2855,7 +2855,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 114.3 38.1 0)
 			(effects
 				(font
@@ -2951,7 +2951,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 73.66 60.96 0)
 			(effects
 				(font
@@ -3047,7 +3047,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 134.62 129.54 0)
 			(effects
 				(font
@@ -3319,7 +3319,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 134.62 60.96 0)
 			(effects
 				(font
@@ -3415,7 +3415,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 154.94 60.96 0)
 			(effects
 				(font
@@ -3613,7 +3613,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 114.3 129.54 0)
 			(effects
 				(font
@@ -4015,7 +4015,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 73.66 129.54 0)
 			(effects
 				(font
@@ -4111,7 +4111,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 154.94 38.1 0)
 			(effects
 				(font
@@ -4309,7 +4309,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 93.98 129.54 0)
 			(effects
 				(font
@@ -4479,7 +4479,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 175.26 83.82 0)
 			(effects
 				(font
@@ -5029,7 +5029,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 73.66 38.1 0)
 			(effects
 				(font
@@ -5533,7 +5533,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 154.94 129.54 0)
 			(effects
 				(font
@@ -6009,7 +6009,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 134.62 38.1 0)
 			(effects
 				(font
@@ -6281,7 +6281,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 175.26 106.68 0)
 			(effects
 				(font
@@ -6377,7 +6377,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 134.62 106.68 0)
 			(effects
 				(font
@@ -6853,7 +6853,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 114.3 152.4 0)
 			(effects
 				(font
@@ -6949,7 +6949,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 154.94 83.82 0)
 			(effects
 				(font
@@ -7045,7 +7045,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 73.66 106.68 0)
 			(effects
 				(font
@@ -7419,7 +7419,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 114.3 60.96 0)
 			(effects
 				(font
@@ -7617,7 +7617,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 93.98 152.4 0)
 			(effects
 				(font
@@ -7815,7 +7815,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 134.62 83.82 0)
 			(effects
 				(font
@@ -8013,7 +8013,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 73.66 152.4 0)
 			(effects
 				(font
@@ -8109,7 +8109,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 175.26 129.54 0)
 			(effects
 				(font
@@ -8205,7 +8205,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 175.26 60.96 0)
 			(effects
 				(font
@@ -8579,7 +8579,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 93.98 38.1 0)
 			(effects
 				(font
@@ -8675,7 +8675,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 73.66 83.82 0)
 			(effects
 				(font
@@ -9049,7 +9049,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 154.94 106.68 0)
 			(effects
 				(font
@@ -9423,7 +9423,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 93.98 83.82 0)
 			(effects
 				(font
@@ -9621,7 +9621,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 93.98 60.96 0)
 			(effects
 				(font
@@ -9819,7 +9819,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 175.26 152.4 0)
 			(effects
 				(font
@@ -9915,7 +9915,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 134.62 152.4 0)
 			(effects
 				(font

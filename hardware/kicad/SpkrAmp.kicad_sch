@@ -2694,7 +2694,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/CC0402KRX5R6BB475.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/CC0402KRX5R6BB475"
 			(at 101.6 71.12 0)
 			(effects
 				(font
@@ -2873,7 +2873,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/DS_NAU8315_DataSheet_EN_Rev1.6.pdf"
+		(property "Datasheet" "https://www.nuvoton.com/export/resource-files/DS_NAU8315_DataSheet_EN_Rev1.6.pdf"
 			(at 151.13 255.88 0)
 			(effects
 				(font
@@ -3214,7 +3214,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-07100KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-07100KL"
 			(at 152.4 81.28 0)
 			(effects
 				(font
@@ -3735,7 +3735,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 111.76 81.28 0)
 			(effects
 				(font
@@ -3915,7 +3915,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/CC0402KRX5R6BB475.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/CC0402KRX5R6BB475"
 			(at 101.6 91.44 0)
 			(effects
 				(font
@@ -4303,7 +4303,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 111.76 71.12 0)
 			(effects
 				(font
@@ -4409,7 +4409,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/CC0402KRX5R6BB475.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/CC0402KRX5R6BB475"
 			(at 101.6 81.28 0)
 			(effects
 				(font
@@ -4515,7 +4515,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-07100KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-07100KL"
 			(at 152.4 86.36 0)
 			(effects
 				(font
@@ -4960,7 +4960,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R6BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R6BB104"
 			(at 111.76 91.44 0)
 			(effects
 				(font
@@ -5343,7 +5343,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/cms-131304-smt-tr.pdf"
+		(property "Datasheet" "https://www.sameskydevices.com/product/resource/cms-131304-smt-tr.pdf"
 			(at 175.26 76.2 0)
 			(effects
 				(font

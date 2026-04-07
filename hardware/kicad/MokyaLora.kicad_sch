@@ -4211,7 +4211,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W4K7L.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W4K7L"
 			(at 96.52 88.9 0)
 			(effects
 				(font
@@ -4308,7 +4308,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W5K1L.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W5K1L"
 			(at 73.66 68.58 0)
 			(effects
 				(font
@@ -4405,7 +4405,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W5K1L.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W5K1L"
 			(at 66.04 68.58 0)
 			(effects
 				(font
@@ -4501,7 +4501,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 111.76 86.36 0)
 			(effects
 				(font
@@ -5149,7 +5149,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W4K7L.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W4K7L"
 			(at 99.06 40.64 0)
 			(effects
 				(font
@@ -5630,7 +5630,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402KRX7R8BB104.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402KRX7R8BB104"
 			(at 106.68 40.64 0)
 			(effects
 				(font
@@ -5875,7 +5875,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/AC0402FR-7W10KL.pdf"
+		(property "Datasheet" "https://yageogroup.com/download/specsheet/AC0402FR-7W10KL"
 			(at 91.44 38.1 0)
 			(effects
 				(font
@@ -6038,7 +6038,7 @@
 				(hide yes)
 			)
 		)
-		(property "Datasheet" "${KIPRJMOD}/Data_Sheets/SDM03U40.pdf"
+		(property "Datasheet" "https://www.diodes.com/datasheet/download/SDM03U40.pdf"
 			(at 111.76 81.28 0)
 			(effects
 				(font
@@ -6907,7 +6907,7 @@
 		(instances
 			(project "MokyaLora"
 				(path "/f16406d4-9256-4081-92f6-ee56448777ee"
-					(page "4")
+					(page "3")
 				)
 			)
 		)
@@ -6969,7 +6969,7 @@
 		(instances
 			(project "MokyaLora"
 				(path "/f16406d4-9256-4081-92f6-ee56448777ee"
-					(page "8")
+					(page "6")
 				)
 			)
 		)
@@ -7041,7 +7041,7 @@
 		(instances
 			(project "MokyaLora"
 				(path "/f16406d4-9256-4081-92f6-ee56448777ee"
-					(page "5")
+					(page "4")
 				)
 			)
 		)
@@ -7123,7 +7123,7 @@
 		(instances
 			(project "MokyaLora"
 				(path "/f16406d4-9256-4081-92f6-ee56448777ee"
-					(page "11")
+					(page "9")
 				)
 			)
 		)
@@ -7717,7 +7717,7 @@
 		(instances
 			(project "MokyaLora"
 				(path "/f16406d4-9256-4081-92f6-ee56448777ee"
-					(page "10")
+					(page "8")
 				)
 			)
 		)
@@ -7829,7 +7829,7 @@
 		(instances
 			(project "MokyaLora"
 				(path "/f16406d4-9256-4081-92f6-ee56448777ee"
-					(page "7")
+					(page "5")
 				)
 			)
 		)
@@ -7943,7 +7943,7 @@
 		(instances
 			(project "MokyaLora"
 				(path "/f16406d4-9256-4081-92f6-ee56448777ee"
-					(page "11")
+					(page "10")
 				)
 			)
 		)
@@ -8105,7 +8105,7 @@
 		(instances
 			(project "MokyaLora"
 				(path "/f16406d4-9256-4081-92f6-ee56448777ee"
-					(page "9")
+					(page "7")
 				)
 			)
 		)

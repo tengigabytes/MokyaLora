@@ -1,0 +1,11 @@
+si SWD
+speed 4000
+device RP2350_M33_0
+connect
+halt
+regs
+mem32 0x20001D38 16
+mem32 0x10000000 8
+mem32 0xD0000000 8
+go
+q
