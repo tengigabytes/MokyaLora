@@ -37,8 +37,14 @@ not directly from I2C. Core 0 never accesses any I2C bus.
 | Region          | Core   | Size            | Contents                                                              |
 |-----------------|--------|-----------------|-----------------------------------------------------------------------|
 | IME Runtime     | Core 1 | 4 MB            | Language index, DAT trie, dictionary — loaded from Flash at boot      |
-| UI & Heap       | Core 1 | 4 MB            | LVGL double framebuffer (~300 KB) + application heap                  |
+| Application Heap| Core 1 | 4 MB            | Message history, node cache, application data                         |
 | Core 0 reserve  | Core 0 | 0 MB (reserved) | Available for StoreAndForward cache or large NodeDB; not required for normal operation |
+
+**Display framebuffer lives in SRAM, not PSRAM.** LVGL partial render buffer (~10 KB) in SRAM
+achieves 60–80 FPS via DMA → PIO → LCD. PSRAM reads are too slow for display (12.8 FPS max
+due to QMI per-word transaction overhead) and have a known DMA burst read silicon issue
+(see bringup log Issue 14 / Step 25). PSRAM is used exclusively for IME dictionary data
+(CPU random-access binary search, <0.4 ms/query) and application heap.
 
 **Core 0 SRAM:** Meshtastic fits within RP2350B's 520 KB internal SRAM (~160–180 KB used for
 code, stack, NodeDB, packet queues). PSRAM is not required for Core 0 under normal operation.

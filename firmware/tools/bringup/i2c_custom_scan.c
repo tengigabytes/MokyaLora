@@ -371,6 +371,10 @@ void handle_command(const char *cmd) {
         cmd_psram_dma_test();
     } else if (strcmp(cmd, "psram_rd_diag") == 0) {
         psram_rd_diag();
+    } else if (strcmp(cmd, "psram_dma_diag") == 0) {
+        psram_dma_diag();
+    } else if (strcmp(cmd, "psram_fps") == 0) {
+        psram_fps_bench();
     } else if (strcmp(cmd, "key") == 0) {
         key_monitor();
     } else if (strcmp(cmd, "key_tft") == 0) {

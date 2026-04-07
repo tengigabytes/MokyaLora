@@ -594,6 +594,116 @@ void tft_fast_test(void) {
         printf(" done\n");
     }
 
+    // -------------------------------------------------------------------------
+    // Sub-test J — SRAM framebuffer DMA (150 KB arbitrary pixel data → LCD)
+    //
+    // Answers: what FPS can a single SRAM framebuffer achieve?
+    // DMA source = 150 KB SRAM buffer (read-increment), sink = PIO TX FIFO.
+    // -------------------------------------------------------------------------
+    // 240 × 320 × 2 = 153,600 bytes — shared by sub-tests J and K
+    // Reuse the PSRAM benchmark SRAM buffer (declared in bringup_memory_tft.c)
+    #define FB_PIX_BYTES (240u * 320u * 2u)
+    extern uint32_t shared_sram_buf[];
+    uint8_t *fb = (uint8_t *)shared_sram_buf;
+
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[J] SRAM framebuffer DMA — 150 KB arbitrary data, clkdiv=4 (10 frames)...\n");
+    {
+
+        // Fill with a non-trivial pattern (gradient) so it's not optimised away
+        for (uint32_t i = 0; i < FB_PIX_BYTES; i += 2) {
+            uint16_t x = (uint16_t)((i / 2) % 240);
+            uint16_t y = (uint16_t)((i / 2) / 240);
+            // RGB565 gradient: R=x, G=y, B=x^y
+            uint16_t c = (uint16_t)(((x >> 3) << 11) | ((y >> 2) << 5) | ((x ^ y) >> 3));
+            fb[i]     = (uint8_t)(c >> 8);
+            fb[i + 1] = (uint8_t)(c & 0xFF);
+        }
+        printf("  Buffer filled with gradient pattern\n");
+
+        // Show the pattern once (visual confirmation)
+        tft_set_window(0, 0, 239, 319);
+        tft_cmd(0x2C);
+        {
+            dma_channel_config cfg = dma_channel_get_default_config(dma_ch);
+            channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+            channel_config_set_dreq(&cfg, pio_get_dreq(TFT_PIO, tft_sm, true));
+            channel_config_set_read_increment(&cfg, true);
+            channel_config_set_write_increment(&cfg, false);
+
+            dma_channel_configure(dma_ch, &cfg,
+                (volatile void *)&TFT_PIO->txf[tft_sm],
+                fb, FB_PIX_BYTES, true);
+            dma_channel_wait_for_finish_blocking(dma_ch);
+            tft_flush();
+        }
+        sleep_ms(1000);
+
+        // Timed: 10 full-frame DMA transfers
+        dma_channel_config cfg = dma_channel_get_default_config(dma_ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+        channel_config_set_dreq(&cfg, pio_get_dreq(TFT_PIO, tft_sm, true));
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, false);
+
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            tft_set_window(0, 0, 239, 319);
+            tft_cmd(0x2C);
+            dma_channel_configure(dma_ch, &cfg,
+                (volatile void *)&TFT_PIO->txf[tft_sm],
+                fb, FB_PIX_BYTES, true);
+            dma_channel_wait_for_finish_blocking(dma_ch);
+            tft_flush();
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        printf("  10 frames in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+        float byte_rate_mb = (float)FB_PIX_BYTES * 10.0f / (elapsed / 1000.0f) / 1e6f;
+        printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+    }
+
+    // -------------------------------------------------------------------------
+    // Sub-test K — SRAM framebuffer DMA, clkdiv=3 (aggressive timing)
+    // -------------------------------------------------------------------------
+    if (back_key_pressed()) goto fast_cleanup;
+    printf("\n[K] SRAM framebuffer DMA — clkdiv=3, 96 ns cycle (10 frames)...\n");
+    {
+        tft_flush();
+        pio_sm_set_clkdiv(TFT_PIO, tft_sm, 3.0f);
+        pio_sm_clkdiv_restart(TFT_PIO, tft_sm);
+
+        // fb[] reused from sub-test J (static, file scope above)
+        dma_channel_config cfg = dma_channel_get_default_config(dma_ch);
+        channel_config_set_transfer_data_size(&cfg, DMA_SIZE_8);
+        channel_config_set_dreq(&cfg, pio_get_dreq(TFT_PIO, tft_sm, true));
+        channel_config_set_read_increment(&cfg, true);
+        channel_config_set_write_increment(&cfg, false);
+
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (int f = 0; f < 10; f++) {
+            tft_set_window(0, 0, 239, 319);
+            tft_cmd(0x2C);
+            dma_channel_configure(dma_ch, &cfg,
+                (volatile void *)&TFT_PIO->txf[tft_sm],
+                fb, FB_PIX_BYTES, true);
+            dma_channel_wait_for_finish_blocking(dma_ch);
+            tft_flush();
+        }
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - t0;
+
+        printf("  10 frames in %lu ms  →  %.2f FPS  (%.2f ms/frame)\n",
+               elapsed, 10000.0f / (float)elapsed, elapsed / 10.0f);
+        float byte_rate_mb = (float)FB_PIX_BYTES * 10.0f / (elapsed / 1000.0f) / 1e6f;
+        printf("  Byte rate: %.3f MB/s\n", byte_rate_mb);
+
+        tft_flush();
+        pio_sm_set_clkdiv(TFT_PIO, tft_sm, TFT_CLK_DIV);
+        pio_sm_clkdiv_restart(TFT_PIO, tft_sm);
+        printf("  clkdiv restored to %.0f\n", TFT_CLK_DIV);
+    }
+
 fast_cleanup:
     dma_channel_unclaim(dma_ch);
 

@@ -60,6 +60,9 @@ $CmdTimeout = @{
     'bq27441'   = 15
     'tft_fast'  = 60
     'core1'     = 5
+    'psram_dma_diag' = 30
+    'psram_rd_diag'  = 15
+    'psram_fps'      = 120
 }
 $DefaultTimeout = 2
 
