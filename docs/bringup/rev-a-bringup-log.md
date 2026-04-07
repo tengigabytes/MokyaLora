@@ -963,6 +963,33 @@ sensitivity errata, init ordering). New `lora_tx` function sends Meshtastic-form
 
 ---
 
+### Step 24 — Core 1 TFT Output & Menu Wrap-Around
+
+**Result: ✅ PASS** (2026-04-07)
+
+UI polish for Core 1 IPC test and menu navigation. Core 1 test now displays results on TFT with colour-coded PASS/FAIL and waits for BACK key. Menu cursor wraps around in all directory levels.
+
+#### Changes
+
+| Change | Description |
+|--------|-------------|
+| Core 1 TFT output | `core1_test()` displays title + 4 test lines (Boot, FIFO, SRAM, GPIO) + overall result on TFT using standard colour scheme (green=PASS, red=FAIL) |
+| Core 1 BACK wait | Test result screen stays visible until user presses BACK key, then returns to menu |
+| Menu wrap-around | UP at first item → jumps to last item; DOWN at last item → jumps to first item; scroll window adjusts correctly; applies to all menu levels |
+
+#### Test Results
+
+| Test | Result | Notes |
+|------|--------|-------|
+| `core1` serial command | ✅ PASS | 4/4 (Boot, FIFO, SRAM, GPIO); TFT output confirmed |
+| Menu wrap-around | ✅ PASS | Verified on root menu and sub-pages |
+
+**Firmware files:**
+- `firmware/tools/bringup/bringup_core1.c` — Added `bringup_menu.h` include, TFT layout macros (LS/LCH/LCOLS), TFT output for each test step + overall result, BACK key wait after completion
+- `firmware/tools/bringup/bringup_menu.c` — `menu_handle_key()` KEY_UP/KEY_DOWN wrap-around with scroll window adjustment
+
+---
+
 ## Issues Log
 
 | # | Date | Component | Issue | Root Cause | Fix Applied | Rev B Action |

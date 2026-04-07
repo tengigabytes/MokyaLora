@@ -327,19 +327,32 @@ void menu_handle_key(menu_ctx_t *ctx, menu_key_t key) {
     case KEY_UP:
         if (ctx->cursor > 0) {
             ctx->cursor--;
-            if (ctx->cursor < ctx->scroll_top)
-                ctx->scroll_top = ctx->cursor;
-            ctx->lcd_dirty = true;
+        } else {
+            // Wrap to last item
+            ctx->cursor = ctx->page->count - 1;
         }
+        // Adjust scroll window
+        if (ctx->cursor < ctx->scroll_top)
+            ctx->scroll_top = ctx->cursor;
+        if (ctx->cursor >= ctx->scroll_top + VISIBLE_ITEMS)
+            ctx->scroll_top = ctx->cursor - VISIBLE_ITEMS + 1;
+        ctx->lcd_dirty = true;
         break;
 
     case KEY_DOWN:
         if (ctx->cursor < ctx->page->count - 1) {
             ctx->cursor++;
-            if (ctx->cursor >= ctx->scroll_top + VISIBLE_ITEMS)
-                ctx->scroll_top = ctx->cursor - VISIBLE_ITEMS + 1;
-            ctx->lcd_dirty = true;
+        } else {
+            // Wrap to first item
+            ctx->cursor = 0;
+            ctx->scroll_top = 0;
         }
+        // Adjust scroll window
+        if (ctx->cursor >= ctx->scroll_top + VISIBLE_ITEMS)
+            ctx->scroll_top = ctx->cursor - VISIBLE_ITEMS + 1;
+        if (ctx->cursor < ctx->scroll_top)
+            ctx->scroll_top = ctx->cursor;
+        ctx->lcd_dirty = true;
         break;
 
     case KEY_OK: {
