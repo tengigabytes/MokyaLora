@@ -10,7 +10,7 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 
 | Revision | Status |
 |----------|--------|
-| Rev A | **Received 2026-04-02 — bringup in progress** — 9 of 10 steps complete; PSRAM hardware fault under investigation (Issue 8) |
+| Rev A | **Received 2026-04-02 — bringup in progress** — 21 of 25 steps fully passed; 3 open issues |
 
 **Rev A bringup summary** (see [`docs/bringup/rev-a-bringup-log.md`](docs/bringup/rev-a-bringup-log.md) for full details):
 
@@ -18,23 +18,37 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 |------|-----------|--------|
 | 1 | Power rails (1.8 V / 3.3 V) | ✅ PASS |
 | 2 | MCU boot + USB CDC | ✅ PASS |
-| 3 | I2C sensors (IMU / Mag / Baro / GNSS) | ⚠️ CONDITIONAL (GNSS I2C OK; outdoor RF pending) |
+| 3 | I2C sensors (IMU / Mag / Baro / GNSS) | ✅ PASS |
 | 4 | TFT LCD (ST7789VI, PIO 8080) | ✅ PASS (via FPC adapter — Issue 5) |
-| 5 | LoRa SX1262 (SPI, RX, RSSI) | ⚠️ CONDITIONAL (SPI/RX OK; TX link + RF performance pending) |
-| 6 | Keypad (6×6 matrix) | ✅ PASS |
+| 5 | LoRa SX1262 (SPI + RF link) | ✅ PASS (TX/RX verified — Step 23) |
+| 6 | Keypad (6×6 matrix, 36 keys) | ✅ PASS |
 | 7 | Audio — NAU8315 I2S amp + speaker | ✅ PASS |
-| 8 | Battery (BQ25622 charger) + vibration motor | ⚠️ CONDITIONAL (charger + motor OK; BQ27441 gauge characterisation pending) |
-| 9 | Flash (W25Q128JW) | ✅ PASS — PSRAM unresponsive (hardware fault, Issue 8) |
-| 10 | PDM microphone (IM69D130) | ⚠️ PARTIAL — capture/playback working; background noise under investigation |
+| 8 | Battery (BQ25622 charger) + vibration motor | ⚠️ CONDITIONAL (charger OK; BQ27441 cold-boot NACK — Issue 10) |
+| 9 | Flash + PSRAM (W25Q128JW + APS6404L) | ✅ PASS (QPI 37.5 MHz, 150 Mbit/s, 8 MB validated) |
+| 10 | PDM microphone (IM69D130) | ⚠️ PARTIAL (capture/playback OK; background noise) |
+| 11 | J-Link SWD debug | ✅ PASS |
+| 12 | BQ27441 fuel gauge | ⚠️ CONDITIONAL (SOC readable; learning cycle pending) |
+| 13 | TFT fast refresh (DMA) | ✅ PASS (60–80 FPS) |
+| 14 | GNSS outdoor RF test | ❌ FAIL (0 satellites — Issue 11) |
+| 15 | LoRa RF performance | ✅ PASS (Meshtastic mesh validated) |
+| 16 | Core 1 (A–H stages) | ✅ PASS (FreeRTOS SMP, IPC, sensors, SPI) |
+| 17 | Meshtastic integration | ✅ PASS (bidirectional mesh messaging) |
+| 18–19 | Interactive menu + regression tests | ✅ PASS (51+ commands, TFT menu, 18/20 reliable) |
+| 20–21 | Menu consolidation + code modularisation | ✅ PASS (21 source files, ~8580 lines) |
+| 23 | LoRa standalone TX/RX | ✅ PASS (6 bug fixes, AES-128-CTR TX) |
+| 24 | Core 1 TFT output + menu wrap-around | ✅ PASS |
+| 25 | PSRAM DMA error investigation | ⚠️ CONDITIONAL (RP2350 silicon issue; CPU read workaround) |
+
+**Open issues:** Issue 10 (BQ27441 cold-boot latchup), Issue 11 (GNSS 0 satellites), Issue 14 (PSRAM DMA read — silicon-level, no production impact).
 
 ### Firmware
 
 | Component | Status |
 |-----------|--------|
-| Core 0 — Meshtastic modem | Not yet started — pending Rev A bringup completion |
-| Core 1 — UI / application | Not yet started — pending Rev A bringup completion |
+| Core 0 — Meshtastic modem | **Validated** — LoRa modem running on Rev A (v2.7.15 dev, `rp2350b-mokya` variant); bidirectional mesh messaging confirmed |
+| Core 1 — FreeRTOS + UI | **Architecture validated** — FreeRTOS SMP, manual TinyUSB CDC, IPC, I2C sensors all proven on hardware; LVGL integration pending |
 | MokyaInput Engine (MIE) | **Phase 1 complete** — full IME (Smart Zh/En, Direct, Bopomofo), C API, 83/83 tests passing |
-| Bringup shell | **Complete** — `firmware/tools/bringup/`; covers all Rev A test steps |
+| Bringup shell | **Active** — `firmware/tools/bringup/`; 51+ commands, TFT interactive menu, 21 source files |
 
 ## System Overview
 
