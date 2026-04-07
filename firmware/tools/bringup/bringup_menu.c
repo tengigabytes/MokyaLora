@@ -59,14 +59,26 @@ static void cmd_scan_a(void) {
     // called by menu_handle_key before invoking run callback).
     while (!back_key_pressed()) sleep_ms(50);
 }
+static void cmd_lora_test(void) {
+    lora_test();
+    while (!back_key_pressed()) sleep_ms(50);
+}
 static void cmd_lora_rx_lf(void) {
-    lora_rx(923875000UL, 11, 0x08, 0x01, 30);
+    lora_rx(920125000UL, 11, 0x05, 0x01, 30);
 }
 static void cmd_lora_rx_mf(void) {
-    lora_rx(922125000UL, 9, 0x08, 0x01, 0);
+    lora_rx(922125000UL, 9, 0x05, 0x01, 0);
 }
 static void cmd_lora_rx_mf1(void) {
-    lora_rx(920125000UL, 9, 0x08, 0x01, 0);
+    lora_rx(920125000UL, 9, 0x05, 0x01, 0);
+}
+static void cmd_lora_tx(void) {
+    lora_tx();
+    while (!back_key_pressed()) sleep_ms(50);
+}
+static void cmd_lora_dump(void) {
+    lora_dump();
+    while (!back_key_pressed()) sleep_ms(50);
 }
 
 // --- Sensors page ---
@@ -126,11 +138,12 @@ static const menu_page_t page_memory = {
 
 // --- LoRa page ---
 static const menu_item_t page_lora_items[] = {
-    {"LoRa test",       lora_test,       NULL},
+    {"LoRa test",       cmd_lora_test,   NULL},
     {"LoRa RX 30s LF",  cmd_lora_rx_lf, NULL},
     {"LoRa RX MF",      cmd_lora_rx_mf,  NULL},
     {"LoRa RX MF1",     cmd_lora_rx_mf1, NULL},
-    {"LoRa dump",       lora_dump,       NULL},
+    {"LoRa TX",         cmd_lora_tx,     NULL},
+    {"LoRa dump",       cmd_lora_dump,   NULL},
 };
 static const menu_page_t page_lora = {
     "LoRa", page_lora_items, sizeof(page_lora_items) / sizeof(page_lora_items[0])

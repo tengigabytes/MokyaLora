@@ -30,3 +30,4 @@ void lora_test(void);
 void lora_rx(uint32_t freq_hz, uint8_t sf, uint8_t bw_code,
              uint8_t cr_code, uint32_t timeout_s);
 void lora_dump(void);
+void lora_tx(void);

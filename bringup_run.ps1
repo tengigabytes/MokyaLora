@@ -29,6 +29,7 @@ $CmdTimeout = @{
     'lora_rx'     = 35
     'lora_rx_mf'  = 35
     'lora_rx_mf1' = 35
+    'lora_tx'     = 15
     'lora_dump' = 8
     'psram'       = 5
     'psram_full'  = 60

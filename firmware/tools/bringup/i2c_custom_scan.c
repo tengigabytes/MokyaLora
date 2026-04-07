@@ -329,14 +329,16 @@ void handle_command(const char *cmd) {
     } else if (strcmp(cmd, "lora") == 0) {
         lora_test();
     } else if (strcmp(cmd, "lora_rx") == 0) {
-        // TW LONG_FAST default: hash("LongFast")%20=15 → 920.0+0.125+15*0.25 = 923.875 MHz, SF11, BW250k
-        lora_rx(923875000UL, 11, 0x08, 0x01, 30);
+        // TW LONG_FAST ch_num=0: 920.0+0.125+0*0.25 = 920.125 MHz, SF11, BW250k
+        lora_rx(920125000UL, 11, 0x05, 0x01, 30);
     } else if (strcmp(cmd, "lora_rx_mf") == 0) {
         // TW MEDIUM_FAST default: hash("MediumFast")%20=8 → 920.0+0.125+8*0.25 = 922.125 MHz, SF9, BW250k
-        lora_rx(922125000UL, 9, 0x08, 0x01, 0);
+        lora_rx(922125000UL, 9, 0x05, 0x01, 0);
     } else if (strcmp(cmd, "lora_rx_mf1") == 0) {
         // TW MEDIUM_FAST channel_num=1 (URL config): slot0 → 920.0+0.125 = 920.125 MHz, SF9, BW250k
-        lora_rx(920125000UL, 9, 0x08, 0x01, 0);
+        lora_rx(920125000UL, 9, 0x05, 0x01, 0);
+    } else if (strcmp(cmd, "lora_tx") == 0) {
+        lora_tx();
     } else if (strcmp(cmd, "lora_dump") == 0) {
         lora_dump();
     } else if (strcmp(cmd, "sram") == 0) {
@@ -431,9 +433,10 @@ void handle_command(const char *cmd) {
         printf("  mic_rec     -- record 3 s into SRAM then play back (no loopback CLK hazard)\n");
         printf("  mic_dump    -- record 1 s into SRAM then dump raw PCM over serial (use recv_pcm_dump.py)\n");
         printf("  lora        -- SX1262 reset + GetStatus + ReadRegister (SyncWord check)\n");
-        printf("  lora_rx     -- SX1262 RX 30 s    (923.875 MHz, SF11, TW LONG_FAST default)\n");
+        printf("  lora_rx     -- SX1262 RX 30 s    (920.125 MHz, SF11, TW LONG_FAST ch0)\n");
         printf("  lora_rx_mf  -- SX1262 RX cont.  (922.125 MHz, SF9,  TW MEDIUM_FAST default; 'exit' to stop)\n");
         printf("  lora_rx_mf1 -- SX1262 RX cont.  (920.125 MHz, SF9,  TW MEDIUM_FAST ch_num=1; 'exit' to stop)\n");
+        printf("  lora_tx     -- SX1262 TX one Meshtastic text msg (920.125 MHz, SF11, default PSK)\n");
         printf("  lora_dump   -- SX1262 full status: errors, SyncWord, OCP, RxGain, RSSI, stats\n");
         printf("  sram        -- RP2350B internal SRAM 16 KB pattern test (5 patterns)\n");
         printf("  flash       -- read Flash JEDEC ID + unique ID (W25Q128JW)\n");
