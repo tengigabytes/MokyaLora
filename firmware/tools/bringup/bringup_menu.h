@@ -63,6 +63,7 @@ extern const uint8_t MENU_FONT5[95][5];
 // PIO lifecycle — claim/release PIO1 SM for 8080 writes
 bool menu_tft_start(void);     // claim SM + load program; returns false on error
 void menu_tft_stop(void);      // release SM + program
+bool menu_tft_active(void);    // true if PIO SM is currently claimed
 
 // ST7789VI full init (SWRESET, SLPOUT, COLMOD, gamma, INVON, DISPON)
 void menu_tft_hw_init(void);

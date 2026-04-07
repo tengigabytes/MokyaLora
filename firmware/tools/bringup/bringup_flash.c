@@ -1,4 +1,5 @@
 #include "bringup.h"
+#include "hardware/clocks.h"
 
 // ---------------------------------------------------------------------------
 // Flash test (W25Q128JW, 16 MB)
@@ -48,4 +49,97 @@ void flash_test(void) {
         printf("%02X ", fx[i]);
     }
     printf("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Flash (M0) XIP speed test — change M0 timing from RAM, test Flash reads.
+//
+// This function runs entirely from RAM (no_inline_not_in_flash) so that XIP
+// can be safely paused while M0.timing is changed.  It reads back a known
+// Flash constant after the change to verify correctness.
+// ---------------------------------------------------------------------------
+
+// Known sentinel in Flash — address and value set by the linker.
+// We use the first word of the vector table (Initial MSP) which is always
+// 0x20082000 for RP2350B with 520 KB SRAM.
+#define FLASH_TEST_ADDR   0x10000000u
+#define FLASH_TEST_EXPECT (*(volatile uint32_t *)FLASH_TEST_ADDR)
+
+void __no_inline_not_in_flash_func(flash_speed_run)(
+        struct flash_speed_result *results, int count,
+        const uint8_t *clkdivs, const uint8_t *rxdelays,
+        uint32_t sys_hz) {
+    // Read expected value BEFORE changing timing (while XIP still works)
+    uint32_t expected = *(volatile uint32_t *)FLASH_TEST_ADDR;
+
+    for (int i = 0; i < count; i++) {
+        uint8_t cd = clkdivs[i];
+        uint8_t rd = rxdelays[i];
+
+        // Pause XIP
+        uint32_t irq_save = save_and_disable_interrupts();
+        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+
+        // Save and change M0 timing
+        uint32_t orig = qmi_hw->m[0].timing;
+        qmi_hw->m[0].timing = (orig & ~(QMI_M0_TIMING_CLKDIV_BITS |
+                                         QMI_M0_TIMING_RXDELAY_BITS))
+                             | ((uint32_t)cd << QMI_M0_TIMING_CLKDIV_LSB)
+                             | ((uint32_t)rd << QMI_M0_TIMING_RXDELAY_LSB);
+
+        // Resume XIP with new timing
+        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        restore_interrupts(irq_save);
+
+        // Read test word from Flash (uses new timing)
+        uint32_t val = *(volatile uint32_t *)FLASH_TEST_ADDR;
+
+        // Revert to original timing immediately (from RAM — safe even if
+        // the read above returned garbage, because we are still in RAM)
+        irq_save = save_and_disable_interrupts();
+        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        qmi_hw->m[0].timing = orig;
+        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        restore_interrupts(irq_save);
+
+        results[i].clkdiv  = cd;
+        results[i].rxdelay = rd;
+        results[i].sck_mhz = sys_hz / (2u * cd) / 1000000u;
+        results[i].read_val = val;
+        results[i].expected = expected;
+        results[i].pass     = (val == expected);
+    }
+}
+
+void flash_speed_test(void) {
+    printf("\n--- Flash (M0) XIP Speed Test ---\n");
+
+    uint32_t sys_hz = clock_get_hz(clk_sys);
+    printf("  sys_clk = %u MHz\n", (unsigned)(sys_hz / 1000000u));
+    printf("  Test: read vector table MSP @ 0x%08X\n", FLASH_TEST_ADDR);
+    printf("  Expected value: 0x%08X\n\n", (unsigned)FLASH_TEST_EXPECT);
+
+    // Build test matrix: CLKDIV=1..4 × RXDELAY=0..3
+    #define FLASH_COMBOS 16
+    uint8_t cd_arr[FLASH_COMBOS], rd_arr[FLASH_COMBOS];
+    struct flash_speed_result res[FLASH_COMBOS];
+    int idx = 0;
+    for (uint8_t cd = 1; cd <= 4; cd++)
+        for (uint8_t rd = 0; rd <= 3; rd++) {
+            cd_arr[idx] = cd;
+            rd_arr[idx] = rd;
+            idx++;
+        }
+
+    flash_speed_run(res, FLASH_COMBOS, cd_arr, rd_arr, sys_hz);
+
+    printf("  CLKDIV  RXDELAY  SCK_MHz  read_val    result\n");
+    printf("  ------  -------  -------  ----------  ------\n");
+    for (int i = 0; i < FLASH_COMBOS; i++) {
+        printf("  %6u  %7u  %7u  0x%08X  %s\n",
+               res[i].clkdiv, res[i].rxdelay, res[i].sck_mhz,
+               (unsigned)res[i].read_val,
+               res[i].pass ? "PASS" : "FAIL");
+    }
+    #undef FLASH_COMBOS
 }
