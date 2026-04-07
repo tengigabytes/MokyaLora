@@ -280,15 +280,17 @@ Must verify selected NAND part has a true low-power standby. Budget 10–50 µA 
 
 ### 8.5 Power Modes & Expected Battery Life
 
-Battery: Nokia BL-4C, 890 mAh. Charger efficiency losses excluded (battery-direct).
+Battery: Nokia BL-4C, 890 mAh (nominal).
 
-| Mode | 3.3 V Rail | System Current (est.) | Battery Life |
-|------|-----------|----------------------|-------------|
-| ACTIVE (screen on, Rx/Tx) | ON | ~50 mA | ~18 hours |
-| STANDBY (screen off, duty-cycle Rx) | **ON** (SX1262 VBAT) | ~300 µA (Rev A) / ~200 µA (Rev B + load switch) | 123 days / 185 days |
-| DORMANT + LoRa wake | **ON** (SX1262 VBAT) | ~150 µA (Rev A) / ~100 µA (Rev B + load switch) | 247 days / 370 days |
-| DORMANT (PWR_BTN only) | **OFF** (Rev B) | ~150 µA (Rev A) / ~50 µA (Rev B, EN gated) | 247 days / **2+ years** |
+> **Important: load-only estimate.** The battery life figures below consider **only system load current**. Li-ion self-discharge (~2–3 %/month at 25 °C, higher at elevated temperatures) is **not included**. For the BL-4C (~890 mAh), self-discharge alone drains ~18–27 mAh/month (~25–37 µA equivalent). At very low load currents (DORMANT), self-discharge becomes the **dominant** drain term and real-world battery life will be significantly shorter than these idealized numbers. Additionally, BL-4C is a legacy cell — actual capacity of available units may be degraded below 890 mAh due to age and storage conditions.
 
-> **Key constraint:** SX1262 VBAT on 3.3 V rail means the LDO must stay on whenever LoRa is needed (STANDBY + LoRa-wake DORMANT). The dominant STANDBY terms are SX1262 duty-cycle Rx (~90 µA avg) and Teseo VCC residual (unknown — **must measure in Step 26**).
+| Mode | 3.3 V Rail | Load Current (est.) | Battery Life (load only) | Battery Life (w/ self-discharge est.) |
+|------|-----------|----------------------|------------------------|--------------------------------------|
+| ACTIVE (screen on, Rx/Tx) | ON | ~50 mA | ~18 hours | ~18 hours (self-discharge negligible) |
+| STANDBY (screen off, duty-cycle Rx) | **ON** (SX1262 VBAT) | ~300 µA (Rev A) / ~200 µA (Rev B + load switch) | 123 / 185 days | ~100 / 140 days |
+| DORMANT + LoRa wake | **ON** (SX1262 VBAT) | ~150 µA (Rev A) / ~100 µA (Rev B + load switch) | 247 / 370 days | ~150 / 190 days |
+| DORMANT (PWR_BTN only) | **OFF** (Rev B) | ~150 µA (Rev A) / ~50 µA (Rev B, EN gated) | 247 days / 2+ years | ~150 days / ~10 months |
+
+> **Key constraint:** SX1262 VBAT on 3.3 V rail means the LDO must stay on whenever LoRa is needed (STANDBY + LoRa-wake DORMANT). The dominant STANDBY terms are SX1262 duty-cycle Rx (~90 µA avg) and Teseo VCC residual (unknown — **must measure in Step 26**). In DORMANT, battery self-discharge (~25–37 µA) rivals or exceeds system load as the limiting factor.
 
 > **Rev B optimization path:** Add load switch (TPS22919) between TPS7A2033 output and non-LoRa 3.3 V loads (Teseo, LCD, sensors). SX1262 VBAT stays powered directly from LDO. This allows STANDBY current to approach **~115 µA** (LDO Iq + SX1262 duty-cycle + MCU dormant) without the Teseo/LCD parasitic draw.
