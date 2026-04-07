@@ -40,8 +40,8 @@
 
 | Rail | Voltage | Regulator | Key Loads |
 |------|---------|-----------|-----------|
-| 1.8 V | 1.8 V | TPS62840 | MCU, Flash, PSRAM, SX1262, Mic, LCD logic, GPS I/O |
-| 3.3 V | 3.3 V | TPS7A2033 | GPS RF, LCD analogue, magnetometer, barometer |
+| 1.8 V | 1.8 V | TPS62840 | MCU, Flash, PSRAM, SX1262 VDD_IN + VBAT_IO, Mic, LCD logic, GPS I/O |
+| 3.3 V | 3.3 V | TPS7A2033 | **SX1262 VBAT (PA + Rx)**, GPS RF, LCD analogue, magnetometer, barometer |
 | VSYS | ~3.5–4.2 V | BQ25622 | Buck input, LDO input, audio amp, backlight, motor |
 | OTG | 5 V | BQ25622 boost | USB VBUS reverse power output |
 
@@ -310,7 +310,8 @@ Changes based on Rev A bringup findings:
 
 | Change | Reason | Priority | Reference |
 |--------|--------|----------|-----------|
-| **TPS7A2033 EN → GPIO** | Gate 3.3 V rail in DORMANT; saves 65+ µA + Teseo leakage | **Critical** | Power review §8.4 |
+| **TPS7A2033 EN → GPIO** | Gate 3.3 V rail in deepest DORMANT (PWR_BTN only, no LoRa) | **Critical** | Power review §8.4 |
+| **Load switch on non-LoRa 3.3 V loads** | Isolate Teseo/LCD/sensors from SX1262 VBAT in STANDBY; SX1262 VBAT stays powered | **High** | Power review §8.4 |
 | **Add NAND Flash** | Non-volatile storage (maps, message DB, OTA) | **High** | New requirement |
 | **Remove NAU8315 amp + CMS-131304 speaker** | Audio not needed | High | User decision |
 | **Remove IM69D130 PDM mic** | Audio not needed | High | User decision |

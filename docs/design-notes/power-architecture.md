@@ -36,7 +36,7 @@ USB-C VBUS ──┐
 |------------------|-------------------------------|
 | Regulator        | TI TPS62840DLCR (VSON-8)      |
 | Quiescent current| 60 nA                         |
-| Loads            | RP2350B IOVDD/DVDD, W25Q128JW Flash, APS6404L PSRAM, SX1262 VCC, IM69D130 VDD, NHD LCD VDDI (logic), Teseo-LIV3FL VCC_IO |
+| Loads            | RP2350B IOVDD/DVDD, W25Q128JW Flash, APS6404L PSRAM, SX1262 VDD_IN + VBAT_IO, IM69D130 VDD, NHD LCD VDDI (logic), Teseo-LIV3FL VCC_IO |
 | Behaviour        | Always-on; Dormant mode draws < 10 µA system-wide |
 
 ### Rail B — 3.3 V (TPS7A2033 LDO)
@@ -46,7 +46,7 @@ USB-C VBUS ──┐
 | Regulator        | TI TPS7A2033 (WSON-6)         |
 | Output current   | 300 mA max                    |
 | PSRR             | Ultra-low noise                |
-| Loads            | Teseo-LIV3FL VCC (RF), NHD LCD VDD (analogue), LIS2MDL, LPS22HH |
+| Loads            | **SX1262 VBAT (PA + Rx frontend)**, Teseo-LIV3FL VCC (RF), NHD LCD VDD (analogue), LIS2MDL, LPS22HH |
 | Enable           | **Rev A: EN tied to VSYS — always-on (no software control).** Rev B: route EN to GPIO for DORMANT power-gating. See §8.2 Issue A |
 
 ### Rail C — VSYS (BQ25620 Direct)
@@ -134,11 +134,39 @@ TPS7A2033 EN is tied to VSYS — **cannot be software-disabled**. Even with all 
 | **LDO Iq** | — | — | **12 µA** |
 | **Subtotal** | | | **~65 µA + Teseo residual** |
 
+**Critical finding:** SX1262 **VBAT (pin 10) is on the 3.3 V rail**, not 1.8 V. VBAT powers the PA (TX) and Rx frontend (LNA, mixer). The 3.3 V rail **cannot be shut down** whenever LoRa needs to operate:
+
+| Power Mode | LoRa State | 3.3 V Rail | Reason |
+|------------|-----------|-----------|--------|
+| ACTIVE | Rx/Tx | **Must be ON** | VBAT needed for PA and Rx frontend |
+| STANDBY (duty-cycle Rx) | Periodic Rx | **Must be ON** | VBAT needed for Rx windows |
+| DORMANT + LoRa wake | Sleep (warm start) | **Must be ON** | VBAT needed for SX1262 to retain state and respond to DIO1 wake |
+| DORMANT (PWR_BTN only) | Power off | Can be OFF | No LoRa — deepest sleep |
+
+SX1262 power pins (from schematic):
+- **VBAT (pin 10) → VCC_3V3** — PA + Rx analog supply (1.8–3.7 V range, 3.3 V on this board)
+- **VDD_IN (pin 1) → VCC_1V8** — digital core
+- **VBAT_IO (pin 11) → VCC_1V8** — SPI I/O levels
+
+This means the 3.3 V rail is effectively **required for all normal operation** (Meshtastic always has LoRa active). Only in the deepest DORMANT (no LoRa, PWR_BTN wake only) can it be shut down.
+
+**Implication for STANDBY power:** The 3.3 V LDO (12 µA Iq) plus all parasitic 3.3 V loads (Teseo leakage, LCD SLPIN, sensors) are **always present** during STANDBY. This makes optimizing the non-LoRa 3.3 V loads more important:
+
+| 3.3 V Load | STANDBY draw | Can be reduced? |
+|------------|-------------|----------------|
+| SX1262 VBAT (duty-cycle Rx) | ~90 µA avg (2% duty × 4.5 mA) | No — protocol-defined |
+| Teseo-LIV3FL VCC | **TBD (LP mode residual)** | `$PSTMLOWPOWERONOFF` — verify |
+| NHD LCD VDD (SLPIN) | ~50 µA | Minimal — already sleeping |
+| LPS22HH + LIS2MDL | ~3 µA | Already power-down |
+| TPS7A2033 Iq | 12 µA | No — inherent |
+| **Subtotal** | **~155 µA + Teseo** | |
+
 **Rev B recommendation:**
-1. Route TPS7A2033 EN to a GPIO — software can power-gate the entire 3.3 V rail in DORMANT.
-2. Verify all 3.3 V loads tolerate power loss (no data corruption, no latchup on re-power).
-3. If LCD VDD is cut, LCD must re-init on wake (acceptable — already done after SLPIN).
-4. Teseo VCC loss → cold start penalty (~30 s TTFF vs. hot-start ~1 s). Acceptable for DORMANT.
+1. **Still route TPS7A2033 EN to a GPIO** — enables deepest DORMANT (PWR_BTN-only wake) by shutting down entire 3.3 V rail. Saves ~155 µA + Teseo leakage in that mode.
+2. For STANDBY: 3.3 V stays on; focus on minimizing parasitic loads (Teseo LP, sensor power-down).
+3. **Teseo residual current on VCC is the biggest unknown** — if `$PSTMLOWPOWERONOFF` doesn't fully gate internal regulators, Teseo may leak mA-level current on the 3.3 V rail even in LP mode. Measure this during Step 26 bringup.
+4. **Consider splitting SX1262 VBAT to a separate 3.3 V supply** (e.g., dedicated LDO or buck with lower Iq) to avoid powering Teseo/LCD/sensors unnecessarily in STANDBY. Trade-off: BOM cost + board area vs. significant power saving.
+5. **Alternative: load switch on non-LoRa 3.3 V loads** — keep SX1262 VBAT powered from TPS7A2033, but gate Teseo VCC and LCD VDD through a load switch (TPS22919, ~1 µA Iq). This isolates LoRa from the other 3.3 V consumers without a second regulator.
 
 #### Issue B — I2C Bus Pull-Up Static Current
 
@@ -198,43 +226,69 @@ Must verify selected NAND part has a true low-power standby. Budget 10–50 µA 
 
 ### 8.3 Dormant Current Estimate Summary
 
+#### DORMANT with LoRa wake (SX1262 sleep warm-start, DIO1 wake)
+
+3.3 V rail must stay ON for SX1262 VBAT.
+
 | Component | Rev A (est.) | Rev B (optimized) | Notes |
 |-----------|-------------|-------------------|-------|
 | RP2350B DORMANT | 20 µA | 20 µA | POWMAN, XOSC off |
 | TPS62840 Iq | 0.06 µA | 0.06 µA | 60 nA — negligible |
-| TPS7A2033 Iq + loads | 65 µA + Teseo? | **0 µA (gated)** | Rev B: EN → GPIO |
+| TPS7A2033 Iq | 12 µA | 12 µA | Must stay on for SX1262 VBAT |
+| SX1262 Sleep (warm) | 0.6 µA | 0.6 µA | VBAT on 3.3V, DIO1 wake functional |
+| Teseo VCC (LP) | **TBD** | **TBD (load switch)** | Rev B: gate via TPS22919 if LP residual is high |
+| LCD VDD (SLPIN) | 50 µA | **~1 µA (load switch)** | Rev B: gate LCD VDD via load switch |
+| Sensors (3.3V, LP) | 3 µA | 3 µA | LPS22HH + LIS2MDL power-down |
 | W25Q128JW DPD | 1 µA | 1 µA | |
 | APS6404L | 40 µA (standby) | 3 µA (DPD) | Reload MIE on wake |
-| SX1262 Sleep | 0.16 µA | 0.16 µA | DIO1 wake functional |
 | BQ25622 | 10 µA (HIZ) | 10 µA (HIZ) | Watchdog + ADC disabled |
 | BQ27441 | 1 µA | 1 µA | Auto sleep |
 | LM27965 | 5 µA | **0 µA (HWEN off)** | Rev B: HWEN → GPIO |
 | NAND Flash | — | 10–50 µA (TBD) | Part-dependent |
-| I2C pull-ups | ~0 (bus idle) | ~0 (bus idle) | Worst-case if latchup: add load switch |
-| LCD panel (SLPIN) | 50 µA | **0 µA (VDD off)** | Rev B: 3.3V gated |
-| Sensors (LP) | 5 µA | 5 µA | |
-| **Total** | **~200 µA + Teseo** | **~50–90 µA** | Rev B with EN GPIO |
+| **Total** | **~145 µA + Teseo** | **~65–105 µA + Teseo** | Teseo residual is the key unknown |
+
+#### DORMANT without LoRa (PWR_BTN wake only, deepest sleep)
+
+3.3 V rail can be fully shut down. SX1262 loses state (cold start on wake).
+
+| Component | Rev A (est.) | Rev B (optimized) | Notes |
+|-----------|-------------|-------------------|-------|
+| RP2350B DORMANT | 20 µA | 20 µA | |
+| TPS62840 Iq | 0.06 µA | 0.06 µA | |
+| TPS7A2033 | 12 µA (always-on) | **0 µA (EN off)** | Rev B: EN → GPIO |
+| W25Q128JW DPD | 1 µA | 1 µA | |
+| APS6404L DPD | 40 µA / 3 µA | 3 µA | |
+| BQ25622 HIZ | 10 µA | 10 µA | |
+| BQ27441 | 1 µA | 1 µA | |
+| LM27965 | 5 µA | **0 µA (HWEN off)** | |
+| NAND Flash | — | 10–50 µA (TBD) | |
+| All 3.3V loads | 55 µA + Teseo | **0 µA (rail off)** | |
+| **Total** | **~145 µA + Teseo** | **~45–85 µA** | True deep sleep |
 
 ### 8.4 Rev B Power Tree Recommendations Summary
 
 | # | Change | Impact | Priority |
 |---|--------|--------|----------|
-| 1 | **TPS7A2033 EN → GPIO** | Gate entire 3.3 V rail in DORMANT; saves 65+ µA + Teseo leakage | **Critical** |
-| 2 | **LM27965 HWEN → GPIO** | Full LED driver shutdown; saves ~5 µA | Medium |
-| 3 | **PSRAM Deep Power Down** in DORMANT | Saves ~37 µA; 200 ms reload cost on wake | Medium |
-| 4 | **I2C Bus B pull-up load switch** or higher-value pull-ups | Protect against BQ27441 latchup drain | Low (conditional on Issue 10) |
-| 5 | **BQ25622 dormant config:** WDT off, ADC off, HIZ | Saves ~990 µA vs. default active | High (firmware) |
-| 6 | **NAND Flash part selection:** require Deep Power Down | Avoid 50 µA standing drain | High (BOM) |
-| 7 | **SX1262 duty-cycle RX budget** | Dominates average current in Meshtastic STANDBY | Design (firmware) |
+| 1 | **TPS7A2033 EN → GPIO** | Gate entire 3.3 V rail in deepest DORMANT (PWR_BTN only); saves all 3.3 V loads | **Critical** |
+| 2 | **Load switch on non-LoRa 3.3 V loads** (Teseo VCC, LCD VDD) | In STANDBY/LoRa-wake DORMANT: isolate Teseo + LCD from SX1262 VBAT; saves Teseo leakage + LCD 50 µA | **High** |
+| 3 | **LM27965 HWEN → GPIO** | Full LED driver shutdown; saves ~5 µA | Medium |
+| 4 | **PSRAM Deep Power Down** in DORMANT | Saves ~37 µA; 200 ms reload cost on wake | Medium |
+| 5 | **I2C Bus B pull-up load switch** or higher-value pull-ups | Protect against BQ27441 latchup drain | Low (conditional on Issue 10) |
+| 6 | **BQ25622 dormant config:** WDT off, ADC off, HIZ | Saves ~990 µA vs. default active | High (firmware) |
+| 7 | **NAND Flash part selection:** require Deep Power Down | Avoid 50 µA standing drain | High (BOM) |
+| 8 | **Measure Teseo VCC residual in LP mode** | Determine if load switch is necessary | **High** (Step 26 bringup) |
 
 ### 8.5 Power Modes & Expected Battery Life
 
 Battery: Nokia BL-4C, 890 mAh. Charger efficiency losses excluded (battery-direct).
 
-| Mode | System Current (est.) | Battery Life |
-|------|----------------------|-------------|
-| ACTIVE (screen on, Rx/Tx) | ~50 mA | ~18 hours |
-| STANDBY (screen off, duty-cycle Rx) | ~500 µA (Rev A) / ~200 µA (Rev B) | 74 days / 185 days |
-| DORMANT (all off, GPIO wake only) | ~200 µA (Rev A) / ~50 µA (Rev B) | 185 days / **2+ years** |
+| Mode | 3.3 V Rail | System Current (est.) | Battery Life |
+|------|-----------|----------------------|-------------|
+| ACTIVE (screen on, Rx/Tx) | ON | ~50 mA | ~18 hours |
+| STANDBY (screen off, duty-cycle Rx) | **ON** (SX1262 VBAT) | ~300 µA (Rev A) / ~200 µA (Rev B + load switch) | 123 days / 185 days |
+| DORMANT + LoRa wake | **ON** (SX1262 VBAT) | ~150 µA (Rev A) / ~100 µA (Rev B + load switch) | 247 days / 370 days |
+| DORMANT (PWR_BTN only) | **OFF** (Rev B) | ~150 µA (Rev A) / ~50 µA (Rev B, EN gated) | 247 days / **2+ years** |
 
-> **Note:** STANDBY with SX1262 duty-cycle Rx (~2% duty, 4.5 mA Rx) contributes ~90 µA average. This is the dominant term and is protocol-determined (Meshtastic slot timing). Hardware optimization has diminishing returns below this floor.
+> **Key constraint:** SX1262 VBAT on 3.3 V rail means the LDO must stay on whenever LoRa is needed (STANDBY + LoRa-wake DORMANT). The dominant STANDBY terms are SX1262 duty-cycle Rx (~90 µA avg) and Teseo VCC residual (unknown — **must measure in Step 26**).
+
+> **Rev B optimization path:** Add load switch (TPS22919) between TPS7A2033 output and non-LoRa 3.3 V loads (Teseo, LCD, sensors). SX1262 VBAT stays powered directly from LDO. This allows STANDBY current to approach **~115 µA** (LDO Iq + SX1262 duty-cycle + MCU dormant) without the Teseo/LCD parasitic draw.
