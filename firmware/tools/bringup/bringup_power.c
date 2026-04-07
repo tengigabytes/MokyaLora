@@ -1,4 +1,5 @@
 #include "bringup.h"
+#include "bringup_menu.h"
 
 // ---------------------------------------------------------------------------
 // LM27965 helpers
@@ -15,39 +16,126 @@ static int lm_read(uint8_t reg, uint8_t *val) {
     return i2c_read_timeout_us(i2c1, LM27965_ADDR, val, 1, false, 50000);
 }
 
-void lm27965_cycle(void) {
-    printf("\n--- LM27965 LED Cycle (non-LCD) ---\n");
+// ---------------------------------------------------------------------------
+// LED interactive control — per-bank on/off + duty, TFT UI
+// GP bit assignments: bit0=ENA(TFT BL) bit1=ENB(Kbd D1B+D2B)
+//                     bit2=ENC(D1C red) bit3=EN5A bit4=EN3B(D3B green)
+//                     bit5=reserved(keep 1)
+// ENB(bit1) must be set for any Bank B output (D1B+D2B always on when ENB=1).
+// EN3B(bit4) gates only D3B green; D1B+D2B require ENB=1.
+// ---------------------------------------------------------------------------
 
-    // 40 % brightness = 12.1 mA/pin (safe for all attached LEDs)
-    lm_write(LM27965_BANKA, 0x16);
-    lm_write(LM27965_BANKB, 0x16);
-    lm_write(LM27965_BANKC, 0xFD);  // bits[1:0] = 01 = 40 %
+// Bank descriptor
+typedef struct {
+    const char *name;       // display label
+    uint8_t     duty_reg;   // brightness register
+    uint8_t     duty_max;   // max duty value (31 for A/B, 3 for C)
+    uint8_t     en_mask;    // GP enable bit(s) — OR'd into GP byte
+} led_bank_t;
 
-    // GP bit assignments: bit0=ENA(TFT,skip) bit1=ENB(Key D1B+D2B) bit2=ENC(D1C red)
-    //                     bit3=EN5A  bit4=EN3B(D3B green)  bit5=reserved(keep 1)
-    // ENB(bit1) must be set for any Bank B output (required for D3B green too).
-    // EN3B(bit4) gates only D3B; D1B+D2B are on whenever ENB=1.
-    typedef struct { uint8_t gp; const char *name; } step_t;
-    step_t seq[] = {
-        { 0x22, "Keyboard backlight (D1B+D2B)"          },
-        { 0x24, "Red indicator (D1C)"                   },
-        { 0x32, "Green indicator (D3B) + Keyboard"      },
-        { 0x36, "All: Keyboard + Red + Green"           },
-    };
+static const led_bank_t led_banks[] = {
+    {"TFT-BL",  LM27965_BANKA, 31, 0x01},          // Bank A: ENA(bit0)
+    {"Kbd+Grn", LM27965_BANKB, 31, 0x12},           // Bank B: ENB(bit1)+EN3B(bit4)
+    {"Red",     LM27965_BANKC,  3, 0x04},            // Bank C: ENC(bit2)
+};
+#define LED_BANK_COUNT  3
 
-    for (int cycle = 0; cycle < 3; cycle++) {
-        if (back_key_pressed()) break;
-        for (int i = 0; i < 4; i++) {
-            lm_write(LM27965_GP, seq[i].gp);
-            printf("  [%d] %s\n", cycle, seq[i].name);
-            sleep_ms(600);
-        }
-        lm_write(LM27965_GP, 0x20);  // brief off
-        sleep_ms(200);
+static void led_draw(int sel, bool on[LED_BANK_COUNT], uint8_t duty[LED_BANK_COUNT]) {
+    const int S = 2;
+    const int CH = 8 * S;
+    const int W  = menu_tft_width();
+    const int COLS = W / (6 * S);
+
+    menu_clear(MC_BG);
+    menu_str(0, 0, " LED Control        ", COLS, MC_TITLE, MC_TITBG, S);
+
+    for (int i = 0; i < LED_BANK_COUNT; i++) {
+        char line[24];
+        snprintf(line, sizeof(line), "%c%-7s %3s %2d/%2d ",
+                 i == sel ? '>' : ' ',
+                 led_banks[i].name,
+                 on[i] ? "ON" : "OFF",
+                 duty[i],
+                 led_banks[i].duty_max);
+        menu_str(0, (2 + i) * CH, line, COLS,
+                 i == sel ? MC_HITEXT : (on[i] ? MC_OK : MC_FG),
+                 i == sel ? MC_HILITE : MC_BG, S);
     }
 
+    menu_str(0, 6 * CH, " UP/DN select       ", COLS, MC_HINT, MC_BG, S);
+    menu_str(0, 7 * CH, " LT/RT duty OK=togg ", COLS, MC_HINT, MC_BG, S);
+    menu_str(0, 9 * CH, " BACK to return     ", COLS, MC_HINT, MC_BG, S);
+}
+
+static void led_apply(bool on[LED_BANK_COUNT], uint8_t duty[LED_BANK_COUNT]) {
+    // Build GP byte: bit5 always set (reserved), plus enabled banks
+    uint8_t gp = 0x20;
+    for (int i = 0; i < LED_BANK_COUNT; i++) {
+        lm_write(led_banks[i].duty_reg, duty[i]);
+        if (on[i]) gp |= led_banks[i].en_mask;
+    }
+    lm_write(LM27965_GP, gp);
+}
+
+void led_control(void) {
+    printf("\n--- LED Interactive Control ---\n");
+
+    int sel = 0;
+    bool on[LED_BANK_COUNT]   = {false, false, false};
+    uint8_t duty[LED_BANK_COUNT] = {16, 16, 1};  // sensible defaults
+
+    led_apply(on, duty);
+    led_draw(sel, on, duty);
+
+    // Use menu_scan_key for keypad input (back_key_init already called by menu)
+    key_gpio_init();
+
+    bool dirty = false;
+    for (;;) {
+        menu_key_t k = menu_scan_key();
+        if (k == KEY_BACK) break;
+
+        switch (k) {
+        case KEY_UP:
+            if (sel > 0) { sel--; dirty = true; }
+            break;
+        case KEY_DOWN:
+            if (sel < LED_BANK_COUNT - 1) { sel++; dirty = true; }
+            break;
+        case KEY_OK:
+            on[sel] = !on[sel];
+            led_apply(on, duty);
+            dirty = true;
+            printf("  %s %s  duty=%d\n", led_banks[sel].name, on[sel] ? "ON" : "OFF", duty[sel]);
+            break;
+        case KEY_RIGHT:
+            if (duty[sel] < led_banks[sel].duty_max) {
+                duty[sel]++;
+                if (on[sel]) led_apply(on, duty);
+                dirty = true;
+            }
+            break;
+        case KEY_LEFT:
+            if (duty[sel] > 0) {
+                duty[sel]--;
+                if (on[sel]) led_apply(on, duty);
+                dirty = true;
+            }
+            break;
+        default:
+            break;
+        }
+
+        if (dirty) {
+            led_draw(sel, on, duty);
+            dirty = false;
+        }
+        sleep_ms(20);
+    }
+
+    // Turn all LEDs off on exit (except TFT backlight which menu reclaims)
     lm_write(LM27965_GP, 0x20);
-    printf("Done - LEDs off\n");
+    printf("LED control done — all off\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -179,11 +267,11 @@ void bq25622_enable_charge(void) {
     uint16_t vreg_raw = (uint16_t)(((vhi & 0x0Fu) << 5) | ((vlo >> 3) & 0x1Fu));
     printf("VREG:   lo=0x%02X hi=0x%02X → %u mV\n", vlo, vhi, (unsigned)(vreg_raw * 10u));
 
-    // 2. Set IINDPM = 100 mA
-    // IINDPM_RAW = 100 / 20 = 5 (8-bit)
-    // IINDPM[3:0] = 5 → REG0x06[7:4] = 0x50; IINDPM[7:4] = 0 → REG0x07[3:0] = 0x00
-    bq_write(REG_IINDPM_LO, 0x50);
-    bq_write(REG_IINDPM_HI, 0x00);
+    // 2. Set IINDPM = 500 mA
+    // IINDPM_RAW = 500 / 20 = 25 = 0x19 (8-bit)
+    // IINDPM[3:0] = 9 → REG0x06[7:4] = 0x90; IINDPM[7:4] = 1 → REG0x07[3:0] = 0x01
+    bq_write(REG_IINDPM_LO, 0x90);
+    bq_write(REG_IINDPM_HI, 0x01);
     bq_read(REG_IINDPM_LO, &vlo);
     bq_read(REG_IINDPM_HI, &vhi);
     uint16_t iindpm_raw = (uint16_t)(((vhi & 0x0Fu) << 4) | ((vlo >> 4) & 0x0Fu));
@@ -708,4 +796,281 @@ void dump_bus_b(void) {
     dump_lm27965_regs();
     bus_b_deinit();
     printf("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Bus B Diagnostic — scan + probe + TFT display (mirrors scan_bus_a pattern)
+// ---------------------------------------------------------------------------
+
+void scan_bus_b(void) {
+    const int S = 2;
+    const int CW = 6 * S;
+    const int CH = 8 * S;
+    const int W  = menu_tft_width();
+    const int COLS = W / CW;
+
+    // --- TFT header ---
+    menu_clear(MC_BG);
+    menu_str(0, 0, " Bus B Diagnostic   ", COLS, MC_TITLE, MC_TITBG, S);
+
+    // --- I2C scan (serial grid) ---
+    printf("\n--- Bus B scan+dump (Power, GPIO 6/7) ---\n");
+    bus_b_init();
+
+    bool found[128] = {false};
+    printf("   0  1  2  3  4  5  6  7  8  9  A  B  C  D  E  F\n");
+    for (int addr = 0; addr < 128; ++addr) {
+        if (addr % 16 == 0) printf("%02x ", addr);
+        int ret;
+        uint8_t rxdata;
+        if ((addr & 0x78) == 0 || (addr & 0x78) == 0x78)
+            ret = PICO_ERROR_GENERIC;
+        else
+            ret = i2c_read_timeout_us(i2c1, addr, &rxdata, 1, false, 50000);
+        if (ret >= 0) found[addr] = true;
+        printf(ret < 0 ? "." : "@");
+        printf(addr % 16 == 15 ? "\n" : "  ");
+    }
+
+    // --- Per-device probe + TFT row ---
+    typedef struct {
+        uint8_t addr;
+        const char *name;
+    } bdev_t;
+    static const bdev_t devs[] = {
+        {BQ25622_ADDR, "Chg "},   // 0x6B
+        {BQ27441_ADDR, "Fuel"},   // 0x55
+        {LM27965_ADDR, "LED "},   // 0x36
+    };
+    int pass = 0;
+
+    for (int i = 0; i < 3; i++) {
+        const bdev_t *d = &devs[i];
+        int row = 2 + i;
+        char line[24];
+
+        if (!found[d->addr]) {
+            snprintf(line, sizeof(line), " %s %02X  MISSING    ", d->name, d->addr);
+            menu_str(0, row * CH, line, COLS, MC_ERR, MC_BG, S);
+            printf("\n  [0x%02X] %s -- NOT FOUND\n", d->addr, d->name);
+            continue;
+        }
+
+        if (d->addr == BQ25622_ADDR) {
+            uint8_t v;
+            bq_read(REG_PART_INFO, &v);
+            uint8_t pn = (v >> 3) & 0x7;
+            bool ok = (pn == 1);  // 1 = BQ25622
+            snprintf(line, sizeof(line), " %s %02X  PN:%s  ",
+                     d->name, d->addr, ok ? "25622" : "???  ");
+            menu_str(0, row * CH, line, COLS, ok ? MC_OK : MC_ERR, MC_BG, S);
+            if (ok) pass++;
+            dump_bq25622();
+        } else if (d->addr == BQ27441_ADDR) {
+            uint16_t dt;
+            bool ok = (fg_ctrl_read(BQ27441_CTRL_DEVTYPE, &dt) >= 0 && dt == 0x0421);
+            snprintf(line, sizeof(line), " %s %02X  DT:%s  ",
+                     d->name, d->addr, ok ? "0421 " : "NACK ");
+            menu_str(0, row * CH, line, COLS, ok ? MC_OK : MC_ERR, MC_BG, S);
+            if (ok) pass++;
+            dump_bq27441_quick();
+        } else if (d->addr == LM27965_ADDR) {
+            uint8_t v;
+            bool ok = (lm_read(LM27965_GP, &v) >= 0);
+            snprintf(line, sizeof(line), " %s %02X  GP:%s    ",
+                     d->name, d->addr, ok ? "OK  " : "NACK");
+            menu_str(0, row * CH, line, COLS, ok ? MC_OK : MC_ERR, MC_BG, S);
+            if (ok) pass++;
+            dump_lm27965_regs();
+        }
+    }
+
+    // --- Summary ---
+    char summary[24];
+    snprintf(summary, sizeof(summary), " Result: %d/3 pass  ", pass);
+    menu_str(0, 6 * CH, summary, COLS, pass == 3 ? MC_OK : MC_ERR, MC_BG, S);
+    menu_str(0, 8 * CH, " BACK to return     ", COLS, MC_HINT, MC_BG, S);
+
+    printf("\n  === %d/3 devices OK ===\n\n", pass);
+    bus_b_deinit();
+}
+
+// ---------------------------------------------------------------------------
+// Charger Diagnostic — BQ25622 status + ADC on TFT, 1 Hz refresh
+// ---------------------------------------------------------------------------
+
+void charger_diag(void) {
+    const int S = 2;
+    const int CH = 8 * S;
+    const int W  = menu_tft_width();
+    const int COLS = W / (6 * S);
+
+    printf("\n--- Charger Diagnostic (1 Hz refresh, BACK to exit) ---\n");
+    bus_b_init();
+
+    // Enable ADC: continuous, 12-bit
+    bq_write(REG_ADC_CTRL, 0x80);
+    sleep_ms(300);  // first full ADC cycle
+
+    // Draw static elements once
+    menu_clear(MC_BG);
+    menu_str(0, 0, " Charger Diag       ", COLS, MC_TITLE, MC_TITBG, S);
+    menu_str(0, 9 * CH, " BACK to return     ", COLS, MC_HINT, MC_BG, S);
+
+    for (;;) {
+        if (back_key_pressed()) break;
+
+        // --- Read ADC channels ---
+        uint8_t lo, hi;
+        uint16_t raw16;
+
+        bq_read(REG_VBUS_ADC_LO, &lo); bq_read(REG_VBUS_ADC_HI, &hi);
+        raw16 = (uint16_t)((hi << 8) | lo);
+        unsigned vbus_mv = (unsigned)(((raw16 >> 2) & 0x1FFFu) * 397u / 100u);
+
+        bq_read(REG_VBAT_ADC_LO, &lo); bq_read(REG_VBAT_ADC_HI, &hi);
+        raw16 = (uint16_t)((hi << 8) | lo);
+        unsigned vbat_mv = (unsigned)(((raw16 >> 1) & 0x0FFFu) * 199u / 100u);
+
+        bq_read(REG_VSYS_ADC_LO, &lo); bq_read(REG_VSYS_ADC_HI, &hi);
+        raw16 = (uint16_t)((hi << 8) | lo);
+        unsigned vsys_mv = (unsigned)(((raw16 >> 1) & 0x0FFFu) * 199u / 100u);
+
+        bq_read(REG_IBUS_ADC_LO, &lo); bq_read(REG_IBUS_ADC_HI, &hi);
+        raw16 = (uint16_t)((hi << 8) | lo);
+        int ibus_ma = (int)((int16_t)raw16 >> 1) * 2;
+
+        bq_read(REG_IBAT_ADC_LO, &lo); bq_read(REG_IBAT_ADC_HI, &hi);
+        raw16 = (uint16_t)((hi << 8) | lo);
+        int ibat_ma = (int)((int16_t)raw16 >> 2) * 4;
+
+        // --- Read status ---
+        uint8_t st1;
+        bq_read(REG_STATUS1, &st1);
+        const char *chg_str[] = {"NoCHG", "CC   ", "Taper", "TopOf"};
+        const char *vbus_str;
+        uint8_t vbus_stat = st1 & 0x7;
+        if (vbus_stat == 0) vbus_str = "None";
+        else if (vbus_stat == 4) vbus_str = "Adpt";
+        else if (vbus_stat == 7) vbus_str = "OTG ";
+        else vbus_str = "??? ";
+
+        // --- TFT update (overwrite value rows only, no clear) ---
+        char line[24];
+        snprintf(line, sizeof(line), " VBUS: %5u mV    ", vbus_mv);
+        menu_str(0, 2 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " VBAT: %5u mV    ", vbat_mv);
+        menu_str(0, 3 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " VSYS: %5u mV    ", vsys_mv);
+        menu_str(0, 4 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " IBUS: %+5d mA    ", ibus_ma);
+        menu_str(0, 5 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " IBAT: %+5d mA    ", ibat_ma);
+        menu_str(0, 6 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " CHG:%s VBUS:%s ", chg_str[(st1 >> 3) & 3], vbus_str);
+        menu_str(0, 7 * CH, line, COLS, MC_OK, MC_BG, S);
+
+        // --- Serial output ---
+        printf("  VBUS=%umV VBAT=%umV VSYS=%umV IBUS=%+dmA IBAT=%+dmA CHG=%s VBUS=%s\n",
+               vbus_mv, vbat_mv, vsys_mv, ibus_ma, ibat_ma,
+               chg_str[(st1 >> 3) & 3], vbus_str);
+
+        // 1 Hz refresh — poll BACK key during wait
+        for (int i = 0; i < 20; i++) {
+            if (back_key_pressed()) goto done;
+            sleep_ms(50);
+        }
+    }
+done:
+    bus_b_deinit();
+    printf("Charger diag done\n");
+}
+
+// ---------------------------------------------------------------------------
+// Gauge Diagnostic — BQ27441 readings on TFT, 1 Hz refresh
+// ---------------------------------------------------------------------------
+
+void gauge_diag(void) {
+    const int S = 2;
+    const int CH = 8 * S;
+    const int W  = menu_tft_width();
+    const int COLS = W / (6 * S);
+
+    printf("\n--- Fuel Gauge Diagnostic (1 Hz refresh, BACK to exit) ---\n");
+    bus_b_init();
+
+    // Probe gauge
+    uint16_t cs;
+    if (fg_ctrl_read(BQ27441_CTRL_STATUS, &cs) < 0) {
+        menu_clear(MC_BG);
+        menu_str(0, 0, " Fuel Gauge Diag    ", COLS, MC_TITLE, MC_TITBG, S);
+        menu_str(0, 3 * CH, " NACK at 0x55       ", COLS, MC_ERR, MC_BG, S);
+        menu_str(0, 5 * CH, " Check battery/pwr  ", COLS, MC_HINT, MC_BG, S);
+        menu_str(0, 9 * CH, " BACK to return     ", COLS, MC_HINT, MC_BG, S);
+        printf("NACK -- BQ27441 not responding at 0x55\n");
+        bus_b_deinit();
+        // Wait for BACK here (back_key_init already called by menu)
+        while (!back_key_pressed()) sleep_ms(50);
+        return;
+    }
+
+    // Draw static elements once
+    menu_clear(MC_BG);
+    menu_str(0, 0, " Fuel Gauge Diag    ", COLS, MC_TITLE, MC_TITBG, S);
+    menu_str(0, 9 * CH, " BACK to return     ", COLS, MC_HINT, MC_BG, S);
+
+    for (;;) {
+        if (back_key_pressed()) break;
+
+        uint16_t raw;
+        unsigned vbat = 0;
+        int      cur  = 0;
+        unsigned soc  = 0;
+        float    temp = 0.0f;
+        unsigned rem  = 0, full = 0;
+        uint8_t  soh_pct = 0;
+        uint8_t  soh_st  = 0;
+
+        if (fg_read16(BQ27441_REG_VOLT, &raw) >= 0)    vbat = raw;
+        if (fg_read16(BQ27441_REG_AVGCUR, &raw) >= 0)  cur  = (int)(int16_t)raw;
+        if (fg_read16(BQ27441_REG_SOC, &raw) >= 0)     soc  = raw;
+        if (fg_read16(BQ27441_REG_TEMP, &raw) >= 0)    temp = (float)raw * 0.1f - 273.15f;
+        if (fg_read16(BQ27441_REG_REMCAP, &raw) >= 0)  rem  = raw;
+        if (fg_read16(BQ27441_REG_FULLCAP, &raw) >= 0) full = raw;
+        if (fg_read16(BQ27441_REG_SOH, &raw) >= 0) {
+            soh_pct = (uint8_t)(raw >> 8);
+            soh_st  = (uint8_t)(raw & 0xFFu);
+        }
+        static const char *const soh_str[] =
+            {"Unk","Bad","VLow","Low","Mid","High","Full","?"};
+
+        // --- TFT update (overwrite value rows only, no clear) ---
+        char line[24];
+        snprintf(line, sizeof(line), " VBAT: %5u mV    ", vbat);
+        menu_str(0, 2 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " Curr: %+5d mA    ", cur);
+        menu_str(0, 3 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " SOC:    %3u %%      ", soc);
+        menu_str(0, 4 * CH, line, COLS, soc > 20 ? MC_OK : MC_ERR, MC_BG, S);
+        snprintf(line, sizeof(line), " Temp: %5.1f C     ", temp);
+        menu_str(0, 5 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " Cap: %u/%u mAh  ", rem, full);
+        menu_str(0, 6 * CH, line, COLS, MC_FG, MC_BG, S);
+        snprintf(line, sizeof(line), " SOH: %3u%% %s    ", soh_pct,
+                 soh_str[soh_st < 7u ? soh_st : 7u]);
+        menu_str(0, 7 * CH, line, COLS, MC_FG, MC_BG, S);
+
+        // --- Serial output ---
+        printf("  V=%umV I=%+dmA SOC=%u%% T=%.1fC Cap=%u/%umAh SOH=%u%%\n",
+               vbat, cur, soc, temp, rem, full, soh_pct);
+
+        // 1 Hz refresh — poll BACK key during wait
+        for (int i = 0; i < 20; i++) {
+            if (back_key_pressed()) goto done;
+            sleep_ms(50);
+        }
+    }
+done:
+    bus_b_deinit();
+    printf("Gauge diag done\n");
 }

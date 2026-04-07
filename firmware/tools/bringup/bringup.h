@@ -224,9 +224,12 @@ void bq25622_enable_charge(void);
 void bq25622_disable_charge(void);
 void bq25622_read_adc(void);
 void bq27441_read(void);
-void lm27965_cycle(void);
+void led_control(void);
 void motor_breathe(void);
 void dump_bus_b(void);
+void scan_bus_b(void);
+void charger_diag(void);
+void gauge_diag(void);
 
 // bringup_sensors.c — Bus A: IMU, Mag, Baro, GNSS, scan
 void baro_read(void);
