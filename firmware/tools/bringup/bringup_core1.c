@@ -1,6 +1,12 @@
 #include "bringup.h"
+#include "bringup_menu.h"
 #include "pico/multicore.h"
 #include "hardware/sync.h"
+
+// TFT layout — scale 2, same as lora/memory tests
+#define LS  2
+#define LCH (8 * LS)
+#define LCOLS (menu_tft_width() / (6 * LS))
 
 // ---------------------------------------------------------------------------
 // Inter-core FIFO protocol tokens
@@ -70,12 +76,23 @@ static void core1_entry(void) {
 void core1_test(void) {
     printf("\n--- Step 16 Stage A: Core 1 bare-metal ---\n");
 
+    bool tft = menu_tft_active();
+    int cols = tft ? LCOLS : 0;
+    char ln[28];
+
+    if (tft) {
+        menu_clear(MC_BG);
+        menu_str(0, 0, " Core 1 IPC Test    ", cols, MC_TITLE, MC_TITBG, LS);
+    }
+
     // Claim a hardware spinlock for the SRAM test; panic if none are free.
     c1_spinlock_num = spin_lock_claim_unused(true);
     spin_lock_t *lock = spin_lock_instance(c1_spinlock_num);
 
     // Discard any stale values left in the FIFO from a previous run.
     multicore_fifo_drain();
+
+    bool t1 = false, t2 = false, t3 = false, t4 = false;
 
     // -----------------------------------------------------------------------
     // [1/4] Core 1 boot
@@ -86,13 +103,17 @@ void core1_test(void) {
     uint32_t ready = 0;
     if (!multicore_fifo_pop_timeout_us(2000000, &ready)) {
         printf("FAIL (timeout — Core 1 did not respond)\n");
+        if (tft) menu_str(0, 2*LCH, " 1 Boot: TIMEOUT    ", cols, MC_ERR, MC_BG, LS);
         goto cleanup;
     }
     if (ready != C1_READY) {
         printf("FAIL (got 0x%08X, expected 0x%08X)\n", ready, C1_READY);
+        if (tft) menu_str(0, 2*LCH, " 1 Boot: FAIL       ", cols, MC_ERR, MC_BG, LS);
         goto cleanup;
     }
     printf("PASS (0x%08X)\n", ready);
+    t1 = true;
+    if (tft) menu_str(0, 2*LCH, " 1 Boot: PASS       ", cols, MC_OK, MC_BG, LS);
 
     // -----------------------------------------------------------------------
     // [2/4] Inter-core FIFO echo (4 round-trips)
@@ -120,6 +141,11 @@ void core1_test(void) {
             }
         }
         if (ok) printf("PASS (4/4)\n");
+        t2 = ok;
+        if (tft) {
+            snprintf(ln, sizeof(ln), " 2 FIFO: %-15s", ok ? "PASS (4/4)" : "FAIL");
+            menu_str(0, 3*LCH, ln, cols, ok ? MC_OK : MC_ERR, MC_BG, LS);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -138,8 +164,13 @@ void core1_test(void) {
             printf("FAIL (timeout)\n");
         } else if (c1_read == test_val) {
             printf("PASS (Core 1 read 0x%08X)\n", c1_read);
+            t3 = true;
         } else {
             printf("FAIL (wrote 0x%08X, Core 1 read 0x%08X)\n", test_val, c1_read);
+        }
+        if (tft) {
+            snprintf(ln, sizeof(ln), " 3 SRAM: %-15s", t3 ? "PASS" : "FAIL");
+            menu_str(0, 4*LCH, ln, cols, t3 ? MC_OK : MC_ERR, MC_BG, LS);
         }
     }
 
@@ -154,8 +185,13 @@ void core1_test(void) {
             printf("FAIL (timeout)\n");
         } else if (gpio_ack == C1_GPIO_ACK) {
             printf("PASS\n");
+            t4 = true;
         } else {
             printf("FAIL (got 0x%08X)\n", gpio_ack);
+        }
+        if (tft) {
+            snprintf(ln, sizeof(ln), " 4 GPIO: %-15s", t4 ? "PASS" : "FAIL");
+            menu_str(0, 5*LCH, ln, cols, t4 ? MC_OK : MC_ERR, MC_BG, LS);
         }
     }
 
@@ -165,5 +201,17 @@ cleanup:
     sleep_ms(100);
     multicore_reset_core1();
     spin_lock_unclaim(c1_spinlock_num);
-    printf("--- Stage A complete ---\n");
+
+    {
+        bool pass = t1 && t2 && t3 && t4;
+        printf("  Result: %s\n", pass ? "PASS (4/4)" : "FAIL");
+        printf("--- Stage A complete ---\n");
+        if (tft) {
+            snprintf(ln, sizeof(ln), " Result: %-15s", pass ? "PASS (4/4)" : "FAIL");
+            menu_str(0, 7*LCH, ln, cols, pass ? MC_OK : MC_ERR, MC_BG, LS);
+        }
+    }
+
+    // Wait for BACK key so the user can read the TFT results
+    while (!back_key_pressed()) sleep_ms(50);
 }
