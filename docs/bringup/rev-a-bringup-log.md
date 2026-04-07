@@ -128,19 +128,20 @@ Teseo-LIV3FL confirmed operational (I2C, NMEA streaming, proprietary commands). 
 
 ### Step 5 — LoRa
 
-**Result: ⚠️ CONDITIONAL** (SPI, calibration, RX mode, RSSI verified; RF link and performance not yet tested)
+**Result: ✅ PASS** (SPI, calibration, RX, TX, RF link all verified — see Step 23 for full TX/RX validation)
 
 | Item | Result | Notes |
 |------|--------|-------|
 | SX1262 SPI response | ✅ PASS | GetStatus: ChipMode=2 (STBY_RC), CmdStatus=5 (POR normal) |
-| RegSyncWord (0x0740/41) | ✅ PASS | 0x14 0x24 — private network default |
+| RegSyncWord (0x0740/41) | ✅ PASS | Meshtastic 0x2B → reg 0x20 0xB0 (RadioLib encoding with controlBits=0x00) |
 | Calibrate + CalibrateImage | ✅ PASS | GetDeviceErrors = 0x0020 (XOSC flag only — cosmetic false positive, see note) |
 | RxGain (0x08AC) | ✅ PASS | Write 0x96, readback 0x96 (boosted LNA confirmed) |
 | SetRx → ChipMode=5 | ✅ PASS | RX mode entered successfully |
 | RSSI (923.125 MHz, 5 samples) | ✅ PASS | −114.0 dBm consistent (indoor noise floor) |
 | GetStats | ✅ PASS | RxOk=0 CrcErr=0 HdrErr=0 (no packets; no crash) |
-| OCP (0x08E7) | ⚠️ NOTE | 0x18 → 105 mA (non-default; investigate before TX — default is 0x38 = 185 mA) |
-| TX link test | ⏳ PENDING | Actual LoRa packet exchange not yet performed |
+| OCP (0x08E7) | ✅ PASS | 0x38 = 140 mA (correct formula: value × 2.5 mA). Written after SetPaConfig+SetTxParams |
+| TX link test | ✅ PASS | Meshtastic-format TX: TxDone 132 ms (SF9/BW250k); node `!4d4f4b59` visible on mesh — see Step 23 |
+| RX link test | ✅ PASS | 25 packets received from node `538EEBE7` (SF9/BW250k, 920.125 MHz, continuous mode, 0 CRC errors) — see Step 23 |
 | RF performance (sensitivity, range) | ⏳ PENDING | Requires outdoor test — see Step 15 |
 
 **Firmware notes:**
@@ -526,7 +527,7 @@ Meshtastic firmware and successfully exchanging text messages with nearby nodes.
 | Channel utilization | `meshtastic --info` | Non-zero airtime | ✅ PASS — channelUtilization=0.40%, airUtilTx=0.011% |
 | RSSI at known distance | ⏳ | RSSI consistent with path loss model | PENDING — not yet measured |
 | Sensitivity | ⏳ | Long-range test (SF12, BW125) | PENDING — outdoor range test required |
-| OCP investigation | ⏳ | Read 0x08E7; confirm expected value | PENDING |
+| OCP investigation | Reg read | 0x08E7 = 0x38 (140 mA) after SetPaConfig | ✅ PASS — formula is value × 2.5 mA; old "185 mA" was wrong formula |
 | Frequency accuracy | ⏳ | TCXO ±0.5 ppm spec | PENDING — spectrum analyser required |
 
 ### Step 16 — Core 1 Functionality
@@ -910,6 +911,55 @@ Systematic split of overgrown bringup source files into per-subsystem modules al
 - Step 20 firmware file references updated: `bringup_audio.c` → `bringup_amp.c` + `bringup_mic.c`; `bringup_power.c` functions split into `bringup_led.c`, `bringup_charger.c`, `bringup_gauge.c`; `bringup_sram.c` memory/TFT functions split into `bringup_psram.c`, `bringup_memory_tft.c`, `bringup_flash.c`; `bringup_menu.c` TFT drawing split into `bringup_tft_draw.c`
 - `CMakeLists.txt` updated for all 3 build targets (`i2c_custom_scan`, `gnss_tft_standalone`, `core1_bringup_test`)
 - Cross-file dependencies resolved: `amp_pio_start/stop`, `bee_note` (amp→mic); `bq25622_reg_read/write`, `fg_read16/ctrl_write/ctrl_read`, `lm_read` (power subsystem); `psram_set_timing`, `psram_sweep_pass`, `flash_speed_run` (memory→TFT); `menu_tft_active()` getter (tft_draw→menu)
+
+---
+
+### Step 23 — LoRa Standalone TX/RX Verification
+
+**Result: ✅ PASS** (2026-04-07)
+
+Standalone bringup LoRa tests aligned with Meshtastic/RadioLib SX1262 configuration.
+Six firmware bugs fixed (BW code, SyncWord encoding, DC-DC regulator, PA clamping errata,
+sensitivity errata, init ordering). New `lora_tx` function sends Meshtastic-format packets
+(AES-128-CTR encrypted protobuf). All LoRa tests now display results on TFT.
+
+#### Bugs Fixed
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| BW code wrong | `0x08` = 10.42 kHz (not 250 kHz); correct SX1262 code for 250 kHz is `0x05` | Changed all lora_rx/tx/dump callers and hardcoded values |
+| SyncWord encoding | Used controlBits=0x04 → reg 0x24,0xB4; RadioLib uses controlBits=0x00 → 0x20,0xB0 | Fixed WriteRegister values for reg 0x0740/0x0741 |
+| Missing SetRegulatorMode(DC-DC) | Meshtastic uses DC-DC (opcode 0x96, payload 0x01); bringup used default LDO | Added to lora_rx, lora_tx, lora_dump init sequences |
+| Missing fixPaClamping | SX1262 errata §15.2: PA clamping too aggressive → TX never completes (TxDone IRQ never fires) | Read-modify-write reg 0x08D8, OR 0x1E |
+| Missing sensitivity fix | SX1262 errata §15.1: reg 0x0889 bit 2 must be set for BW < 500 kHz | Applied in lora_rx and lora_tx |
+| Init sequence order | SetStandby(RC) instead of XOSC; no standby after calibrate; wrong command ordering | Restructured to RadioLib-exact order: XOSC standby → DIO2 → TCXO → calibrate → XOSC standby → DC-DC → packet type → frequency → calibrate image |
+
+#### Test Results
+
+| Test | Config | Result | Notes |
+|------|--------|--------|-------|
+| lora_tx (MEDIUM_FAST) | SF9, BW250k, 920.125 MHz, ch=0x6B | ✅ PASS | TxDone 132 ms; node `!4d4f4b59` ("MOKY") visible on Meshtastic mesh |
+| lora_tx (LONG_FAST) | SF11, BW250k, 920.125 MHz | ✅ PASS | TxDone 484 ms (matches theoretical ~477 ms airtime) |
+| lora_rx (MEDIUM_FAST) | SF9, BW250k, 920.125 MHz, continuous | ✅ PASS | 25 packets received from node `538EEBE7`, 0 CRC errors |
+| lora_rx (LONG_FAST) | SF11, BW250k, 920.125 MHz, 30 s | ⚠️ N/A | No LONG_FAST traffic on air during test window; RSSI/preamble detection confirmed working |
+| OCP register | 0x08E7 readback after SetPaConfig+SetTxParams | ✅ PASS | 0x38 = 140 mA (formula: value × 2.5 mA) |
+
+#### New Features
+
+| Feature | Description |
+|---------|-------------|
+| `lora_tx` function | Meshtastic-format TX: 16-byte PacketHeader + AES-128-CTR encrypted protobuf payload ("MokyaLora" text message, broadcast to 0xFFFFFFFF) |
+| `lora_tx` serial command | Added to REPL; `bringup_run.ps1` timeout 15 s |
+| TFT display for all LoRa tests | `lora_test`, `lora_rx`, `lora_dump`, `lora_tx` show results on TFT (title, params, status, PASS/FAIL) |
+| Menu wrappers | `cmd_lora_test`, `cmd_lora_tx`, `cmd_lora_dump` add BACK key wait; raw functions return immediately (no serial REPL blocking) |
+| AES-128-CTR implementation | Standalone AES-128 encrypt (sbox, key expansion, CTR mode) for Meshtastic packet encryption |
+
+**Firmware files:**
+- `firmware/tools/bringup/bringup_lora.c` — All 6 bug fixes, `lora_tx()` function, AES-128-CTR, TFT output for all functions, RadioLib-exact init sequences
+- `firmware/tools/bringup/bringup_sx1262.h` — Added `lora_tx()` declaration
+- `firmware/tools/bringup/bringup_menu.c` — Added `cmd_lora_test`, `cmd_lora_tx`, `cmd_lora_dump` wrappers; BW code fix in all `lora_rx()` calls
+- `firmware/tools/bringup/i2c_custom_scan.c` — Added `lora_tx` command dispatch; BW code fix in all `lora_rx()` calls
+- `bringup_run.ps1` — Added `'lora_tx' = 15` to CmdTimeout table
 
 ---
 
