@@ -518,6 +518,52 @@ RF chain issue suspected.
 > RF chain: Chip antenna (M830120) → B39162B4327P810 SAW → BGA123N6 LNA → Teseo-LIV3FL RF_IN.
 > **Note:** design docs (rf-matching.md, hardware-requirements.md) incorrectly list BGA725L6; actual populated part is BGA123N6.
 
+#### Step 14a — `$PSTMNOTCHSTATUS` runtime probe (Issue 11 investigation, 2026-04-11)
+
+Attempted to retrieve ANF (Adaptive Notch Filter) status at runtime to identify
+whether an in-band jammer is polluting the GPS path. Runtime probes were built
+around `$PSTMNMEAREQUEST,<low>,<high>` (UM2229 §10.2.38), which per the manual is
+a one-shot burst that should bypass the periodic NMEA scheduler.
+
+**Result: ❌ runtime probe impossible on this firmware**
+
+| Probe | Command | Target | Observed |
+|-------|---------|--------|----------|
+| P1 | `$PSTMNMEAREQUEST,0,1` | `$PSTMLOWPOWERDATA` (high bit 0) | ✗ echo only, no payload |
+| P2 | `$PSTMNMEAREQUEST,0,2` | `$PSTMNOTCHSTATUS` (high bit 1)  | ✗ echo only, no payload |
+| P3 | `$PSTMNMEAREQUEST,A0,0` | `$PSTMNOISE`+`$PSTMRF` (low bits 5/7) | ✅ both emit |
+| P4 | `$PSTMNMEAREQUEST,A0,3` | all four combined | only NOISE+RF emit |
+
+**Conclusion:** Teseo-LIV3FL firmware `BINIMG_4.6.15.1_CP_LIV3FL_ARM` **ignores
+the high-word (`msglist_h`) argument of `$PSTMNMEAREQUEST` entirely.** Only
+messages whose bit is in the low 32-bit word can be polled at runtime. Any
+message at overall bit 32 or higher (`$PSTMLOWPOWERDATA`, `$PSTMNOTCHSTATUS`,
+`$PSTMTM`, `$PSTMPV`, `$PSTMPVQ`, `$PSTMUTC`, `$PSTMADCDATA`, `$PSTMUSEDSATS`,
+`$PSTMEPHEM`, `$PSTMALMANAC`, `$PSTMBIASDATA`, etc.) is unreachable via
+`$PSTMNMEAREQUEST`.
+
+**CDB state snapshot (read-only via `gnss_probe`):**
+
+| CDB-ID | Purpose | Value |
+|--------|---------|-------|
+| 1200 | Application ON/OFF 1 | `0x096B165C` |
+| 1227 | Application ON/OFF 2 | `0x0401048D` |
+| 1231 | NMEA I2C msg list LOW  | `0x00980056` (default: GGA/GSA/VTG/RMC/GSV/GLL/PSTMCPU) |
+| 1232 | NMEA I2C msg list HIGH | `0x00020000` (NOTCHSTATUS bit 0x2 is clear; LOWPOWERDATA bit 0x1 is clear) |
+
+**Observed RF telemetry during probe (at desk, indoor):**
+
+```
+$PSTMNOISE,12500,12500    ← GPS / GLONASS noise floor, consistent
+$PSTMRF,1,1,00,,,,,,,,,,,, ← sat_type=1, n_sat=0 (matches "0 SVs tracked")
+```
+
+**Implication for Issue 11:** `$PSTMNOTCHSTATUS` cannot be used as a diagnostic
+without a destructive persistent CDB-1232 write (`$PSTMSETPAR,1232,…` →
+`$PSTMSAVEPAR` → `$PSTMSRR`). Issue 11 must therefore be pursued via physical
+RF measurements (antenna continuity, SAW insertion loss, LNA bias, shielding
+experiments, BGA123N6 bypass) rather than firmware-side jammer detection.
+
 ### Step 15 — LoRa RF Performance
 
 **Result: ✅ PARTIAL PASS** (validated via Meshtastic mesh — see Step 17)
@@ -1198,7 +1244,7 @@ Error signature unchanged — `XY`→`YY` byte-0 nibble duplication. Mod-8 histo
 | 8 | 2026-04-03 | U3 (APS6404L PSRAM) | GPIO0 (CS1) stuck LOW; XIP reads return 0xFFFFFFFF | Three firmware bugs: (1) SIO register addresses used RP2040 offsets; (2) QMI `ASSERT_CS1N` does not control GPIO0; (3) PSRAM XIP address used `+0x800000` (M0) instead of `+0x1000000` (M1) | All three fixed. `psram_init()` runs at boot: SIO CS + QMI clock for init, then XIP_CS1 handoff. Direct-mode probe PASS, XIP 4 KB pattern PASS | Rev B: add 4.7k–10kΩ pull-up on GPIO0 to VCC_1V8 |
 | 9 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | BIN pin unconnected → BIE=1 → BAT_DET never set → INITCOMP stuck at 0 | BIN pin not connected in Rev A; BIE default=1 (hardware detection mode) | CONFIG UPDATE clears BIE (OpConfig 0x25F8→0x05F8); BAT_INSERT (0x000C) sets BAT_DET=1; INITCOMP completes in ~1.6 s. Bringup command `bq27441` handles this automatically | Connect BIN pin or remove fuel gauge from BOM (see Issue 10) |
 | 10 | 2026-04-04 | U16 (BQ27441DRZR, 0x55) | Cold boot I2C NACK — gauge completely unresponsive after any power-on that includes battery insertion. 9-clock bus recovery ineffective. Observations: (1) USB on + no battery + charger toggle → gauge responds (charger supplies VSYS → gauge POR with clean bus); (2) while gauge already running, insert battery → still responds; (3) cold boot with battery (USB+battery both removed then reinserted) → permanent NACK; (4) USB on + charge off + insert battery → permanent NACK, even after charger re-toggle | Under investigation. Suspected ESD latchup on I2C input pins: battery insertion causes fast VBAT edge → internal 1.8V LDO ramps from 0V while external SDA/SCL pull-ups already at 1.8V → ESD protection diodes forward-bias → I2C input circuitry latch. Not yet confirmed with scope measurement | Rev A workaround: boot without battery → charge_on → insert battery (gauge already running, no POR). Standard I2C bus recovery (9 clocks + STOP) does not resolve the condition | **Consider removing BQ27441 from Rev B BOM.** If retained: add 1MΩ pull-down on SDA/SCL (TI recommendation), ensure power sequencing (1.8V pull-up rail not before gauge VDD), connect GPOUT to MCU GPIO |
-| 11 | 2026-04-05 | U10/U11 GNSS RF chain | 0 satellites tracked after >10 min outdoor cold start; GNSS completely non-functional | Unknown. LNA (BGA123N6) ON confirmed (VPON = 1.8 V). Candidates: (1) chip antenna ground clearance insufficient (open item in rf-matching.md); (2) SAW → LNA or LNA → Teseo impedance mismatch; (3) BOM part incorrect (design docs listed BGA725L6; actual part is BGA123N6) | Under investigation. Next step: bypass BGA123N6 (jumper SAW output → Teseo RF_IN; pull VPON to GND) | Fix antenna ground clearance; verify SAW and LNA BOM vs schematic; correct rf-matching.md and hardware-requirements.md (BGA725L6 → BGA123N6) |
+| 11 | 2026-04-05 | U10/U11 GNSS RF chain | 0 satellites tracked after >10 min outdoor cold start; GNSS completely non-functional | Unknown. LNA (BGA123N6) ON confirmed (VPON = 1.8 V). Candidates: (1) chip antenna ground clearance insufficient (open item in rf-matching.md); (2) SAW → LNA or LNA → Teseo impedance mismatch; (3) BOM part incorrect (design docs listed BGA725L6; actual part is BGA123N6) | Under investigation. Runtime `$PSTMNOTCHSTATUS` probe ruled out — LIV3FL `4.6.15.1` ignores high-word of `$PSTMNMEAREQUEST` (see Step 14a); firmware-side jammer detection unavailable without destructive CDB-1232 write. Next step: bypass BGA123N6 (jumper SAW output → Teseo RF_IN; pull VPON to GND) | Fix antenna ground clearance; verify SAW and LNA BOM vs schematic; correct rf-matching.md and hardware-requirements.md (BGA725L6 → BGA123N6) |
 | 12 | 2026-04-06 | Meshtastic / SPI1 | SX1262 radio init fails (Error 4, NO_INTERFACE) under Meshtastic firmware | `rpipico2` board defaults `PIN_WIRE1_SDA=26, PIN_WIRE1_SCL=27`; Meshtastic `Wire1.begin()` reconfigures GPIO 26/27 funcsel from SPI to I2C before `SPI1.begin()` runs | `MESHTASTIC_EXCLUDE_I2C=1` disables all Wire init on Core 0 (I2C peripherals are Core 1's domain). Initial workaround was `I2C_SDA1=6, I2C_SCL1=7` redirect | No HW change needed; firmware-only fix. Document SPI1/Wire1 pin conflict in variant README |
 | 13 | 2026-04-06 | PSRAM / USB CDC serial | `psram` and `psram_full` commands return empty output in `bringup_test_all.ps1` when run after 12+ prior commands; pass 100% in isolation or via `bringup_run.ps1` | USB CDC serial timing: after many sequential commands, trailing CDC packet bytes from previous responses pollute or delay the next command's buffer. PSRAM tests (which involve QSPI bus reconfiguration) may have longer response latency that exceeds the script's read window | Under investigation. Firmware confirmed working — issue is host-side script timing only. Workaround: skip memory group (`-Skip memory`) for 16/16 PASS, or run memory group separately (`-Group memory`) for 4/4 PASS | No HW change needed; script-side fix required |
 | 14 | 2026-04-07 | U3 (APS6404L PSRAM) / DMA | DMA **reads** from PSRAM produce ~25% word errors. DMA writes and CPU access are 100% reliable. Corrupted words have byte 0 high nibble replaced by low nibble (`XY`→`YY`). Safe burst threshold is speed-dependent: ≤ 4 words at 37.5 MHz, ≤ 2 words at 75 MHz (board #2, verified 2026-04-11) | Not yet isolated. Observed pattern suggests QMI read-data latch timing error on specific word positions within each 8-word XIP cache-line burst triggered by the DMA bus master. CPU reads use a different internal path and are unaffected. Needs further investigation before assigning a definitive cause | Workaround: CPU volatile read or DMA burst ≤ 2 words. DMA writes to PSRAM are safe. Diagnostic command: `psram_dma_diag` (see Step 25) | No HW change needed. For display framebuffer: DMA write + CPU read. Consider Raspberry Pi forum inquiry or errata check for authoritative explanation |
