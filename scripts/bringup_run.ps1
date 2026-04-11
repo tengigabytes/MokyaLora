@@ -1,14 +1,14 @@
 # bringup_run.ps1 — Send one or more commands to the bringup shell and print output.
 #
 # Usage:
-#   .\bringup_run.ps1 psram
-#   .\bringup_run.ps1 -Flash psram
-#   .\bringup_run.ps1 scan_a scan_b status lora lora_dump flash psram
-#   .\bringup_run.ps1 -Flash scan_a scan_b status lora lora_dump flash psram
+#   .\scripts\bringup_run.ps1 psram
+#   .\scripts\bringup_run.ps1 -Flash psram
+#   .\scripts\bringup_run.ps1 scan_a scan_b status lora lora_dump flash psram
+#   .\scripts\bringup_run.ps1 -Flash scan_a scan_b status lora lora_dump flash psram
 #
 # Options:
 #   -Flash      Build + flash via J-Link before connecting (triggers MCU reset)
-#   -PortName   Serial port name (default: COM4)
+#   -PortName   Serial port name (default: auto-detect by VID 0x2E8A)
 #   -Baud       Baud rate (default: 115200)
 #
 # Per-command timeouts (seconds) — extend for slow operations:
@@ -17,12 +17,15 @@
 param(
     [switch]$Flash,
     [Parameter(ParameterSetName='Default')]
-    [string]$PortName = 'COM4',
+    [string]$PortName = '',
     [Parameter(ParameterSetName='Default')]
     [int]$Baud        = 115200,
     [Parameter(Position=0, ValueFromRemainingArguments=$true)]
     [string[]]$Commands = @('help')
 )
+
+. "$PSScriptRoot\_mokya-port.ps1"
+$PortName = Resolve-MokyaPort $PortName
 
 # Per-command receive timeout table (seconds)
 $CmdTimeout = @{
@@ -71,7 +74,7 @@ $DefaultTimeout = 2
 # ---------------------------------------------------------------------------
 if ($Flash) {
     Write-Host '=== Building and flashing ===' -ForegroundColor Cyan
-    & bash build_and_flash_bringup.sh
+    & bash scripts/build_and_flash_bringup.sh
     if ($LASTEXITCODE -ne 0) { Write-Host 'Flash failed.' -ForegroundColor Red; exit 1 }
     Write-Host ''
 }

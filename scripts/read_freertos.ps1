@@ -3,13 +3,16 @@
 # COM port is always closed in finally block.
 
 param(
-    [string]$Port = 'COM4',
+    [string]$Port = '',
     [int]$ReadSeconds = 14
 )
 
+. "$PSScriptRoot\_mokya-port.ps1"
+$Port = Resolve-MokyaPort $Port
+
 # --- 1. Build + flash (resets MCU) ---
 Write-Output '=== Building and flashing core1_freertos_test ==='
-& bash flash_core1_freertos.sh
+& bash scripts/flash_core1_freertos.sh
 if ($LASTEXITCODE -ne 0) { Write-Output 'Flash failed.'; exit 1 }
 
 # --- 2. Open COM port (retry while USB re-enumerates after reset) ---

@@ -9,7 +9,7 @@ each bringup or debug session.
 ## Hardware Setup
 
 - **Debugger:** SEGGER J-Link (supports 1.8 V VTREF — required for RP2350B)
-- **Serial port:** COM4, 115200 baud, USB CDC (RP2350B USB)
+- **Serial port:** auto-detected by USB VID `0x2E8A` (Raspberry Pi), 115200 baud, USB CDC (RP2350B USB). COM number varies per host and enumeration order — all scripts call `scripts/_mokya-port.ps1::Resolve-MokyaPort`; pass `-PortName COMxx` to override.
 - **SWD connection:** SWCLK / SWDIO / GND on board test points
 - **Power:** USB-C 5 V input (VSYS via BQ25622)
 
@@ -19,59 +19,61 @@ each bringup or debug session.
 
 ## Build & Flash Scripts
 
+All build, flash, and serial helper scripts live in `scripts/`. Run from project root.
+
 | Script | Location | Purpose |
 |--------|----------|---------|
-| `configure_bringup.sh` | project root | CMake configure only (run once or after CMakeLists change) |
-| `build_bringup.sh` | project root | Incremental build only (no flash) |
-| `build_and_flash_bringup.sh` | project root | Full build + J-Link flash + reset |
-| `flash_bringup.sh` | project root | Flash pre-built ELF only (no build step) |
-| `serial_monitor.ps1` | project root | Interactive serial terminal |
-| `bringup_run.ps1` | project root | Automated command runner (send commands, capture output) |
-| `firmware/tools/recv_pcm_dump.py` | firmware/tools | Binary PCM receiver for `mic_dump` command |
+| `configure_bringup.sh` | `scripts/` | CMake configure only (run once or after CMakeLists change) |
+| `build_bringup.sh` | `scripts/` | Incremental build only (no flash) |
+| `build_and_flash_bringup.sh` | `scripts/` | Full build + J-Link flash + reset |
+| `flash_bringup.sh` | `scripts/` | Flash pre-built ELF only (no build step) |
+| `serial_monitor.ps1` | `scripts/` | Interactive serial terminal |
+| `bringup_run.ps1` | `scripts/` | Automated command runner (send commands, capture output) |
+| `firmware/tools/recv_pcm_dump.py` | `firmware/tools/` | Binary PCM receiver for `mic_dump` command |
 
 ### Build & Flash
 
 ```bash
 # First time: configure CMake (run from project root in Git Bash)
-bash configure_bringup.sh
+bash scripts/configure_bringup.sh
 
 # Subsequent builds: incremental build only
-bash build_bringup.sh
+bash scripts/build_bringup.sh
 
 # Full build + flash via J-Link
-bash build_and_flash_bringup.sh
+bash scripts/build_and_flash_bringup.sh
 
 # Flash only (ELF already built)
-bash flash_bringup.sh
+bash scripts/flash_bringup.sh
 ```
 
 ### Interactive Terminal
 
 ```powershell
 # Open interactive shell (COM4, 115200)
-.\serial_monitor.ps1
+.\scripts\serial_monitor.ps1
 
 # Open shell and send initial command
-.\serial_monitor.ps1 help
+.\scripts\serial_monitor.ps1 help
 ```
 
-### Automated Command Runner (`bringup_run.ps1`)
+### Automated Command Runner (`scripts/bringup_run.ps1`)
 
 Sends one or more commands to the bringup shell, waits for each to complete, and prints
 output. Handles COM port retry, boot banner detection, and per-command timeouts.
 
 ```powershell
 # Single command
-.\bringup_run.ps1 psram
+.\scripts\bringup_run.ps1 psram
 
 # Multiple commands in sequence
-.\bringup_run.ps1 scan_a scan_b status lora_dump
+.\scripts\bringup_run.ps1 scan_a scan_b status lora_dump
 
 # Build + flash first, then run commands
-.\bringup_run.ps1 -Flash scan_a lora_dump psram
+.\scripts\bringup_run.ps1 -Flash scan_a lora_dump psram
 
 # Custom port
-.\bringup_run.ps1 -PortName COM5 mic_dump
+.\scripts\bringup_run.ps1 -PortName COM5 mic_dump
 ```
 
 Per-command timeouts (seconds): `lora_rx` = 35, `lora_dump` = 8, `psram` = 5, others = 2.

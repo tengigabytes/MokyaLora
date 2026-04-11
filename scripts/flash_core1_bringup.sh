@@ -4,7 +4,7 @@
 # Run from project root.
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 ELF="build/firmware/tools/bringup/core1_bringup_test.elf"
 if [ ! -f "$ELF" ]; then

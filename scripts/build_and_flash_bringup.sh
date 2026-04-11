@@ -3,7 +3,7 @@
 # Run from project root. Requires: J-Link connected via SWD.
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # --- Build ---
 echo "=== Building i2c_custom_scan ==="
@@ -37,4 +37,4 @@ printf "connect\nr\nloadfile \"%s\"\nr\ng\nqc\n" "$ELF" > /tmp/jlink_flash.jlink
     | grep -E "O\.K\.|ownload|rror|Verify|bytes|speed"
 
 echo ""
-echo "=== Done. Run: .\\serial_monitor.ps1 key ==="
+echo "=== Done. Run: .\\scripts\\serial_monitor.ps1 key ==="

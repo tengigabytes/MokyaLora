@@ -9,7 +9,7 @@
 #   [Stage B] PASS — FreeRTOS task ran 5 heartbeats on Core 1
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 # --- Build ---
 echo "=== Building core1_freertos_test ==="
@@ -49,4 +49,4 @@ echo "=== Done. Connect serial monitor to see heartbeat output: ==="
 echo "    .\\serial_monitor.ps1"
 echo "    Expected: 5 x HEARTBEAT lines then 'Stage B PASS'"
 echo "    After observing PASS, restore bringup firmware:"
-echo "    bash build_and_flash_bringup.sh"
+echo "    bash scripts/build_and_flash_bringup.sh"

@@ -147,7 +147,7 @@ Never add a Meshtastic #include to core1/ or mie/.
 
 - Always verify a build compiles successfully before moving on to additional changes.
 - If a build fails, fix it immediately — do not layer more changes on top of a broken build.
-- **Auto-flash:** After each bringup firmware change, always build **and flash** (`bash build_and_flash_bringup.sh`) — do not stop at compile-only. The user expects the board to be running the latest code immediately.
+- **Auto-flash:** After each bringup firmware change, always build **and flash** (`bash scripts/build_and_flash_bringup.sh`) — do not stop at compile-only. The user expects the board to be running the latest code immediately.
 - After adding new features, check memory usage: flash size constraints are common on embedded targets.
 
 ## Build Commands
@@ -175,15 +175,15 @@ cmake -S firmware -B build/firmware \
 cmake --build build/firmware
 
 # Bringup firmware — build only (from project root)
-bash build_bringup.sh
+bash scripts/build_bringup.sh
 
 # Bringup firmware — build + flash via J-Link (from project root)
-bash build_and_flash_bringup.sh
+bash scripts/build_and_flash_bringup.sh
 
 # Run bringup commands over serial (PowerShell, from project root)
-.\bringup_run.ps1 <command>              # run one command (e.g. psram_diag)
-.\bringup_run.ps1 -Flash <command>       # build + flash + run command
-.\bringup_run.ps1 scan_a scan_b lora     # run multiple commands in sequence
+.\scripts\bringup_run.ps1 <command>              # run one command (e.g. psram_diag)
+.\scripts\bringup_run.ps1 -Flash <command>       # build + flash + run command
+.\scripts\bringup_run.ps1 scan_a scan_b lora     # run multiple commands in sequence
 
 # Data generation tools
 python firmware/mie/tools/gen_font.py   # produces font_glyphs.bin + font_index.bin
@@ -205,7 +205,7 @@ manual intervention required.
 | ARM GDB | `C:/Program Files/Arm/GNU Toolchain mingw-w64-x86_64-arm-none-eabi/bin/arm-none-eabi-gdb.exe` |
 | Pico SDK | `C:/pico-sdk` |
 | Bringup ELF | `build/firmware/tools/bringup/i2c_custom_scan.elf` |
-| Serial port | `COM4` (115200 baud, USB CDC) |
+| Serial port | Auto-detected by VID `0x2E8A` (Raspberry Pi), 115200 baud, USB CDC. Helper: `scripts/_mokya-port.ps1` (`Resolve-MokyaPort`). Override via `-PortName COMxx`. |
 
 ### Automated Workflows
 
@@ -213,7 +213,7 @@ manual intervention required.
 
 ```sh
 # 1. Build
-bash build_bringup.sh
+bash scripts/build_bringup.sh
 
 # 2. Flash via J-Link Commander
 JLINK="C:/Program Files/SEGGER/JLink_V932/JLink.exe"
@@ -223,8 +223,12 @@ printf 'connect\nr\nloadfile "%s"\nr\ng\nqc\n' "$ELF_WIN" > /tmp/jlink_flash.jli
     -CommanderScript "$(cygpath -w /tmp/jlink_flash.jlink)"
 
 # 3. Run bringup command via serial (wait 3 s for USB CDC re-enumerate)
+#    Inline one-off approach — for routine use, prefer scripts/bringup_run.ps1
+#    which auto-detects the port via VID 0x2E8A.
 powershell.exe -NoProfile -File - <<'PS1'
-$serial = New-Object System.IO.Ports.SerialPort 'COM4', 115200
+. "$PWD/scripts/_mokya-port.ps1"
+$port = Resolve-MokyaPort ''
+$serial = New-Object System.IO.Ports.SerialPort $port, 115200
 $serial.DtrEnable = $true; $serial.RtsEnable = $true; $serial.ReadTimeout = 300
 $serial.Open(); Start-Sleep -Milliseconds 2500
 try { $serial.ReadExisting() | Out-Null } catch {}
@@ -268,7 +272,7 @@ EOF
 - USB CDC disconnects while MCU is halted — expected; reconnects on resume.
 - After J-Link flash, USB may need 2–3 s to re-enumerate before serial is available.
 - **COM port stuck/busy:** If serial open fails (`UnauthorizedAccessException`), re-flash via J-Link — this resets the MCU and forces USB CDC re-enumeration, releasing the port. Always flash before retrying serial.
-- `bringup_run.ps1` handles build+flash+serial in one step with `-Flash` flag.
+- `scripts/bringup_run.ps1` handles build+flash+serial in one step with `-Flash` flag.
 
 ## IPC Protocol
 
