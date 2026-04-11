@@ -280,19 +280,18 @@ static void __no_inline_not_in_flash_func(psram_init_run)(
     CS_INIT_LOW(); ok = cs1_tx(0x35); CS_INIT_HIGH();
     if (!ok) { r->busy_timeout = true; goto exit; }
 
-    // Phase 2: configure M1 for QPI at 37.5 MHz (CLKDIV=2, RXDELAY=0, COOLDOWN=2)
-    // Sweep test confirmed: CLKDIV=2/RXDELAY=0 is the only zero-error setting.
-    // CLKDIV=1 (75 MHz) has ~200-300 marginal errors per 256 KB; CLKDIV=3 fails
-    // completely due to QMI sampling phase exceeding RXDELAY range.
-    // Base timing from M0 (preserves MIN_DESELECT, SELECT_HOLD etc.), then
-    // override COOLDOWN=2 (meets tCPH≥18ns), RXDELAY=0, CLKDIV=2 (SCK=37.5MHz).
+    // Phase 2: configure M1 for QPI at 75 MHz (CLKDIV=1, RXDELAY=0, COOLDOWN=2)
+    // Board #2 validated: CLKDIV=1 passes 256 KB sweep, 10+10+5 run stability
+    // diagnostic, and full 8 MB write+verify at zero errors. Board #1 required
+    // CLKDIV=2; the difference is attributed to per-unit APS6404L timing margin.
+    // COOLDOWN=2 meets tCPH≥18 ns.
     qmi_hw->m[1].timing = (qmi_hw->m[0].timing &
                             ~(QMI_M1_TIMING_COOLDOWN_BITS |
                               QMI_M1_TIMING_RXDELAY_BITS  |
                               QMI_M1_TIMING_CLKDIV_BITS))
                          | (2u << QMI_M1_TIMING_COOLDOWN_LSB)
                          | (0u << QMI_M1_TIMING_RXDELAY_LSB)
-                         | (2u << QMI_M1_TIMING_CLKDIV_LSB);
+                         | (1u << QMI_M1_TIMING_CLKDIV_LSB);
 
     // rfmt: cmd=Q/8b, addr=Q, dummy=Q/28bits (7 quad clocks), data=Q
     // APS6404L 0xEB QPI: 6 wait cycles spec; empirically requires 7 QPI clocks
@@ -509,6 +508,23 @@ void psram_full_test(void) {
     printf("  Result  : %s\n",
            errors == 0 ? "PASS — full 8 MB accessible and data-correct"
                        : "FAIL — data errors detected");
+}
+
+// Full 8 MB test at CLKDIV=1 (75 MHz). Saves and restores M1.timing so
+// the rest of the session is not disturbed.
+void psram_full_test_75(void) {
+    uint32_t orig_timing = qmi_hw->m[1].timing;
+    printf("\n--- PSRAM Full 8 MB @ 75 MHz (CLKDIV=1) ---\n");
+    printf("  Original M1.timing = 0x%08X\n", (unsigned)orig_timing);
+
+    psram_set_timing(1, 0);
+    printf("  Switched to M1.timing = 0x%08X (CLKDIV=1, RXDELAY=0, SCK=75 MHz)\n",
+           (unsigned)qmi_hw->m[1].timing);
+
+    psram_full_test();
+
+    psram_set_full_timing(orig_timing);
+    printf("\n  Restored M1.timing = 0x%08X\n", (unsigned)qmi_hw->m[1].timing);
 }
 
 // ---------------------------------------------------------------------------
