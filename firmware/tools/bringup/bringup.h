@@ -29,6 +29,8 @@ void baro_read(void);
 void mag_read(void);
 void imu_read(void);
 void gnss_info(void);
+void gnss_probe(void);
+void gnss_rfdiag(void);
 void scan_bus_a(void);
 void perform_scan(i2c_inst_t *i2c, uint sda, uint scl, const char *bus_name);
 
@@ -103,6 +105,7 @@ void tft_fast_test(void);
 
 // bringup_gnss_tft.c — Step 14: Teseo-LIV3FL outdoor GNSS + live TFT display
 void gnss_tft_test(void);
+void gnss_rftft(void);
 
 // bringup_core1.c — Step 16 Stage A: bare-metal Core 1 validation
 void core1_test(void);

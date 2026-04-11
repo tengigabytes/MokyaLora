@@ -93,7 +93,7 @@ See `docs/design-notes/power-architecture.md` for the full power tree.
 | Role | Part | Package | Notes |
 |------|------|---------|-------|
 | GNSS Receiver | ST Teseo-LIV3FL | LGA-14 | Multi-constellation; I2C0, address 0x3A |
-| LNA | Infineon BGA725L6 | — | 14 dB gain, NF 0.9 dB |
+| LNA | Infineon BGA123N6 | — | GPS/GNSS LNA; 1.8 V VPON enable |
 | SAW Filter | Qualcomm B39162B4327P810 | — | L1 bandpass, after LNA |
 | GNSS Antenna | Kyocera AVX M830120 | Chip | Placed at left PCB edge |
 
@@ -102,6 +102,7 @@ See `docs/design-notes/power-architecture.md` for the full power tree.
 - RF trace: 50 Ω controlled impedance.
 - 3.3 V supply (TPS7A2033) for RF and analogue sections.
 - SDA/SCL share sensor bus pull-ups with other sensors.
+- **MCU interface is I2C only** — Teseo `nRST` is **not** routed to any MCU GPIO on Rev A. Firmware can only issue software reset via `$PSTMCOLDSTART` / `$PSTMSRR` proprietary commands over I2C; a hard reset requires power cycling the 3.3 V rail.
 
 ---
 
