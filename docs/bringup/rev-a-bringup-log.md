@@ -1038,15 +1038,15 @@ expected 0x12345678 → got 0x12345688   (0x78 → 0x88)
 
 In QPI mode each byte = 2 nibbles on consecutive QPI clocks. The 7th QPI data nibble (byte 0 high) latches the value of the 8th nibble (byte 0 low) — **QMI data capture is 1 QPI clock late** on specific words during burst reads.
 
-#### Root Cause
+#### Observed Behaviour
 
-**RP2350 silicon-level issue in QMI → XIP data path for DMA burst reads from M1 (PSRAM):**
+Scope of the symptom — described only from measurement; root cause is not yet isolated:
 
-1. Even with XIP cache disabled (EN_SEC=0, EN_NONSEC=0), the XIP controller internally fetches M1 data in 8-word (32-byte, cache-line-sized) bursts from QMI.
-2. When the DMA bus master triggers these burst reads, the QMI read data latch timing is off by 1 QPI clock on specific word positions within the burst (predominantly positions 2 and 6 in each 8-word group).
-3. CPU reads are unaffected — the CPU uses a different internal data path or timing through XIP.
+1. Even with XIP cache disabled (EN_SEC=0, EN_NONSEC=0), the XIP controller appears to fetch M1 data in 8-word (32-byte, cache-line-sized) bursts from QMI.
+2. When the DMA bus master triggers these burst reads, corruption appears on specific word positions within the burst (predominantly positions 2 and 6 in each 8-word group at 37.5 MHz).
+3. CPU reads are unaffected.
 4. DMA writes to PSRAM are completely unaffected (0 errors).
-5. DMA reads with burst ≤ 4 words are unaffected (0 errors).
+5. At 37.5 MHz, DMA reads with burst ≤ 4 words are unaffected (0 errors).
 
 #### Register State During Test
 
@@ -1093,7 +1093,7 @@ SRAM framebuffer comparison (via `tft_fast` sub-tests J/K, DMA → PIO → LCD):
 | PSRAM (4 MB) | MIE dictionary DAT + values (CPU random read, binary search) |
 | PSRAM (4 MB) | Application heap (message history, node cache) |
 
-MIE dictionary lookup is inherently random-access (~600 bytes/query, <0.4 ms via CPU read). DMA provides no benefit for this access pattern. The DMA-to-PSRAM read bug has **zero impact** on the production firmware architecture.
+MIE dictionary lookup is inherently random-access (~600 bytes/query, <0.4 ms via CPU read). DMA provides no benefit for this access pattern. The DMA-to-PSRAM read issue has **zero impact** on the production firmware architecture.
 
 **Bug fix (2026-04-07):** `psram_rd_diag()` XIP_CTRL decode used bit 10 for WRITABLE_M1; correct position is bit 11 (SDK `XIP_CTRL_WRITABLE_M1_MSB=11`, mask `0x00000800`). Display showed `WRITABLE_M1=0` when the actual value was 1. Fixed — no functional impact (decode-only bug, read path unaffected).
 
@@ -1104,6 +1104,83 @@ MIE dictionary lookup is inherently random-access (~600 bytes/query, <0.4 ms via
 - `firmware/tools/bringup/bringup_tft.c` — Added sub-tests J (SRAM framebuffer DMA clkdiv=4) and K (clkdiv=3) to `tft_fast_test()`
 - `firmware/tools/bringup/i2c_custom_scan.c` — Registered `psram_dma_diag` and `psram_fps` serial commands
 - `bringup_run.ps1` — Added timeout entries for `psram_dma_diag` (30 s), `psram_rd_diag` (15 s), `psram_fps` (120 s)
+
+---
+
+### Step 26 — PSRAM 75 MHz Validation on Board #2
+
+**Result: ✅ PASS** (2026-04-11)
+
+Second Rev A PCB assembled; PSRAM QPI max clock re-characterised. Board #2's APS6404L passes every test at CLKDIV=1 (75 MHz) — a doubling of the Board #1 validated default (CLKDIV=2, 37.5 MHz). The difference is attributed to per-unit APS6404L / PCB routing timing margin; no single root cause is claimed.
+
+#### PSRAM Speed Sweep (256 KB per combo, write+read / read-only)
+
+| CLKDIV | SCK | RXDELAY=0 | RXDELAY=1 | RXDELAY=2..7 |
+|--------|-----|-----------|-----------|--------------|
+| 3 | 25 MHz | FAIL | FAIL | FAIL |
+| 2 | 37.5 MHz | **PASS** | FAIL | FAIL |
+| **1** | **75 MHz** | ✅ **PASS** | ✅ **PASS** | FAIL |
+
+#### Stability Diagnostic (`psram_diag`)
+
+| Phase | Setting | Runs | Errors |
+|-------|---------|------|--------|
+| [1] | CLKDIV=1/RXDELAY=0 (write@safe, read@75 MHz) | 10 | 0 |
+| [2] | CLKDIV=1/RXDELAY=1 (write@safe, read@75 MHz) | 10 | 0 |
+| [3] | CLKDIV=2/RXDELAY=0 (37.5 MHz baseline) | 5 | 0 |
+| [4] | CLKDIV=1/RXDELAY=0 (write+read both @75 MHz) | 5 | 0 |
+
+#### Full 8 MB Test at 75 MHz (`psram_full_75`)
+
+```
+M1.timing = 0xA0007001 (CLKDIV=1, RXDELAY=0, SCK=75 MHz)
+Capacity  : 8 MB (2097152 words)
+Write     : 8/8 MB complete
+Verify    : 8/8 MB, errors=0
+Result    : PASS — full 8 MB accessible and data-correct
+```
+
+Also re-run after `psram_init()` default was promoted to CLKDIV=1 — regular `psram_full` passes with 0 errors at the new default.
+
+#### Issue 14 Re-verification at 75 MHz (`psram_dma_diag`)
+
+The DMA read corruption observed at 37.5 MHz is still present at 75 MHz and the safe burst threshold halves:
+
+| Test | Description | 37.5 MHz (Board #1) | **75 MHz (Board #2)** |
+|------|-------------|---------------------|-----------------------|
+| A | DMA write 8 words + CPU verify | ✅ 0 errors | ✅ 0 errors |
+| B | DMA write 4 KB + CPU verify | ✅ 0 errors | ✅ 0 errors |
+| C | CPU write + DMA read 4 KB | ❌ 25% | ❌ 24.7% |
+| D | Address-pattern DMA read 256 B | ❌ 15/64 | ❌ 16/64 |
+| E | Single-word DMA reads | ✅ 0 errors | ✅ 0 errors |
+| F | Burst-size sweep threshold | errors start @ burst=8 | errors start @ burst=4 |
+
+Burst-size error rate comparison:
+
+| Burst (words) | 37.5 MHz | 75 MHz |
+|---------------|----------|--------|
+| 1 | 0% | 0% |
+| 2 | 0% | **0% ← safe** |
+| 4 | 0% ← previously safe | **25%** ❌ |
+| 8 | 12.5% | 25% |
+| ≥ 16 | 20–24% | 25% |
+
+Error signature unchanged — `XY`→`YY` byte-0 nibble duplication. Mod-8 histogram at 75 MHz shows positions 0/2/4/6 all affected (pos 0 and 4 newly degraded), while 1/3/5/7 remain mostly clean.
+
+#### Architecture Impact
+
+- DMA **writes** to PSRAM: safe at 75 MHz
+- CPU reads from PSRAM: safe at 75 MHz
+- DMA **reads** from PSRAM: safe burst tightened from ≤ 4 words to ≤ 2 words
+- Production memory plan unchanged: SRAM partial-render framebuffer (60–80 FPS, PIO-limited) + CPU random-access PSRAM for MIE dictionary and application heap. Neither use case triggers Issue 14.
+
+#### Firmware Changes (commit `ccd6441`)
+
+- `firmware/tools/bringup/bringup_psram.c` — `psram_init()` default CLKDIV 2 → 1 (75 MHz); added `psram_full_test_75()` helper that switches to CLKDIV=1 around `psram_full_test()` and restores original M1.timing.
+- `firmware/tools/bringup/i2c_custom_scan.c` — registered `psram_full_75` serial command.
+- `firmware/tools/bringup/bringup.h` — declared `psram_full_test_75()`.
+
+> **Note:** Only one Board #2 sample has been characterised. The 75 MHz default may not hold on Board #1 or on future production units. If future samples fail, per-board detection or a reversion to CLKDIV=2 will be required.
 
 ---
 
@@ -1124,7 +1201,7 @@ MIE dictionary lookup is inherently random-access (~600 bytes/query, <0.4 ms via
 | 11 | 2026-04-05 | U10/U11 GNSS RF chain | 0 satellites tracked after >10 min outdoor cold start; GNSS completely non-functional | Unknown. LNA (BGA123N6) ON confirmed (VPON = 1.8 V). Candidates: (1) chip antenna ground clearance insufficient (open item in rf-matching.md); (2) SAW → LNA or LNA → Teseo impedance mismatch; (3) BOM part incorrect (design docs listed BGA725L6; actual part is BGA123N6) | Under investigation. Next step: bypass BGA123N6 (jumper SAW output → Teseo RF_IN; pull VPON to GND) | Fix antenna ground clearance; verify SAW and LNA BOM vs schematic; correct rf-matching.md and hardware-requirements.md (BGA725L6 → BGA123N6) |
 | 12 | 2026-04-06 | Meshtastic / SPI1 | SX1262 radio init fails (Error 4, NO_INTERFACE) under Meshtastic firmware | `rpipico2` board defaults `PIN_WIRE1_SDA=26, PIN_WIRE1_SCL=27`; Meshtastic `Wire1.begin()` reconfigures GPIO 26/27 funcsel from SPI to I2C before `SPI1.begin()` runs | `MESHTASTIC_EXCLUDE_I2C=1` disables all Wire init on Core 0 (I2C peripherals are Core 1's domain). Initial workaround was `I2C_SDA1=6, I2C_SCL1=7` redirect | No HW change needed; firmware-only fix. Document SPI1/Wire1 pin conflict in variant README |
 | 13 | 2026-04-06 | PSRAM / USB CDC serial | `psram` and `psram_full` commands return empty output in `bringup_test_all.ps1` when run after 12+ prior commands; pass 100% in isolation or via `bringup_run.ps1` | USB CDC serial timing: after many sequential commands, trailing CDC packet bytes from previous responses pollute or delay the next command's buffer. PSRAM tests (which involve QSPI bus reconfiguration) may have longer response latency that exceeds the script's read window | Under investigation. Firmware confirmed working — issue is host-side script timing only. Workaround: skip memory group (`-Skip memory`) for 16/16 PASS, or run memory group separately (`-Group memory`) for 4/4 PASS | No HW change needed; script-side fix required |
-| 14 | 2026-04-07 | U3 (APS6404L PSRAM) / DMA | DMA **reads** from PSRAM produce ~25% word errors. DMA writes and CPU access are 100% reliable. Errors start at burst ≥ 8 words (= 1 XIP cache line); burst ≤ 4 is clean. Corrupted words have byte 0 high nibble replaced by low nibble (`XY`→`YY`) — QMI data latch 1 QPI clock late | **RP2350 silicon issue:** XIP controller issues 8-word cache-line-sized burst reads from QMI even with cache disabled. DMA bus master triggers a QMI read data latch timing error on the 7th QPI data nibble at word positions 2 and 6 within each burst. CPU reads use a different internal path and are unaffected | Workaround: CPU volatile read (1632 KB/s) or DMA burst ≤ 4 words. DMA writes to PSRAM are safe. Diagnostic command: `psram_dma_diag` (see Step 25) | No HW change needed. For display framebuffer: DMA write + CPU read. Consider Raspberry Pi forum inquiry or errata check for official acknowledgement |
+| 14 | 2026-04-07 | U3 (APS6404L PSRAM) / DMA | DMA **reads** from PSRAM produce ~25% word errors. DMA writes and CPU access are 100% reliable. Corrupted words have byte 0 high nibble replaced by low nibble (`XY`→`YY`). Safe burst threshold is speed-dependent: ≤ 4 words at 37.5 MHz, ≤ 2 words at 75 MHz (board #2, verified 2026-04-11) | Not yet isolated. Observed pattern suggests QMI read-data latch timing error on specific word positions within each 8-word XIP cache-line burst triggered by the DMA bus master. CPU reads use a different internal path and are unaffected. Needs further investigation before assigning a definitive cause | Workaround: CPU volatile read or DMA burst ≤ 2 words. DMA writes to PSRAM are safe. Diagnostic command: `psram_dma_diag` (see Step 25) | No HW change needed. For display framebuffer: DMA write + CPU read. Consider Raspberry Pi forum inquiry or errata check for authoritative explanation |
 
 ---
 
