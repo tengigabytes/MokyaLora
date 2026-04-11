@@ -4,7 +4,7 @@
 # On boot the TFT shows live GPS data; press BACK key to exit.
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 JLINK="C:/Program Files/SEGGER/JLink_V932/JLink.exe"
 ELF="build/firmware/tools/bringup/gnss_tft_standalone.elf"

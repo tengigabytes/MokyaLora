@@ -4,7 +4,7 @@
 # Run from project root.
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 powershell.exe -NoProfile -Command "
 \$env:PICO_SDK_PATH = 'C:\pico-sdk'

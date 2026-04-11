@@ -4,10 +4,10 @@
 # expected patterns, and produces a pass/fail summary report.
 #
 # Usage:
-#   .\bringup_test_all.ps1                  # run all tests (no flash)
-#   .\bringup_test_all.ps1 -Flash           # build + flash + run all tests
-#   .\bringup_test_all.ps1 -Group sensors   # run only one group
-#   .\bringup_test_all.ps1 -Skip audio      # skip a group
+#   .\scripts\bringup_test_all.ps1                  # run all tests (no flash)
+#   .\scripts\bringup_test_all.ps1 -Flash           # build + flash + run all tests
+#   .\scripts\bringup_test_all.ps1 -Group sensors   # run only one group
+#   .\scripts\bringup_test_all.ps1 -Skip audio      # skip a group
 #
 # Groups: sensors, power, audio, memory, lora, display, core1
 #
@@ -15,11 +15,14 @@
 
 param(
     [switch]$Flash,
-    [string]$PortName = 'COM4',
+    [string]$PortName = '',
     [int]$Baud        = 115200,
     [string]$Group    = '',          # run only this group (empty = all)
     [string[]]$Skip   = @()          # skip these groups
 )
+
+. "$PSScriptRoot\_mokya-port.ps1"
+$PortName = Resolve-MokyaPort $PortName
 
 # ---------------------------------------------------------------------------
 # Test definitions: [command, timeout_sec, description, regex_pass_pattern]
@@ -72,7 +75,7 @@ $GroupOrder = @('sensors', 'power', 'audio', 'memory', 'lora', 'display', 'core1
 # ---------------------------------------------------------------------------
 if ($Flash) {
     Write-Host "`n=== Building and flashing ===" -ForegroundColor Cyan
-    & bash build_and_flash_bringup.sh
+    & bash scripts/build_and_flash_bringup.sh
     if ($LASTEXITCODE -ne 0) { Write-Host 'Flash failed.' -ForegroundColor Red; exit 1 }
     Write-Host ''
 }

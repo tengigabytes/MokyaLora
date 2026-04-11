@@ -51,3 +51,9 @@ firmware/tools/gen_voice_pcm.py
 
 # KiCad lock files
 *.lck
+
+# Local datasheet cache (Claude Code debug reference only — not tracked)
+docs/datasheet/
+
+# Temporary debug scripts
+.tmp_*.ps1
