@@ -144,7 +144,7 @@ Never add a Meshtastic #include to core1/ or mie/.
 - Goal: turn bring-up architecture into dual-core production firmware — Core 0 Meshtastic LoRa modem, Core 1 FreeRTOS + LVGL + MIE UI, shared-SRAM SPSC ring IPC.
 - Tracked by milestone (M1.0, M1.0b, M1.1, ...) in `docs/bringup/phase2-log.md`.
 - Plan: `~/.claude/plans/groovy-petting-alpaca.md`.
-- Current status: **M1.0 ✅ complete** — Core 0 Meshtastic boots under `-DNO_USB` + `IpcSerialStream` stub + single-core FreeRTOS. M1.0b (dual-image Core 1 boot spike) is the next blocker.
+- Current status: **M1.0b ✅ complete** — Core 0 Meshtastic boots under `-DNO_USB` + `IpcSerialStream` stub + single-core FreeRTOS, and `initVariant()` hands execution to a separate Apache-2.0 Core 1 bootspike image at flash `0x10200000` via `multicore_launch_core1_raw()` (after a `multicore_reset_core1()` preamble — see Issue P2-3). Both cores verified running concurrently via SWD (Core 1 sentinel `0xC1B00701` at `0x20078000`, Core 1 PC in WFI at `0x102000Dx`, MSP `0x20050000`). M1.1 (shared-SRAM SPSC IPC ring carrying real bytes between Core 0 Meshtastic and a Core 1 USB CDC image) is next.
 
 ### Known Phase 2 constraints
 
