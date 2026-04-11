@@ -31,6 +31,7 @@ typedef enum {
     IPC_MSG_DEVICE_STATUS  = 0x03,  ///< Periodic status update (battery, GPS, RSSI)
     IPC_MSG_TX_ACK         = 0x04,  ///< Tx acknowledgement (sent / delivered / failed)
     IPC_MSG_CHANNEL_UPDATE = 0x05,  ///< Channel configuration changed
+    IPC_MSG_SERIAL_BYTES   = 0x06,  ///< Raw serial byte stream (Phase 2 M1 byte bridge, ≤256 B payload)
 
     /* Core 1 → Core 0 (commands) */
     IPC_CMD_SEND_TEXT      = 0x81,  ///< Request to send a text message
@@ -44,10 +45,16 @@ typedef enum {
 
     /* Bidirectional (debug) */
     IPC_MSG_LOG_LINE       = 0xF0,  ///< Debug log line (either core → other core)
+    IPC_MSG_PANIC          = 0xFE,  ///< Cross-core panic notification (reserved, M6)
 
     /* Boot handshake */
     IPC_BOOT_READY         = 0xFF,  ///< Sent by each core when its init is complete
 } IpcMsgId;
+
+/* ── Ring / transport parameters (Phase 2 M1) ─────────────────────────────── */
+
+#define IPC_MSG_PAYLOAD_MAX    256u   ///< Max payload bytes per ring slot
+#define IPC_RING_SLOT_COUNT     32u   ///< SPSC ring depth (per direction)
 
 /* ── Common header (every message starts with this) ───────────────────────── */
 
