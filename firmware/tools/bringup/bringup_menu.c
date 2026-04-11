@@ -88,6 +88,7 @@ static const menu_item_t page_sensors_items[] = {
     {"Mag read",       mag_read,     NULL},
     {"NMEA polling",   gnss_info,    NULL},
     {"GNSS TFT live",  gnss_tft_test, NULL},
+    {"GNSS RF debug",  gnss_rftft,   NULL},
     {"Bus A Diag",     cmd_scan_a,   NULL},
 };
 static const menu_page_t page_sensors = {

@@ -606,3 +606,357 @@ void gnss_tft_test(void) {
 
     printf("Done\n");
 }
+
+// ---------------------------------------------------------------------------
+// gnss_rftft — Live RF debug display for Teseo-LIV3FL (Issue 11)
+//
+// Enables $PSTMNOISE, $PSTMNOTCHSTATUS, $PSTMRF in CDB-231/232 (RAM only,
+// auto-reverts after reboot) and renders parsed fields on the ST7789VI.
+//
+// Screen layout (240x320, scale-2: 20 cols x 20 rows, 12x16 px/cell):
+//   Row 0  : Header
+//   Row 2  : NOISE header
+//   Row 3  : GPS raw NF
+//   Row 4  : GLO raw NF
+//   Row 6  : NOTCH header
+//   Row 7  : pwr_gps + lock
+//   Row 8  : kfreq (jammer frequency when locked)
+//   Row 9  : ovfs / jammer flag
+//   Row 10 : mode
+//   Row 12 : RF header
+//   Row 13 : tracked sats + best CN0
+//   Row 15+: event log (recent sentence count per type)
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    // $PSTMNOISE
+    long  noise_gps;
+    long  noise_glo;
+    bool  noise_valid;
+    // $PSTMNOTCHSTATUS — GPS path only (Teseo-LIV3FL uses GPS branch)
+    long  notch_kfreq;
+    int   notch_lock;
+    long  notch_pwr;
+    int   notch_ovfs;     // 4-digit raw
+    int   notch_jammer;   // top bit of ovfs (1=jammer removing)
+    int   notch_mode;
+    bool  notch_valid;
+    // $PSTMRF — aggregated
+    int   rf_used_sats;
+    int   rf_best_cn0;
+    int   rf_worst_cn0;
+    int   rf_sat_count;   // sats reported in most recent burst
+    bool  rf_valid;
+    // Counters
+    uint32_t cnt_noise;
+    uint32_t cnt_notch;
+    uint32_t cnt_rf;
+} rfdbg_t;
+
+static rfdbg_t g_rf;
+
+// Skip to the n-th comma in a sentence body; returns pointer just after the
+// comma, or NULL if fewer commas are present.
+static const char *rf_field(const char *body, int n) {
+    const char *p = body;
+    for (int i = 0; i < n; i++) {
+        p = strchr(p, ',');
+        if (!p) return NULL;
+        p++;
+    }
+    return p;
+}
+
+// Parse "$PSTMNOISE,<gps>,<glo>" (already stripped of leading '$' and cs).
+static void parse_noise(const char *body) {
+    const char *f0 = body;  // GPS_raw_NF
+    const char *f1 = rf_field(body, 1);  // GLONASS_raw_NF
+    if (!f1) return;
+    g_rf.noise_gps = strtol(f0, NULL, 10);
+    g_rf.noise_glo = strtol(f1, NULL, 10);
+    g_rf.noise_valid = true;
+    g_rf.cnt_noise++;
+}
+
+// Parse "$PSTMNOTCHSTATUS,kf_gps,lock_gps,pwr_gps,ovfs_gps,mode_gps,
+//                          kf_gln,lock_gln,pwr_gln,ovfs_gln,mode_gln"
+static void parse_notch(const char *body) {
+    const char *fk   = body;                 // kfreq_now_Hz_gps
+    const char *flk  = rf_field(body, 1);    // lock_en_gps
+    const char *fpw  = rf_field(body, 2);    // pwr_gps
+    const char *fovf = rf_field(body, 3);    // ovfs_gps
+    const char *fmd  = rf_field(body, 4);    // mode_gps
+    if (!flk || !fpw || !fovf || !fmd) return;
+    g_rf.notch_kfreq = strtol(fk,  NULL, 10);
+    g_rf.notch_lock  = (int)strtol(flk, NULL, 10);
+    g_rf.notch_pwr   = strtol(fpw, NULL, 10);
+    g_rf.notch_ovfs  = (int)strtol(fovf, NULL, 10);
+    g_rf.notch_jammer= (g_rf.notch_ovfs / 1000) ? 1 : 0;
+    g_rf.notch_mode  = (int)strtol(fmd, NULL, 10);
+    g_rf.notch_valid = true;
+    g_rf.cnt_notch++;
+}
+
+// Parse "$PSTMRF,<MsgAmt>,<MsgIdx>,<used>,<SatID>,<PhN>,<Freq>,<CN0>,..."
+// Each message holds up to 3 satellites; aggregate best/worst CN0 across
+// the multi-message burst. Reset on MsgIdx==1.
+static void parse_rf(const char *body) {
+    const char *fam  = body;
+    const char *fix  = rf_field(body, 1);
+    const char *fus  = rf_field(body, 2);
+    if (!fix || !fus) return;
+    int msg_idx   = (int)strtol(fix, NULL, 10);
+    int used_sats = (int)strtol(fus, NULL, 10);
+    (void)fam;
+    if (msg_idx == 1) {
+        g_rf.rf_best_cn0  = 0;
+        g_rf.rf_worst_cn0 = 99;
+        g_rf.rf_sat_count = 0;
+    }
+    g_rf.rf_used_sats = used_sats;
+    // Up to 3 satellites per message, CN0 is field (3 + 4*i + 3) for i=0..2
+    for (int i = 0; i < 3; i++) {
+        const char *fid  = rf_field(body, 3 + 4 * i + 0);
+        const char *fcn0 = rf_field(body, 3 + 4 * i + 3);
+        if (!fid || !fcn0 || *fid == ',' || *fid == '\0' || *fcn0 == ',' || *fcn0 == '\0')
+            continue;
+        int prn = (int)strtol(fid,  NULL, 10);
+        int cn0 = (int)strtol(fcn0, NULL, 10);
+        if (prn <= 0) continue;
+        if (cn0 > g_rf.rf_best_cn0)  g_rf.rf_best_cn0  = cn0;
+        if (cn0 < g_rf.rf_worst_cn0) g_rf.rf_worst_cn0 = cn0;
+        g_rf.rf_sat_count++;
+    }
+    g_rf.rf_valid = true;
+    g_rf.cnt_rf++;
+}
+
+// Screen row constants for the RF debug view
+#define RFY_HDR     (0  * ROW_H)
+#define RFY_NSH     (2  * ROW_H)
+#define RFY_NS_G    (3  * ROW_H)
+#define RFY_NS_R    (4  * ROW_H)
+#define RFY_NTH     (6  * ROW_H)
+#define RFY_NT_PWR  (7  * ROW_H)
+#define RFY_NT_KFQ  (8  * ROW_H)
+#define RFY_NT_OVF  (9  * ROW_H)
+#define RFY_NT_MD   (10 * ROW_H)
+#define RFY_RFH     (12 * ROW_H)
+#define RFY_RF_US   (13 * ROW_H)
+#define RFY_RF_CN   (14 * ROW_H)
+#define RFY_CNT     (16 * ROW_H)
+#define RFY_HINT    (18 * ROW_H)
+
+static void rftft_draw(void) {
+    char buf[40];
+    int C = g_cols;
+
+    // Noise block
+    if (g_rf.noise_valid) {
+        snprintf(buf, sizeof(buf), "GPS  NF:%7ld", g_rf.noise_gps);
+        g_str(0, RFY_NS_G, buf, C, C_WHITE, C_BG, 2);
+        snprintf(buf, sizeof(buf), "GLO  NF:%7ld", g_rf.noise_glo);
+        g_str(0, RFY_NS_R, buf, C, C_GRAY,  C_BG, 2);
+    } else {
+        g_str(0, RFY_NS_G, "GPS  NF: ----",      C, C_GRAY, C_BG, 2);
+        g_str(0, RFY_NS_R, "GLO  NF: ----",      C, C_GRAY, C_BG, 2);
+    }
+
+    // Notch block
+    if (g_rf.notch_valid) {
+        snprintf(buf, sizeof(buf), "PWR_GPS:%8ld", g_rf.notch_pwr);
+        g_str(0, RFY_NT_PWR, buf, C, C_WHITE, C_BG, 2);
+
+        if (g_rf.notch_lock)
+            snprintf(buf, sizeof(buf), "KFRQ: %7ld LK", g_rf.notch_kfreq);
+        else
+            snprintf(buf, sizeof(buf), "KFRQ: ---- UNLK");
+        g_str(0, RFY_NT_KFQ, buf, C,
+              g_rf.notch_lock ? C_YELL : C_GRAY, C_BG, 2);
+
+        snprintf(buf, sizeof(buf), "OVFS: %04d %s",
+                 g_rf.notch_ovfs, g_rf.notch_jammer ? "JAM!" : "ok");
+        g_str(0, RFY_NT_OVF, buf, C,
+              g_rf.notch_jammer ? C_RED : C_GREEN, C_BG, 2);
+
+        const char *mstr =
+            (g_rf.notch_mode == 0) ? "OFF " :
+            (g_rf.notch_mode == 1) ? "ON  " :
+            (g_rf.notch_mode == 2) ? "AUTO" : "?   ";
+        snprintf(buf, sizeof(buf), "MODE: %s (%d)", mstr, g_rf.notch_mode);
+        g_str(0, RFY_NT_MD, buf, C, C_CYAN, C_BG, 2);
+    } else {
+        g_str(0, RFY_NT_PWR, "PWR_GPS: ----", C, C_GRAY, C_BG, 2);
+        g_str(0, RFY_NT_KFQ, "KFRQ: ----",    C, C_GRAY, C_BG, 2);
+        g_str(0, RFY_NT_OVF, "OVFS: ----",    C, C_GRAY, C_BG, 2);
+        g_str(0, RFY_NT_MD,  "MODE: ----",    C, C_GRAY, C_BG, 2);
+    }
+
+    // RF / CN0 block
+    snprintf(buf, sizeof(buf), "USED: %2d  #SV:%2d",
+             g_rf.rf_used_sats, g_rf.rf_sat_count);
+    g_str(0, RFY_RF_US, buf, C, C_WHITE, C_BG, 2);
+    if (g_rf.rf_valid && g_rf.rf_best_cn0 > 0) {
+        snprintf(buf, sizeof(buf), "CN0: %2d..%2d dB",
+                 g_rf.rf_worst_cn0, g_rf.rf_best_cn0);
+        uint16_t col = (g_rf.rf_best_cn0 < 25) ? C_RED :
+                       (g_rf.rf_best_cn0 < 35) ? C_YELL : C_GREEN;
+        g_str(0, RFY_RF_CN, buf, C, col, C_BG, 2);
+    } else {
+        g_str(0, RFY_RF_CN, "CN0: no track", C, C_GRAY, C_BG, 2);
+    }
+
+    // Message counters
+    snprintf(buf, sizeof(buf), "N:%-3lu T:%-3lu R:%-3lu",
+             (unsigned long)g_rf.cnt_noise,
+             (unsigned long)g_rf.cnt_notch,
+             (unsigned long)g_rf.cnt_rf);
+    g_str(0, RFY_CNT, buf, C, C_CYAN, C_BG, 2);
+}
+
+void gnss_rftft(void) {
+    printf("\n--- GNSS RF Debug TFT (Issue 11) ---\n");
+    printf("Renders $PSTMNOISE / $PSTMNOTCHSTATUS / $PSTMRF on TFT.\n");
+    printf("Press BACK key (or Enter) to stop.\n");
+
+    menu_tft_stop();
+
+    // --- TFT GPIO init ---
+    gpio_init(TFT_nCS_PIN);  gpio_set_dir(TFT_nCS_PIN,  GPIO_OUT); gpio_put(TFT_nCS_PIN,  1);
+    gpio_init(TFT_DCX_PIN);  gpio_set_dir(TFT_DCX_PIN,  GPIO_OUT); gpio_put(TFT_DCX_PIN,  1);
+    gpio_init(TFT_nRST_PIN); gpio_set_dir(TFT_nRST_PIN, GPIO_OUT); gpio_put(TFT_nRST_PIN, 1);
+
+    if (!g_tft_start()) return;
+
+    gpio_put(TFT_nRST_PIN, 0); sleep_ms(10);
+    gpio_put(TFT_nRST_PIN, 1); sleep_ms(120);
+    gpio_put(TFT_nCS_PIN, 0);
+    g_tft_init();
+
+    bus_b_init();
+    lm_write(LM27965_BANKA, 0x16);
+    lm_write(LM27965_GP,    0x21);
+    bus_b_deinit();
+
+    back_key_init();
+
+    g_scr_w = menu_tft_width();
+    g_cols  = g_scr_w / (6 * 2);
+
+    menu_clear(C_BG);
+    g_str(0, RFY_HDR, " MOKYA RF DEBUG", g_cols, C_YELL,  C_DKBLU, 2);
+    g_str(0, RFY_NSH, " NOISE FLOOR",    g_cols, C_CYAN,  C_DKBLU, 2);
+    g_str(0, RFY_NTH, " NOTCH / ANF",    g_cols, C_CYAN,  C_DKBLU, 2);
+    g_str(0, RFY_RFH, " RF / CN0",       g_cols, C_CYAN,  C_DKBLU, 2);
+    g_str(0, RFY_HINT, "BACK=exit",      g_cols, C_GRAY,  C_BG,    2);
+
+    memset(&g_rf, 0, sizeof(g_rf));
+    g_rf.rf_worst_cn0 = 99;
+    g_nlen = 0; g_nbuf[0] = '\0';
+    rftft_draw();
+
+    // --- Init Bus A for GNSS ---
+    i2c_init(i2c1, 100 * 1000);
+    gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(BUS_A_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(BUS_A_SDA);
+    gpio_pull_up(BUS_A_SCL);
+
+    // Enable the Adaptive Notch Filter in Auto mode on the GPS path so that
+    // $PSTMNOTCHSTATUS becomes meaningful. Without ANF enabled, the notch
+    // status message is suppressed (UM2229 §11.5.58 "When ANF is disabled
+    // all parameters are set to zero"). sat_type=0 GPS, mode=2 Auto.
+    {
+        const char *body = "PSTMNOTCH,0,2";
+        uint8_t cs = 0;
+        for (const char *p = body; *p; p++) cs ^= (uint8_t)*p;
+        char line[80];
+        snprintf(line, sizeof(line), "$%s*%02X\r\n", body, cs);
+        gnss_send_pstm(line);
+    }
+    sleep_ms(200);
+
+    // Note: the message scheduler on Teseo-LIV3FL does NOT re-read CDB-231/232
+    // or CFGMSGL at runtime — periodic emission of $PSTMNOISE / $PSTMRF /
+    // $PSTMNOTCHSTATUS can't be enabled without a full SAVEPAR+SRR cycle.
+    // Instead we drive $PSTMNMEAREQUEST once per display refresh, which is
+    // a one-shot burst that bypasses the scheduler entirely. This keeps
+    // persistent state untouched.
+
+    while (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) {}
+
+    // Build cached $PSTMNMEAREQUEST,A0,3 poll sentence (low = NOISE+RF bits,
+    // high = both candidate NOTCHSTATUS bit positions).
+    char req_line[64];
+    {
+        const char *body = "PSTMNMEAREQUEST,A0,3";
+        uint8_t cs = 0;
+        for (const char *p = body; *p; p++) cs ^= (uint8_t)*p;
+        snprintf(req_line, sizeof(req_line), "$%s*%02X\r\n", body, cs);
+    }
+
+    uint8_t  raw[128];
+    char     sent[128];
+    uint32_t last_draw = 0;
+    uint32_t last_poll = 0;
+    bool     dirty     = true;
+
+    while (true) {
+        int ch = getchar_timeout_us(0);
+        if (ch == '\r' || ch == '\n') break;
+        if (back_key_pressed()) { sleep_ms(50); break; }
+
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+
+        // Fire a $PSTMNMEAREQUEST every 500 ms to get a fresh burst of
+        // $PSTMNOISE / $PSTMNOTCHSTATUS / $PSTMRF.
+        if ((now - last_poll) >= 500) {
+            i2c_write_timeout_us(i2c1, 0x3A,
+                (const uint8_t *)req_line, strlen(req_line), false, 200000);
+            last_poll = now;
+        }
+
+        int r = i2c_read_timeout_us(i2c1, 0x3A, raw, sizeof(raw), false, 200000);
+        if (r > 0) {
+            gnss_buf_append(raw, r);
+            while (gnss_pop(sent, sizeof(sent))) {
+                if (strncmp(sent, "PSTMNOISE,", 10) == 0) {
+                    parse_noise(sent + 10); dirty = true;
+                    printf("$%s\n", sent);
+                } else if (strncmp(sent, "PSTMNOTCHSTATUS,", 16) == 0) {
+                    parse_notch(sent + 16); dirty = true;
+                    printf("$%s\n", sent);
+                } else if (strncmp(sent, "PSTMRF,", 7) == 0) {
+                    parse_rf(sent + 7); dirty = true;
+                    printf("$%s\n", sent);
+                }
+            }
+        }
+
+        if ((dirty && (now - last_draw) >= 250) || (now - last_draw) >= 1000) {
+            rftft_draw();
+            last_draw = now;
+            dirty = false;
+        }
+
+        sleep_ms(20);
+    }
+
+    back_key_deinit();
+
+    i2c_deinit(i2c1);
+    gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
+    gpio_set_function(BUS_A_SCL, GPIO_FUNC_NULL);
+
+    bus_b_init();
+    lm_write(LM27965_GP, 0x20);
+    bus_b_deinit();
+
+    gpio_put(TFT_nCS_PIN, 1);
+    g_tft_stop();
+    gpio_set_function(TFT_nCS_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(TFT_DCX_PIN,  GPIO_FUNC_NULL);
+    gpio_set_function(TFT_nRST_PIN, GPIO_FUNC_NULL);
+
+    printf("Done\n");
+}

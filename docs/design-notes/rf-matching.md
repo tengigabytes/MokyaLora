@@ -58,7 +58,7 @@ TCXO Output ──[ 220 Ω ]──┬──[ 10 pF ]── GND
 ### 2.1 Block Diagram
 
 ```
-GNSS Chip Antenna (M830120) ──► SAW Filter (B39162B4327P810) ──► LNA (BGA725L6) ──► Teseo-LIV3FL RF_IN
+GNSS Chip Antenna (M830120) ──► SAW Filter (B39162B4327P810) ──► LNA (BGA123N6) ──► Teseo-LIV3FL RF_IN
 ```
 
 ### 2.2 SAW Filter — Qualcomm B39162B4327P810
@@ -67,13 +67,12 @@ GNSS Chip Antenna (M830120) ──► SAW Filter (B39162B4327P810) ──► LNA
 - Rejects out-of-band interference (cellular, LoRa).
 - Must be placed immediately after the antenna feed point.
 
-### 2.3 LNA — Infineon BGA725L6
+### 2.3 LNA — Infineon BGA123N6
 
-- Low-noise amplifier for GPS front-end.
-- Noise figure: typ. 0.9 dB.
-- Gain: typ. 14 dB.
-- Supply: 1.8 V (Rail A) or 3.3 V depending on variant — verify from datasheet.
+- Low-noise amplifier for GPS/GNSS front-end (populated part on Rev A).
+- VPON enable pin: logic HIGH (≥ 0.8 V) = ON; tied to 1.8 V rail on Rev A → LNA always on when 1.8 V is present.
 - Place close to SAW filter output; minimise trace length.
+- **Note:** earlier design docs listed BGA725L6 by mistake. Verify all datasheet-derived parameters (gain, NF, supply, pinout) against the BGA123N6 datasheet — do not carry over BGA725L6 figures.
 
 ### 2.4 GNSS Chip Antenna — Kyocera AVX M830120
 
@@ -107,5 +106,5 @@ GNSS Chip Antenna (M830120) ──► SAW Filter (B39162B4327P810) ──► LNA
 ## 5. Open Items
 
 - [ ] Confirm M620720 matching network values on target 4-layer stack-up.
-- [ ] Verify BGA725L6 supply voltage selection.
+- [ ] Verify BGA123N6 supply and VPON enable topology against its datasheet (populated part on Rev A).
 - [ ] Perform antenna isolation measurement (LoRa vs. GPS) on Rev A board.
