@@ -274,6 +274,12 @@ void handle_command(const char *cmd) {
         imu_read();
     } else if (strcmp(cmd, "gnss_info") == 0) {
         gnss_info();
+    } else if (strcmp(cmd, "gnss_probe") == 0) {
+        gnss_probe();
+    } else if (strcmp(cmd, "gnss_rfdiag") == 0) {
+        gnss_rfdiag();
+    } else if (strcmp(cmd, "gnss_rftft") == 0) {
+        gnss_rftft();
     } else if (strcmp(cmd, "dump_b") == 0) {
         dump_bus_b();
     } else if (strcmp(cmd, "scan_a") == 0) {
@@ -349,6 +355,8 @@ void handle_command(const char *cmd) {
         psram_test();
     } else if (strcmp(cmd, "psram_full") == 0) {
         psram_full_test();
+    } else if (strcmp(cmd, "psram_full_75") == 0) {
+        psram_full_test_75();
     } else if (strcmp(cmd, "psram_sweep") == 0) {
         psram_speed_test();
     } else if (strcmp(cmd, "flash_sweep") == 0) {

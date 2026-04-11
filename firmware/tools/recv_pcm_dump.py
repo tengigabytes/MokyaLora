@@ -4,7 +4,10 @@ recv_pcm_dump.py — trigger mic_dump on the bringup shell, receive raw PCM,
                    save as a 16-bit mono WAV file for analysis in Audacity.
 
 Usage:
-    python recv_pcm_dump.py [--port COM4] [--out mic_dump.wav]
+    python recv_pcm_dump.py [--port COMxx] [--out mic_dump.wav]
+
+Port is auto-detected by USB VID 0x2E8A (Raspberry Pi / RP2350B). Override
+with --port if multiple RP2350 boards are attached.
 
 Requires: pyserial  (pip install pyserial)
 
@@ -21,23 +24,36 @@ import wave
 
 try:
     import serial
+    from serial.tools import list_ports
 except ImportError:
     print("ERROR: pyserial not installed.  Run: pip install pyserial")
     sys.exit(1)
 
 
+def find_mokya_port() -> str | None:
+    for p in list_ports.comports():
+        if p.vid == 0x2E8A:
+            return p.device
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Receive mic_dump PCM from bringup shell")
-    parser.add_argument("--port", default="COM4", help="Serial port (default: COM4)")
+    parser.add_argument("--port", default="", help="Serial port (default: auto-detect by VID 0x2E8A)")
     parser.add_argument("--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("--out",  default="mic_dump.wav", help="Output WAV file (default: mic_dump.wav)")
     parser.add_argument("--no-send", action="store_true",
                         help="Don't send mic_dump command; just listen (useful if already triggered)")
     args = parser.parse_args()
 
-    print(f"Opening {args.port} at {args.baud} baud...")
+    port = args.port or find_mokya_port()
+    if not port:
+        print("ERROR: No RP2350B serial port found (VID 0x2E8A). Pass --port COMxx to override.")
+        sys.exit(1)
+
+    print(f"Opening {port} at {args.baud} baud...")
     try:
-        ser = serial.Serial(args.port, args.baud, timeout=5)
+        ser = serial.Serial(port, args.baud, timeout=5)
     except serial.SerialException as e:
         print(f"ERROR: {e}")
         sys.exit(1)

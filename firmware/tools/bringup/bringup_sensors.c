@@ -497,6 +497,230 @@ void gnss_info(void) {
 }
 
 // ---------------------------------------------------------------------------
+// gnss_probe — Read-only Teseo-LIV3FL state dump via $PSTMGETPAR
+// Reads CDB-ID 200 / 227 / 231 / 232 so we can see the actual NMEA I2C mask
+// and feature flags without writing anything. Issue 11 diagnostic.
+// ---------------------------------------------------------------------------
+
+static uint8_t gnss_nmea_cs(const char *body) {
+    uint8_t cs = 0;
+    while (*body) cs ^= (uint8_t)*body++;
+    return cs;
+}
+
+static int gnss_send_nmea(const char *body) {
+    char buf[96];
+    uint8_t cs = gnss_nmea_cs(body);
+    int n = snprintf(buf, sizeof(buf), "$%s*%02X\r\n", body, cs);
+    return i2c_write_timeout_us(i2c1, 0x3A, (const uint8_t *)buf, n, false, 200000);
+}
+
+// Drain the I2C NMEA stream for up to wait_ms, printing any sentence whose
+// body starts with match_prefix (skip NULL to print everything).
+static void gnss_drain(int wait_ms, const char *match_prefix) {
+    char sbuf[256];
+    int slen = 0;
+    absolute_time_t end = make_timeout_time_ms(wait_ms);
+    while (absolute_time_diff_us(get_absolute_time(), end) > 0) {
+        uint8_t raw[128];
+        int r = i2c_read_timeout_us(i2c1, 0x3A, raw, sizeof(raw), false, 200000);
+        if (r <= 0) { sleep_ms(10); continue; }
+        for (int i = 0; i < r; i++) {
+            char c = (char)raw[i];
+            if (c == (char)0xFF) continue;
+            if (c == '$') slen = 0;
+            if (slen < (int)sizeof(sbuf) - 1) {
+                sbuf[slen++] = c;
+                sbuf[slen]   = '\0';
+            }
+            if (c != '\n') continue;
+            if (slen >= 6 && sbuf[0] == '$') {
+                for (int k = slen - 1; k > 0 && (sbuf[k] == '\r' || sbuf[k] == '\n'); k--)
+                    sbuf[k] = '\0';
+                const char *body = sbuf + 1;
+                if (match_prefix == NULL || strncmp(body, match_prefix, strlen(match_prefix)) == 0) {
+                    printf("  $%s\n", body);
+                }
+            }
+            slen = 0;
+        }
+    }
+}
+
+static void gnss_query(const char *cmd_body, const char *match_prefix, int wait_ms) {
+    printf("\n  >> $%s\n", cmd_body);
+    int w = gnss_send_nmea(cmd_body);
+    if (w < 0) {
+        printf("    (i2c write failed: %d)\n", w);
+        return;
+    }
+    gnss_drain(wait_ms, match_prefix);
+}
+
+// CDB-ID 231 NMEA I2C message list LOW 32 bits — bit definitions from
+// UM2229 Table §CDB-ID 201/228/231 (same layout as UART list).
+// Default value on Teseo-LIV3FL is 0x00980056.
+static void gnss_decode_cdb231(uint32_t v) {
+    static const struct { uint8_t bit; const char *name; } bits[] = {
+        { 1,  "GGA"      },
+        { 2,  "GSA"      },
+        { 3,  "GST"      },
+        { 4,  "VTG"      },
+        { 6,  "RMC"      },
+        { 19, "GSV"      },
+        { 20, "GLL"      },
+        { 23, "PSTMCPU"  },
+        { 25, "ZDA"      },
+    };
+    printf("    CDB-231 decode (NMEA I2C list, 0x%08lX):\n", (unsigned long)v);
+    for (size_t i = 0; i < sizeof(bits) / sizeof(bits[0]); i++) {
+        int on = (v >> bits[i].bit) & 1u;
+        printf("      bit %2u %-8s = %d\n", bits[i].bit, bits[i].name, on);
+    }
+}
+
+void gnss_probe(void) {
+    printf("\n--- GNSS Probe (read-only CDB dump) ---\n");
+
+    i2c_init(i2c1, 100 * 1000);
+    gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(BUS_A_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(BUS_A_SDA);
+    gpio_pull_up(BUS_A_SCL);
+
+    // Drain whatever is currently in the output queue so the $PSTMGETPAR
+    // responses are not mixed with periodic NMEA output.
+    printf("\n  [drain 500 ms pre-probe]\n");
+    gnss_drain(500, NULL);
+
+    // Software version — confirms the module is responsive.
+    gnss_query("PSTMGETSWVER,6", "PSTM", 800);
+
+    // CDB-ID 200 — Application ON/OFF 1 (GPS/GLONASS/SBAS/PPS/etc).
+    gnss_query("PSTMGETPAR,1200", "PSTMSETPAR", 800);
+
+    // CDB-ID 227 — Application ON/OFF 2 (Galileo/BEIDOU/RTC).
+    gnss_query("PSTMGETPAR,1227", "PSTMSETPAR", 800);
+
+    // CDB-ID 231 — NMEA I2C message list LOW 32 bits. Default 0x00980056.
+    gnss_query("PSTMGETPAR,1231", "PSTMSETPAR", 800);
+
+    // CDB-ID 232 — NMEA I2C message list HIGH 32 bits. Default 0x0.
+    gnss_query("PSTMGETPAR,1232", "PSTMSETPAR", 800);
+
+    printf("\n  Note: $PSTMSETPAR response format is\n");
+    printf("    $PSTMSETPAR,<CDB-ID>,<value>*<cs>\n");
+    printf("    where <value> is the parameter's current value (hex).\n");
+    printf("  CDB-231 default is 0x00980056 → GGA,GSA,VTG,RMC,GSV,GLL,PSTMCPU\n");
+
+    gnss_decode_cdb231(0x00980056u);
+
+    i2c_deinit(i2c1);
+    gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
+    gpio_set_function(BUS_A_SCL, GPIO_FUNC_NULL);
+    printf("\nDone\n");
+}
+
+// ---------------------------------------------------------------------------
+// gnss_rfdiag — Poll $PSTMNOISE / $PSTMRF via $PSTMNMEAREQUEST (UM2229
+// §10.2.38), and keep two negative-result probes for high-word messages as
+// a permanent regression guard.
+//
+// **Firmware quirk (BINIMG_4.6.15.1_CP_LIV3FL_ARM, confirmed 2026-04-11):**
+// `$PSTMNMEAREQUEST` only honors the low-word (`msglist_l`) argument. The
+// high-word (`msglist_h`) argument is silently ignored, so any message at
+// overall bit ≥ 32 is unreachable via this command. Confirmed by isolation
+// probes for both `$PSTMLOWPOWERDATA` (high bit 0) and `$PSTMNOTCHSTATUS`
+// (high bit 1): the command is ack'd but no payload follows. The only path
+// to enable high-word messages is persistent CDB-1232 write + SAVEPAR + SRR,
+// which is destructive and avoided here. See rev-a-bringup-log.md Step 14a.
+//
+// Message bit map (UM2229 Table 208, low word):
+//   bit 5 (0x20) = $PSTMNOISE
+//   bit 7 (0x80) = $PSTMRF    → low = 0xA0 polls both
+// ---------------------------------------------------------------------------
+
+void gnss_rfdiag(void) {
+    printf("\n--- GNSS RF Diagnostic ---\n");
+
+    i2c_init(i2c1, 100 * 1000);
+    gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(BUS_A_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(BUS_A_SDA);
+    gpio_pull_up(BUS_A_SCL);
+
+    gnss_drain(300, NULL);
+
+    uint32_t n_noise = 0, n_notch = 0, n_rf = 0, n_lpd = 0;
+
+    // Probe sequence. (1)(2) are permanent regression guards — if they ever
+    // start returning payload on a newer Teseo firmware, delete this comment
+    // and re-evaluate the high-word policy. (3)-(6) are the actual working
+    // NOISE + RF polls.
+    const char *const requests[] = {
+        "PSTMNMEAREQUEST,0,1",    // regression guard: high bit 0 (LOWPOWERDATA)
+        "PSTMNMEAREQUEST,0,2",    // regression guard: high bit 1 (NOTCHSTATUS)
+        "PSTMNMEAREQUEST,A0,0",   // NOISE + RF
+        "PSTMNMEAREQUEST,A0,0",
+        "PSTMNMEAREQUEST,A0,0",
+        "PSTMNMEAREQUEST,A0,0",
+    };
+
+    int n_polls = (int)(sizeof(requests) / sizeof(requests[0]));
+    for (int poll = 0; poll < n_polls; poll++) {
+        printf("\n  [poll %d/%d] %s\n", poll + 1, n_polls, requests[poll]);
+        gnss_send_nmea(requests[poll]);
+
+        // Give the chip ~800 ms to emit the burst; capture everything that
+        // starts with PSTMNOISE / PSTMNOTCHSTATUS / PSTMRF, tally and print.
+        char sbuf[256];
+        int  slen = 0;
+        absolute_time_t end = make_timeout_time_ms(800);
+        while (absolute_time_diff_us(get_absolute_time(), end) > 0) {
+            uint8_t raw[128];
+            int r = i2c_read_timeout_us(i2c1, 0x3A, raw, sizeof(raw), false, 200000);
+            if (r <= 0) { sleep_ms(10); continue; }
+            for (int i = 0; i < r; i++) {
+                char c = (char)raw[i];
+                if (c == (char)0xFF) continue;
+                if (c == '$') slen = 0;
+                if (slen < (int)sizeof(sbuf) - 1) {
+                    sbuf[slen++] = c;
+                    sbuf[slen]   = '\0';
+                }
+                if (c != '\n') continue;
+                if (slen >= 6 && sbuf[0] == '$') {
+                    for (int k = slen - 1; k > 0 && (sbuf[k] == '\r' || sbuf[k] == '\n'); k--)
+                        sbuf[k] = '\0';
+                    const char *body = sbuf + 1;
+                    if      (strncmp(body, "PSTMNOISE,",         10) == 0) { n_noise++; printf("    $%s\n", body); }
+                    else if (strncmp(body, "PSTMNOTCHSTATUS,",   16) == 0) { n_notch++; printf("    $%s\n", body); }
+                    else if (strncmp(body, "PSTMRF,",             7) == 0) { n_rf++;    printf("    $%s\n", body); }
+                    else if (strncmp(body, "PSTMLOWPOWERDATA,",  17) == 0) { n_lpd++;   printf("    $%s\n", body); }
+                    else if (strncmp(body, "PSTMNMEAREQUEST",    15) == 0) {             printf("    $%s\n", body); }
+                }
+                slen = 0;
+            }
+        }
+    }
+
+    printf("\nCapture summary:\n");
+    printf("  $PSTMNOISE        : %lu\n", (unsigned long)n_noise);
+    printf("  $PSTMRF           : %lu\n", (unsigned long)n_rf);
+    printf("  $PSTMLOWPOWERDATA : %lu   (regression guard, expect 0 on LIV3FL 4.6.15.1)\n", (unsigned long)n_lpd);
+    printf("  $PSTMNOTCHSTATUS  : %lu   (regression guard, expect 0 on LIV3FL 4.6.15.1)\n", (unsigned long)n_notch);
+    printf("\nInterpretation:\n");
+    printf("  NOISE ~12500 baseline on quiet bench; sharp rise -> in-band RFI\n");
+    printf("  PSTMRF n_sat==0              -> no satellite tracked (Issue 11)\n");
+    printf("  LPD or NOTCH > 0             -> firmware upgraded; revisit Step 14a\n");
+
+    i2c_deinit(i2c1);
+    gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
+    gpio_set_function(BUS_A_SCL, GPIO_FUNC_NULL);
+    printf("\nDone\n");
+}
+
+// ---------------------------------------------------------------------------
 // Bus A register dump (IMU + Mag + Baro + GNSS)
 // ---------------------------------------------------------------------------
 

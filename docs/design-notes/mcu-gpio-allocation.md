@@ -79,7 +79,7 @@
 | IMU           | LSM6DSV16X     | 0x6A          | SA0 tied to GND (default 0x6B conflicts with charger) |
 | Magnetometer  | LIS2MDL        | 0x1E          | Fixed address                           |
 | Barometer     | LPS22HH        | 0x5D          | SA0 tied to 3.3 V (Rev A confirmed; design docs previously stated 0x5C / SA0=GND) |
-| GPS           | Teseo-LIV3FL   | 0x3A          | Fixed address                           |
+| GPS           | Teseo-LIV3FL   | 0x3A          | Fixed address. **I2C only** — `nRST` not routed to MCU; no GPIO enable. Software reset via `$PSTMSRR` / `$PSTMCOLDSTART`. |
 
 ### Power + Backlight bus — GPIO 6 / 7 (`i2c1` in Pico SDK)
 

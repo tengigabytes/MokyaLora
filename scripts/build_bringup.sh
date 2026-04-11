@@ -3,7 +3,7 @@
 # Run from project root. Requires: VS Build Tools 2019, ARM GCC, Ninja, Pico SDK at C:\pico-sdk.
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 powershell.exe -NoProfile -Command "
 \$env:PICO_SDK_PATH = 'C:\pico-sdk'

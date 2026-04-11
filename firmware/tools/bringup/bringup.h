@@ -29,6 +29,8 @@ void baro_read(void);
 void mag_read(void);
 void imu_read(void);
 void gnss_info(void);
+void gnss_probe(void);
+void gnss_rfdiag(void);
 void scan_bus_a(void);
 void perform_scan(i2c_inst_t *i2c, uint sda, uint scl, const char *bus_name);
 
@@ -76,6 +78,7 @@ void flash_speed_run(struct flash_speed_result *results, int count,
 bool psram_init(void);      // call once at boot — returns true if APS6404L found
 void psram_test(void);
 void psram_full_test(void); // full 8 MB two-pass write+verify test
+void psram_full_test_75(void); // full 8 MB test at CLKDIV=1 (75 MHz), restores timing
 void psram_speed_test(void);// sweep CLKDIV*RXDELAY, find max PSRAM QPI speed
 void psram_diag_test(void); // CLKDIV=1 error pattern analysis & timing tuning
 void psram_jlink_prep(void);// write sentinel, print J-Link mem32 command
@@ -102,6 +105,7 @@ void tft_fast_test(void);
 
 // bringup_gnss_tft.c — Step 14: Teseo-LIV3FL outdoor GNSS + live TFT display
 void gnss_tft_test(void);
+void gnss_rftft(void);
 
 // bringup_core1.c — Step 16 Stage A: bare-metal Core 1 validation
 void core1_test(void);

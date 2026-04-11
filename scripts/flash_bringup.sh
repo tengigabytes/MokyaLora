@@ -3,7 +3,7 @@
 # Run from project root. Requires: J-Link Ultra V6 connected via SWD.
 
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 JLINK="C:/Program Files/SEGGER/JLink_V932/JLink.exe"
 ELF="$(cygpath -w "$(pwd)/build/firmware/tools/bringup/i2c_custom_scan.elf")"
