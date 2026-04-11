@@ -622,27 +622,26 @@ void gnss_probe(void) {
 }
 
 // ---------------------------------------------------------------------------
-// gnss_rfdiag — Poll $PSTMNOISE / $PSTMNOTCHSTATUS / $PSTMRF via
-// $PSTMNMEAREQUEST (UM2229 §10.2.38).
+// gnss_rfdiag — Poll $PSTMNOISE / $PSTMRF via $PSTMNMEAREQUEST (UM2229
+// §10.2.38), and keep two negative-result probes for high-word messages as
+// a permanent regression guard.
 //
-// Runtime-mode $PSTMSETPAR writes to CDB-231/232 are acknowledged but do NOT
-// refresh the NMEA scheduler on Teseo-LIV3FL — message emission is cached
-// per-boot. $PSTMNMEAREQUEST,<low>,<high> is a one-shot poll that requests
-// a burst of messages immediately, bypassing the scheduler entirely. No
-// persistent state change.
+// **Firmware quirk (BINIMG_4.6.15.1_CP_LIV3FL_ARM, confirmed 2026-04-11):**
+// `$PSTMNMEAREQUEST` only honors the low-word (`msglist_l`) argument. The
+// high-word (`msglist_h`) argument is silently ignored, so any message at
+// overall bit ≥ 32 is unreachable via this command. Confirmed by isolation
+// probes for both `$PSTMLOWPOWERDATA` (high bit 0) and `$PSTMNOTCHSTATUS`
+// (high bit 1): the command is ack'd but no payload follows. The only path
+// to enable high-word messages is persistent CDB-1232 write + SAVEPAR + SRR,
+// which is destructive and avoided here. See rev-a-bringup-log.md Step 14a.
 //
-// Target message mask (low_hex):
+// Message bit map (UM2229 Table 208, low word):
 //   bit 5 (0x20) = $PSTMNOISE
-//   bit 7 (0x80) = $PSTMRF        (per UM2229 §Table 208 default 0x00980056)
-//   => low = 0xA0
-// Target message mask (high_hex):
-//   bit 1 (0x2) = $PSTMNOTCHSTATUS  (64-bit bit 33)
-//   => high = 0x2
+//   bit 7 (0x80) = $PSTMRF    → low = 0xA0 polls both
 // ---------------------------------------------------------------------------
 
 void gnss_rfdiag(void) {
-    printf("\n--- GNSS RF Diagnostic (one-shot poll x 10) ---\n");
-    printf("Using $PSTMNMEAREQUEST,A0,2 to request NOISE + RF + NOTCHSTATUS.\n");
+    printf("\n--- GNSS RF Diagnostic ---\n");
 
     i2c_init(i2c1, 100 * 1000);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_I2C);
@@ -652,26 +651,24 @@ void gnss_rfdiag(void) {
 
     gnss_drain(300, NULL);
 
-    uint32_t n_noise = 0, n_notch = 0, n_rf = 0;
+    uint32_t n_noise = 0, n_notch = 0, n_rf = 0, n_lpd = 0;
 
-    // First two polls probe the high-word bit mapping for $PSTMNOTCHSTATUS.
-    // UM2229 Table 208 labels it "bit 33" in the 64-bit message list; our
-    // earlier guess of high=0x2 returned nothing. Try 0x1 and 0x3 too.
+    // Probe sequence. (1)(2) are permanent regression guards — if they ever
+    // start returning payload on a newer Teseo firmware, delete this comment
+    // and re-evaluate the high-word policy. (3)-(6) are the actual working
+    // NOISE + RF polls.
     const char *const requests[] = {
-        "PSTMNMEAREQUEST,A0,1",   // NOISE + RF, NOTCHSTATUS via high bit 0
-        "PSTMNMEAREQUEST,A0,3",   // NOISE + RF, NOTCHSTATUS via either high bit 0 or 1
-        "PSTMNMEAREQUEST,A0,2",   // original guess
-        "PSTMNMEAREQUEST,A0,2",
-        "PSTMNMEAREQUEST,A0,2",
-        "PSTMNMEAREQUEST,A0,2",
-        "PSTMNMEAREQUEST,A0,2",
-        "PSTMNMEAREQUEST,A0,2",
-        "PSTMNMEAREQUEST,A0,2",
-        "PSTMNMEAREQUEST,A0,2",
+        "PSTMNMEAREQUEST,0,1",    // regression guard: high bit 0 (LOWPOWERDATA)
+        "PSTMNMEAREQUEST,0,2",    // regression guard: high bit 1 (NOTCHSTATUS)
+        "PSTMNMEAREQUEST,A0,0",   // NOISE + RF
+        "PSTMNMEAREQUEST,A0,0",
+        "PSTMNMEAREQUEST,A0,0",
+        "PSTMNMEAREQUEST,A0,0",
     };
 
-    for (int poll = 0; poll < (int)(sizeof(requests)/sizeof(requests[0])); poll++) {
-        printf("\n  [poll %d/10] %s\n", poll + 1, requests[poll]);
+    int n_polls = (int)(sizeof(requests) / sizeof(requests[0]));
+    for (int poll = 0; poll < n_polls; poll++) {
+        printf("\n  [poll %d/%d] %s\n", poll + 1, n_polls, requests[poll]);
         gnss_send_nmea(requests[poll]);
 
         // Give the chip ~800 ms to emit the burst; capture everything that
@@ -696,10 +693,11 @@ void gnss_rfdiag(void) {
                     for (int k = slen - 1; k > 0 && (sbuf[k] == '\r' || sbuf[k] == '\n'); k--)
                         sbuf[k] = '\0';
                     const char *body = sbuf + 1;
-                    if (strncmp(body, "PSTMNOISE,",       10) == 0) { n_noise++; printf("    $%s\n", body); }
-                    else if (strncmp(body, "PSTMNOTCHSTATUS,", 16) == 0) { n_notch++; printf("    $%s\n", body); }
-                    else if (strncmp(body, "PSTMRF,",           7)  == 0) { n_rf++;    printf("    $%s\n", body); }
-                    else if (strncmp(body, "PSTMNMEAREQUEST",  15) == 0) { printf("    $%s\n", body); }
+                    if      (strncmp(body, "PSTMNOISE,",         10) == 0) { n_noise++; printf("    $%s\n", body); }
+                    else if (strncmp(body, "PSTMNOTCHSTATUS,",   16) == 0) { n_notch++; printf("    $%s\n", body); }
+                    else if (strncmp(body, "PSTMRF,",             7) == 0) { n_rf++;    printf("    $%s\n", body); }
+                    else if (strncmp(body, "PSTMLOWPOWERDATA,",  17) == 0) { n_lpd++;   printf("    $%s\n", body); }
+                    else if (strncmp(body, "PSTMNMEAREQUEST",    15) == 0) {             printf("    $%s\n", body); }
                 }
                 slen = 0;
             }
@@ -707,13 +705,14 @@ void gnss_rfdiag(void) {
     }
 
     printf("\nCapture summary:\n");
-    printf("  $PSTMNOISE       : %lu\n", (unsigned long)n_noise);
-    printf("  $PSTMNOTCHSTATUS : %lu\n", (unsigned long)n_notch);
-    printf("  $PSTMRF          : %lu\n", (unsigned long)n_rf);
+    printf("  $PSTMNOISE        : %lu\n", (unsigned long)n_noise);
+    printf("  $PSTMRF           : %lu\n", (unsigned long)n_rf);
+    printf("  $PSTMLOWPOWERDATA : %lu   (regression guard, expect 0 on LIV3FL 4.6.15.1)\n", (unsigned long)n_lpd);
+    printf("  $PSTMNOTCHSTATUS  : %lu   (regression guard, expect 0 on LIV3FL 4.6.15.1)\n", (unsigned long)n_notch);
     printf("\nInterpretation:\n");
-    printf("  NOISE high / very low       -> LNA or RF path broken\n");
-    printf("  NOTCHSTATUS ovfs_gps=1xxx   -> jammer detected, check kfreq\n");
-    printf("  PSTMRF count == 0           -> no satellite tracked\n");
+    printf("  NOISE ~12500 baseline on quiet bench; sharp rise -> in-band RFI\n");
+    printf("  PSTMRF n_sat==0              -> no satellite tracked (Issue 11)\n");
+    printf("  LPD or NOTCH > 0             -> firmware upgraded; revisit Step 14a\n");
 
     i2c_deinit(i2c1);
     gpio_set_function(BUS_A_SDA, GPIO_FUNC_NULL);
