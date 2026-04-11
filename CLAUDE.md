@@ -136,12 +136,19 @@ Never add a Meshtastic #include to core1/ or mie/.
 
 ## Current Development Phase
 
-**Phase 1 — MIE on PC** (active, pre-hardware, no RP2350 needed):
-- Goal: build and test MokyaInput Engine on PC entirely independent of hardware.
-- Entry point: `firmware/mie/` (standalone CMake project, no Pico SDK dependency).
-- Reference: `docs/requirements/software-requirements.md` §5.7 Roadmap.
+**Phase 1 — MIE on PC** ✅ complete — 120 GoogleTest cases pass, C API ready at `firmware/mie/`.
 
-**Phase 2** (future): Core 0 / Core 1 firmware development starts after Rev A PCB arrives.
+**Rev A hardware bring-up** ✅ complete — Steps 1–26, logged in `docs/bringup/rev-a-bringup-log.md`.
+
+**Phase 2 — RP2350B firmware productization** (active, on Rev A board):
+- Goal: turn bring-up architecture into dual-core production firmware — Core 0 Meshtastic LoRa modem, Core 1 FreeRTOS + LVGL + MIE UI, shared-SRAM SPSC ring IPC.
+- Tracked by milestone (M1.0, M1.0b, M1.1, ...) in `docs/bringup/phase2-log.md`.
+- Plan: `~/.claude/plans/groovy-petting-alpaca.md`.
+- Current status: **M1.0 ✅ complete** — Core 0 Meshtastic boots under `-DNO_USB` + `IpcSerialStream` stub + single-core FreeRTOS. M1.0b (dual-image Core 1 boot spike) is the next blocker.
+
+### Known Phase 2 constraints
+
+- **Core 0 Meshtastic must build with single-core FreeRTOS** (`-DconfigNUMBER_OF_CORES=1`). Arduino-Pico 5.4.4's `rp2350_base` enables FreeRTOS **SMP** via `-D__FREERTOS=1`, and the RP2350 SMP port launches Core 1's passive-idle task from `xPortStartScheduler`, which HardFaults in `vStartFirstTask` before any user code runs. MokyaLora gives Core 1 to a separate Apache-2.0 image at `0x10200000`, so Core 0's FreeRTOS must stay single-core. Switching to `configNUMBER_OF_CORES=1` requires five idempotent framework patches applied by `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/patch_arduinopico.py` (SerialUSB.h extern guard, freertos-main.cpp + freertos-lwip.cpp SMP call-site guards, portmacro.h missing extern decl, port.c `static` removal). Full rationale in `docs/bringup/phase2-log.md` Issue P2-2.
 
 ## Build & Flash Rules
 
