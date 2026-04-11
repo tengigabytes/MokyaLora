@@ -76,6 +76,7 @@ void flash_speed_run(struct flash_speed_result *results, int count,
 bool psram_init(void);      // call once at boot — returns true if APS6404L found
 void psram_test(void);
 void psram_full_test(void); // full 8 MB two-pass write+verify test
+void psram_full_test_75(void); // full 8 MB test at CLKDIV=1 (75 MHz), restores timing
 void psram_speed_test(void);// sweep CLKDIV*RXDELAY, find max PSRAM QPI speed
 void psram_diag_test(void); // CLKDIV=1 error pattern analysis & timing tuning
 void psram_jlink_prep(void);// write sentinel, print J-Link mem32 command

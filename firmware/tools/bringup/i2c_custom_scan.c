@@ -349,6 +349,8 @@ void handle_command(const char *cmd) {
         psram_test();
     } else if (strcmp(cmd, "psram_full") == 0) {
         psram_full_test();
+    } else if (strcmp(cmd, "psram_full_75") == 0) {
+        psram_full_test_75();
     } else if (strcmp(cmd, "psram_sweep") == 0) {
         psram_speed_test();
     } else if (strcmp(cmd, "flash_sweep") == 0) {
