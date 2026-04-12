@@ -54,6 +54,16 @@ extern "C" {
 #define IPC_SHARED_SIZE     0x00006000u  /* 24 KB */
 #define IPC_BOOT_MAGIC      0x4D4F4B59u  /* 'MOKY' little-endian */
 #define IPC_DOORBELL_NUM    0u             /* RP2350 doorbell for ring push notification */
+#define IPC_FLASH_DOORBELL  1u             /* RP2350 doorbell for flash-park request */
+
+/* flash_lock protocol (shared SRAM):
+ *   0 = normal operation
+ *   1 = Core 0 requests Core 1 to park (set by Core 0)
+ *   2 = Core 1 has parked, Core 0 may proceed (set by Core 1 ISR)
+ * Core 0 clears back to 0 after flash write completes, then __SEV(). */
+#define IPC_FLASH_LOCK_IDLE     0u
+#define IPC_FLASH_LOCK_REQUEST  1u
+#define IPC_FLASH_LOCK_PARKED   2u
 
 /* ── Per-slot layout ───────────────────────────────────────────────────────
  *
@@ -96,7 +106,7 @@ typedef struct {
     volatile uint32_t boot_magic;   ///< IPC_BOOT_MAGIC once Core 0 inits
     volatile uint32_t c0_ready;     ///< Core 0 published setup-complete
     volatile uint32_t c1_ready;     ///< Core 1 published bridge-task-running
-    uint32_t          _reserved0;
+    volatile uint32_t flash_lock;   ///< Flash-park handshake (IPC_FLASH_LOCK_*)
 
     /* Control blocks — 32 B each, separated from slots for cache-friendliness */
     uint32_t          _pad_to_0x20[4];

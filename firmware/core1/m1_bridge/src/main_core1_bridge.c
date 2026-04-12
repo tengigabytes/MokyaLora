@@ -120,16 +120,62 @@ static volatile uint32_t g_rx_total;
 static volatile uint32_t g_tx_total;
 static volatile uint32_t g_loop_count;
 
+/* ── Flash-park handler (MUST reside in RAM — runs while XIP is off) ───── *
+ *
+ * Called from the doorbell ISR when Core 0 requests a flash write.
+ * Protocol:
+ *   1. Core 0 sets flash_lock = REQUEST, fires IPC_FLASH_DOORBELL
+ *   2. This ISR catches the doorbell, ACKs with flash_lock = PARKED, __SEV()
+ *   3. Disables all interrupts on Core 1 (SysTick, USB, etc.)
+ *   4. Spins in RAM until Core 0 clears flash_lock back to IDLE + __SEV()
+ *   5. Re-enables interrupts and returns — scheduler resumes
+ *
+ * The __no_inline_not_in_flash_func attribute guarantees the function body
+ * and all local data are placed in .time_critical (SRAM), not .text (flash).
+ */
+static void __no_inline_not_in_flash_func(flash_park_handler)(void)
+{
+    /* ACK: tell Core 0 we are safely parked */
+    __atomic_store_n(&g_ipc_shared.flash_lock,
+                     IPC_FLASH_LOCK_PARKED, __ATOMIC_RELEASE);
+    __sev();  /* wake Core 0 polling on flash_lock */
+
+    /* Kill ALL interrupts on this core — no SysTick, no USB, nothing
+     * can trigger a flash fetch while XIP is off. */
+    uint32_t saved = save_and_disable_interrupts();
+
+    /* Spin in RAM until Core 0 clears the lock. __wfe() is a low-power
+     * wait; Core 0 will __sev() after the flash operation completes. */
+    while (__atomic_load_n(&g_ipc_shared.flash_lock,
+                           __ATOMIC_ACQUIRE) != IPC_FLASH_LOCK_IDLE) {
+        __wfe();
+    }
+
+    restore_interrupts(saved);
+}
+
 /* ── Doorbell ISR — Core 0 ring push wakes bridge_task ──────────────────── */
 
-static void ipc_doorbell_isr(void)
+static void __no_inline_not_in_flash_func(ipc_doorbell_isr)(void)
 {
-    doorbell_clear_own(IPC_DOORBELL_NUM);
-    if (g_bridge_task_handle != NULL) {
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        xTaskNotifyFromISR(g_bridge_task_handle, NOTIFY_BIT_IPC,
-                           eSetBits, &xHigherPriorityTaskWoken);
-        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    /* Check flash-park doorbell FIRST — time-critical */
+    if (sio_hw->doorbell_in_set & (1u << IPC_FLASH_DOORBELL)) {
+        doorbell_clear_own(IPC_FLASH_DOORBELL);
+        if (__atomic_load_n(&g_ipc_shared.flash_lock,
+                            __ATOMIC_ACQUIRE) == IPC_FLASH_LOCK_REQUEST) {
+            flash_park_handler();
+        }
+    }
+
+    /* Normal IPC ring doorbell */
+    if (sio_hw->doorbell_in_set & (1u << IPC_DOORBELL_NUM)) {
+        doorbell_clear_own(IPC_DOORBELL_NUM);
+        if (g_bridge_task_handle != NULL) {
+            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+            xTaskNotifyFromISR(g_bridge_task_handle, NOTIFY_BIT_IPC,
+                               eSetBits, &xHigherPriorityTaskWoken);
+            portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+        }
     }
 }
 
