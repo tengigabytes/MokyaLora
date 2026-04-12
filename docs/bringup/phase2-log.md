@@ -563,7 +563,54 @@ Measured with `python -m meshtastic --port COMxx --info` (v2.7.8), 3 runs each.
 
 **Remaining throughput gap (16× vs native) deferred to M2** — root cause is polling latency (SerialConsole 5 ms + no cross-core notification), not data copy overhead. M2 will add SIO FIFO doorbell + `xTaskNotifyFromISR` for µs-latency IPC wake-up.
 
-**Open issues carried forward:** P2-7 (Core 0 ISR stack overflow into breadcrumb area), P2-9 (first-boot HardFault on empty flash).
+**Open issues carried forward:** P2-7 (Core 0 ISR stack overflow into breadcrumb area), P2-9 (first-boot HardFault on empty flash), P2-10 (config change reboot hangs COM port).
+
+---
+
+## Milestone 2 — Interrupt-driven IPC + graceful reboot
+
+**Status:** Not started
+**Goal:** (A) Replace polling with cross-core interrupt notification for µs-latency IPC, (B) fix config-change reboot hanging the COM port, (C) establish IPC handshake v2 for Core 0 restart resilience.
+
+### M2 scope
+
+#### Part A — Cross-core interrupt notification
+
+Replace `taskYIELD()` polling with SIO FIFO doorbell + FreeRTOS task notification:
+- Core 0 `ipc_ring_push()` → write SIO FIFO doorbell → Core 1 ISR → `xTaskNotifyFromISR(bridge_task)`
+- Core 1 `ipc_ring_push()` → write SIO FIFO doorbell → Core 0 ISR → wake `SerialConsole` (or equivalent)
+- `bridge_task` uses `xTaskNotifyWait(portMAX_DELAY)` instead of `taskYIELD()` — zero CPU when idle, µs wake on data
+- **Risk:** SIO FIFO IRQ is shared with `multicore_launch_core1_raw()` handshake. Must ensure doorbell usage doesn't conflict with the boot-time FIFO protocol. May need to use RP2350 doorbell registers (separate from FIFO) instead.
+
+#### Part B — Graceful reboot on config change (fixes P2-10)
+
+**Problem:** Meshtastic `Power::reboot()` calls `rp2040.reboot()` → `watchdog_reboot(0, 0, 10)` with no USB disconnect. Core 1's TinyUSB CDC is hard-killed. Windows COM port handle enters error state; Web Console WebSerial connection hangs.
+
+**Fix:** Core 0 `notifyReboot` observer → send `IPC_MSG_PANIC` (or new `IPC_MSG_REBOOT_PENDING`) via ring → Core 1 receives, calls `tud_disconnect()`, waits ~200 ms for host to process disconnect → Core 1 sends `IPC_BOOT_READY` ack back → Core 0 proceeds with `watchdog_reboot()`. Fallback: if Core 1 doesn't ack within 500 ms, reboot anyway (covers Core 1 hang scenario).
+
+#### Part C — IPC handshake v2 (Core 0 restart resilience)
+
+After watchdog reset, both cores cold-start. Handshake v2:
+1. Core 0 `initVariant()` zeroes its ring control struct (`c0_to_c1_ctrl.head = tail = 0`)
+2. Core 0 sets `c0_ready = 0` before any ring init
+3. Core 1 detects `c0_ready == 0` → pauses ring reads, flushes stale data
+4. Core 0 completes init → sets `c0_ready = 1` → sends `IPC_BOOT_READY`
+5. Core 1 resumes normal bridge operation
+
+This handshake also prepares for M5's Core 0 selective reset (PSM proc0 only), where Core 1 stays alive and needs to survive a Core 0 restart without losing USB or UI state.
+
+### M2 success criteria
+
+1. `python -m meshtastic --port COMxx --info` per-KB throughput within 2× of native SerialUSB (currently 16× slower)
+2. Config change via Web Console → device reboots → COM port re-enumerates cleanly → Web Console auto-reconnects (or user can manually reconnect without browser refresh)
+3. SWD breadcrumb: `usb_task_polls` rate increases 10×+ vs M1.2-B (confirms polling → interrupt transition)
+4. 10-minute sustained Web Console session with periodic config changes — no COM port hangs
+
+### Not in M2 scope
+
+- Core 0 selective reset (PSM proc0 only) — deferred to M5 when `IPCPhoneAPI` + Config IPC adapter are ready
+- LVGL UI, display driver, keypad driver — M3/M4
+- `IPCPhoneAPI` structured messages — M5
 
 ---
 
@@ -579,4 +626,5 @@ Measured with `python -m meshtastic --port COMxx --info` (v2.7.8), 3 runs each.
 | P2-7 | 2026-04-12 | Core 0 ISR stack overflow into breadcrumb area | SWD reads at `0x2007FFC0` show Core 0 SRAM/code pointers (`0x2000F5E4`, `0x100419E8`) instead of the expected sentinel `0xC1B01200`. Core 0 MSP starts at `0x20082000`, SCRATCH_X+Y = 8 KB ends at `0x20080000` — deep ISR nesting or large stack frames overflow into `0x2007FFxx` (the `.shared_ipc` tail where breadcrumbs live). Breadcrumb corruption is cosmetic (counters still readable via offsets), but a deep stack overflow could eventually reach ring control structures at lower addresses. | Investigation deferred. Candidate fixes: (a) increase Core 0 MSP stack reservation, (b) move breadcrumbs to a region above MSP, (c) add stack canary monitoring. |
 | P2-8 | 2026-04-12 | CLI version mismatch — false regression in all M1.2 testing | System PATH resolved `meshtastic` to Python 3.11 (Microsoft Store) version **2.3.11**. Active Python 3.13 has `meshtastic` **2.7.8** (via `python -m meshtastic`). Firmware is **2.7.21** — protobuf schema between 2.3.x and 2.7.x is incompatible. All `meshtastic --info` tests returned "Timed out waiting for connection completion" regardless of bridge code changes. Discovered when stock Pico2 on COM7 also timed out with `meshtastic` but succeeded with `python -m meshtastic`. MokyaLora dual-image then also confirmed working with correct CLI — 64 nodes, full config, `pioEnv: "rp2350b-mokya"`. An entire M1.2 debugging session (staged-delivery, drain mode, taskYIELD experiments) was wasted chasing a phantom regression. | Use `python -m meshtastic` for all future testing. Uninstall or deprioritize the Python 3.11 meshtastic package. |
 | P2-9 | 2026-04-12 | 2.7.21 mokya variant HardFault on first boot (empty flash / no LittleFS) | **Symptom:** After a full `erase` via J-Link (which wipes the entire 16 MB flash including LittleFS filesystem area), flashing the 2.7.21 mokya variant ELF results in an immediate HardFault on boot. CFSR=0x00008201 (IACCVIOL + IBUSERR), MMFAR/BFAR=0x2008204C — 76 bytes beyond SRAM end (0x20082000). The crash occurs during Meshtastic filesystem initialization when LittleFS finds no valid superblock. **Comparison:** The older 2.7.15 mokya variant ELF does **not** have this bug — it successfully initialises a fresh LittleFS filesystem on empty flash and boots normally. **Recovery procedure:** (1) Flash old 2.7.15 ELF via J-Link → boots and creates LittleFS filesystem. (2) Flash 2.7.21 ELF on top → finds existing filesystem and boots normally. **Root cause:** Not yet investigated. Likely a regression in the Meshtastic LittleFS init path between 2.7.15 and 2.7.21, or a mokya variant config change that triggers an uninitialised pointer / unbounded stack allocation during filesystem format. | Workaround: always ensure LittleFS filesystem exists before flashing 2.7.21. Use 2.7.15 ELF for filesystem init on erased flash. Root cause investigation deferred. |
+| P2-10 | 2026-04-12 | Config change via Web Console hangs COM port | **Symptom:** After modifying node settings in the Meshtastic web console, the device attempts to reboot (via `Power::reboot()` → `rp2040.reboot()` → `watchdog_reboot(0, 0, 10)`). The watchdog hard-resets the entire chip including the USB controller without calling `tud_disconnect()` first. Windows sees the USB device vanish abruptly — the COM port handle enters an error state and the Web Console WebSerial connection hangs indefinitely. After the chip restarts and Core 1 re-enumerates USB CDC, the old COM port handle is stale and the user must close/reopen the browser tab or manually reconnect. **Root cause:** `rp2040.reboot()` performs no USB disconnect — it directly arms the watchdog and spins. In native Arduino-Pico builds (single-core, framework-managed USB), the framework's boot-time `SerialUSB` init happens early enough that Windows re-associates the same COM port seamlessly. In our dual-core architecture, Core 1's manual TinyUSB init occurs later (after `multicore_launch_core1_raw` + FreeRTOS scheduler start), and the re-enumeration timing differs from what the host driver expects. | M2 Part B: Core 0 `notifyReboot` observer sends IPC reboot-pending message → Core 1 `tud_disconnect()` + 200 ms delay → watchdog reset. M5: Core 0 selective reset via PSM (USB + UI stay alive). |
 | P2-6 | 2026-04-12 | M1.1-B USB CDC bridge — slow Meshtastic web console initial handshake | **Symptom:** When the Meshtastic web console attaches to COM16 (MokyaLora via Core 1 bridge), the initial device-configuration handshake (`want_config_id` → full `FromRadio` stream: MyNodeInfo, Metadata, Channel×8, Config×, ModuleConfig×, NodeInfo×86) takes **noticeably longer** than the same firmware build running with Arduino-Pico's native `SerialUSB` (no bridge). One-shot `meshtastic --info` via `pyserial` also feels slower than a reference Meshtastic device but is tolerable; web console's dozens of small-packet exchanges amplify the per-round-trip penalty. **Hypotheses (ranked):** (1) **`usb_device_task` 1-tick yield (`vTaskDelay(pdMS_TO_TICKS(1))`) at `main_core1_bridge.c:97`** — between every `tud_task()` poll. Full-speed USB bulk-IN polling interval is 125 µs, so a 1 ms quantum means the TX endpoint only has ~8 opportunities/ms to push out data, and every request→response round trip eats at least 1 ms on the USB side. (2) **`bridge_task` idle 1-tick yield at `main_core1_bridge.c:192`** — when both directions drain empty, we sleep 1 ms before re-checking. Web console's synchronous request/response protocol means every host→device→host round trip adds 1–2 ms of bridge latency on top of the USB wire time. (3) **No FreeRTOS task notification on ring push** — Core 0's `ipc_ring_push` writes the slot then releases `head`, but does not wake Core 1's `bridge_task`. Core 1 only sees the new slot on its next idle-yield wake-up. Similarly, CDC OUT data only triggers `bridge_task` wake-up 1 ms later. A cross-core sev / FIFO doorbell + `xTaskNotifyFromISR` would let the bridge react within tens of µs. (4) **`tud_cdc_write` micro-chunking** — the `bridge_task` splits each ring slot across `tud_cdc_write_available()` chunks; if avail is small and we re-loop with a 1-tick yield, a single 256 B ring slot can cost multiple ms. **Verification plan:** Measure end-to-end handshake time with `meshtastic --port COMxx --info` scripted against (a) native `SerialUSB` reference build on the same board, (b) current M1.1-B bridge, (c) M1.1-B bridge with `usb_device_task` switched to `taskYIELD()` instead of `vTaskDelay(1)`, (d) M1.1-B bridge with FreeRTOS task-notify on ring push (requires cross-core notify via RP2350 SIO FIFO IRQ). Pick the minimal change that matches (a). **Status:** Confirmed by benchmark (2026-04-12). With correct CLI (2.7.8): bridge ~0.50 KB/s vs native ~12.6 KB/s (**~25× slower per-KB**). Zero drops. Root cause is dual 1 ms vTaskDelay, not the bridge protocol itself. M1.2 Part B (`taskYIELD()` replacement) is the next fix. Cross-core notification deferred to M2. |
