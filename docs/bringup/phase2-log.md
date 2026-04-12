@@ -498,19 +498,47 @@ Config IPC definition committed to `firmware/shared/ipc/ipc_protocol.h`:
 
 Measured with `python -m meshtastic --port COMxx --info` (v2.7.8), 3 runs each.
 
+**Pre-M1.2B baseline (dual `vTaskDelay(pdMS_TO_TICKS(1))`):**
+
 | Configuration | Port | Avg wall time | Response size | Node count | Success |
 |---|---|---|---|---|---|
 | Stock Pico2 (native SerialUSB, firmware 2.7.20) | COM7 | **4.39 s** | 55 325 B | 100 nodes | 3/3 |
 | MokyaLora Bridge (IPC ring + TinyUSB CDC, firmware 2.7.21) | COM16 | **15.02 s** | 7 549 B | 1 node | 3/3 |
 
+**Post-M1.2B (`taskYIELD()` + equal task priority):**
+
+| Configuration | Port | Run 1 | Run 2 | Run 3 | Response size | Node count |
+|---|---|---|---|---|---|---|
+| Stock Pico2 | COM7 | 4.36 s | — | — | 55 364 B | 100 |
+| MokyaLora Bridge | COM16 | 8.07 s | 6.53 s | 6.51 s | 7 591 B | 1 |
+
+**M1.2B changes:** (a) `usb_device_task` and `bridge_task` both changed from `vTaskDelay(pdMS_TO_TICKS(1))` to `taskYIELD()`; (b) both tasks set to equal priority (`tskIDLE_PRIORITY + 2`) — required because `taskYIELD()` only yields to equal-or-higher priority tasks; original `configMAX_PRIORITIES - 1` for `usb_device_task` starved `bridge_task`.
+
+**Post-M1.2B + TX accumulation buffer + newline flush:**
+
+| Configuration | Port | Run 1 | Run 2 | Run 3 | Avg | Response size | Node count |
+|---|---|---|---|---|---|---|---|
+| MokyaLora Bridge | COM16 | 5.84 s | 5.97 s | 5.83 s | **5.88 s** | ~4 500 B | 1 |
+
+**M1.2B full change list:**
+1. `usb_device_task` and `bridge_task` yield: `vTaskDelay(pdMS_TO_TICKS(1))` → `taskYIELD()`
+2. Both tasks set to equal priority `tskIDLE_PRIORITY + 2` (was `configMAX_PRIORITIES - 1` for `usb_device_task` — `taskYIELD()` only yields to equal-or-higher, so unequal priority starved `bridge_task`)
+3. TX accumulation buffer in `IpcSerialStream::write(uint8_t)`: batches single-byte writes (from `RedirectablePrint` log output) into a 256-byte buffer, flushed on newline or buffer full — previously each byte occupied a full 264-byte ring slot
+4. `IpcSerialStream::write(const uint8_t*, size_t)`: flushes accumulated bytes first then pushes protobuf frames directly — no extra copy, ordering preserved
+5. `IpcSerialStream::flush()`: now calls `flush_tx_acc_()` instead of no-op
+
 **Analysis:**
-- Wall time: bridge is **~3.4× slower** (15.02 s vs 4.39 s)
-- Per-KB throughput: bridge **~0.50 KB/s** vs stock **~12.6 KB/s** — approximately **25× slower per-KB**
-- The stock Pico2 has 100 nodes in its database (55 KB response) vs MokyaLora's 1 node (7.5 KB), so wall-time comparison is not apples-to-apples — but per-KB throughput normalises this
-- **Zero packet drops** on both configurations (3/3 success, full protobuf round-trip)
-- Root cause: dual `vTaskDelay(pdMS_TO_TICKS(1))` in `usb_device_task` and `bridge_task` adds 1–2 ms latency per round-trip exchange. Meshtastic's protobuf handshake involves dozens of small request→response pairs, amplifying the per-packet overhead
-- **Confirms P2-6 is real and significant** — M1.2 Part B (`taskYIELD()` replacement) is needed to close the gap
-- M2 cross-core notification (SIO FIFO doorbell → `xTaskNotifyFromISR`) would further reduce latency to ~µs
+- Total improvement from pre-M1.2B baseline: **15.02 s → 5.88 s (2.6× faster)**
+- Per-KB throughput: **0.50 → ~0.76 KB/s** (1.5× improvement)
+- Custom benchmark (`bench_bridge.py`, bypasses CLI Win11 sleep penalty): first-byte latency 60–120 ms, data transfer ~2.3 s for ~4.5 KB = **~1.95 KB/s** raw bridge throughput
+- The 1.1 s gap between first chunk and steady-state data is Meshtastic state machine processing time (MyInfo → Config state transitions), not an IPC bottleneck
+- **Per-KB throughput still ~16× slower than native:** stock Pico2 = 0.080 s/KB, MokyaLora = 1.31 s/KB. CLI Win11 sleep penalty is identical for both (same Python CLI), so it cancels out — the gap is entirely IPC bridge overhead
+- **Remaining bottlenecks (ranked):**
+  1. **SerialConsole polling interval** — Meshtastic cooperative scheduler: `readStream()` returns 5 ms (recent data) or 250 ms (idle). Core 0 checks for incoming ring data at most every 5 ms per OSThread tick — each CLI request→response round trip costs ≥5 ms of Core 0 polling latency on top of USB wire time
+  2. **No cross-core notification** — `ipc_ring_push()` does not wake the other core. Core 1 discovers new c0→c1 data only on its next `taskYIELD()` round-robin cycle; Core 0 discovers new c1→c0 data only on its next `SerialConsole::runOnce()` poll. Cross-core SIO FIFO doorbell + `xTaskNotifyFromISR` (M2 scope) would cut this to µs
+  3. **Ring buffer memcpy overhead** — every push/pop does a full payload copy; native `SerialUSB` is zero-copy into TinyUSB's endpoint FIFO
+- **Root cause of byte-at-a-time inefficiency (fixed):** `RedirectablePrint::write(uint8_t c)` → `dest->write(c)` iterated each log byte through the IPC ring. Without the accumulation buffer, a 60-char log line consumed 60 × 264 = 15,840 bytes of ring bandwidth (99.6% overhead). With batching, same line costs 1 × (4 + 60) = 64 bytes
+- **Verdict:** TX accumulation buffer + yield optimization delivered 2.6× wall-time improvement. Per-KB throughput gap (16×) remains significant and is dominated by polling latency, not data copy. Cross-core interrupt notification (M2) is the next high-impact optimisation — it addresses bottlenecks #1 and #2 above
 
 ---
 

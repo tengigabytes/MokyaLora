@@ -103,14 +103,15 @@ static volatile uint32_t g_loop_count;
 
 /* TinyUSB polling task. OPT_OS_NONE means tud_task() is a non-blocking
  * poll — we call it as fast as practical while still yielding to the
- * bridge task via vTaskDelay(1 tick). */
+ * bridge task via taskYIELD(). */
 static void usb_device_task(void *pv)
 {
     (void)pv;
     for (;;) {
         tud_task();
-        /* Yield; the 1 ms tick quantum is fine for full-speed CDC. */
-        vTaskDelay(pdMS_TO_TICKS(1));
+        /* Cooperative yield — no 1 ms floor, so the bridge task runs
+         * immediately after each TinyUSB poll. */
+        taskYIELD();
     }
 }
 
@@ -215,9 +216,9 @@ static void bridge_task(void *pv)
         }
 
         if (!did_work) {
-            /* Empty in both directions — yield one tick so the USB task
-             * and the idle task can run. */
-            vTaskDelay(pdMS_TO_TICKS(1));
+            /* Empty in both directions — cooperative yield so the USB
+             * task can poll TinyUSB without a 1 ms floor delay. */
+            taskYIELD();
         }
     }
 }
@@ -292,8 +293,10 @@ int main(void)
     __atomic_store_n(&g_ipc_shared.c1_ready, 1u, __ATOMIC_RELEASE);
 
     /* 7. Hand off to FreeRTOS. */
+    /* Both tasks at the same priority so taskYIELD() round-robins
+     * between them without the 1 ms vTaskDelay floor. */
     xTaskCreate(usb_device_task, "usb",    1024, NULL,
-                configMAX_PRIORITIES - 1, NULL);
+                tskIDLE_PRIORITY + 2, NULL);
     xTaskCreate(bridge_task,     "bridge", 1024, NULL,
                 tskIDLE_PRIORITY + 2, NULL);
 
