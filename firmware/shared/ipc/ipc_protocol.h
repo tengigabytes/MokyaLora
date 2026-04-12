@@ -34,6 +34,7 @@ typedef enum {
     IPC_MSG_SERIAL_BYTES   = 0x06,  ///< Raw serial byte stream (Phase 2 M1 byte bridge, ≤256 B payload)
     IPC_MSG_CONFIG_VALUE   = 0x07,  ///< Config value response or unsolicited push on change
     IPC_MSG_CONFIG_RESULT  = 0x08,  ///< Set/commit result (OK / error code)
+    IPC_MSG_REBOOT_NOTIFY  = 0x09,  ///< Core 0 about to reboot — Core 1 should disconnect USB
 
     /* Core 1 → Core 0 (commands) */
     IPC_CMD_SEND_TEXT      = 0x81,  ///< Request to send a text message

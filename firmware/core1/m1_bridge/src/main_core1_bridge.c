@@ -69,6 +69,7 @@
 #include "hardware/resets.h"
 #include "hardware/regs/resets.h"
 #include "hardware/sync.h"
+#include "hardware/structs/sio.h"
 #include "tusb.h"
 
 #include "FreeRTOS.h"
@@ -77,6 +78,26 @@
 #include "ipc_protocol.h"
 #include "ipc_shared_layout.h"
 #include "ipc_ringbuf.h"
+
+/* ── Doorbell IPC notification (M2) ─────────────────────────────────────── *
+ * We use raw SIO register writes instead of pico_multicore API to avoid
+ * runtime_init side effects from linking pico_multicore into Core 1.       */
+#define NOTIFY_BIT_IPC  (1u << 0)
+#ifndef SIO_IRQ_BELL
+#define SIO_IRQ_BELL  26   /* RP2350 doorbell IRQ (secure) */
+#endif
+
+static TaskHandle_t g_bridge_task_handle;
+
+static inline void doorbell_set_other_core(uint32_t num)
+{
+    sio_hw->doorbell_out_set = 1u << num;
+}
+
+static inline void doorbell_clear_own(uint32_t num)
+{
+    sio_hw->doorbell_in_clr = 1u << num;
+}
 
 /* ── SWD breadcrumbs ─────────────────────────────────────────────────────── */
 /* Last 64 B of .shared_ipc — guaranteed outside Core 0's heap & task stacks */
@@ -98,6 +119,19 @@ static inline void dbg_u32(uintptr_t addr, uint32_t val)
 static volatile uint32_t g_rx_total;
 static volatile uint32_t g_tx_total;
 static volatile uint32_t g_loop_count;
+
+/* ── Doorbell ISR — Core 0 ring push wakes bridge_task ──────────────────── */
+
+static void ipc_doorbell_isr(void)
+{
+    doorbell_clear_own(IPC_DOORBELL_NUM);
+    if (g_bridge_task_handle != NULL) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xTaskNotifyFromISR(g_bridge_task_handle, NOTIFY_BIT_IPC,
+                           eSetBits, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }
+}
 
 /* ── FreeRTOS tasks ──────────────────────────────────────────────────────── */
 
@@ -131,8 +165,23 @@ static void bridge_task(void *pv)
 
     uint8_t scratch[IPC_MSG_PAYLOAD_MAX];
     uint8_t tx_seq = 0;
+    bool reboot_pending = false;
+
+    /* Enable doorbell IRQ now that the FreeRTOS scheduler is running and
+     * PendSV/SVC handlers are installed.  Any pending doorbells from
+     * Core 0 during the pre-scheduler busy-wait will fire immediately. */
+#if 0 /* DISABLED FOR RAM LAYOUT DEBUGGING */
+    irq_set_enabled(SIO_IRQ_BELL, true);
+#endif
 
     for (;;) {
+        /* If Core 0 announced a reboot, stop all ring/CDC processing and
+         * idle until the watchdog fires the chip-wide reset. */
+        if (reboot_pending) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         bool did_work = false;
 
         /* ── c0_to_c1 → CDC IN ────────────────────────────────────────── */
@@ -142,6 +191,18 @@ static void bridge_task(void *pv)
                          &hdr,
                          scratch,
                          sizeof(scratch))) {
+
+            /* ── Message dispatch ─────────────────────────────────────── */
+            if (hdr.msg_id == IPC_MSG_REBOOT_NOTIFY) {
+                /* Core 0 is about to watchdog-reset the chip.  Gracefully
+                 * disconnect USB so the host drops the COM port handle
+                 * before the hard reset yanks the controller out. */
+                tud_disconnect();
+                reboot_pending = true;
+                did_work = true;
+                continue;   /* skip the rest of this iteration */
+            }
+
             if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u) {
                 uint16_t remaining = hdr.payload_len;
                 const uint8_t *p = scratch;
@@ -201,6 +262,10 @@ static void bridge_task(void *pv)
                 tx_seq++;
                 g_tx_total += n;
                 dbg_u32(BRIDGE_TX_COUNT_ADDR, g_tx_total);
+#if 0 /* M2 doorbell — disabled until Core 0 ISR replaces FreeRTOS SMP handler */
+                /* Wake Core 0 so it sees the new c1→c0 data immediately */
+                doorbell_set_other_core(IPC_DOORBELL_NUM);
+#endif
                 did_work = true;
             }
         }
@@ -216,9 +281,15 @@ static void bridge_task(void *pv)
         }
 
         if (!did_work) {
-            /* Empty in both directions — cooperative yield so the USB
-             * task can poll TinyUSB without a 1 ms floor delay. */
+#if 0 /* DISABLED FOR RAM LAYOUT DEBUGGING — doorbell-driven wake */
+            /* No data in either direction — block until doorbell fires
+             * (Core 0 pushed new ring data) or 10 ms timeout (handles
+             * CDC OUT events not signaled by doorbell). */
+            xTaskNotifyWait(0, UINT32_MAX, NULL, pdMS_TO_TICKS(10));
+#else
+            /* Polling fallback — same as M1.2 */
             taskYIELD();
+#endif
         }
     }
 }
@@ -227,6 +298,11 @@ static void bridge_task(void *pv)
 
 int main(void)
 {
+    /* 0. Unique boot marker — verifies over SWD that THIS build is running.
+     * Written to shared IPC tail-pad (immune to both cores' crt0 zeroing).
+     * Change the value each build to confirm a fresh boot. */
+    dbg_u32(0x2007FFD4u, 0xDEAD0002u);  /* bump suffix each flash attempt */
+
     /* 1. Life signal — first thing after SDK runtime hands over. */
     dbg_u32(BRIDGE_SENTINEL_ADDR,   BRIDGE_SENTINEL_VALUE);
     dbg_u32(BRIDGE_RX_COUNT_ADDR,   0u);
@@ -292,13 +368,21 @@ int main(void)
 
     __atomic_store_n(&g_ipc_shared.c1_ready, 1u, __ATOMIC_RELEASE);
 
-    /* 7. Hand off to FreeRTOS. */
+    /* 7. Register doorbell ISR but do NOT enable yet — enabling before the
+     *    FreeRTOS scheduler starts causes a HardFault because portYIELD_FROM_ISR
+     *    triggers PendSV before the port has installed the PendSV handler.
+     *    The IRQ is enabled at the start of bridge_task (after scheduler runs). */
+#if 0 /* DISABLED FOR RAM LAYOUT DEBUGGING — re-enable after verifying basic bridge works */
+    irq_set_exclusive_handler(SIO_IRQ_BELL, ipc_doorbell_isr);
+#endif
+
+    /* 8. Hand off to FreeRTOS. */
     /* Both tasks at the same priority so taskYIELD() round-robins
      * between them without the 1 ms vTaskDelay floor. */
     xTaskCreate(usb_device_task, "usb",    1024, NULL,
                 tskIDLE_PRIORITY + 2, NULL);
     xTaskCreate(bridge_task,     "bridge", 1024, NULL,
-                tskIDLE_PRIORITY + 2, NULL);
+                tskIDLE_PRIORITY + 2, &g_bridge_task_handle);
 
     vTaskStartScheduler();
 
