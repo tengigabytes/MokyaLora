@@ -170,9 +170,7 @@ static void bridge_task(void *pv)
     /* Enable doorbell IRQ now that the FreeRTOS scheduler is running and
      * PendSV/SVC handlers are installed.  Any pending doorbells from
      * Core 0 during the pre-scheduler busy-wait will fire immediately. */
-#if 0 /* DISABLED FOR RAM LAYOUT DEBUGGING */
     irq_set_enabled(SIO_IRQ_BELL, true);
-#endif
 
     for (;;) {
         /* If Core 0 announced a reboot, stop all ring/CDC processing and
@@ -262,10 +260,9 @@ static void bridge_task(void *pv)
                 tx_seq++;
                 g_tx_total += n;
                 dbg_u32(BRIDGE_TX_COUNT_ADDR, g_tx_total);
-#if 0 /* M2 doorbell — disabled until Core 0 ISR replaces FreeRTOS SMP handler */
-                /* Wake Core 0 so it sees the new c1→c0 data immediately */
+                /* Wake Core 0 — fire-and-forget (Core 0 has no doorbell ISR,
+                 * its FreeRTOS pico_sync handler is patched out). */
                 doorbell_set_other_core(IPC_DOORBELL_NUM);
-#endif
                 did_work = true;
             }
         }
@@ -281,15 +278,10 @@ static void bridge_task(void *pv)
         }
 
         if (!did_work) {
-#if 0 /* DISABLED FOR RAM LAYOUT DEBUGGING — doorbell-driven wake */
             /* No data in either direction — block until doorbell fires
              * (Core 0 pushed new ring data) or 10 ms timeout (handles
              * CDC OUT events not signaled by doorbell). */
             xTaskNotifyWait(0, UINT32_MAX, NULL, pdMS_TO_TICKS(10));
-#else
-            /* Polling fallback — same as M1.2 */
-            taskYIELD();
-#endif
         }
     }
 }
@@ -372,9 +364,7 @@ int main(void)
      *    FreeRTOS scheduler starts causes a HardFault because portYIELD_FROM_ISR
      *    triggers PendSV before the port has installed the PendSV handler.
      *    The IRQ is enabled at the start of bridge_task (after scheduler runs). */
-#if 0 /* DISABLED FOR RAM LAYOUT DEBUGGING — re-enable after verifying basic bridge works */
     irq_set_exclusive_handler(SIO_IRQ_BELL, ipc_doorbell_isr);
-#endif
 
     /* 8. Hand off to FreeRTOS. */
     /* Both tasks at the same priority so taskYIELD() round-robins
