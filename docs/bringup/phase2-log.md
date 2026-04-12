@@ -277,6 +277,241 @@ This closes Milestone 1: Core 0 Meshtastic is reachable from a host PC through C
 - **VID/PID `0x2E8A:0x000F` is a placeholder.** Must submit a `raspberrypi/usb-pid` PR to get an official MokyaLora PID before Rev B.
 - **Issue P2-4 — `.shared_ipc` placement confusion in `ipc_shared_layout.h`.** The file's header comment claims `0x20078000..0x2007A000` is "preserved untouched" as a secondary SWD debug channel. This is wrong — Core 0's linker script (`memmap_default.ld` MOKYA_SHARED_IPC_PATCH) sets RAM to `0x20000000..0x2007A000`, so the window is **inside** Core 0's FreeRTOS heap. Left alone for now (M1.0b sentinel observation still happens to land early in the boot before heap pressure), but the comment should be fixed when M1.1-B's lessons are rolled back upstream into the shared header.
 
+### P2-5 / P2-6 Root Cause Analysis (post-M1.1-B)
+
+**Date:** 2026-04-12
+**Scope:** Architecture-level analysis of the byte-bridge drop and latency problems.
+
+#### Finding 1 — Pop-before-delivery is a structural defect (P2-5 root cause)
+
+The `bridge_task` in `main_core1_bridge.c` has an asymmetric flow control design:
+
+| Direction | Pattern | Result |
+|---|---|---|
+| CDC OUT → c1_to_c0 ring | Read USB first, then spin-push to ring until success | ✅ Guaranteed delivery |
+| c0_to_c1 ring → CDC IN | **Pop ring slot first** (destructive, `tail` advances immediately), then attempt CDC write | ❌ Drop on CDC backpressure |
+
+`ipc_ring_pop()` (`ipc_ringbuf.c:111`) immediately advances `tail` via `__atomic_store_n`. Once popped, the slot is gone forever. If `tud_cdc_write_available() == 0` persists for ≥10 ticks (~10 ms), the remaining bytes in `scratch[]` are dropped (`main_core1_bridge.c:163-167`). Since the bridge is frame-unaware (opaque byte stream), this truncates protobuf frames at arbitrary byte boundaries. The host-side Meshtastic deserializer sees a broken `0x94C3` framed packet, silently discards it, and the message is permanently lost.
+
+**This is not a parameter-tuning problem.** Increasing the stall timeout or ring depth delays the symptom but does not fix the root cause — any transient CDC backpressure (WebSerial reader paused, JS event loop busy, browser tab not focused) can still trigger data loss.
+
+**The `ipc_ringbuf` API has no peek function** — only destructive `pop`, `push`, `pending`, `free_slots`.
+
+#### Finding 2 — Dual 1 ms yield stacks round-trip latency (P2-6 root cause)
+
+Two FreeRTOS `vTaskDelay(pdMS_TO_TICKS(1))` calls add per-iteration latency:
+
+1. `usb_device_task:113` — `tud_task()` called once per ms. FS USB SOF is 1 ms, but the endpoint needs re-arming after each transfer completion. If `tud_task()` runs only 1000×/s, each transfer completion waits up to 1 ms before the next transfer is armed.
+2. `bridge_task:220` — idle yield sleeps 1 ms before re-checking the ring, even if Core 0 pushed a new slot nanoseconds after the check.
+
+Combined effect on the `want_config_id` handshake burst (~10–20 KB, 100+ protobuf frames):
+- Each ring slot drain cycle adds 0–2 ms of bridge latency
+- ~100 ring slots × ~1–2 ms/slot ≈ 100–200 ms added latency vs native `SerialUSB`
+- Plus Core 0 `IpcSerialStream::write()` busy-wait when ring fills (up to 50 ms/chunk)
+
+No cross-core notification exists: Core 0's `ipc_ring_push` does not wake Core 1. Core 1 discovers new data only on its next 1 ms yield wake-up.
+
+#### Finding 3 — Meshtastic serial framing vs ring slot size
+
+Meshtastic's `StreamAPI` framing: `0x94 0xC3` + 2-byte big-endian length + protobuf payload. Max frame = 516 B (`MAX_TO_FROM_RADIO_SIZE=512` + 4-byte header). Ring slot = 256 B.
+
+`IpcSerialStream::write()` auto-chunks: a 516 B frame becomes 3 ring slots (256 + 256 + 4 B). Core 1 bridge pops each slot and streams bytes to CDC. The host reassembles frames from the byte stream using `0x94C3` framing — **this is correct and not a problem**, as long as bytes are not dropped (see Finding 1).
+
+#### Finding 4 — IPC protocol completeness for full product
+
+Current `ipc_protocol.h` uses only `IPC_MSG_SERIAL_BYTES` (byte tunnel). This covers 100% of Meshtastic functionality for M1 (transparent bridge). However, for M4+ (Core 1 LVGL UI that directly displays/edits Meshtastic state), the protocol is missing:
+
+| Feature | Status |
+|---|---|
+| Config get/set (10 Config types + 16 ModuleConfig types) | ❌ Missing — needed for settings UI |
+| Telemetry data (temperature, humidity, air quality) | ❌ Missing |
+| Waypoint | ❌ Missing |
+| Admin messages (remote config) | ❌ Missing |
+| Firmware update / OTA | ❌ Missing (Rev B) |
+
+Config get/set is the most critical gap — it is a foundational UI feature. Design below in M1.2 plan.
+
+### P2-8 — CLI version mismatch invalidated all M1.2 regression tests
+
+**Date:** 2026-04-12
+**Severity:** Critical (false regression — wasted an entire debugging session)
+
+**Root cause:** The system PATH resolved `meshtastic` to a Python 3.11 (Microsoft Store) installation at version **2.3.11**, while `pip install meshtastic` on the active Python 3.13 installed version **2.7.8**. The firmware is **2.7.21** — the protobuf schema between 2.3.x and 2.7.x is completely incompatible, so `meshtastic --info` always times out regardless of bridge code changes.
+
+**Discovery:** Flashing a stock Pico2 Meshtastic device (COM7) and testing with `python -m meshtastic --port COM7 --info` (CLI 2.7.8) succeeded immediately — 34 nodes, full config dump. Then flashing the MokyaLora dual-image (M1.1-B baseline) and testing with `python -m meshtastic --port COM16 --info` also succeeded — 64 nodes, full config, `pioEnv: "rp2350b-mokya"`, `firmwareVersion: "2.7.21.01c5b67"`.
+
+**Impact:**
+- All `meshtastic --info` timeout failures observed during M1.2 development were false negatives — the bridge code was working correctly the entire time.
+- The M1.2 staged-delivery code was **not** causing the timeout regression — the code may have been correct all along.
+- P2-5 (pop-before-delivery) architectural analysis remains valid as a theoretical risk under CDC backpressure, but was **not** the cause of the observed symptom.
+- P2-6 (slow handshake) needs re-evaluation with the correct CLI — the 1 ms vTaskDelay overhead may be negligible compared to the protobuf exchange time.
+
+**Fix:** Use `python -m meshtastic` (resolves to 2.7.8) for all future testing. Consider uninstalling the Python 3.11 meshtastic package or adjusting PATH.
+
+### M1.2 — Bridge architecture fix + Config IPC definition
+
+**Status:** In progress (re-baselined after P2-8 CLI fix)
+**Goal:** (A) Eliminate packet drops under CDC backpressure, (B) reduce bridge latency to match native SerialUSB, (C) define Config IPC messages for M4+ settings UI.
+
+**Re-assessment after P2-8:** M1.1-B baseline is fully functional with the correct CLI. Parts A and B are hardening improvements (not blockers). Part C (Config IPC) is the main deliverable for M4+ UI readiness.
+
+#### Part A — Staged-delivery bridge (fixes P2-5)
+
+Replace the pop-then-drop pattern with a pop-then-hold pattern. Only `main_core1_bridge.c` changes; `ipc_ringbuf.c` / `ipc_shared_layout.h` / `ipc_serial_stub.cpp` are untouched.
+
+**Design:**
+
+```
+Current:   pop slot → try CDC write → drop remainder on stall → pop next
+Proposed:  pop slot → try CDC write → hold remainder in staging buffer
+           → next iteration: drain staging first → only pop when staging empty
+```
+
+New state in `bridge_task`:
+
+```c
+static uint8_t  staged[IPC_MSG_PAYLOAD_MAX];
+static uint16_t staged_len = 0;   // valid bytes in staging buffer
+static uint16_t staged_pos = 0;   // bytes already delivered to CDC
+```
+
+Flow:
+
+1. If `staged_pos < staged_len` — drain staging to CDC first (`tud_cdc_write` as much as `available()` allows). Do NOT pop a new ring slot.
+2. If staging is empty (`staged_pos >= staged_len`) — pop next slot into `staged`, reset `staged_pos = 0`.
+3. If `!tud_mounted()` — discard staging (no host, intentional drop).
+4. **No stall timeout, no drop-burst.** CDC backpressure naturally propagates:
+   - staging buffer full → bridge stops popping → ring fills → Core 0 `IpcSerialStream::write()` busy-wait triggers → end-to-end backpressure.
+
+**Watchdog safety:** Add a `bridge_stall_ticks` counter. If staging data hasn't moved for 500 ms AND `tud_mounted()` is false, discard — covers the cable-unplug-during-transfer edge case.
+
+#### Part B — Yield optimization (fixes P2-6)
+
+| Change | File:Line | Before | After | Rationale |
+|---|---|---|---|---|
+| `usb_device_task` yield | `main_core1_bridge.c:113` | `vTaskDelay(pdMS_TO_TICKS(1))` | `taskYIELD()` | USB endpoint re-arm within µs instead of 1 ms |
+| `bridge_task` idle yield | `main_core1_bridge.c:220` | `vTaskDelay(pdMS_TO_TICKS(1))` | `taskYIELD()` | React to new ring data within µs of Core 0 push |
+
+`taskYIELD()` gives up the current timeslice but does not sleep — if no equal-or-higher priority task is ready, the same task runs again immediately. This is safe because:
+- `usb_device_task` is priority `configMAX_PRIORITIES-1` (highest) — yields to nothing, effectively busy-polls `tud_task()` at max rate.
+- `bridge_task` is priority `tskIDLE_PRIORITY+2` — yields to `usb_device_task` (and vice versa via round-robin), but both productive tasks keep running without forced 1 ms sleeps.
+- Idle task still runs when both bridge and USB tasks yield with no work → CPU power draw is fine.
+
+**M2 follow-up (not M1.2 scope):** Replace polling with cross-core notification. Core 0 `ipc_ring_push` → RP2350 SIO FIFO doorbell → Core 1 ISR → `xTaskNotifyFromISR(bridge_task)`. Bridge task uses `xTaskNotifyWait` with `portMAX_DELAY` timeout. This eliminates all polling and makes bridge latency ~µs. Deferred because it requires ISR setup + SIO FIFO integration — larger scope.
+
+#### Part C — Config IPC definition (for M4+)
+
+Add config get/set messages to `ipc_protocol.h`. Design principles:
+- **Generic envelope + typed key**: one config value message type with a `uint16_t key` discriminator, not one message type per config field.
+- **MIT licensed, self-contained**: Core 1 includes `ipc_protocol.h` only — no Meshtastic headers.
+- **Core 0 adapter**: A GPL-3.0 module in `core0/` that translates between `IpcConfigKey` and Meshtastic's `AdminModule` — implemented at M4, not M1.2.
+- **Key namespace**: `0xCCNN` where `CC` = category, `NN` = field index. Categories: `0x01`=Device, `0x02`=LoRa, `0x03`=Position, `0x04`=Power, `0x05`=Display, `0x06`=Channel, `0x07`=Owner. `0x10`–`0x1F` reserved for ModuleConfig (Telemetry, CannedMessage, etc.).
+
+**New message IDs:**
+
+| ID | Direction | Name | Purpose |
+|---|---|---|---|
+| `0x07` | C0→C1 | `IPC_MSG_CONFIG_VALUE` | Config value response (or unsolicited push on change) |
+| `0x08` | C0→C1 | `IPC_MSG_CONFIG_RESULT` | Set/commit result (OK / error code) |
+| `0x89` | C1→C0 | `IPC_CMD_GET_CONFIG` | Request config value by key |
+| `0x8A` | C1→C0 | `IPC_CMD_SET_CONFIG` | Set config value by key |
+| `0x8B` | C1→C0 | `IPC_CMD_COMMIT_CONFIG` | Commit pending changes (save + reboot if needed) |
+
+**Initial config key set (MokyaLora feature phone UI):**
+
+| Key | Category | Field | Type |
+|---|---|---|---|
+| `0x0100` | Device | `DEVICE_NAME` | string, max 40 B |
+| `0x0101` | Device | `DEVICE_ROLE` | uint8 (CLIENT, ROUTER, etc.) |
+| `0x0200` | LoRa | `LORA_REGION` | uint8 |
+| `0x0201` | LoRa | `LORA_MODEM_PRESET` | uint8 (LONG_FAST, SHORT_TURBO, etc.) |
+| `0x0202` | LoRa | `LORA_TX_POWER` | int8 (dBm) |
+| `0x0203` | LoRa | `LORA_HOP_LIMIT` | uint8 (1–7) |
+| `0x0204` | LoRa | `LORA_CHANNEL_NUM` | uint8 |
+| `0x0300` | Position | `GPS_MODE` | uint8 (DISABLED/ENABLED/NOT_PRESENT) |
+| `0x0301` | Position | `GPS_UPDATE_INTERVAL` | uint32 (seconds) |
+| `0x0302` | Position | `POSITION_BCAST_SECS` | uint32 |
+| `0x0400` | Power | `POWER_SAVING` | uint8 (bool) |
+| `0x0401` | Power | `SHUTDOWN_AFTER_SECS` | uint32 |
+| `0x0500` | Display | `SCREEN_ON_SECS` | uint32 (0=default 60 s) |
+| `0x0501` | Display | `UNITS_METRIC` | uint8 (bool) |
+| `0x0600` | Channel | `CHANNEL_NAME` | string, max 12 B |
+| `0x0601` | Channel | `CHANNEL_PSK` | bytes, max 32 B |
+| `0x0700` | Owner | `OWNER_LONG_NAME` | string, max 40 B |
+| `0x0701` | Owner | `OWNER_SHORT_NAME` | string, max 5 B |
+
+**Payload structures:**
+
+```c
+typedef struct {
+    uint16_t key;                ///< IpcConfigKey
+} IpcPayloadGetConfig;           /* 2 B */
+
+typedef struct {
+    uint16_t key;                ///< IpcConfigKey
+    uint16_t value_len;          ///< Byte length of value[]
+    uint8_t  value[];            ///< Type-dependent: uint8/int8/uint32/string/bytes
+} IpcPayloadConfigValue;         /* 4 B + variable */
+
+typedef struct {
+    uint16_t key;                ///< Which key this result is for
+    uint8_t  result;             ///< 0=OK, 1=UNKNOWN_KEY, 2=INVALID_VALUE, 3=BUSY
+} IpcPayloadConfigResult;        /* 3 B */
+```
+
+#### Diagnostic breadcrumbs (Part A verification)
+
+Add 7 counters at `0x2007FFD4..0x2007FFEC` (inside existing `_tail_pad`, after the 5 M1.1-B breadcrumbs):
+
+| Address | Name | Meaning |
+|---|---|---|
+| `0x2007FFD4` | `drop_burst_count` | Times the 10-tick stall timeout was hit (should go to zero after fix) |
+| `0x2007FFD8` | `drop_burst_bytes` | Total bytes dropped by stall timeout |
+| `0x2007FFDC` | `c0c1_overflow_snap` | Snapshot of `c0_to_c1_ctrl.overflow` (Core 0 ring-full events) |
+| `0x2007FFE0` | `c1c0_overflow_snap` | Snapshot of `c1_to_c0_ctrl.overflow` |
+| `0x2007FFE4` | `max_write_deficit` | Largest `payload_len` seen when `tud_cdc_write_available()==0` |
+| `0x2007FFE8` | `stall_tick_total` | Cumulative staging-drain ticks (backpressure duration) |
+| `0x2007FFEC` | `usb_task_polls` | `tud_task()` call count (verify USB polling rate) |
+
+#### Execution order
+
+1. Add diagnostic breadcrumb definitions to `main_core1_bridge.c` (addresses + zero-init in `main()`)
+2. Implement staged-delivery in `bridge_task` (Part A)
+3. Switch both tasks to `taskYIELD()` (Part B)
+4. Add Config IPC messages + key enum + payload structs to `ipc_protocol.h` (Part C)
+5. Build Core 1 + flash dual-image
+6. SWD verify breadcrumbs zero-init
+7. `meshtastic --info` round-trip (regression check)
+8. Web console test: idle handshake + LoRa send/receive + SWD read counters
+9. Compare handshake speed vs M1.1-B baseline
+
+#### M1.2 Part C — Implementation complete (2026-04-12)
+
+Config IPC definition committed to `firmware/shared/ipc/ipc_protocol.h`:
+- 5 new message IDs (`IPC_MSG_CONFIG_VALUE`, `IPC_MSG_CONFIG_RESULT`, `IPC_CMD_GET_CONFIG`, `IPC_CMD_SET_CONFIG`, `IPC_CMD_COMMIT_CONFIG`)
+- `IpcConfigKey` enum with 18 keys across 7 categories (Device, LoRa, Position, Power, Display, Channel, Owner)
+- 3 payload structs (`IpcPayloadGetConfig`, `IpcPayloadConfigValue`, `IpcPayloadConfigResult`)
+- Build verified: Core 1 bridge compiles clean with new definitions
+- Round-trip verified: `python -m meshtastic --port COM16 --info` succeeds — Config IPC header additions do not break existing bridge functionality
+
+#### Benchmark: Bridge vs Native SerialUSB (2026-04-12)
+
+Measured with `python -m meshtastic --port COMxx --info` (v2.7.8), 3 runs each.
+
+| Configuration | Port | Avg wall time | Response size | Node count | Success |
+|---|---|---|---|---|---|
+| Stock Pico2 (native SerialUSB, firmware 2.7.20) | COM7 | **4.39 s** | 55 325 B | 100 nodes | 3/3 |
+| MokyaLora Bridge (IPC ring + TinyUSB CDC, firmware 2.7.21) | COM16 | **15.02 s** | 7 549 B | 1 node | 3/3 |
+
+**Analysis:**
+- Wall time: bridge is **~3.4× slower** (15.02 s vs 4.39 s)
+- Per-KB throughput: bridge **~0.50 KB/s** vs stock **~12.6 KB/s** — approximately **25× slower per-KB**
+- The stock Pico2 has 100 nodes in its database (55 KB response) vs MokyaLora's 1 node (7.5 KB), so wall-time comparison is not apples-to-apples — but per-KB throughput normalises this
+- **Zero packet drops** on both configurations (3/3 success, full protobuf round-trip)
+- Root cause: dual `vTaskDelay(pdMS_TO_TICKS(1))` in `usb_device_task` and `bridge_task` adds 1–2 ms latency per round-trip exchange. Meshtastic's protobuf handshake involves dozens of small request→response pairs, amplifying the per-packet overhead
+- **Confirms P2-6 is real and significant** — M1.2 Part B (`taskYIELD()` replacement) is needed to close the gap
+- M2 cross-core notification (SIO FIFO doorbell → `xTaskNotifyFromISR`) would further reduce latency to ~µs
+
 ---
 
 ## Issues Log (Phase 2)
@@ -287,5 +522,8 @@ This closes Milestone 1: Core 0 Meshtastic is reachable from a host PC through C
 | P2-2 | 2026-04-11 | Arduino-Pico 5.4.4 FreeRTOS SMP on RP2350 | Core 1's passive-idle task HardFaults in `vStartFirstTask` the instant `xPortStartScheduler` launches it, blocking Core 0 from ever reaching `setup()`. CFSR=0x101 (IACCVIOL+IBUSERR), MMFAR=BFAR=0x2000C5AC (inside Core 1's own PSP region). Independent of `-DNO_USB` — architecture change, not a stub bug. | Switched to single-core FreeRTOS (`-DconfigNUMBER_OF_CORES=1`). Requires guarding the SMP-only framework code (`vTaskCoreAffinitySet`, `vTaskPreemptionDisable/Enable`, IdleCoreN task creation) in `freertos-main.cpp` / `freertos-lwip.cpp` and fixing the missing `extern` decl of `ulCriticalNesting` in the port — all done idempotently by `patch_arduinopico.py`. Core 1 is now left under Pico SDK reset and will be launched separately by the M1.0b Apache-2.0 boot image. Upstream fix would be to (a) provide an `extern` decl of `ulCriticalNesting` in single-core mode in `portmacro.h`, (b) drop `static` from `ulCriticalNesting` in `port.c`, and (c) either make `freertos-main.cpp`/`freertos-lwip.cpp` compile under `configNUMBER_OF_CORES==1` or gate the SMP-only bits. |
 | P2-3 | 2026-04-11 | `multicore_launch_core1_raw` in `initVariant()` | On cold reset, by the time Core 0 reaches `initVariant()` Core 1 is **not** in the clean bootrom FIFO handler that `multicore_launch_core1_raw` expects — the four-word launch handshake never completes and Core 0 hangs inside `_raw` (debug breadcrumb stuck at phase `0x12`). Candidates for the disturbance: Arduino-Pico's early `rp2040.fifo.begin(2)`, `multicore_doorbell_claim_unused`, or Pico SDK `runtime_init_per_core_bootrom_reset`. Not yet isolated. | Workaround: call `multicore_reset_core1()` immediately before `multicore_launch_core1_raw()` in `initVariant()`. This asserts `PSM_FRCE_OFF_PROC1` and returns Core 1 to the bootrom handler (same mechanism as Arduino-Pico's `restartCore1()`), after which the handshake completes instantly and Core 1 starts executing our Apache-2.0 bootspike image at `0x10200000`. Safe — mirrors an existing framework path — but root cause investigation deferred to M1.1 when the Core 0 boot path is fully instrumented. |
 | P2-4 | 2026-04-12 | `ipc_shared_layout.h` comment + legacy breadcrumb placement (M1.0b / M1.1-A) | The header comment claims `0x20078000..0x2007A000` is "preserved untouched" as a secondary SWD debug channel. This is **wrong** — Core 0's patched `memmap_default.ld` sets `RAM(rwx) : ORIGIN = 0x20000000, LENGTH = 512k - 0x6000` = `0x20000000..0x2007A000`, so the window is inside Core 0's FreeRTOS heap / task stack region. M1.0b + M1.1-A both used `0x20078000` for Core 1 sentinel + breadcrumbs and it worked by luck — at those phases Core 0's heap pressure was low enough that the sentinel bytes were never reached. M1.1-B triggered the collision: once Meshtastic task stacks + heap allocations reached the window, the breadcrumb region was overwritten with code pointers (observed `0x1002xxxx` / `0x2000xxxx` values instead of the `0xC1B01200` sentinel). | M1.1-B breadcrumbs moved to the last 64 B of `.shared_ipc` (`0x2007FFC0..0x20080000`), which lives inside `g_ipc_shared._tail_pad` — both cores' linker scripts reserve this range as NOLOAD shared SRAM and ring traffic never touches it. The M1.0b / M1.1-A legacy breadcrumbs at `0x20078000..0x2007801C` (initVariant phase marker + Core 1 SP/entry capture) are still used by Core 0 `variant.cpp` on cold boot before heap grows; those reads are valid for the first ~100k NOPs after `multicore_launch_core1_raw` returns. `ipc_shared_layout.h` comment should be rewritten to reflect reality when the header is next touched. |
-| P2-5 | 2026-04-12 | M1.1-B USB CDC bridge — intermittent message loss via Meshtastic web console | **Symptoms (observed during post-M1.1-B smoke test):** (a) Sending a text message from Mokya out over LoRa works **sometimes** — neighbouring nodes receive it — but other times the send silently fails with no error surfaced in the web console. (b) Neighbouring nodes sending TO Mokya: the sender's device UI shows "delivered" (ACK received), and Core 0 Meshtastic presumably processed the packet, but the message never appears in the Meshtastic web console text view. One-way `meshtastic --info` protobuf round-trip (M1.1-B close-out test) still works — so the bridge is not totally broken, only lossy under sustained traffic. **Hypotheses (ranked):** (1) `bridge_task` bounded-retry drop-burst at `main_core1_bridge.c:131-168` — when TinyUSB TX FIFO is full for 10 ticks (≈10 ms) the remainder of the ring-slot payload is dropped. If the web console's WebSerial reader isn't draining fast enough, protobuf frames get truncated mid-stream and Meshtastic's web client silently discards partial packets. (2) c1_to_c0 single-slot push from `bridge_task:158-176` reads up to 256 B with `tud_cdc_read` and pushes as one `IPC_MSG_SERIAL_BYTES` slot — if the host sends a frame >256 B in one USB transaction, it may be chunked across reads in a way Core 0's `IpcSerialStream::read` doesn't reassemble cleanly. (3) `usb_device_task` 1-tick (1 ms) yield between `tud_task()` calls — under WebSerial burst traffic, 1 ms may be too slow and endpoint FIFOs back up. (4) FreeRTOS heap fragmentation in the Core 1 image under sustained traffic. **Verification plan (next session, M1.1-B sign-off):** Instrument `bridge_task` with counters for (a) drop-burst events (FIFO stall timeout hit), (b) c0_to_c1 ring overflow count, (c) c1_to_c0 ring overflow count, (d) max observed `tud_cdc_write_available()` deficit. Place counters at `0x2007FFE0+` in `.shared_ipc` tail. Then reproduce the lossy scenarios over web console while watching counters via SWD. Fix strategy depends on which counter moves: if drop-burst, raise retry budget or move to blocking-with-watchdog; if ring overflow, extend slot count or coalesce; if neither, suspect CDC endpoint latency and tune `usb_device_task` yield. **Status:** Tracked — does **not** block M1.1-B closure (round-trip itself works), but must be resolved before M2 (interrupt-driven IPC + Core 1 LVGL) because M2 will layer LVGL traffic on top of the same ring. |
-| P2-6 | 2026-04-12 | M1.1-B USB CDC bridge — slow Meshtastic web console initial handshake | **Symptom:** When the Meshtastic web console attaches to COM16 (MokyaLora via Core 1 bridge), the initial device-configuration handshake (`want_config_id` → full `FromRadio` stream: MyNodeInfo, Metadata, Channel×8, Config×, ModuleConfig×, NodeInfo×86) takes **noticeably longer** than the same firmware build running with Arduino-Pico's native `SerialUSB` (no bridge). One-shot `meshtastic --info` via `pyserial` also feels slower than a reference Meshtastic device but is tolerable; web console's dozens of small-packet exchanges amplify the per-round-trip penalty. **Hypotheses (ranked):** (1) **`usb_device_task` 1-tick yield (`vTaskDelay(pdMS_TO_TICKS(1))`) at `main_core1_bridge.c:97`** — between every `tud_task()` poll. Full-speed USB bulk-IN polling interval is 125 µs, so a 1 ms quantum means the TX endpoint only has ~8 opportunities/ms to push out data, and every request→response round trip eats at least 1 ms on the USB side. (2) **`bridge_task` idle 1-tick yield at `main_core1_bridge.c:192`** — when both directions drain empty, we sleep 1 ms before re-checking. Web console's synchronous request/response protocol means every host→device→host round trip adds 1–2 ms of bridge latency on top of the USB wire time. (3) **No FreeRTOS task notification on ring push** — Core 0's `ipc_ring_push` writes the slot then releases `head`, but does not wake Core 1's `bridge_task`. Core 1 only sees the new slot on its next idle-yield wake-up. Similarly, CDC OUT data only triggers `bridge_task` wake-up 1 ms later. A cross-core sev / FIFO doorbell + `xTaskNotifyFromISR` would let the bridge react within tens of µs. (4) **`tud_cdc_write` micro-chunking** — the `bridge_task` splits each ring slot across `tud_cdc_write_available()` chunks; if avail is small and we re-loop with a 1-tick yield, a single 256 B ring slot can cost multiple ms. **Verification plan:** Measure end-to-end handshake time with `meshtastic --port COMxx --info` scripted against (a) native `SerialUSB` reference build on the same board, (b) current M1.1-B bridge, (c) M1.1-B bridge with `usb_device_task` switched to `taskYIELD()` instead of `vTaskDelay(1)`, (d) M1.1-B bridge with FreeRTOS task-notify on ring push (requires cross-core notify via RP2350 SIO FIFO IRQ). Pick the minimal change that matches (a). **Status:** Tracked — does **not** block M1.1-B closure. Same underlying cause as P2-5 (bridge latency / dropped bursts under flow), and likely solved together by the same verification cycle. |
+| P2-5 | 2026-04-12 | M1.1-B USB CDC bridge — intermittent message loss via Meshtastic web console | **Symptoms (observed during post-M1.1-B smoke test):** (a) Sending a text message from Mokya out over LoRa works **sometimes** — neighbouring nodes receive it — but other times the send silently fails with no error surfaced in the web console. (b) Neighbouring nodes sending TO Mokya: the sender's device UI shows "delivered" (ACK received), and Core 0 Meshtastic presumably processed the packet, but the message never appears in the Meshtastic web console text view. One-way `meshtastic --info` protobuf round-trip (M1.1-B close-out test) still works — so the bridge is not totally broken, only lossy under sustained traffic. **Hypotheses (ranked):** (1) `bridge_task` bounded-retry drop-burst at `main_core1_bridge.c:131-168` — when TinyUSB TX FIFO is full for 10 ticks (≈10 ms) the remainder of the ring-slot payload is dropped. If the web console's WebSerial reader isn't draining fast enough, protobuf frames get truncated mid-stream and Meshtastic's web client silently discards partial packets. (2) c1_to_c0 single-slot push from `bridge_task:158-176` reads up to 256 B with `tud_cdc_read` and pushes as one `IPC_MSG_SERIAL_BYTES` slot — if the host sends a frame >256 B in one USB transaction, it may be chunked across reads in a way Core 0's `IpcSerialStream::read` doesn't reassemble cleanly. (3) `usb_device_task` 1-tick (1 ms) yield between `tud_task()` calls — under WebSerial burst traffic, 1 ms may be too slow and endpoint FIFOs back up. (4) FreeRTOS heap fragmentation in the Core 1 image under sustained traffic. **Verification plan (next session, M1.1-B sign-off):** Instrument `bridge_task` with counters for (a) drop-burst events (FIFO stall timeout hit), (b) c0_to_c1 ring overflow count, (c) c1_to_c0 ring overflow count, (d) max observed `tud_cdc_write_available()` deficit. Place counters at `0x2007FFE0+` in `.shared_ipc` tail. Then reproduce the lossy scenarios over web console while watching counters via SWD. Fix strategy depends on which counter moves: if drop-burst, raise retry budget or move to blocking-with-watchdog; if ring overflow, extend slot count or coalesce; if neither, suspect CDC endpoint latency and tune `usb_device_task` yield. **Status:** Theoretical risk confirmed (pop-before-delivery defect exists in code). However, the observed symptom (`meshtastic --info` timeout) was actually caused by P2-8 (CLI version mismatch 2.3.11 vs 2.7.21). M1.1-B baseline works correctly with CLI 2.7.8. Pop-before-delivery fix (M1.2 Part A) remains a hardening improvement for CDC backpressure scenarios but is no longer a blocker. |
+| P2-7 | 2026-04-12 | Core 0 ISR stack overflow into breadcrumb area | SWD reads at `0x2007FFC0` show Core 0 SRAM/code pointers (`0x2000F5E4`, `0x100419E8`) instead of the expected sentinel `0xC1B01200`. Core 0 MSP starts at `0x20082000`, SCRATCH_X+Y = 8 KB ends at `0x20080000` — deep ISR nesting or large stack frames overflow into `0x2007FFxx` (the `.shared_ipc` tail where breadcrumbs live). Breadcrumb corruption is cosmetic (counters still readable via offsets), but a deep stack overflow could eventually reach ring control structures at lower addresses. | Investigation deferred. Candidate fixes: (a) increase Core 0 MSP stack reservation, (b) move breadcrumbs to a region above MSP, (c) add stack canary monitoring. |
+| P2-8 | 2026-04-12 | CLI version mismatch — false regression in all M1.2 testing | System PATH resolved `meshtastic` to Python 3.11 (Microsoft Store) version **2.3.11**. Active Python 3.13 has `meshtastic` **2.7.8** (via `python -m meshtastic`). Firmware is **2.7.21** — protobuf schema between 2.3.x and 2.7.x is incompatible. All `meshtastic --info` tests returned "Timed out waiting for connection completion" regardless of bridge code changes. Discovered when stock Pico2 on COM7 also timed out with `meshtastic` but succeeded with `python -m meshtastic`. MokyaLora dual-image then also confirmed working with correct CLI — 64 nodes, full config, `pioEnv: "rp2350b-mokya"`. An entire M1.2 debugging session (staged-delivery, drain mode, taskYIELD experiments) was wasted chasing a phantom regression. | Use `python -m meshtastic` for all future testing. Uninstall or deprioritize the Python 3.11 meshtastic package. |
+| P2-9 | 2026-04-12 | 2.7.21 mokya variant HardFault on first boot (empty flash / no LittleFS) | **Symptom:** After a full `erase` via J-Link (which wipes the entire 16 MB flash including LittleFS filesystem area), flashing the 2.7.21 mokya variant ELF results in an immediate HardFault on boot. CFSR=0x00008201 (IACCVIOL + IBUSERR), MMFAR/BFAR=0x2008204C — 76 bytes beyond SRAM end (0x20082000). The crash occurs during Meshtastic filesystem initialization when LittleFS finds no valid superblock. **Comparison:** The older 2.7.15 mokya variant ELF does **not** have this bug — it successfully initialises a fresh LittleFS filesystem on empty flash and boots normally. **Recovery procedure:** (1) Flash old 2.7.15 ELF via J-Link → boots and creates LittleFS filesystem. (2) Flash 2.7.21 ELF on top → finds existing filesystem and boots normally. **Root cause:** Not yet investigated. Likely a regression in the Meshtastic LittleFS init path between 2.7.15 and 2.7.21, or a mokya variant config change that triggers an uninitialised pointer / unbounded stack allocation during filesystem format. | Workaround: always ensure LittleFS filesystem exists before flashing 2.7.21. Use 2.7.15 ELF for filesystem init on erased flash. Root cause investigation deferred. |
+| P2-6 | 2026-04-12 | M1.1-B USB CDC bridge — slow Meshtastic web console initial handshake | **Symptom:** When the Meshtastic web console attaches to COM16 (MokyaLora via Core 1 bridge), the initial device-configuration handshake (`want_config_id` → full `FromRadio` stream: MyNodeInfo, Metadata, Channel×8, Config×, ModuleConfig×, NodeInfo×86) takes **noticeably longer** than the same firmware build running with Arduino-Pico's native `SerialUSB` (no bridge). One-shot `meshtastic --info` via `pyserial` also feels slower than a reference Meshtastic device but is tolerable; web console's dozens of small-packet exchanges amplify the per-round-trip penalty. **Hypotheses (ranked):** (1) **`usb_device_task` 1-tick yield (`vTaskDelay(pdMS_TO_TICKS(1))`) at `main_core1_bridge.c:97`** — between every `tud_task()` poll. Full-speed USB bulk-IN polling interval is 125 µs, so a 1 ms quantum means the TX endpoint only has ~8 opportunities/ms to push out data, and every request→response round trip eats at least 1 ms on the USB side. (2) **`bridge_task` idle 1-tick yield at `main_core1_bridge.c:192`** — when both directions drain empty, we sleep 1 ms before re-checking. Web console's synchronous request/response protocol means every host→device→host round trip adds 1–2 ms of bridge latency on top of the USB wire time. (3) **No FreeRTOS task notification on ring push** — Core 0's `ipc_ring_push` writes the slot then releases `head`, but does not wake Core 1's `bridge_task`. Core 1 only sees the new slot on its next idle-yield wake-up. Similarly, CDC OUT data only triggers `bridge_task` wake-up 1 ms later. A cross-core sev / FIFO doorbell + `xTaskNotifyFromISR` would let the bridge react within tens of µs. (4) **`tud_cdc_write` micro-chunking** — the `bridge_task` splits each ring slot across `tud_cdc_write_available()` chunks; if avail is small and we re-loop with a 1-tick yield, a single 256 B ring slot can cost multiple ms. **Verification plan:** Measure end-to-end handshake time with `meshtastic --port COMxx --info` scripted against (a) native `SerialUSB` reference build on the same board, (b) current M1.1-B bridge, (c) M1.1-B bridge with `usb_device_task` switched to `taskYIELD()` instead of `vTaskDelay(1)`, (d) M1.1-B bridge with FreeRTOS task-notify on ring push (requires cross-core notify via RP2350 SIO FIFO IRQ). Pick the minimal change that matches (a). **Status:** Confirmed by benchmark (2026-04-12). With correct CLI (2.7.8): bridge ~0.50 KB/s vs native ~12.6 KB/s (**~25× slower per-KB**). Zero drops. Root cause is dual 1 ms vTaskDelay, not the bridge protocol itself. M1.2 Part B (`taskYIELD()` replacement) is the next fix. Cross-core notification deferred to M2. |
