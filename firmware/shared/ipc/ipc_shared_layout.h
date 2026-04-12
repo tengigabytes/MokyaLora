@@ -53,6 +53,7 @@ extern "C" {
 #define IPC_SHARED_ORIGIN   0x2007A000u
 #define IPC_SHARED_SIZE     0x00006000u  /* 24 KB */
 #define IPC_BOOT_MAGIC      0x4D4F4B59u  /* 'MOKY' little-endian */
+#define IPC_DOORBELL_NUM    0u             /* RP2350 doorbell for ring push notification */
 
 /* ── Per-slot layout ───────────────────────────────────────────────────────
  *

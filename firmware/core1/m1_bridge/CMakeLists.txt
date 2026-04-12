@@ -103,6 +103,8 @@ target_compile_definitions(core1_bridge PRIVATE
 target_link_libraries(core1_bridge
     pico_stdlib
     pico_unique_id
+    # pico_multicore — NOT linked; doorbell uses raw SIO register writes
+    # to avoid pico_multicore's runtime_init side effects on Core 1.
     hardware_resets
     hardware_irq
     hardware_sync
