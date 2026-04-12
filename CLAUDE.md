@@ -144,7 +144,7 @@ Never add a Meshtastic #include to core1/ or mie/.
 - Goal: turn bring-up architecture into dual-core production firmware — Core 0 Meshtastic LoRa modem, Core 1 FreeRTOS + LVGL + MIE UI, shared-SRAM SPSC ring IPC.
 - Tracked by milestone (M1.0, M1.0b, M1.1, ...) in `docs/bringup/phase2-log.md`.
 - Plan: `~/.claude/plans/groovy-petting-alpaca.md`.
-- Current status: **M1.2-B complete, M1.2-C next.** M1.2-B yield optimization + TX accumulation buffer done: CLI `--info` improved from 15.0 s → 5.9 s (2.6×), raw bridge throughput ~1.95 KB/s. Per-KB throughput still ~16× slower than native SerialUSB — gap is IPC polling latency (SerialConsole 5 ms poll + no cross-core notification), not CLI overhead. Cross-core interrupt notification (M2) is the next high-impact fix. **IMPORTANT: always use `python -m meshtastic` (v2.7.8), never bare `meshtastic` command.** M1.2-C scope: Config IPC messages in `ipc_protocol.h` (main deliverable for M4+ LVGL settings UI). M2 (interrupt-driven IPC + Core 1 LVGL UI) follows after M1.2.
+- Current status: **M1.2 ✅ complete (all parts A/B/C).** M1 milestone (IPC byte bridge) fully delivered: staged-delivery bridge (Part A), yield optimization + TX accumulation buffer with 2.6× speedup (Part B), Config IPC definition with 18 keys across 7 categories (Part C). CLI `--info` 15.0 s → 5.9 s. Per-KB throughput still ~16× slower than native SerialUSB — gap is IPC polling latency (SerialConsole 5 ms poll + no cross-core notification). **IMPORTANT: always use `python -m meshtastic` (v2.7.8), never bare `meshtastic` command.** **Next: M2 — interrupt-driven IPC + Core 1 LVGL UI.**
 
 ### Known Phase 2 constraints
 

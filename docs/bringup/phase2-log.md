@@ -350,7 +350,7 @@ Config get/set is the most critical gap — it is a foundational UI feature. Des
 
 ### M1.2 — Bridge architecture fix + Config IPC definition
 
-**Status:** In progress (re-baselined after P2-8 CLI fix)
+**Status:** ✅ COMPLETE (2026-04-12)
 **Goal:** (A) Eliminate packet drops under CDC backpressure, (B) reduce bridge latency to match native SerialUSB, (C) define Config IPC messages for M4+ settings UI.
 
 **Re-assessment after P2-8:** M1.1-B baseline is fully functional with the correct CLI. Parts A and B are hardening improvements (not blockers). Part C (Config IPC) is the main deliverable for M4+ UI readiness.
@@ -539,6 +539,31 @@ Measured with `python -m meshtastic --port COMxx --info` (v2.7.8), 3 runs each.
   3. **Ring buffer memcpy overhead** — every push/pop does a full payload copy; native `SerialUSB` is zero-copy into TinyUSB's endpoint FIFO
 - **Root cause of byte-at-a-time inefficiency (fixed):** `RedirectablePrint::write(uint8_t c)` → `dest->write(c)` iterated each log byte through the IPC ring. Without the accumulation buffer, a 60-char log line consumed 60 × 264 = 15,840 bytes of ring bandwidth (99.6% overhead). With batching, same line costs 1 × (4 + 60) = 64 bytes
 - **Verdict:** TX accumulation buffer + yield optimization delivered 2.6× wall-time improvement. Per-KB throughput gap (16×) remains significant and is dominated by polling latency, not data copy. Cross-core interrupt notification (M2) is the next high-impact optimisation — it addresses bottlenecks #1 and #2 above
+
+#### M1.2 Close-out (2026-04-12)
+
+**M1.2 delivered all three parts:**
+
+| Part | Deliverable | Key result |
+|------|-------------|------------|
+| A | Staged-delivery bridge | Pop-then-hold replaces pop-then-drop; CDC backpressure propagates end-to-end |
+| B | Yield optimization + TX accumulation buffer | `vTaskDelay(1)` → `taskYIELD()`, single-byte writes batched into 256 B buffer; CLI `--info` 15.0 s → 5.9 s (2.6×) |
+| C | Config IPC definition | 5 msg IDs, `IpcConfigKey` enum (18 keys / 7 categories), 3 payload structs in `ipc_protocol.h` |
+
+**M1 milestone (IPC byte bridge) is now complete.** Summary of M1 sub-milestones:
+
+| Sub-milestone | Deliverable |
+|---------------|-------------|
+| M1.0 | Core 0 `NO_USB` + `IpcSerialStream` stub + single-core FreeRTOS patches |
+| M1.0b | Dual-image Core 1 boot spike (`multicore_launch_core1_raw`) |
+| M1.1-A | Core 1 `m1_bridge` ring validator (SPSC ring + shared SRAM layout) |
+| M1.1-B | Core 1 USB CDC bridge — full Meshtastic serial passthrough via IPC ring |
+| M1.2-A/B | Staged delivery + yield/accumulation optimization (2.6× speedup) |
+| M1.2-C | Config IPC messages for M4+ LVGL settings UI |
+
+**Remaining throughput gap (16× vs native) deferred to M2** — root cause is polling latency (SerialConsole 5 ms + no cross-core notification), not data copy overhead. M2 will add SIO FIFO doorbell + `xTaskNotifyFromISR` for µs-latency IPC wake-up.
+
+**Open issues carried forward:** P2-7 (Core 0 ISR stack overflow into breadcrumb area), P2-9 (first-boot HardFault on empty flash).
 
 ---
 
