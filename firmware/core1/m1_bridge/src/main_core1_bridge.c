@@ -267,7 +267,7 @@ static void bridge_task(void *pv)
                         if (++stall_ticks >= 10) {
                             break;
                         }
-                        vTaskDelay(pdMS_TO_TICKS(1));
+                        taskYIELD();  /* was vTaskDelay(1ms) — yield to usb_device_task for tud_task() processing, ~10µs vs 1ms */
                         continue;
                     }
                     stall_ticks = 0;
@@ -360,7 +360,7 @@ int main(void)
     /* 0. Unique boot marker — verifies over SWD that THIS build is running.
      * Written to shared IPC tail-pad (immune to both cores' crt0 zeroing).
      * Change the value each build to confirm a fresh boot. */
-    dbg_u32(0x2007FFD4u, 0xDEAD0002u);  /* bump suffix each flash attempt */
+    dbg_u32(0x2007FFD4u, 0xDEAD0003u);  /* bump suffix each flash attempt */
 
     /* 1. Life signal — first thing after SDK runtime hands over. */
     dbg_u32(BRIDGE_SENTINEL_ADDR,   BRIDGE_SENTINEL_VALUE);
