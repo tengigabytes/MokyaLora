@@ -59,8 +59,9 @@ typedef enum {
 
 /* ── Ring / transport parameters (Phase 2 M1) ─────────────────────────────── */
 
-#define IPC_MSG_PAYLOAD_MAX    256u   ///< Max payload bytes per ring slot
-#define IPC_RING_SLOT_COUNT     32u   ///< SPSC ring depth (per direction)
+#define IPC_MSG_PAYLOAD_MAX        256u   ///< Max payload bytes per ring slot
+#define IPC_RING_SLOT_COUNT         32u   ///< SPSC ring depth (data + cmd rings)
+#define IPC_LOG_RING_SLOT_COUNT     16u   ///< SPSC ring depth (log ring, best-effort)
 
 /* ── Common header (every message starts with this) ───────────────────────── */
 

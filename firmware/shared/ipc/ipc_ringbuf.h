@@ -35,7 +35,9 @@ extern "C" {
  * Push a message into the ring.
  *
  * @param ctrl          Ring control block (head/tail/overflow).
- * @param slots         Slot array of length IPC_RING_SLOT_COUNT.
+ * @param slots         Slot array of length slot_count.
+ * @param slot_count    Number of slots in this ring (e.g. IPC_RING_SLOT_COUNT or
+ *                      IPC_LOG_RING_SLOT_COUNT).
  * @param msg_id        IpcMsgId value copied into the slot header.
  * @param seq           Rolling sequence number copied into the slot header.
  * @param payload       Pointer to payload bytes (may be NULL if payload_len == 0).
@@ -48,6 +50,7 @@ extern "C" {
  */
 bool ipc_ring_push(IpcRingCtrl *ctrl,
                    IpcRingSlot *slots,
+                   uint32_t     slot_count,
                    uint8_t      msg_id,
                    uint8_t      seq,
                    const void  *payload,
@@ -57,7 +60,8 @@ bool ipc_ring_push(IpcRingCtrl *ctrl,
  * Pop a message from the ring.
  *
  * @param ctrl          Ring control block.
- * @param slots         Slot array of length IPC_RING_SLOT_COUNT.
+ * @param slots         Slot array of length slot_count.
+ * @param slot_count    Number of slots in this ring.
  * @param header_out    Receives the slot header (must not be NULL).
  * @param payload_out   Receives up to max_payload bytes (may be NULL if max_payload == 0).
  * @param max_payload   Size of payload_out buffer.
@@ -69,15 +73,16 @@ bool ipc_ring_push(IpcRingCtrl *ctrl,
  */
 bool ipc_ring_pop(IpcRingCtrl *ctrl,
                   IpcRingSlot *slots,
+                  uint32_t     slot_count,
                   IpcMsgHeader *header_out,
                   void         *payload_out,
                   size_t        max_payload);
 
-/** Number of slots currently pending (0..IPC_RING_SLOT_COUNT). */
-uint32_t ipc_ring_pending(const IpcRingCtrl *ctrl);
+/** Number of slots currently pending (0..slot_count). */
+uint32_t ipc_ring_pending(const IpcRingCtrl *ctrl, uint32_t slot_count);
 
-/** Number of free slots (0..IPC_RING_SLOT_COUNT). */
-uint32_t ipc_ring_free_slots(const IpcRingCtrl *ctrl);
+/** Number of free slots (0..slot_count). */
+uint32_t ipc_ring_free_slots(const IpcRingCtrl *ctrl, uint32_t slot_count);
 
 /**
  * Zero-initialise the shared SRAM layout. Called once by Core 0 during
