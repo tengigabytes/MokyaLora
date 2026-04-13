@@ -40,15 +40,27 @@ not directly from I2C. Core 0 never accesses any I2C bus.
 | Application Heap| Core 1 | 4 MB            | Message history, node cache, application data                         |
 | Core 0 reserve  | Core 0 | 0 MB (reserved) | Available for StoreAndForward cache or large NodeDB; not required for normal operation |
 
-**Display framebuffer lives in SRAM, not PSRAM.** LVGL partial render buffer (~10 KB) in SRAM
-achieves 60–80 FPS via DMA → PIO → LCD. PSRAM reads are too slow for display (12.8 FPS max
-due to QMI per-word transaction overhead) and have a known DMA burst read silicon issue
-(see bringup log Issue 14 / Step 25). PSRAM is used exclusively for IME dictionary data
-(CPU random-access binary search, <0.4 ms/query) and application heap.
+**Display framebuffer lives in SRAM, not PSRAM.** Single full-screen framebuffer
+(240×320×RGB565 = 150 KB) in Core 1 SRAM with LVGL direct mode — only dirty areas are
+redrawn and DMA-flushed to the LCD via PIO 8080, achieving 60–80 FPS. PSRAM reads are
+too slow for display (12.8 FPS max due to QMI per-word transaction overhead) and have a
+known DMA burst read error whose root cause is not yet confirmed (see bringup log
+Issue 14 / Step 25). PSRAM is used exclusively for IME dictionary data (CPU random-access
+binary search, <0.4 ms/query) and application heap.
 
-**Core 0 SRAM:** Meshtastic fits within RP2350B's 520 KB internal SRAM (~160–180 KB used for
-code, stack, NodeDB, packet queues). PSRAM is not required for Core 0 under normal operation.
-Both cores can access PSRAM via the shared QMI/QSPI bus if required in future.
+**SRAM partition (520 KB total):**
+
+| Region | Address Range | Size | Contents |
+|--------|--------------|------|----------|
+| Core 0 | `0x20000000–0x2002BFFF` | 176 KB | Meshtastic: .data/.bss (54 KB) + heap (122 KB) |
+| Core 1 | `0x2002C000–0x20079FFF` | 312 KB | FreeRTOS + LVGL + framebuffer + MIE + HAL |
+| Shared IPC | `0x2007A000–0x2007FFFF` | 24 KB | SPSC rings (data + log + cmd) + GPS buffer |
+| SCRATCH_X | `0x20080000–0x20080FFF` | 4 KB | (unused) |
+| SCRATCH_Y | `0x20081000–0x20081FFF` | 4 KB | Core 0 MSP / ISR stack |
+
+See `docs/design-notes/ipc-ram-replan.md` for detailed budget and verification data.
+PSRAM is not required for Core 0 under normal operation. Both cores can access PSRAM
+via the shared QMI/QSPI bus if required in future.
 
 ### 1.4 Stability Mechanisms
 
