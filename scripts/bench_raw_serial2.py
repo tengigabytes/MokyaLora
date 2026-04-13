@@ -107,20 +107,27 @@ def main():
     print(f"  Read syscalls:        {read_count}")
 
     if len(frames) > 1:
-        # Show first 5 and last 3 frame timestamps
-        print(f"\n  Frame timing (first 5):")
-        for i, (t, plen) in enumerate(frames[:5]):
-            dt = (t - t_send) * 1000
-            gap = (t - frames[i-1][0]) * 1000 if i > 0 else 0
-            print(f"    #{i+1:3d}: +{dt:8.1f} ms  (gap {gap:6.1f} ms)  payload={plen}")
-        if len(frames) > 8:
-            print(f"    ...")
-        print(f"  Frame timing (last 3):")
-        for i in range(max(5, len(frames)-3), len(frames)):
-            t, plen = frames[i]
-            dt = (t - t_send) * 1000
-            gap = (t - frames[i-1][0]) * 1000
-            print(f"    #{i+1:3d}: +{dt:8.1f} ms  (gap {gap:6.1f} ms)  payload={plen}")
+        show_all = "--all" in sys.argv
+        if show_all:
+            print(f"\n  Frame timing (all {len(frames)} frames):")
+            for i, (t, plen) in enumerate(frames):
+                dt = (t - t_send) * 1000
+                gap = (t - frames[i-1][0]) * 1000 if i > 0 else 0
+                print(f"    #{i+1:3d}: +{dt:8.1f} ms  (gap {gap:6.1f} ms)  payload={plen}")
+        else:
+            print(f"\n  Frame timing (first 5):")
+            for i, (t, plen) in enumerate(frames[:5]):
+                dt = (t - t_send) * 1000
+                gap = (t - frames[i-1][0]) * 1000 if i > 0 else 0
+                print(f"    #{i+1:3d}: +{dt:8.1f} ms  (gap {gap:6.1f} ms)  payload={plen}")
+            if len(frames) > 8:
+                print(f"    ...")
+            print(f"  Frame timing (last 3):")
+            for i in range(max(5, len(frames)-3), len(frames)):
+                t, plen = frames[i]
+                dt = (t - t_send) * 1000
+                gap = (t - frames[i-1][0]) * 1000
+                print(f"    #{i+1:3d}: +{dt:8.1f} ms  (gap {gap:6.1f} ms)  payload={plen}")
 
     ser.close()
 
