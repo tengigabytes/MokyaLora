@@ -661,12 +661,12 @@ Watchdog reset cold-starts both cores, so the existing boot handshake (boot_magi
 
 | Metric | M1.2 | M2 | M2 + P2-13 fix | Change (M1.2 → final) |
 |--------|------|----|----------------|----------------------|
-| `--info` wall time | 5.9 s | 4.8 s | **4.4 s** | **−25%** |
-| Per-frame gap | 12–50 ms | 12–50 ms | **0.13–0.69 ms** | **30–85×** |
+| `--info` wall time | 5.9 s | 4.8 s | **4.5 s** | **−24%** |
+| Per-frame gap | 12–50 ms | 12–50 ms | **0–1.6 ms** | **30–85×** |
 | `--set` + reboot | HardFault (P2-11) | ✅ clean reboot | ✅ clean reboot | Fixed |
 | COM port after reboot | Hung (P2-10) | ✅ re-enumerates | ✅ re-enumerates | Fixed |
 
-Throughput improvement is from interrupt-driven IPC (Part A): Core 1 wakes on doorbell instead of waiting for next `taskYIELD()` round-robin cycle. The P2-13 fix (XIP cache re-enable) eliminated the dominant per-frame bottleneck — instruction fetch latency dropped ~100× from uncached QSPI to cached XIP. Remaining gap vs native SerialUSB (~1.4× slower) is IPC ring overhead + Core 0's 5 ms `SerialConsole::runOnce()` polling — addressable in M5 when Core 0 gets its own doorbell ISR.
+Throughput improvement is from interrupt-driven IPC (Part A): Core 1 wakes on doorbell instead of waiting for next `taskYIELD()` round-robin cycle. The P2-13 fix (XIP cache re-enable) eliminated the dominant per-frame bottleneck — instruction fetch latency dropped ~100× from uncached QSPI to cached XIP. Burst throughput now exceeds stock Pico2 (2.5× faster frame rate). Remaining `--info` wall-time gap (~0.1 s) is first-byte latency from Core 0's 5 ms `SerialConsole::runOnce()` polling — addressable in M5 when Core 0 gets its own doorbell ISR.
 
 #### Benchmark: `bench_raw_serial2.py` — MokyaLora vs Stock Pico2 (2026-04-13)
 
@@ -685,35 +685,36 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 | Frame gap (tail, large frames) | 20.4 ms | 20.5 ms | 20.5 ms |
 | Read syscalls | 44 | 50 | 47 |
 
-**MokyaLora (COM16, M2 + P2-13 XIP cache fix) — 3-run avg:**
+**MokyaLora (COM16, M2 + P2-13 XIP cache fix, LOG enabled) — 3-run avg:**
 
 | Metric | Run 1 | Run 2 | Run 3 | Avg |
 |--------|-------|-------|-------|-----|
-| Send → first byte | 731.0 ms | 994.5 ms | 1006.8 ms | 910.8 ms |
-| Send → first frame | 731.0 ms | 994.5 ms | 1006.8 ms | 910.8 ms |
-| First → last frame | 21.3 ms | 21.9 ms | 22.6 ms | 21.9 ms |
-| Total frames | 47 | 47 | 47 | 47 |
-| Total payload | 872 B | 872 B | 872 B | 872 B |
-| Frame gap (typical) | 0.0 ms | 0.0–1.4 ms | 0.0–1.6 ms | 0–1.6 ms |
-| Frame gap (max) | 0.0 ms | 1.4 ms | 1.6 ms | 1.0 ms |
-| Read syscalls | 7 | 3 | 4 | 4.7 |
+| Send → first byte | 562.7 ms | 932.4 ms | 977.2 ms | 824.1 ms |
+| Send → first frame | 588.5 ms | 958.1 ms | 1003.2 ms | 849.9 ms |
+| First → last frame | 42.8 ms | 24.5 ms | 42.9 ms | 36.7 ms |
+| Total frames | 48 | 47 | 47 | 47 |
+| Total payload | 879 B | 873 B | 873 B | 875 B |
+| Frame gap (typical) | 0.0–1.6 ms | 0.0–1.6 ms | 0.0–1.6 ms | 0–1.6 ms |
+| Frame gap (max, tail LOG spike) | 20.4 ms | 0.0 ms | 20.4 ms | ~20 ms |
+| Read syscalls | 8 | 6 | 8 | 7.3 |
 
 **Head-to-head comparison (stable runs):**
 
 | Metric | Stock Pico2 | MokyaLora | Ratio |
 |--------|-------------|-----------|-------|
-| Burst duration (first→last) | 196 ms / 100 frm | 22 ms / 47 frm | — |
-| Frame rate | 0.51 frm/ms | 2.14 frm/ms | **MokyaLora 4.2× faster** |
-| Avg per-frame time | 1.96 ms | 0.47 ms | **MokyaLora 4.2× faster** |
+| Burst duration (first→last) | 196 ms / 100 frm | 37 ms / 47 frm | — |
+| Frame rate | 0.51 frm/ms | 1.28 frm/ms | **MokyaLora 2.5× faster** |
+| Avg per-frame time | 1.96 ms | 0.78 ms | **MokyaLora 2.5× faster** |
 | Per-frame gap (typical) | 1.2–3.3 ms | 0–1.6 ms | **MokyaLora better** |
-| First byte latency | 3.7 ms | 911 ms | **Stock 246× faster** |
-| `--info` wall time | 4.4 s | 4.4 s | **Parity** |
+| Per-frame gap (tail spike) | 20.5 ms | 20.4 ms | **Parity** (LOG output) |
+| First byte latency | 3.7 ms | 824 ms | **Stock 223× faster** |
+| `--info` wall time | 4.4 s | 4.5 s | **Parity** |
 
 **Analysis:**
-- Burst throughput (frame rate during config exchange) now **exceeds** stock Pico2 by 4.2×, thanks to XIP cache + `DEBUG_MUTE` eliminating LOG overhead between frames.
-- Per-frame gap 0–1.6 ms is better than stock's 1.2–3.3 ms — frames arrive batched in single USB transactions.
-- Stock Pico2 shows 20 ms gaps on large tail frames (NodeInfo with LOG output); MokyaLora's `DEBUG_MUTE` eliminates this.
-- **Sole remaining bottleneck: first byte latency (~911 ms).** Root cause: Core 0 `SerialConsole::runOnce()` returns 5 ms (recent) / 250 ms (idle) poll interval — `want_config_id` sits in the IPC ring until the next `readStream()` poll. Stock Pico2's `SerialConsole` reads directly from USB endpoint buffer (no IPC hop) but still has the same 5 ms polling architecture — the 3.7 ms first-byte time means the `want_config_id` arrived during an active poll window. MokyaLora's ~911 ms is 250 ms idle poll + Meshtastic state machine warm-up. Fix: M5 Core 0 doorbell ISR to wake `SerialConsole` immediately on ring data arrival.
+- Burst throughput (frame rate during config exchange) **exceeds** stock Pico2 by 2.5×, thanks to XIP cache fix. Both platforms have LOG enabled; MokyaLora's IPC ring batches multiple frames into single USB transactions.
+- Per-frame gap 0–1.6 ms matches stock's 1.2–3.3 ms range. Both show ~20 ms tail spikes from LOG output on large frames (NodeInfo).
+- `DEBUG_MUTE` was tested during investigation and gave an additional ~45% improvement, but was **removed** — LOG overhead is negligible with XIP cache enabled, and debuggability is more important.
+- **Sole remaining bottleneck: first byte latency (~824 ms).** Root cause: Core 0 `SerialConsole::runOnce()` returns 5 ms (recent) / 250 ms (idle) poll interval — `want_config_id` sits in the IPC ring until the next `readStream()` poll. Stock Pico2's `SerialConsole` reads directly from USB endpoint buffer (no IPC hop) but still has the same 5 ms polling architecture — the 3.7 ms first-byte time means the `want_config_id` arrived during an active poll window. MokyaLora's ~824 ms is 250 ms idle poll + Meshtastic state machine warm-up. Fix: M5 Core 0 doorbell ISR to wake `SerialConsole` immediately on ring data arrival.
 
 **Full evolution across all stages:**
 
@@ -723,7 +724,7 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 | M1.1-B (dual vTaskDelay) | 15.0 s | — | 12–50 ms | 3.4× slower |
 | M1.2-B (taskYIELD + TX accum) | 5.9 s | — | 12–50 ms | 1.3× slower |
 | M2 (doorbell IPC) | 4.8 s | — | 12–50 ms | 1.1× slower |
-| **M2 + P2-13 (XIP cache fix)** | **4.4 s** | **22 ms / 47 frm** | **0–1.6 ms** | **parity (burst 4.2× faster)** |
+| **M2 + P2-13 (XIP cache fix)** | **4.5 s** | **37 ms / 47 frm** | **0–1.6 ms** | **parity (burst 2.5× faster)** |
 
 #### M2 close-out (2026-04-13)
 
@@ -734,7 +735,7 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 **Files changed (Meshtastic submodule `firmware/core0/meshtastic/`):**
 - `variants/rp2350/rp2350b-mokya/flash_safety_wrap.c` — NEW, `--wrap` flash safety wrappers + P2-13 XIP cache re-enable after flash ops
 - `variants/rp2350/rp2350b-mokya/variant.cpp` — P2-13 XIP cache enable at boot (initVariant)
-- `variants/rp2350/rp2350b-mokya/platformio.ini` — added `-Wl,--wrap` flags + `flash_safety_wrap.c` to build + `-D DEBUG_MUTE` (P2-13)
+- `variants/rp2350/rp2350b-mokya/platformio.ini` — added `-Wl,--wrap` flags + `flash_safety_wrap.c` to build
 - `variants/rp2350/rp2350b-mokya/patch_arduinopico.py` — removed dead flash.c patch code, added NOTE
 
 #### P2-12 fix — detachInterrupt ISR-unsafe under FreeRTOS ✅ (2026-04-13)
@@ -772,12 +773,14 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 1. `variant.cpp:initVariant()` — writes `0x03` to XIP_CTRL SET alias (`0x400CA000`) at boot, before any Meshtastic code. Uses SET alias for atomic bit-set without disturbing other XIP_CTRL fields (e.g. WRITABLE_M1 from `psram_init`).
 2. `flash_safety_wrap.c:__wrap_flash_range_erase/program` — after each `__real_*` call (which internally runs `flash_exit_xip` → flash op → `flash_enable_xip_via_boot2`), re-enables cache via `MOKYA_XIP_CTRL_SET = 0x03`.
 
-**Verified:**
+**Verified (final — LOG enabled, no DEBUG_MUTE):**
 - XIP_CTRL = 0x00000003 (SWD confirmed)
 - Calibration: 72,274 cycles / 10000 iter = 7.2 cycles/iter (was ~690 → **96× improvement**)
 - `getFromRadio()`: 0.13–0.69 ms/frame (was 5–39 ms → **30–85× improvement**)
-- `--info` wall time: 4.4 s (was 15.0 s → **3.4× improvement**)
-- Per-frame gap now matches stock Pico2 (0–3 ms target)
+- `--info` wall time: 4.5 s (was 15.0 s → **3.3× improvement**)
+- Per-frame gap: 0–1.6 ms typical, ~20 ms tail spike on large frames (identical to stock Pico2)
+- Burst rate: 1.28 frm/ms = **2.5× faster** than stock Pico2 (0.51 frm/ms)
+- `DEBUG_MUTE` tested during investigation (+45% with cache off), then removed — LOG overhead negligible with cache on (~3%)
 
 **DWT profiling data (first 24 of 51 frames, with cache ON):**
 
@@ -788,10 +791,11 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 | 5–11 (CHANNELS) | 19K–22K | 0.13–0.15 | 2.5K–2.8K | 0.02 | 6 |
 | 13–17 (CONFIG) | 30K–43K | 0.20–0.29 | 2.6K–3.3K | 0.02 | 7–28 |
 
+**`-DDEBUG_MUTE` experiment (reverted):** Compile-time LOG suppression was tested during investigation and gave ~45% independent improvement (15 s → 5.9 s with cache still off). After XIP cache fix, LOG overhead became negligible (~3% of `--info` wall time), and both MokyaLora and stock Pico2 show identical ~20 ms tail spikes from LOG on large frames. `DEBUG_MUTE` was removed to preserve debuggability.
+
 **Files changed (Meshtastic submodule):**
 - `variants/rp2350/rp2350b-mokya/variant.cpp` — added XIP cache enable in `initVariant()`
 - `variants/rp2350/rp2350b-mokya/flash_safety_wrap.c` — added XIP cache re-enable after each wrapped flash op
-- `variants/rp2350/rp2350b-mokya/platformio.ini` — added `-D DEBUG_MUTE` build flag
 - `src/mesh/StreamAPI.cpp` — DWT profiling instrumentation added then removed (clean)
 
 ---
@@ -811,5 +815,5 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 | P2-10 | 2026-04-12 | Config change via Web Console hangs COM port | **Symptom:** After modifying node settings in the Meshtastic web console, the device attempts to reboot (via `Power::reboot()` → `rp2040.reboot()` → `watchdog_reboot(0, 0, 10)`). The watchdog hard-resets the entire chip including the USB controller without calling `tud_disconnect()` first. Windows sees the USB device vanish abruptly — the COM port handle enters an error state and the Web Console WebSerial connection hangs indefinitely. After the chip restarts and Core 1 re-enumerates USB CDC, the old COM port handle is stale and the user must close/reopen the browser tab or manually reconnect. **Root cause:** `rp2040.reboot()` performs no USB disconnect — it directly arms the watchdog and spins. In native Arduino-Pico builds (single-core, framework-managed USB), the framework's boot-time `SerialUSB` init happens early enough that Windows re-associates the same COM port seamlessly. In our dual-core architecture, Core 1's manual TinyUSB init occurs later (after `multicore_launch_core1_raw` + FreeRTOS scheduler start), and the re-enumeration timing differs from what the host driver expects. | **Fixed in M2 Part B (2026-04-13).** Core 0 `RebootNotifier` pushes `IPC_MSG_REBOOT_NOTIFY` via ring + doorbell → Core 1 `bridge_task` receives it, calls `tud_disconnect()`, idles until watchdog fires. COM port re-enumerates cleanly after reboot. Verified with `meshtastic --set device.role ROUTER` → reboot → COM16 re-appears → `--get device.role` confirms persistence. |
 | P2-11 | 2026-04-12 | Flash write HardFault — `flash_range_erase`/`program` runs with XIP off, interrupts enabled, Core 1 active | **Symptom:** `meshtastic --set` (any config change) triggers a HardFault on Core 0. CFSR=0x00000101 (IACCVIOL+IBUSERR) at `isr_systick` entry (0x1002B61C). PSP frame PC=0x292 (bootrom — inside ROM flash-erase function). Device stuck in HardFault with no watchdog recovery (crash occurs before `Power::reboot()` arms the watchdog). **Root cause chain:** Meshtastic config save → `EEPROM.commit()` → Arduino-Pico `EEPROM.cpp:121-130`. The framework guards flash writes with `#ifndef __FREERTOS / noInterrupts()` and `rp2040.idleOtherCore()`. On MokyaLora both guards are no-ops: (1) `__FREERTOS` is defined → `noInterrupts()` skipped, (2) `_multicore` is false (single-core FreeRTOS) → `idleOtherCore()` returns immediately. The framework assumes "has FreeRTOS → `__freertos_idle_other_core()` handles everything", but our single-core FreeRTOS + independent Core 1 architecture falls through both guards. Result: `flash_range_erase()` calls ROM `flash_exit_xip()` which disables XIP, then SysTick fires (1 ms tick, still enabled), hardware fetches `isr_systick` from flash (0x1002B61C) → IACCVIOL because XIP is off. Independently, Core 1 is still executing from flash during the XIP-off window — its instruction fetches also fail. **Why standard Meshtastic is unaffected:** (a) SMP mode: `_multicore=true` → `idleOtherCore()` actually pauses Core 1 and disables interrupts. (b) Single-core without FreeRTOS: `_multicore=false` but `__FREERTOS` not defined → `noInterrupts()` is called, protecting the flash write. MokyaLora is the only configuration where both paths are skipped. **Affected code paths:** Any flash write — `EEPROM.commit()`, LittleFS write, Preferences save. `meshtastic --info` (read-only) is safe. **SWD evidence captured:** MSP=0x20081F28, stacked xPSR IPSR=0x0F (SysTick), stacked PC=0x1002B61C (`isr_systick` entry), stacked LR=0xFFFFFFED (EXC_RETURN to Thread/PSP). PSP frame PC=0x292 (bootrom flash function). HFSR=0x40000000 (FORCED). | **Fixed in M2 (2026-04-13).** Linker `--wrap=flash_range_erase` + `--wrap=flash_range_program` intercepts all flash write callers. `flash_safety_wrap.c` parks Core 1 via shared-SRAM `flash_lock` protocol + `IPC_FLASH_DOORBELL`, disables Core 0 interrupts, then calls `__real_flash_range_*`. Core 1's `flash_park_handler()` (RAM-resident) ACKs parked, disables all interrupts, WFE-spins until lock cleared. Handles c1_ready==0 (first boot) by skipping park. Verified: `meshtastic --set device.role ROUTER` completes without HardFault. RAM cost: +136 bytes. |
 | P2-12 | 2026-04-13 | LoRa RX HardFault — `detachInterrupt` ISR-unsafe under FreeRTOS | **Symptom:** Device HardFaults on LoRa message reception. CFSR=0x00020001 (INVSTATE+IACCVIOL), MSP=0x20079F30 (34 KB stack overflow from `__StackTop`). Crash inside IO_IRQ_BANK0 (SX1262 DIO1). **Root cause:** `RadioLibInterface::isrLevel0Common()` → `disableInterrupt()` → `clearDio1Action()` → `detachInterrupt(29)`. Arduino-Pico's `detachInterrupt()` acquires `CoreMutex(&_irqMutex)` → `__get_freertos_mutex_for_ptr` lazy-creates FreeRTOS semaphore → `pvPortMalloc` uses critical section → `vPortExitCritical` detects ISR context → `rtosFatalError` → `panic` → `puts` → recursive malloc (stdout lock also needs lazy init) → ~177 recursive iterations → stack overflow through SCRATCH + shared IPC → corrupted function pointer → INVSTATE HardFault. | **Fixed (2026-04-13).** `patch_arduinopico.py` patches `wiring_private.cpp`: in ISR context (`portCHECK_IF_IN_ISR()`), `detachInterrupt` calls `_detachInterruptInternal` directly, skipping `CoreMutex`. Patch marker: `MOKYA_ISR_DETACH_PATCH`. Verified: LoRa reception works without crash. |
-| P2-13 | 2026-04-13 | XIP cache disabled — 30–85× slowdown on Core 0 instruction fetch | **Symptom:** 12–50 ms frame-to-frame gaps during `want_config_id` → `FromRadio` burst. Stock Pico2 (native SerialUSB) achieves 0–3 ms. DWT CYCCNT profiling showed `getFromRadio()` consuming 750K–5.8M cycles per frame (5–39 ms at 150 MHz). Calibration loop: ~690 cycles/iter vs expected ~7 → ~100× instruction fetch slowdown. **Root cause:** XIP_CTRL register at 0x400C8000 reads 0x00000000 — both EN_SECURE (bit 0) and EN_NONSECURE (bit 1) are cleared, disabling the RP2350's 4 KB XIP cache. All instruction fetches go to QSPI flash at 37.5 MHz (QMI CLKDIV=2, sys_clk=150 MHz). The cache is cleared during boot by the PSRAM detection flow and/or ROM functions — `psram_detect()` enters QMI direct mode which resets XIP_CTRL, and Pico SDK boot2 only restores QMI configuration (M0_TIMING, M0_RCMD, M0_RFMT), never XIP_CTRL. Additionally, every `flash_range_erase/program` call goes through ROM `flash_exit_xip()` which clears XIP_CTRL, and `flash_enable_xip_via_boot2()` (boot2 copyout) does not restore the cache enable bits. This is a Pico SDK gap — boot2 should restore XIP_CTRL but doesn't. Stock Pico2 boards are less affected because native SerialUSB masks the latency. **Investigation steps:** (1) DWT CYCCNT v1/v2 profiling of `writeStream()` loop confirmed 98.5% of time in `getFromRadio()`, 1.5% in `emitTxBuffer()`; (2) `-DDEBUG_MUTE` (compile-time LOG suppression) gave ~45% improvement but early frames still 10–40 ms; (3) FreeRTOS task analysis ruled out preemption — only CORE0(pri 4), Timer Svc(7), Idle(0); (4) SWD register reads: PLL confirmed 150 MHz, QMI at 37.5 MHz, XIP_CTRL=0x00000000. | **Fixed (2026-04-13).** Two-site fix: (1) `variant.cpp:initVariant()` — unconditionally sets EN_SECURE + EN_NONSECURE via XIP_CTRL SET alias (0x400CA000) at boot, before any Meshtastic code runs. (2) `flash_safety_wrap.c` — after each `__real_flash_range_erase/program` call, re-enables cache via `MOKYA_XIP_CTRL_SET = 0x03`. **Results:** XIP_CTRL=0x00000003, calibration 7.2 cycles/iter (96× better), `getFromRadio()` 0.13–0.69 ms/frame (30–85× better), `--info` 15.0 s → 4.4 s. Per-frame gap now matches stock Pico2. |
+| P2-13 | 2026-04-13 | XIP cache disabled — 30–85× slowdown on Core 0 instruction fetch | **Symptom:** 12–50 ms frame-to-frame gaps during `want_config_id` → `FromRadio` burst. Stock Pico2 (native SerialUSB) achieves 0–3 ms. DWT CYCCNT profiling showed `getFromRadio()` consuming 750K–5.8M cycles per frame (5–39 ms at 150 MHz). Calibration loop: ~690 cycles/iter vs expected ~7 → ~100× instruction fetch slowdown. **Root cause:** XIP_CTRL register at 0x400C8000 reads 0x00000000 — both EN_SECURE (bit 0) and EN_NONSECURE (bit 1) are cleared, disabling the RP2350's 4 KB XIP cache. All instruction fetches go to QSPI flash at 37.5 MHz (QMI CLKDIV=2, sys_clk=150 MHz). The cache is cleared during boot by the PSRAM detection flow and/or ROM functions — `psram_detect()` enters QMI direct mode which resets XIP_CTRL, and Pico SDK boot2 only restores QMI configuration (M0_TIMING, M0_RCMD, M0_RFMT), never XIP_CTRL. Additionally, every `flash_range_erase/program` call goes through ROM `flash_exit_xip()` which clears XIP_CTRL, and `flash_enable_xip_via_boot2()` (boot2 copyout) does not restore the cache enable bits. This is a Pico SDK gap — boot2 should restore XIP_CTRL but doesn't. Stock Pico2 boards are less affected because native SerialUSB masks the latency. **Investigation steps:** (1) DWT CYCCNT v1/v2 profiling of `writeStream()` loop confirmed 98.5% of time in `getFromRadio()`, 1.5% in `emitTxBuffer()`; (2) `-DDEBUG_MUTE` (compile-time LOG suppression) gave ~45% improvement but early frames still 10–40 ms; (3) FreeRTOS task analysis ruled out preemption — only CORE0(pri 4), Timer Svc(7), Idle(0); (4) SWD register reads: PLL confirmed 150 MHz, QMI at 37.5 MHz, XIP_CTRL=0x00000000. | **Fixed (2026-04-13).** Two-site fix: (1) `variant.cpp:initVariant()` — unconditionally sets EN_SECURE + EN_NONSECURE via XIP_CTRL SET alias (0x400CA000) at boot, before any Meshtastic code runs. (2) `flash_safety_wrap.c` — after each `__real_flash_range_erase/program` call, re-enables cache via `MOKYA_XIP_CTRL_SET = 0x03`. **Results (LOG enabled, no DEBUG_MUTE):** XIP_CTRL=0x00000003, calibration 7.2 cycles/iter (96× better), per-frame gap 0–1.6 ms (was 12–50 ms), burst 37 ms / 47 frm (2.5× faster than stock Pico2), `--info` 15.0 s → 4.5 s. Behavior now matches stock Pico2 including ~20 ms tail-frame LOG spikes. |
 | P2-6 | 2026-04-12 | M1.1-B USB CDC bridge — slow Meshtastic web console initial handshake | **Symptom:** When the Meshtastic web console attaches to COM16 (MokyaLora via Core 1 bridge), the initial device-configuration handshake (`want_config_id` → full `FromRadio` stream: MyNodeInfo, Metadata, Channel×8, Config×, ModuleConfig×, NodeInfo×86) takes **noticeably longer** than the same firmware build running with Arduino-Pico's native `SerialUSB` (no bridge). One-shot `meshtastic --info` via `pyserial` also feels slower than a reference Meshtastic device but is tolerable; web console's dozens of small-packet exchanges amplify the per-round-trip penalty. **Hypotheses (ranked):** (1) **`usb_device_task` 1-tick yield (`vTaskDelay(pdMS_TO_TICKS(1))`) at `main_core1_bridge.c:97`** — between every `tud_task()` poll. Full-speed USB bulk-IN polling interval is 125 µs, so a 1 ms quantum means the TX endpoint only has ~8 opportunities/ms to push out data, and every request→response round trip eats at least 1 ms on the USB side. (2) **`bridge_task` idle 1-tick yield at `main_core1_bridge.c:192`** — when both directions drain empty, we sleep 1 ms before re-checking. Web console's synchronous request/response protocol means every host→device→host round trip adds 1–2 ms of bridge latency on top of the USB wire time. (3) **No FreeRTOS task notification on ring push** — Core 0's `ipc_ring_push` writes the slot then releases `head`, but does not wake Core 1's `bridge_task`. Core 1 only sees the new slot on its next idle-yield wake-up. Similarly, CDC OUT data only triggers `bridge_task` wake-up 1 ms later. A cross-core sev / FIFO doorbell + `xTaskNotifyFromISR` would let the bridge react within tens of µs. (4) **`tud_cdc_write` micro-chunking** — the `bridge_task` splits each ring slot across `tud_cdc_write_available()` chunks; if avail is small and we re-loop with a 1-tick yield, a single 256 B ring slot can cost multiple ms. **Verification plan:** Measure end-to-end handshake time with `meshtastic --port COMxx --info` scripted against (a) native `SerialUSB` reference build on the same board, (b) current M1.1-B bridge, (c) M1.1-B bridge with `usb_device_task` switched to `taskYIELD()` instead of `vTaskDelay(1)`, (d) M1.1-B bridge with FreeRTOS task-notify on ring push (requires cross-core notify via RP2350 SIO FIFO IRQ). Pick the minimal change that matches (a). **Status:** Confirmed by benchmark (2026-04-12). With correct CLI (2.7.8): bridge ~0.50 KB/s vs native ~12.6 KB/s (**~25× slower per-KB**). Zero drops. Root cause is dual 1 ms vTaskDelay, not the bridge protocol itself. M1.2 Part B (`taskYIELD()` replacement) is the next fix. Cross-core notification deferred to M2. |
