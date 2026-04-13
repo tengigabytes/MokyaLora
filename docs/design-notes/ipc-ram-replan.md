@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-13
 **Phase:** Phase 2 M3 prep
-**Status:** Proposed — pending IPC benchmark validation
+**Status:** ✅ Complete — Step 1 (dual ring) + Step 2 (SRAM reallocation) both validated
 
 ---
 
@@ -73,37 +73,38 @@ rectangles to the LCD via PIO 8080.
 - Single buffer (150 KB) vs double buffer (300 KB): saves 150 KB. The tradeoff is
   that LVGL must wait for the DMA flush callback before modifying the buffer — this
   is handled automatically by LVGL's flush-ready mechanism.
-- PSRAM is too slow for display (12.8 FPS max due to QMI per-word overhead + known
-  DMA burst read silicon issue — see bringup log Issue 14 / Step 25).
+- PSRAM is too slow for display (12.8 FPS max due to QMI per-word overhead + DMA
+  burst read errors with unconfirmed root cause — see bringup log Issue 14 / Step 25).
 
-### 2.3 SRAM: Shrink Core 0 to 192 KB, Expand Core 1 to 296 KB
+### 2.3 SRAM: Shrink Core 0 to 176 KB, Expand Core 1 to 312 KB
 
-| Region | Current | Proposed | Change |
-|--------|---------|----------|--------|
-| Core 0 | 432 KB (0x20000000–0x2006BFFF) | 192 KB (0x20000000–0x2002FFFF) | −240 KB |
-| Core 1 | 56 KB (0x2006C000–0x20079FFF) | 296 KB (0x20030000–0x20079FFF) | +240 KB |
+| Region | Current | Final | Change |
+|--------|---------|-------|--------|
+| Core 0 | 432 KB (0x20000000–0x2006BFFF) | 176 KB (0x20000000–0x2002BFFF) | −256 KB |
+| Core 1 | 56 KB (0x2006C000–0x20079FFF) | 312 KB (0x2002C000–0x20079FFF) | +256 KB |
 | Shared IPC | 24 KB (0x2007A000–0x2007FFFF) | 24 KB (unchanged) | 0 |
 | SCRATCH_X | 4 KB | 4 KB | 0 |
 | SCRATCH_Y | 4 KB | 4 KB | 0 |
 
-**Core 0 at 192 KB:** 54 KB static + ~138 KB heap. Peak runtime heap ~76 KB leaves
-62 KB margin (48%). Even at MAX_NUM_NODES=200 (+20 KB), still 42 KB free.
+**Core 0 at 176 KB:** 54 KB static + ~122 KB heap. SWD-measured heap high-water
+mark ~100 KB (3 nodes). At MAX_NUM_NODES=200 (~140 KB peak), 36 KB margin (20%).
 
-**Core 1 at 296 KB budget:**
+**Core 1 at 312 KB budget:**
 
 | Component | Estimate |
 |-----------|----------|
 | Framebuffer (240×320×16bpp ×1) | 150 KB |
-| LVGL core + widgets | 35 KB |
-| FreeRTOS kernel + 5 task stacks | 20 KB |
+| LVGL heap (widgets, styles, draw cache) | 35 KB |
+| FreeRTOS ucHeap (6 tasks + TCB + queues) | 48 KB |
 | MIE C API + buffers | 5 KB |
-| HAL drivers (I2C×2, PIO keypad/audio, PWM) | 15 KB |
-| GPS bridge (NMEA parser) | 2 KB |
-| Application logic | 25 KB |
+| HAL drivers (I2C×2, PIO keypad, PWM) | 9 KB |
+| Application state (messages, nodes, GPS, UI) | 16 KB |
+| Static (.data/.bss misc, SDK runtime) | 10 KB |
 | Stack (main + ISR) | 8 KB |
-| **Total** | **~260 KB** |
-| **Margin** | **~36 KB (12%)** |
+| **Total** | **~281 KB** |
+| **Margin** | **~31 KB (10%)** |
 
+Audio (PDM mic + I2S amp) removed from future revisions — no audio buffers needed.
 MIE dictionary data (4 MB) and application heap (message history, node cache) live
 in PSRAM (8 MB APS6404L), not SRAM.
 
@@ -160,21 +161,21 @@ Expected improvement: ~~frame gap from 12–49 ms → 0–5 ms~~ — see §7 ben
 
 ---
 
-## 4. SRAM Map (Proposed)
+## 4. SRAM Map (Final)
 
 ```
 RP2350B SRAM (520 KB)
 
 0x20000000 ┌──────────────────────────────────────┐
            │  Core 0 — Meshtastic (GPL-3.0)       │
-           │  .vector + .data + .bss    54 KB      │  192 KB
-           │  .heap                    138 KB      │
-0x20030000 ├──────────────────────────────────────┤
+           │  .vector + .data + .bss    54 KB      │  176 KB
+           │  .heap                    122 KB      │
+0x2002C000 ├──────────────────────────────────────┤
            │  Core 1 — FreeRTOS+LVGL+MIE          │
            │  framebuffer             150 KB       │
-           │  LVGL + FreeRTOS + MIE    70 KB       │  296 KB
-           │  HAL + App + Stack        40 KB       │
-           │  margin                   36 KB       │
+           │  LVGL heap + FreeRTOS     83 KB       │  312 KB
+           │  HAL + App + Stack        48 KB       │
+           │  margin                   31 KB       │
 0x2007A000 ├──────────────────────────────────────┤
            │  Shared IPC (NOLOAD)                  │  24 KB
            │  DATA ring (32) + LOG ring (16)       │
@@ -203,14 +204,14 @@ Files changed:
 5. `firmware/core0/.../ipc_serial_stub.cpp` — `flush_tx_acc_()` → log ring; `write(buf,len)` → data ring
 6. `firmware/core1/.../main_core1_bridge.c` — drain data ring first, then log ring
 
-### Step 2 — SRAM Reallocation (after Step 1 benchmark passes)
+### Step 2 — SRAM Reallocation (after Step 1 benchmark passes) ✅
 
-Resize Core 0 from 432 KB → 192 KB, Core 1 from 56 KB → 296 KB. Build, flash, run
+Resize Core 0 from 432 KB → 176 KB, Core 1 from 56 KB → 312 KB. Build, flash, run
 `meshtastic --info` regression test.
 
 Files changed:
-1. `firmware/core0/.../patch_arduinopico.py` — patch RAM LENGTH to 192K (was 432K via 512K−IPC)
-2. `firmware/core1/.../memmap_core1_bridge.ld` — `ORIGIN=0x20030000, LENGTH=296K`
+1. `firmware/core0/.../patch_arduinopico.py` — patch RAM LENGTH to 176K (was 432K via 512K−IPC)
+2. `firmware/core1/.../memmap_core1_bridge.ld` — `ORIGIN=0x2002C000, LENGTH=312K`
 
 ### Step 3 — M3 LVGL Integration (future milestone)
 
@@ -223,7 +224,7 @@ this change — only enabled once Steps 1 and 2 are validated.
 
 | Risk | Mitigation |
 |------|------------|
-| Core 0 heap too small at 138 KB | Peak usage ~76 KB with 50%+ margin; MAX_NUM_NODES=100 fits; can tune to 224 KB (shift Core 1 to 0x20038000) if needed |
+| Core 0 heap too small at 122 KB | SWD-measured peak ~100 KB (3 nodes); MAX_NUM_NODES=200 worst case ~140 KB → 36 KB margin (20%). Can shift boundary to 0x20030000 (192 KB) if needed |
 | Log ring overflow loses debug output | Acceptable — log is best-effort; can increase to 24 slots at cost of 2.1 KB tail-pad if needed |
 | ringbuf API change breaks callers | Mechanical — all 7 call sites updated in same commit; compile error if any missed |
 | Framebuffer single-buffer tearing | LVGL flush callback blocks next render; DMA at 8080 bus speed (~10 MHz × 8-bit = 10 MB/s) completes 150 KB in ~15 ms — 60+ FPS achievable |
@@ -281,7 +282,35 @@ bottleneck is CPU-bound on Core 0, not IPC-bound. Further investigation needed:
   `write()` is a fast memcpy into a USB endpoint buffer — no ring push, no doorbell,
   no cross-core overhead.
 
-### 7.2 Step 2 — SRAM Reallocation
+### 7.2 Step 2 — SRAM Reallocation ✅
 
-Pending — proceeds independently of P2-13. The RAM reallocation is needed for M3 LVGL
-regardless of IPC speed.
+**Date:** 2026-04-14
+**Result:** Core 0 shrunk to 176 KB, Core 1 expanded to 312 KB. Build + flash + SWD + `meshtastic --info` round-trip verified.
+
+Initial attempt used 192/296 split, then revised to 176/312 after detailed M3+ budget
+analysis showed Core 1 margin was too tight (4.7% without audio, 10% with 312 KB).
+Audio hardware (PDM mic + I2S amp) confirmed removed from future revisions.
+
+**Changes:**
+
+| File | Change |
+|------|--------|
+| `patch_arduinopico.py` | `__RAM_LENGTH__ - 0x14000` → `__RAM_LENGTH__ - 0x54000` (Core 0: 432 KB → 176 KB) |
+| `memmap_core1_bridge.ld` | `ORIGIN = 0x2006C000, LENGTH = 56K` → `ORIGIN = 0x2002C000, LENGTH = 312K` |
+| `memmap_default.ld` (framework) | Same patch applied to live framework copy |
+
+**Verification:**
+
+| Check | Result |
+|-------|--------|
+| Core 0 static (.data+.bss) | 53.8 KB / 176 KB (31%) |
+| Core 0 SWD heap high-water mark | ~100 KB (3 nodes) → 76 KB free (43%) |
+| Core 0 worst-case (200 nodes) | ~140 KB → 36 KB margin (20%) |
+| Core 1 `__data_start__` | `0x2002C110` ✅ |
+| Core 1 `__StackTop` | `0x2007A000` ✅ (312 KB region top) |
+| `g_ipc_shared` | `0x2007A000` ✅ (unchanged) |
+| SWD Core 0 PSP | `0x2000B138` (within 176 KB) ✅ |
+| SWD Core 1 PSP | `0x20032F98` (within 312 KB) ✅ |
+| SWD IPC boot_magic | `0x4D4F4B59` ("MOKY") ✅ |
+| SWD c1_ready | 1 ✅ |
+| `meshtastic --info` | Full config + 5 nodes returned ✅ |

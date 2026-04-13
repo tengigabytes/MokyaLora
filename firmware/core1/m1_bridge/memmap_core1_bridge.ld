@@ -6,9 +6,9 @@
  *   - FLASH origin moves from 0x10000000 to 0x10200000 (2 MB region carved
  *     out of W25Q128JW, matches docs/requirements/software-requirements.md
  *     §1.2 Core 1 firmware slot).
- *   - RAM origin moves from 0x20000000 to 0x2006C000 (56 KB carve-out:
- *     Core 0 keeps 0x20000000..0x2006C000 = 432 KB, Core 1 gets
- *     0x2006C000..0x2007A000 = 56 KB, with NO overlap).
+ *   - RAM origin moves from 0x20000000 to 0x2002C000 (312 KB carve-out:
+ *     Core 0 keeps 0x20000000..0x2002C000 = 176 KB, Core 1 gets
+ *     0x2002C000..0x2007A000 = 312 KB, with NO overlap).
  *   - No SCRATCH_X / SCRATCH_Y carve: those addresses (0x20080000..0x20082000)
  *     are owned by Core 0's Arduino-Pico for its task stacks. Core 1 keeps
  *     its stack inside the 64 KB RAM region (top-of-RAM = __StackTop).
@@ -22,7 +22,7 @@
  *     matching g_ipc_shared addresses — this is the sole cross-core coherency
  *     constraint.
  *
- *   - __StackTop = 0x2007A000 (top of the 56 KB carve-out)
+ *   - __StackTop = 0x2007A000 (top of the 312 KB carve-out)
  *   - SDK runtime places its own .heap/.bss up to __StackLimit; FreeRTOS Heap4
  *     is allocated out of the .bss region (ucHeap[configTOTAL_HEAP_SIZE]).
  *
@@ -43,7 +43,7 @@
 MEMORY
 {
     FLASH      (rx) : ORIGIN = 0x10200000, LENGTH = 2048K
-    RAM        (rwx): ORIGIN = 0x2006C000, LENGTH = 56K
+    RAM        (rwx): ORIGIN = 0x2002C000, LENGTH = 312K
     SHARED_IPC (rw) : ORIGIN = 0x2007A000, LENGTH = 24K
 }
 
@@ -144,7 +144,7 @@ SECTIONS
     __binary_info_end = .;
     . = ALIGN(4);
 
-    /* RAM sections — begin at ORIGIN(RAM) = 0x2006C000 */
+    /* RAM sections — begin at ORIGIN(RAM) = 0x2002C000 */
 
     .ram_vector_table (NOLOAD): {
         *(.ram_vector_table)
@@ -248,7 +248,7 @@ SECTIONS
         PROVIDE(__flash_binary_end = .);
     } > FLASH =0xaa
 
-    /* Stack lives at the top of the 56 KB RAM carve. No core 1 stack region
+    /* Stack lives at the top of the 312 KB RAM carve. No core 1 stack region
      * because there's only one core in this image. */
     __StackLimit = ORIGIN(RAM) + LENGTH(RAM);
     __StackTop   = ORIGIN(RAM) + LENGTH(RAM);
