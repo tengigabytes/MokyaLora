@@ -110,12 +110,14 @@ typedef struct {
 
     /* Control blocks — 32 B each, separated from slots for cache-friendliness */
     uint32_t          _pad_to_0x20[4];
-    IpcRingCtrl       c0_to_c1_ctrl;  ///< Core 0 → Core 1 ring (producer = C0)
-    IpcRingCtrl       c1_to_c0_ctrl;  ///< Core 1 → Core 0 ring (producer = C1)
+    IpcRingCtrl       c0_to_c1_ctrl;      ///< Core 0 → Core 1 DATA ring (producer = C0)
+    IpcRingCtrl       c0_log_to_c1_ctrl;  ///< Core 0 → Core 1 LOG ring (producer = C0)
+    IpcRingCtrl       c1_to_c0_ctrl;      ///< Core 1 → Core 0 CMD ring (producer = C1)
 
-    /* Slot arrays — 32 × 264 B = 8 448 B each direction */
-    IpcRingSlot       c0_to_c1_slots[IPC_RING_SLOT_COUNT];
-    IpcRingSlot       c1_to_c0_slots[IPC_RING_SLOT_COUNT];
+    /* Slot arrays */
+    IpcRingSlot       c0_to_c1_slots[IPC_RING_SLOT_COUNT];            ///< 32 × 264 B — protobuf data
+    IpcRingSlot       c0_log_to_c1_slots[IPC_LOG_RING_SLOT_COUNT];    ///< 16 × 264 B — log lines
+    IpcRingSlot       c1_to_c0_slots[IPC_RING_SLOT_COUNT];            ///< 32 × 264 B — host commands
 
     /* Reserved for Phase 2 M4 (GPS bridge) */
     uint8_t           gps_buf[260];
@@ -124,8 +126,9 @@ typedef struct {
     uint8_t           _tail_pad[IPC_SHARED_SIZE
                                 - 16                                    /* magic + ready words */
                                 - 16                                    /* _pad_to_0x20 */
-                                - 2 * sizeof(IpcRingCtrl)               /* two ctrl blocks */
-                                - 2 * IPC_RING_SLOT_COUNT * sizeof(IpcRingSlot)
+                                - 3 * sizeof(IpcRingCtrl)               /* three ctrl blocks */
+                                - 2 * IPC_RING_SLOT_COUNT * sizeof(IpcRingSlot)  /* data + cmd */
+                                - IPC_LOG_RING_SLOT_COUNT * sizeof(IpcRingSlot)  /* log */
                                 - 260];
 } IpcSharedSram;
 

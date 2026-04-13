@@ -25,13 +25,6 @@
 __attribute__((section(".shared_ipc"), used))
 IpcSharedSram g_ipc_shared;
 
-/* ── Internal helpers ─────────────────────────────────────────────────────*/
-
-static inline uint32_t mask_index(uint32_t idx)
-{
-    return idx % IPC_RING_SLOT_COUNT;
-}
-
 /* ── Public API ───────────────────────────────────────────────────────────*/
 
 void ipc_shared_init(void)
@@ -49,6 +42,7 @@ void ipc_shared_init(void)
 
 bool ipc_ring_push(IpcRingCtrl *ctrl,
                    IpcRingSlot *slots,
+                   uint32_t     slot_count,
                    uint8_t      msg_id,
                    uint8_t      seq,
                    const void  *payload,
@@ -64,12 +58,12 @@ bool ipc_ring_push(IpcRingCtrl *ctrl,
     const uint32_t head = ctrl->head;
     const uint32_t tail = __atomic_load_n(&ctrl->tail, __ATOMIC_ACQUIRE);
 
-    if ((head - tail) >= IPC_RING_SLOT_COUNT) {
+    if ((head - tail) >= slot_count) {
         __atomic_fetch_add(&ctrl->overflow, 1u, __ATOMIC_RELAXED);
         return false;
     }
 
-    IpcRingSlot *slot = &slots[mask_index(head)];
+    IpcRingSlot *slot = &slots[head % slot_count];
     slot->header.msg_id      = msg_id;
     slot->header.seq         = seq;
     slot->header.payload_len = payload_len;
@@ -85,6 +79,7 @@ bool ipc_ring_push(IpcRingCtrl *ctrl,
 
 bool ipc_ring_pop(IpcRingCtrl *ctrl,
                   IpcRingSlot *slots,
+                  uint32_t     slot_count,
                   IpcMsgHeader *header_out,
                   void         *payload_out,
                   size_t        max_payload)
@@ -98,7 +93,7 @@ bool ipc_ring_pop(IpcRingCtrl *ctrl,
         return false;
     }
 
-    IpcRingSlot *slot = &slots[mask_index(tail)];
+    IpcRingSlot *slot = &slots[tail % slot_count];
     *header_out = slot->header;
 
     const uint16_t len = slot->header.payload_len;
@@ -112,14 +107,15 @@ bool ipc_ring_pop(IpcRingCtrl *ctrl,
     return true;
 }
 
-uint32_t ipc_ring_pending(const IpcRingCtrl *ctrl)
+uint32_t ipc_ring_pending(const IpcRingCtrl *ctrl, uint32_t slot_count)
 {
+    (void)slot_count;  /* pending count is head - tail regardless of ring size */
     const uint32_t head = __atomic_load_n(&ctrl->head, __ATOMIC_ACQUIRE);
     const uint32_t tail = __atomic_load_n(&ctrl->tail, __ATOMIC_ACQUIRE);
     return head - tail;
 }
 
-uint32_t ipc_ring_free_slots(const IpcRingCtrl *ctrl)
+uint32_t ipc_ring_free_slots(const IpcRingCtrl *ctrl, uint32_t slot_count)
 {
-    return IPC_RING_SLOT_COUNT - ipc_ring_pending(ctrl);
+    return slot_count - ipc_ring_pending(ctrl, slot_count);
 }

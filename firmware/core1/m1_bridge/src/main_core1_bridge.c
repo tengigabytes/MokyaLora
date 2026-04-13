@@ -228,10 +228,11 @@ static void bridge_task(void *pv)
 
         bool did_work = false;
 
-        /* ── c0_to_c1 → CDC IN ────────────────────────────────────────── */
+        /* ── c0_to_c1 DATA ring → CDC IN (high priority) ───────────── */
         IpcMsgHeader hdr;
         if (ipc_ring_pop(&g_ipc_shared.c0_to_c1_ctrl,
                          g_ipc_shared.c0_to_c1_slots,
+                         IPC_RING_SLOT_COUNT,
                          &hdr,
                          scratch,
                          sizeof(scratch))) {
@@ -258,18 +259,12 @@ static void bridge_task(void *pv)
                 int stall_ticks = 0;
                 while (remaining > 0u) {
                     if (!tud_mounted()) {
-                        /* No host at all (cable unplugged or device not yet
-                         * enumerated). Drop the burst — there is nothing to
-                         * flush into. */
                         break;
                     }
                     uint32_t avail = tud_cdc_write_available();
                     if (avail == 0u) {
                         tud_cdc_write_flush();
                         if (++stall_ticks >= 10) {
-                            /* FIFO has been full for ~10 ms — assume the
-                             * host isn't reading (port closed, web console
-                             * paused, etc.). Drop the rest of this burst. */
                             break;
                         }
                         vTaskDelay(pdMS_TO_TICKS(1));
@@ -288,7 +283,32 @@ static void bridge_task(void *pv)
             did_work = true;
         }
 
-        /* ── CDC OUT → c1_to_c0 ───────────────────────────────────────── */
+        /* ── c0_log_to_c1 LOG ring → CDC IN (low priority) ──────────
+         * Drain log slots only when the data ring is empty, so protobuf
+         * frames are never delayed by log forwarding. Log output is
+         * best-effort — if CDC FIFO is full, drop immediately. */
+        else if (ipc_ring_pop(&g_ipc_shared.c0_log_to_c1_ctrl,
+                               g_ipc_shared.c0_log_to_c1_slots,
+                               IPC_LOG_RING_SLOT_COUNT,
+                               &hdr,
+                               scratch,
+                               sizeof(scratch))) {
+            if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u
+                && tud_mounted()) {
+                uint32_t avail = tud_cdc_write_available();
+                uint32_t to_write = (hdr.payload_len < avail)
+                                        ? hdr.payload_len : avail;
+                if (to_write > 0u) {
+                    uint32_t wrote = tud_cdc_write(scratch, to_write);
+                    g_rx_total += wrote;
+                    tud_cdc_write_flush();
+                    dbg_u32(BRIDGE_RX_COUNT_ADDR, g_rx_total);
+                }
+            }
+            did_work = true;
+        }
+
+        /* ── CDC OUT → c1_to_c0 CMD ring ──────────────────────────────── */
         if (tud_cdc_available()) {
             uint32_t n = tud_cdc_read(scratch, sizeof(scratch));
             if (n > 0u) {
@@ -297,6 +317,7 @@ static void bridge_task(void *pv)
                  * never fill a 32-slot ring. */
                 while (!ipc_ring_push(&g_ipc_shared.c1_to_c0_ctrl,
                                       g_ipc_shared.c1_to_c0_slots,
+                                      IPC_RING_SLOT_COUNT,
                                       IPC_MSG_SERIAL_BYTES,
                                       tx_seq,
                                       scratch,
@@ -398,6 +419,7 @@ int main(void)
         memcpy(packet + sizeof(hdr), "core1 bridge up", 16u);
         (void)ipc_ring_push(&g_ipc_shared.c1_to_c0_ctrl,
                             g_ipc_shared.c1_to_c0_slots,
+                            IPC_RING_SLOT_COUNT,
                             IPC_MSG_LOG_LINE,
                             0u,
                             packet,
