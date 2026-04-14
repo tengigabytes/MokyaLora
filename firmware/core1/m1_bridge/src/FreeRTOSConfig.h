@@ -9,11 +9,14 @@
  * Arduino-Pico + single-core FreeRTOS in a separate image).
  *
  * Heap budget:
- *   Core 1 has a 64 KB RAM carve-out at 0x20040000..0x20050000. After
- *   SDK runtime (ram_vector_table, newlib TLS, mutex array) and the FreeRTOS
- *   kernel's own .bss we expect ~45 KB free. 32 KB Heap4 fits the M3.1 task
- *   set (usb/bridge/disp @ 1024 words each + Timer + Idle) with headroom for
- *   LVGL glue and future growth.
+ *   Core 1 owns the 312 KB region at 0x2002C000..0x20078000 (see
+ *   docs/design-notes/firmware-architecture.md §2.2 "Core 1 SRAM
+ *   breakdown"). FreeRTOS Heap4 is fixed at 32 KB by the architecture
+ *   spec — it backs all task stacks (heap_4 dynamic allocation), TCBs,
+ *   timer queue, and any runtime xQueueCreate / xSemaphoreCreate. The
+ *   remaining 280 KB is split between the LVGL framebuffer (150 KB),
+ *   LVGL internal heap (48 KB), driver/MIE/app state, main stack, and
+ *   margin per the same table.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
