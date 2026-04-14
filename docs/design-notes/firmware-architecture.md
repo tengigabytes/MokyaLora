@@ -1266,10 +1266,12 @@ only needs to rewrite the "Rev A specific" column.
 
 When producing Rev B (or later), run this checklist before Core 0 / Core 1 firmware is built:
 
-1. Update `CLAUDE.md` Hardware section + GPIO table in `docs/design-notes/mcu-gpio-allocation.md`.
-2. Update `docs/requirements/system-requirements.md` §2, §5, §8 (BOM, spec summary, BOM highlights).
-3. Update `docs/requirements/hardware-requirements.md` power tree + keypad matrix if rails or
-   switch layout changed.
+1. Update `docs/design-notes/mcu-gpio-allocation.md` — the authoritative GPIO /
+   I2C pin map.
+2. Update `docs/requirements/system-requirements.md` §2 system architecture and
+   §5 spec summary (user-visible specs only).
+3. Update `docs/requirements/hardware-requirements.md` — per-subsystem component
+   tables, power tree, keypad matrix, mandatory design rules.
 4. If **audio is removed**: delete any PDM/I2S PIO program files; no firmware task to remove
    (none was ever created on Rev A). Update §12.2 to move audio row out of this table.
 5. If **battery capacity** changes: update BQ27441 `Design Capacity` constant in
@@ -1300,7 +1302,7 @@ versions disagree, and the status LED enters safe mode with a distinct pattern.
 
 | Document                                         | Scope                                                   |
 |--------------------------------------------------|---------------------------------------------------------|
-| `docs/requirements/system-requirements.md`       | System & hardware spec — BOM, operating modes, mandatory HW rules |
+| `docs/requirements/system-requirements.md`       | System-level spec — architecture, operating modes, mandatory HW rules |
 | `docs/requirements/hardware-requirements.md`     | Full BOM, power tree, GPIO map, keypad matrix            |
 | `docs/requirements/software-requirements.md`     | SRS — what the firmware must do (behaviour, performance) |
 | `docs/design-notes/firmware-architecture.md`     | **This doc** — how the firmware is actually built (HOW)  |

@@ -69,15 +69,17 @@ See `docs/design-notes/power-architecture.md` for the full power tree.
 
 ### 3.2 SPI1 Interface
 
-| Signal | GPIO | Notes |
-|--------|------|-------|
-| LORA_MISO | GPIO 24 | SPI1 |
-| LORA_nCS | GPIO 25 | SPI1 chip select |
-| LORA_SCK | GPIO 26 | SPI1 |
-| LORA_MOSI | GPIO 27 | SPI1 |
-| LORA_BUSY | GPIO 28 | Active-high; poll before each SPI transaction |
-| LORA_DIO1 | GPIO 29 | IRQ / DORMANT wakeup source |
-| LORA_nRST | GPIO 23 | Active-low reset |
+| Signal     | Notes                                             |
+|------------|---------------------------------------------------|
+| LORA_MISO  | SPI1                                              |
+| LORA_nCS   | SPI1 chip select                                  |
+| LORA_SCK   | SPI1                                              |
+| LORA_MOSI  | SPI1                                              |
+| LORA_BUSY  | Active-high; poll before each SPI transaction     |
+| LORA_DIO1  | IRQ / DORMANT wakeup source                       |
+| LORA_nRST  | Active-low reset                                  |
+
+GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
 **Design constraints:**
 - RF traces: 50 Ω controlled impedance on dedicated RF layer.
@@ -117,15 +119,17 @@ See `docs/design-notes/power-architecture.md` for the full power tree.
 
 ### 5.2 Interface
 
-| Signal | GPIO | Notes |
-|--------|------|-------|
-| TFT_nCS | GPIO 10 | Chip select |
-| TFT_DCX | GPIO 11 | Data / command select |
-| TFT_nWR | GPIO 12 | Write strobe |
-| TFT_D8–D15 | GPIO 13–20 | 8-bit parallel data bus (PIO) |
-| TFT_nRST | GPIO 21 | Reset |
-| TFT_TE | GPIO 22 | Tearing effect |
-| Backlight | LM27965 Bank A | I2C1 dimming |
+| Signal     | Notes                                   |
+|------------|-----------------------------------------|
+| TFT_nCS    | Chip select                             |
+| TFT_DCX    | Data / command select                   |
+| TFT_nWR    | Write strobe                            |
+| TFT_D8–D15 | 8-bit parallel data bus (PIO)           |
+| TFT_nRST   | Reset                                   |
+| TFT_TE     | Tearing effect                          |
+| Backlight  | LM27965 Bank A, I2C1 dimming            |
+
+GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
 **Design constraints:**
 - FPC connector: insert FPC with contacts facing **down**; verify orientation before locking ZIF.
@@ -144,13 +148,15 @@ See `docs/design-notes/power-architecture.md` for the full power tree.
 
 ### 6.2 Interface
 
-| Signal | GPIO | Notes |
-|--------|------|-------|
-| MIC_CLK | GPIO 4 | PDM clock output to mic |
-| MIC_DATA | GPIO 5 | PDM data input from mic |
-| AMP_BCLK | GPIO 30 | I2S bit clock to amp |
-| AMP_FSR | GPIO 31 | I2S frame sync to amp |
-| AMP_DAC | GPIO 32 | I2S data output to amp |
+| Signal   | Notes                              |
+|----------|------------------------------------|
+| MIC_CLK  | PDM clock output to mic            |
+| MIC_DATA | PDM data input from mic            |
+| AMP_BCLK | I2S bit clock to amp               |
+| AMP_FSR  | I2S frame sync to amp              |
+| AMP_DAC  | I2S data output to amp             |
+
+GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
 **Design constraints:**
 - IM69D130 is a bottom-port microphone: PCB must have an acoustic opening aligned to the mic inlet; enclosure must seal the acoustic cavity with a rubber gasket.
@@ -187,7 +193,7 @@ All sensors share the **sensor bus (GPIO 34 / 35, `i2c1` in Pico SDK)** with the
 | Anti-ghost Diodes | Diodes Inc. SDM03U40 | SOD-523 Schottky, Vf ~0.37 V @ 30 mA; enables NKRO at 1.8 V logic |
 | Keypad BL LEDs | LiteOn LTST-C191TBWET (×6–8) | White; driven by LM27965 Bank B (I2C1) |
 
-**Scan mechanism:** RP2350 PIO drives 6 column lines (GPIO 36–41), samples 6 row lines (GPIO 42–47). DMA writes key state directly to RAM — zero CPU overhead. Logic level 1.8 V, active-low.
+**Scan mechanism:** RP2350 PIO drives 6 column lines, samples 6 row lines. DMA writes key state directly to RAM — zero CPU overhead. Logic level 1.8 V, active-low. GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
 #### Physical Layout (6×6 Matrix)
 
@@ -275,19 +281,9 @@ All sensors share the **sensor bus (GPIO 34 / 35, `i2c1` in Pico SDK)** with the
 
 ## 10. I2C Bus Allocation
 
-| Device | Part | 7-bit Addr | Bus | GPIO | Address Setting |
-|--------|------|-----------|-----|------|-----------------|
-| Charger | BQ25622 | 0x6B | I2C1 | GPIO 6 / 7 | Fixed |
-| Fuel Gauge | BQ27441 | 0x55 | I2C1 | GPIO 6 / 7 | Fixed |
-| LED Driver | LM27965 | 0x36 | I2C1 | GPIO 6 / 7 | Fixed; nets BKLT_SCL / BKLT_SDA |
-| IMU | LSM6DSV16X | 0x6A | `i2c1` (sensor bus) | GPIO 34 / 35 | SA0 → GND |
-| Magnetometer | LIS2MDL | 0x1E | `i2c1` (sensor bus) | GPIO 34 / 35 | Fixed |
-| Barometer | LPS22HH | 0x5D | `i2c1` (sensor bus) | GPIO 34 / 35 | SA0 → 3.3 V |
-| GNSS | Teseo-LIV3FL | 0x3A | `i2c1` (sensor bus) | GPIO 34 / 35 | Fixed |
-
-Pull-up: 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL for both buses.
-
-> **SDK peripheral note:** Both buses (GPIO 6/7 and GPIO 34/35) resolve to the `i2c1` peripheral in the RP2350 Pico SDK. They cannot be active simultaneously; firmware must deinit and reinit `i2c1` with different GPIO pairs to switch between them.
+Bus assignments, 7-bit addresses, GPIO pin pairs, pull-up values, and the
+RP2350 SDK peripheral note all live in
+`docs/design-notes/mcu-gpio-allocation.md` to keep a single source of truth.
 
 ---
 

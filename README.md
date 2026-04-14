@@ -77,7 +77,7 @@ MokyaLora/
 ├── docs/
 │   ├── assets/                         # Documentation images (block diagrams, etc.)
 │   ├── requirements/                   # Requirements specifications
-│   │   ├── system-requirements.md      # System-level spec, BOM highlights, mandatory HW rules
+│   │   ├── system-requirements.md      # System-level spec, operating modes, mandatory HW rules
 │   │   ├── hardware-requirements.md    # Full BOM, power tree, GPIO map, keypad matrix, design rules
 │   │   └── software-requirements.md   # SRS (WHAT): driver needs, power states, UI/UX, IME requirements
 │   ├── design-notes/                   # Design decision records
