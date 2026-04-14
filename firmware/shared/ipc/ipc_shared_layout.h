@@ -20,10 +20,13 @@
  *   to 0x2007A000. SCRATCH_X / SCRATCH_Y (0x20080000..0x20082000) are
  *   untouched — they still host Arduino-Pico's Core 0 task stacks.
  *
- *   Note: M1.0b sentinel (0x20078000) and debug breadcrumbs
- *   (0x20078010..0x2007801C) sit in the 8 KB *below* this layout and are
- *   preserved untouched so the Core 1 bootspike proof-of-life path still
- *   works as a second SWD debug channel.
+ *   Debug breadcrumbs live in the LAST 64 B of this 24 KB region
+ *   (0x2007FFC0..0x2007FFFF) inside `_tail_pad`, which both cores'
+ *   linker scripts reserve as NOLOAD and ring traffic never touches.
+ *   The 8 KB below (0x20078000..0x2007A000) is part of Core 0's
+ *   Arduino-Pico heap region — do NOT place long-lived data there;
+ *   M1.0b / M1.1-A legacy sentinel at 0x20078000 was only reliable
+ *   during early boot before heap pressure built (see phase2-log P2-4).
  *
  * Transport model:
  *   Two SPSC rings carry message-level traffic (IpcMsgHeader + payload).

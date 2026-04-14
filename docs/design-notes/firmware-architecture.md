@@ -534,16 +534,17 @@ signal.
 
 ### 5.5 End-to-end flows
 
-**A. Sending a text from UI → LoRa air:**
+**A. Sending a text from UI → LoRa air** (C1 → C0, polled in M2, doorbell in M5):
 
 ```
   User types in IMEBar ──► MIE emits UTF-8
     ──► MessagesApp.send()
         ──► IpcClient.sendText(to, chan, text)
              ipc_ring_push(CMD, IPC_CMD_SEND_TEXT, IpcPayloadText)
-             SIO FIFO push (doorbell) ────────────────────────┐
+             [M5: doorbell_set_other_core(IPC_DOORBELL_NUM)]
                                                               ▼
-  Core 0 SIO_IRQ_BELL ──► IPCPhoneAPI reads CMD ring
+  M2 now:   Core 0 SerialConsole::runOnce() polls every 5 ms (OSThread tick)
+  M5 plan:  Core 0 SIO_IRQ_BELL ──► IPCPhoneAPI wakes instantly
     ──► PhoneAPI.handleToRadio(ToRadio{...SendText})
         ──► MeshService.sendToMesh()
             ──► Router.send()
@@ -551,19 +552,20 @@ signal.
   Core 0: on tx complete, IPC_MSG_TX_ACK ──► DATA ring ──► UI toast
 ```
 
-**B. Incoming text from LoRa → UI:**
+**B. Incoming text from LoRa → UI** (C0 → C1, doorbell-driven in M2):
 
 ```
   SX1262 RX IRQ ──► SX126xInterface.handleDio1()
     ──► Router.receive() ──► TextMessageModule.handleReceived()
         ──► IPCPhoneAPI.sendOnToRadio(ToRadio{FromRadio{RxText}})
              ipc_ring_push(DATA, IPC_MSG_RX_TEXT)
-             SIO FIFO push ──────────────────────────────────┐
+             doorbell_set_other_core(IPC_DOORBELL_NUM) ──────┐
                                                              ▼
-  Core 1 SIO_IRQ_BELL ──► IPCRxTask notified (task-level)
-    ──► ipc_ring_pop(DATA) ──► MessageModel.append()
-        ──► xQueueSend(UIQueue)
-            ──► UITask drains ──► LVGL redraw ──► LCD DMA
+  Core 1 SIO_IRQ_BELL ──► ipc_doorbell_isr
+    ──► xTaskNotifyFromISR(bridge_task / IPCRxTask in M4+)
+        ──► ipc_ring_pop(DATA) ──► MessageModel.append()
+            ──► xQueueSend(UIQueue)
+                ──► UITask drains ──► LVGL redraw ──► LCD DMA
 ```
 
 **C. GPS NMEA pipe (no ring involved):**
@@ -601,16 +603,34 @@ signal.
 
 ### 5.6 Doorbell mechanism
 
-RP2350 SIO inter-core FIFO is used as a notification doorbell, **not** as data transport.
-After pushing a ring slot, the sender writes a single 32-bit word to the FIFO; the receiver
-takes an `SIO_IRQ_BELL` interrupt that wakes its ring-drain task (Core 1) or schedules a
-runLoop check (Core 0). Payload data always travels through shared SRAM.
+RP2350 SIO **doorbell registers** (`SIO_DOORBELL_OUT_SET` / `SIO_DOORBELL_IN_*`) are
+used as per-core notification bits, **not** the inter-core FIFO — the FIFO is reserved
+for the bootrom `multicore_launch_core1_raw` handshake and re-using it would conflict.
+Payload data always travels through shared SRAM; doorbells carry only "ring has data"
+and "park request" signals.
+
+Doorbell bit allocation (`IPC_DOORBELL_NUM = 0`, `IPC_FLASH_DOORBELL = 1`):
+
+| Bit | Direction | Purpose                                           | ISR owner        |
+|-----|-----------|---------------------------------------------------|------------------|
+| 0   | C0 → C1   | Ring slot pushed — wake `bridge_task`             | Core 1           |
+| 0   | C1 → C0   | Ring slot pushed — *currently unused; polled*     | (M5 — see below) |
+| 1   | C0 → C1   | Flash-park request (P2-11 safety)                 | Core 1           |
+
+**Current M2 asymmetry:** Only Core 1 has a doorbell ISR. Core 1 → Core 0 ring-push
+notification is not wired — Core 0 still discovers incoming CMD traffic via
+`SerialConsole::runOnce()` polling on its 5 ms OSThread tick. Upgrading Core 0 to a
+doorbell ISR is deferred to M5, when `IPCPhoneAPI` replaces `SerialConsole` as the
+Core 0 IPC receive path.
 
 Notes:
-- `SIO_IRQ_BELL` is shared across all doorbells — the ISR must clear only the bit it owns
-  and leave others set (see `project_sio_irq_bell_shared` memory).
-- During flash write (P2-11 fix), Core 1 parks on a RAM-resident busy loop and the
-  doorbell bit for "park release" is the sole IRQ Core 1 watches.
+- `SIO_IRQ_BELL` is shared across all doorbell bits — the ISR must clear only the bits
+  it owns and leave others set (see `project_sio_irq_bell_shared` memory).
+- During flash write (P2-11 fix), Core 1 parks on a RAM-resident busy loop, disables
+  all interrupts, and WFE-spins until `flash_lock` clears; the park is signalled via
+  `IPC_FLASH_DOORBELL` bit 1 before Core 0 disables interrupts.
+- The Arduino-Pico FreeRTOS port's own `prvDoorbellInterruptHandler` is disabled by
+  `MOKYA_DOORBELL_PATCH` — see §6.8.
 
 ### 5.7 MIE user-dictionary persistence (planned, M5+)
 
@@ -763,6 +783,24 @@ Only Core 0 writes flash. Before every `flash_range_erase` / `flash_range_progra
 
 See `flash_safety_wrap.c`. Core 1's park loop is in `.data` (copied to RAM at boot), so it
 runs without XIP.
+
+### 6.8 FreeRTOS doorbell-handler patch (`MOKYA_DOORBELL_PATCH`)
+
+The Arduino-Pico FreeRTOS-Kernel port (`RP2350_ARM_NTZ`) registers
+`prvDoorbellInterruptHandler` on `SIO_IRQ_BELL` at scheduler start and uses it to drive
+`pico_sync`'s cross-core spin-lock blocking. That handler takes
+`spin_lock_blocking(pxCrossCoreSpinLock)` on entry — when Core 1 fires our IPC doorbell,
+Core 0's copy of the same handler would deadlock (or endlessly re-enter) because the lock
+is held in Core 1's own critical section.
+
+`patch_arduinopico.py` wraps the entire doorbell-registration block in `#if 0` (marker:
+`MOKYA_DOORBELL_PATCH`). Our ISR (`ipc_doorbell_isr` on Core 1, planned Core 0 ISR at M5)
+takes over `SIO_IRQ_BELL` exclusively.
+
+**Consequence (design constraint):** MokyaLora **must not** use any `pico_sync` cross-core
+primitive (`spin_lock_blocking`, `critical_section`, `mutex_enter_*` in blocking mode) on
+objects shared between cores, because the FreeRTOS back-off path is gone. Safe because our
+IPC uses SPSC rings + doorbell, never lock-based sharing.
 
 ---
 
