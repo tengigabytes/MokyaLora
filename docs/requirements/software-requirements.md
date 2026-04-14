@@ -131,7 +131,6 @@ extern NodeDB g_nodeDB;   /* Core 1 must not reference any Core 0 symbol */
 | Power bus (`i2c1`, GPIO 6/7)   | Core 1 | BQ25622, BQ27441, LM27965 (same peripheral, different GPIOs) |
 | SPI1 (GPIO 24–27)         | Core 0 | SX1262 LoRa transceiver                                    |
 | PIO — keypad scan         | Core 1 | 6×6 matrix, GPIO 36–47                                     |
-| PIO — audio               | Core 1 | IM69D130 PDM (GPIO 4/5), NAU8315 I2S (GPIO 30–32)         |
 | PWM — motor               | Core 1 | MTR_PWM GPIO 9                                             |
 
 Core 0 exclusively owns SPI1 and LoRa-related GPIOs. All I2C buses are owned by Core 1.
@@ -139,25 +138,36 @@ No register or memory of any Core 0-owned peripheral may be accessed by Core 1, 
 
 #### IPC Mechanism
 
-- **Transport:** two SPSC (Single-Producer Single-Consumer) lock-free ring buffers in a dedicated
-  ~32 KB shared SRAM region; one per direction. Each slot holds one `ipc_frame_t` (260 bytes).
+- **Transport:** three SPSC (Single-Producer Single-Consumer) lock-free ring buffers in the
+  dedicated 24 KB shared SRAM region at `0x2007A000`:
+  - `c0_to_c1`     — DATA ring, 32 slots × `IpcRingSlot` (264 B) — protobuf frames (blocking on full)
+  - `c0_log_to_c1` — LOG  ring, 16 slots × `IpcRingSlot` (264 B) — log lines (best-effort)
+  - `c1_to_c0`     — CMD  ring, 32 slots × `IpcRingSlot` (264 B) — host commands
+  Each `IpcRingSlot` holds an `IpcMsgHeader` (4 B) + up to 256 B payload + 4 B slot metadata.
+- **Log ring rationale:** log traffic goes to its own ring so `LOG_DEBUG/LOG_INFO` output
+  cannot starve protobuf data during `writeStream()` bursts. The log ring is **best-effort —
+  if full, the producer drops the log line rather than blocking the data path**.
 - **Doorbell:** RP2350 hardware FIFO (8 × 32-bit words, one per core) used as a wake signal only;
   the HW FIFO word carries only a frame count, not data. Ring buffer carries the actual payload.
 - **Memory ordering:** `__dmb()` (Data Memory Barrier) on ring buffer head/tail writes before
   writing the doorbell.
 - **Serialisation:** all application data (protobuf bytes, NMEA sentences, config fields) is
-  serialised into `ipc_frame_t.payload[]` by the sender and deserialised by the receiver.
+  serialised into `IpcRingSlot.payload[]` by the sender and deserialised by the receiver.
   No Meshtastic object references or pointers are present anywhere in shared SRAM.
 - **GPS double-buffer:** a `uint8_t gps_buf[2][128]` array in shared SRAM holds the latest NMEA
   sentence as plain bytes. Defined in `ipc_protocol.h` as a POD array. Core 1 writes, Core 0
   reads. Core 0 never calls any GPS I2C driver — it only reads this buffer.
 
 ```
-Core 0 → Core 1 : c0_to_c1  SPSC ring buffer  (ipc_frame_t slots, events / notifications)
-Core 1 → Core 0 : c1_to_c0  SPSC ring buffer  (ipc_frame_t slots, commands)
+Core 0 → Core 1 : c0_to_c1      SPSC ring (32 slots, DATA — protobuf, blocking on full)
+Core 0 → Core 1 : c0_log_to_c1  SPSC ring (16 slots, LOG  — best-effort, drops on full)
+Core 1 → Core 0 : c1_to_c0      SPSC ring (32 slots, CMD  — host commands)
 Both directions : HW FIFO doorbell (32-bit frame-count word, non-blocking)
 GPS data        : gps_buf uint8_t[2][128] in shared SRAM (Core 1 writes, Core 0 reads)
 ```
+
+See `docs/design-notes/firmware-architecture.md` §4 for the full 24 KB shared-SRAM byte map
+and the non-overlap guarantees between the two ELF images.
 
 **Boot handshake:** Core 0 initialises the ring buffers and `gps_buf`, then signals Core 1 via
 HW FIFO (`IPC_BOOT_READY`) before Core 1 begins UI init. Core 1 must not touch IPC structures
@@ -272,13 +282,6 @@ All HAL drivers listed below run on **Core 1** and exclusively own their respect
 | Baro   | 0x5D    | Barometric altitude                                |
 
 - **Fusion:** Kalman filter or Madgwick algorithm for 9-DOF data fusion.
-
-### `AudioPipeline` — IM69D130 (PDM) + NAU8315 (I2S) [Core 1]
-
-- **PDM driver:** PIO-based PDM sampling → 16-bit PCM conversion.
-- **DSP:** software high-pass filter to remove wind-noise low-frequency components.
-- **Codec2:** encode clean speech for LoRa voice transmission.
-- **Speaker protection:** limit NAU8315 output gain to −3 dB to stay within CMS-131304 (0.7 W) rating.
 
 ### `GPSDriver_I2C` — ST Teseo-LIV3FL [Core 1 · I2C0 · 0x3A]
 
