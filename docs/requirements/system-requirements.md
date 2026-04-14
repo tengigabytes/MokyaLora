@@ -72,17 +72,19 @@ The device supports two mutually exclusive modes, selected by the user on USB in
 
 | Parameter        | Value / Part                                                |
 |------------------|-------------------------------------------------------------|
-| MCU              | Raspberry Pi RP2350B (QFN80)                               |
-| Flash            | Winbond W25Q128JW — 16 MB, 1.8 V, QSPI                    |
-| PSRAM            | AP Memory APS6404L-3SQN — 8 MB, 1.8 V, QSPI               |
-| Display          | Newhaven NHD-2.4-240320AF — 2.4″ IPS, 240×320, 8-bit 8080 |
-| Input            | 36-key 6×6 matrix (SDM03U40 anti-ghost diodes, PIO+DMA)    |
-| Audio (Rev A)    | IM69D130 PDM mic + NAU8315 3.2 W Class-D amp + CMS-131304 — **populated on Rev A only; removed in next revision.** Firmware has no audio task. |
-| LoRa             | Semtech SX1262 (SPI1) + ECS-TXO-20CSMV4 TCXO              |
-| GNSS             | ST Teseo-LIV3FL (sensor bus, GPIO 34/35, `i2c1`, 0x3A)      |
-| Sensors          | LSM6DSV16X IMU, LIS2MDL mag, LPS22HH baro (sensor bus, GPIO 34/35, `i2c1`) |
+| MCU              | Raspberry Pi RP2350B (dual-core Cortex-M33, 1.8 V logic)   |
+| Flash            | 16 MB QSPI (1.8 V)                                         |
+| PSRAM            | 8 MB QSPI (1.8 V)                                          |
+| Display          | 2.4″ IPS, 240×320, 8-bit parallel 8080                     |
+| Input            | 36-key 6×6 matrix, Schottky anti-ghost, PIO+DMA scan       |
+| Audio (Rev A)    | PDM mic + Class-D amp + SMT speaker — **Rev A only; removed in next revision.** Firmware has no audio task. |
+| LoRa             | Semtech SX1262 + TCXO (Sub-GHz, mesh communication)        |
+| GNSS             | ST Teseo-LIV3FL (multi-constellation)                      |
+| Sensors          | 6-axis IMU + magnetometer + barometer                      |
 | Battery          | Nokia BL-4C Li-ion ~890 mAh                                |
-| Charging         | USB-C up to 2 A fast charge (configurable via I2C); OTG 5 V reverse power supported |
+| Charging         | USB-C up to 2 A fast charge (configurable); OTG 5 V reverse power supported |
+
+Full part numbers, packages, and design rules live in `hardware-requirements.md`.
 
 ## 6. Mechanical Requirements
 
@@ -117,33 +119,10 @@ Implementation details are specified in `docs/requirements/hardware-requirements
    - Layout practices to avoid crosstalk between digital and RF signal pairs
    - U.FL test connector on the RF path to allow bench verification of RF matching
 
-## 8. Key BOM Highlights
+## 8. Related Documents
 
-| Function            | Part Number          | Package       |
-|---------------------|----------------------|---------------|
-| MCU                 | RP2350B              | QFN-80        |
-| Flash               | W25Q128JW            | WSON-8        |
-| PSRAM               | APS6404L-3SQN        | BGA / QFN     |
-| Charger             | TI BQ25622RYKR       | DSBGA-18      |
-| Fuel Gauge          | TI BQ27441DRZR       | SON-12        |
-| 1.8 V Buck          | TI TPS62840DLCR      | VSON-8        |
-| 3.3 V LDO           | TI TPS7A2033         | WSON-6        |
-| LED Driver          | TI LM27965           | WQFN-24       |
-| LoRa Transceiver    | Semtech SX1262       | QFN-24        |
-| TCXO (LoRa)         | ECS-TXO-20CSMV4-320  | SMD           |
-| GPS                 | ST Teseo-LIV3FL      | LGA-14        |
-| IMU                 | ST LSM6DSV16X        | LGA-14        |
-| Magnetometer        | ST LIS2MDL           | LGA-12        |
-| Barometer           | ST LPS22HH           | LGA-10        |
-| Microphone (Rev A)  | Infineon IM69D130    | LGA-5         |
-| Audio Amp (Rev A)   | Nuvoton NAU8315YG    | WSON-6        |
-| Speaker (Rev A)     | CUI CMS-131304-SMT-TR| SMT           |
-| LoRa Ant            | Kyocera AVX M620720  | Chip          |
-| GPS Ant             | Kyocera AVX M830120  | Chip          |
-| RF Switch           | Murata PE4259        | SPDT          |
-| USB-C               | GCT USB4105-GF-A     | 16-pin        |
-| Battery Conn        | AVX 009155003301006  | 3-pin pogo    |
-| Keypad Diodes       | SDM03U40             | SOD-523       |
-| Keypad Switches     | SWT0105              | Metal dome    |
-| Motor               | HD-EMB1104-SM-2      | SMD ERM       |
-| Motor MOSFET        | Toshiba SSM3K56ACT   | CST3          |
+- `hardware-requirements.md` — full BOM (part numbers, packages), per-subsystem
+  component tables, and mandatory design rules.
+- `docs/design-notes/power-architecture.md` — power tree and rail definitions.
+- `docs/design-notes/rf-matching.md` — LoRa / GNSS RF frontend details.
+- `docs/design-notes/mcu-gpio-allocation.md` — GPIO pin map and I2C bus allocation.

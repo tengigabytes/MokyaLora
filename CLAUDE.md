@@ -15,7 +15,7 @@ The project is currently in the **hardware design phase**. Firmware does not yet
 MokyaLora/
 ├── docs/
 │   ├── requirements/           # System requirements documents
-│   │   ├── system-requirements.md   — system specs, BOM highlights, mandatory hw rules
+│   │   ├── system-requirements.md   — system specs, operating modes, mandatory hw rules
 │   │   ├── hardware-requirements.md — full BOM, power tree, GPIO map, keypad matrix
 │   │   └── software-requirements.md — SRS (WHAT): driver needs, power states, UI/UX, IME requirements
 │   ├── design-notes/           # Design decision records
@@ -111,7 +111,7 @@ distribution rules in firmware-architecture.md §1 and §11.
 
 ## Working with This Repo
 
-- `docs/requirements/system-requirements.md` — system-level overview, BOM highlights, mandatory HW rules.
+- `docs/requirements/system-requirements.md` — system-level overview, operating modes, mandatory HW rules.
 - `docs/requirements/hardware-requirements.md` — full BOM, power tree, keypad matrix, all mandatory design rules.
 - `docs/requirements/software-requirements.md` — SRS (WHAT): driver class needs, power states, UI/UX, IME requirements.
 - `docs/design-notes/firmware-architecture.md` — implementation (HOW): memory map, IPC byte layout, build system, boot sequence.
