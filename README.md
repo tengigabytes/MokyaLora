@@ -79,7 +79,7 @@ MokyaLora/
 │   ├── requirements/                   # Requirements specifications
 │   │   ├── system-requirements.md      # System-level spec, BOM highlights, mandatory HW rules
 │   │   ├── hardware-requirements.md    # Full BOM, power tree, GPIO map, keypad matrix, design rules
-│   │   └── software-requirements.md   # SW architecture, memory map, drivers, power states, UI/UX, IME
+│   │   └── software-requirements.md   # SRS (WHAT): driver needs, power states, UI/UX, IME requirements
 │   ├── design-notes/                   # Design decision records
 │   │   ├── power-architecture.md       # Power tree, rail definitions, charger/gauge configuration
 │   │   ├── rf-matching.md              # LoRa / GNSS RF frontend, TCXO coupling, antenna rules
