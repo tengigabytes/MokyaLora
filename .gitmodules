@@ -5,3 +5,7 @@
 [submodule "firmware/core1/freertos-kernel"]
 	path = firmware/core1/freertos-kernel
 	url = https://github.com/FreeRTOS/FreeRTOS-Kernel
+[submodule "firmware/core1/lvgl"]
+	path = firmware/core1/lvgl
+	url = https://github.com/lvgl/lvgl.git
+	branch = release/v9.2

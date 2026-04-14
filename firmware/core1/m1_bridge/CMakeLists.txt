@@ -57,6 +57,24 @@ add_subdirectory(
     "${FREERTOS_KERNEL_PATH}/portable/ThirdParty/Community-Supported-Ports/GCC/RP2350_ARM_NTZ"
     FreeRTOS-Kernel-RP2350)
 
+# ── LVGL v9.2.2 ──────────────────────────────────────────────────────────────
+# Standalone LVGL build. lv_conf.h lives next to this CMakeLists (in src/) and
+# the LVGL CMake option LV_CONF_PATH tells LVGL where to find it. Examples,
+# demos, and ThorVG are disabled — Core 1 builds its own UI on top of the
+# plain lvgl target. LVGL's OSAL wrappers (lv_freertos.c) need the
+# FreeRTOS-Kernel include directories, which we propagate below.
+set(LV_CONF_PATH
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/lv_conf.h"
+    CACHE FILEPATH "Path to project-specific lv_conf.h" FORCE)
+set(LV_CONF_BUILD_DISABLE_EXAMPLES       ON CACHE BOOL "" FORCE)
+set(LV_CONF_BUILD_DISABLE_DEMOS          ON CACHE BOOL "" FORCE)
+set(LV_CONF_BUILD_DISABLE_THORVG_INTERNAL ON CACHE BOOL "" FORCE)
+
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../lvgl" lvgl_build)
+
+# LVGL's FreeRTOS OSAL needs FreeRTOS headers at compile time.
+target_link_libraries(lvgl PUBLIC FreeRTOS-Kernel)
+
 # ── Shared IPC TU ────────────────────────────────────────────────────────────
 set(SHARED_IPC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/ipc)
 
@@ -112,6 +130,7 @@ target_link_libraries(core1_bridge
     tinyusb_device
     FreeRTOS-Kernel
     FreeRTOS-Kernel-Heap4
+    lvgl
 )
 
 # Override the SDK's default memmap with our own — this is what redirects
