@@ -25,6 +25,8 @@ build/
 *.bin
 *.hex
 *.map
+*.pio.h
+*.stackdump
 
 # Python byte-compiled
 __pycache__/
