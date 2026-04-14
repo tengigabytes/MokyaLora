@@ -28,8 +28,8 @@ The device integrates a dedicated 36-key physical matrix keyboard, phone-grade C
 | USB-C | GCT USB4105-GF-A | Power input (5 V charging); USB CDC serial in data-terminal mode; OTG 5 V reverse output. |
 | Power & Charger | BQ25620, BQ27441, TPS62840, TPS7A2033, LM27965 | Battery charging and path management, fuel gauging, 1.8 V / 3.3 V rail generation, backlight dimming. |
 | Battery | Nokia BL-4C (~890 mAh) | Primary Li-ion energy source. |
-| Microphone | Infineon IM69D130 | PDM digital microphone; audio capture for voice messages. |
-| Speaker | NAU8315 + CMS-131304 | Class-D audio amplifier and SMT speaker; audio playback and alerts. |
+| Microphone | Infineon IM69D130 | **Rev A only — removed from next HW revision.** PDM digital microphone; was reserved for voice-message capture. |
+| Speaker | NAU8315 + CMS-131304 | **Rev A only — removed from next HW revision.** Class-D amplifier and SMT speaker; was reserved for audio playback and alerts. |
 | Keyboard | 36-key 6×6 matrix (SWT0105 + SDM03U40) | Primary text entry and navigation input; NKRO via PIO + DMA scanner. |
 | Vibrate Motor | HD-EMB1104-SM-2 (ERM) | Haptic feedback for incoming messages and alerts. |
 
@@ -77,9 +77,9 @@ The device supports two mutually exclusive modes, selected by the user on USB in
 | PSRAM            | AP Memory APS6404L-3SQN — 8 MB, 1.8 V, QSPI               |
 | Display          | Newhaven NHD-2.4-240320AF — 2.4″ IPS, 240×320, 8-bit 8080 |
 | Input            | 36-key 6×6 matrix (SDM03U40 anti-ghost diodes, PIO+DMA)    |
-| Audio            | IM69D130 PDM mic + NAU8315 3.2 W Class-D amp + CMS-131304  |
+| Audio (Rev A)    | IM69D130 PDM mic + NAU8315 3.2 W Class-D amp + CMS-131304 — **populated on Rev A only; removed in next revision.** Firmware has no audio task. |
 | LoRa             | Semtech SX1262 (SPI1) + ECS-TXO-20CSMV4 TCXO              |
-| GNSS             | ST Teseo-LIV3FL (sensor bus, 0x3A)                          |
+| GNSS             | ST Teseo-LIV3FL (sensor bus, GPIO 34/35, `i2c1`, 0x3A)      |
 | Sensors          | LSM6DSV16X IMU, LIS2MDL mag, LPS22HH baro (sensor bus, GPIO 34/35, `i2c1`) |
 | Battery          | Nokia BL-4C Li-ion ~890 mAh                                |
 | Charging         | USB-C up to 2 A fast charge (configurable via I2C); OTG 5 V reverse power supported |
@@ -135,9 +135,9 @@ Implementation details are specified in `docs/requirements/hardware-requirements
 | IMU                 | ST LSM6DSV16X        | LGA-14        |
 | Magnetometer        | ST LIS2MDL           | LGA-12        |
 | Barometer           | ST LPS22HH           | LGA-10        |
-| Microphone          | Infineon IM69D130    | LGA-5         |
-| Audio Amp           | Nuvoton NAU8315YG    | WSON-6        |
-| Speaker             | CUI CMS-131304-SMT-TR| SMT           |
+| Microphone (Rev A)  | Infineon IM69D130    | LGA-5         |
+| Audio Amp (Rev A)   | Nuvoton NAU8315YG    | WSON-6        |
+| Speaker (Rev A)     | CUI CMS-131304-SMT-TR| SMT           |
 | LoRa Ant            | Kyocera AVX M620720  | Chip          |
 | GPS Ant             | Kyocera AVX M830120  | Chip          |
 | RF Switch           | Murata PE4259        | SPDT          |

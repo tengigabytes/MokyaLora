@@ -153,9 +153,10 @@ typedef struct {
 /**
  * IpcGpsBuf — double-buffer for NMEA sentences written by Core 1, read by Core 0.
  *
- * Core 1 owns the Teseo-LIV3FL over I2C0. It writes complete NMEA sentences into
- * buf[write_idx ^ 0] while Core 0 reads from buf[read_idx]. Ownership swaps are
- * signalled via IPC_CMD_REQUEST_STATUS or a dedicated FIFO word (upper bit set).
+ * Core 1 owns the Teseo-LIV3FL on the sensor bus (i2c1, GPIO 34/35). It writes
+ * complete NMEA sentences into buf[write_idx ^ 1] while Core 0 reads buf[write_idx ^ 1]
+ * after the flip. No doorbell is sent — the atomic flip of write_idx is itself the
+ * signal; Core 0 polls the index on its 1 Hz cadence.
  *
  * Each slot holds one NMEA sentence (max 82 bytes per NMEA spec, padded to 128).
  */

@@ -18,9 +18,10 @@
 - **Core 0:** Arduino-Pico (Meshtastic base) — cooperative `OSThread` scheduler (`concurrency::Scheduler`)
 - **Core 1:** FreeRTOS + LVGL — preemptive task scheduler
 
-**GPS bridge:** Core 1 reads Teseo-LIV3FL (I2C0, 0x3A) and forwards NMEA position data to Core 0
-via the IPC ring buffer. Meshtastic's `PositionModule` on Core 0 consumes GPS data from IPC,
-not directly from I2C. Core 0 never accesses any I2C bus.
+**GPS bridge:** Core 1 reads Teseo-LIV3FL on the sensor bus (`i2c1`, GPIO 34/35, 0x3A)
+and writes NMEA sentences into `IpcGpsBuf` (a double-buffer in shared SRAM). Meshtastic's
+`PositionModule` on Core 0 polls the buffer and never calls I2C directly. Core 0 never
+accesses any I2C bus.
 
 ### 1.2 Flash Memory Map (16 MB — W25Q128JW)
 
@@ -94,27 +95,42 @@ on any Meshtastic header or object. This prevents GPL-3.0 from propagating to Co
   the boundary.
 - Message/command IDs are plain `#define` constants or `typedef enum` with an explicit `uint8_t` base.
 
-**Canonical POD frame — the only IPC data structure:**
+**Canonical POD types — defined in `firmware/shared/ipc/ipc_protocol.h`:**
 
 ```c
-/* firmware/shared/ipc/ipc_protocol.h */
 #include <stdint.h>
-#define IPC_MAX_PAYLOAD 256
+#define IPC_MSG_PAYLOAD_MAX       256u
+#define IPC_RING_SLOT_COUNT        32u   /* DATA + CMD rings */
+#define IPC_LOG_RING_SLOT_COUNT    16u   /* LOG ring (best-effort) */
 
+/* Every IPC frame starts with this 4-byte header */
 typedef struct {
-    uint8_t  msg_id;              /* IPC_MSG_* or IPC_CMD_* constant */
-    uint8_t  reserved;
-    uint16_t length;              /* valid bytes in payload[]; <= IPC_MAX_PAYLOAD */
-    uint8_t  payload[IPC_MAX_PAYLOAD];
-} ipc_frame_t;                    /* sizeof == 260 bytes, no padding surprises */
+    uint8_t  msg_id;         /* IpcMsgId — IPC_MSG_* or IPC_CMD_*   */
+    uint8_t  seq;            /* rolling sequence number             */
+    uint16_t payload_len;    /* byte length of the payload          */
+} IpcMsgHeader;              /* 4 bytes                             */
+
+/* Shared-SRAM ring slot — 4 B header + 256 B payload + 4 B metadata */
+typedef struct {
+    IpcMsgHeader hdr;
+    uint8_t      payload[IPC_MSG_PAYLOAD_MAX];
+    uint32_t     _slot_meta;    /* owned by the SPSC primitives */
+} IpcRingSlot;                  /* sizeof == 264 bytes          */
 ```
+
+Per-message payload layouts (`IpcPayloadText`, `IpcPayloadNodeUpdate`,
+`IpcPayloadDeviceStatus`, `IpcPayloadTxAck`, `IpcPayloadPowerState`,
+`IpcPayloadLogLine`, `IpcPayloadGetConfig`, `IpcPayloadConfigValue`,
+`IpcPayloadConfigResult`, `IpcPayloadSetTxPower`, `IpcPayloadSetNodeAlias`) are all
+defined in `ipc_protocol.h`. All are POD with fixed-size fields; variable-length
+strings use a trailing flexible array accompanied by an explicit length field.
 
 **Prohibited patterns:**
 
 ```c
 /* PROHIBITED — exposes Meshtastic internal type across the boundary */
 #include "mesh/MeshPacket.h"
-typedef struct { MeshPacket *pkt; } ipc_frame_t;
+typedef struct { MeshPacket *pkt; } IpcRingSlot;
 
 /* PROHIBITED — C++ linkage; Core 1 build must not link to Core 0 objects */
 class IPCFrame { ... };
@@ -175,47 +191,84 @@ before receiving this signal.
 
 #### IPC Message Types
 
-All payloads are serialised byte sequences. No Meshtastic types or pointers appear in any payload.
+The definitive catalogue lives in `firmware/shared/ipc/ipc_protocol.h` (`IpcMsgId` enum).
+All payloads are POD byte sequences — no Meshtastic types, no pointers, no C++ objects.
+IDs in the `0x0X` range are Core 0 → Core 1 notifications; `0x8X` are Core 1 → Core 0
+commands; `0xFX` are bidirectional / protocol.
 
-| Direction | Message Type              | Payload contents (serialised into `payload[]`)              |
-|-----------|---------------------------|-------------------------------------------------------------|
-| C0 → C1   | `IPC_MSG_PACKET_RECEIVED` | Meshtastic `Data` protobuf bytes (text, position, telemetry) |
-| C0 → C1   | `IPC_MSG_PACKET_SENT`     | `uint32_t` packet ID (4 bytes)                              |
-| C0 → C1   | `IPC_MSG_NODE_UPDATED`    | Serialised node record: node ID, SNR, battery %, lat/lon    |
-| C0 → C1   | `IPC_MSG_NODE_LIST`       | One or more serialised node records (response to `IPC_CMD_GET_NODE_LIST`) |
-| C0 → C1   | `IPC_MSG_GPS_UPDATE`      | Doorbell only — NMEA sentence already written to `gps_buf`  |
-| C0 → C1   | `IPC_MSG_RADIO_STATUS`    | `int8_t` RSSI, `int8_t` SNR, `uint8_t` channel utilisation % |
-| C0 → C1   | `IPC_MSG_LOG_LINE`        | UTF-8 log string (null-terminated, ≤ 255 chars)             |
-| C1 → C0   | `IPC_CMD_SEND_TEXT`       | ToRadio protobuf bytes                                      |
-| C1 → C0   | `IPC_CMD_SEND_POSITION`   | `double` lat, `double` lon, `float` alt (serialised)        |
-| C1 → C0   | `IPC_CMD_SET_CONFIG`      | Meshtastic `Config` protobuf bytes                          |
-| C1 → C0   | `IPC_CMD_GET_NODE_LIST`   | Empty payload — requests NodeDB dump as `IPC_MSG_NODE_LIST` frames |
-| C1 → C0   | `IPC_CMD_POWER_STATE`     | `uint8_t` state: 0 = ACTIVE, 1 = STANDBY, 2 = DORMANT      |
-| C1 → C0   | `IPC_CMD_REBOOT`          | Empty payload                                               |
-| C1 → C0   | `IPC_CMD_FACTORY_RESET`   | Empty payload                                               |
+| ID | Direction | Message Type | Payload struct / contents |
+|----|-----------|--------------|---------------------------|
+| `0x01` | C0 → C1 | `IPC_MSG_RX_TEXT`        | `IpcPayloadText` — from/to node ID, channel, text[] |
+| `0x02` | C0 → C1 | `IPC_MSG_NODE_UPDATE`    | `IpcPayloadNodeUpdate` — node ID, RSSI, SNR×4, hops, lat/lon e7, batt mV, alias[] |
+| `0x03` | C0 → C1 | `IPC_MSG_DEVICE_STATUS`  | `IpcPayloadDeviceStatus` — batt mV/%, charging, LoRa RSSI/SNR, GPS sats + fix, uptime |
+| `0x04` | C0 → C1 | `IPC_MSG_TX_ACK`         | `IpcPayloadTxAck` — original seq, result (sending/delivered/failed) |
+| `0x05` | C0 → C1 | `IPC_MSG_CHANNEL_UPDATE` | Channel configuration changed |
+| `0x06` | C0 → C1 | `IPC_MSG_SERIAL_BYTES`   | Raw CLI byte stream (M1 byte bridge, ≤ 256 B per slot) |
+| `0x07` | C0 → C1 | `IPC_MSG_CONFIG_VALUE`   | `IpcPayloadConfigValue` — key + typed value (reply or push) |
+| `0x08` | C0 → C1 | `IPC_MSG_CONFIG_RESULT`  | `IpcPayloadConfigResult` — key + OK / UNKNOWN_KEY / INVALID / BUSY |
+| `0x09` | C0 → C1 | `IPC_MSG_REBOOT_NOTIFY`  | Core 0 about to reboot — Core 1 should detach USB CDC |
+| `0x81` | C1 → C0 | `IPC_CMD_SEND_TEXT`      | `IpcPayloadText` — dest node ID, channel, want_ack, text[] |
+| `0x82` | C1 → C0 | `IPC_CMD_SET_CHANNEL`    | Channel index + optional new config bytes |
+| `0x83` | C1 → C0 | `IPC_CMD_SET_TX_POWER`   | `IpcPayloadSetTxPower` — `int8_t power_dbm` |
+| `0x84` | C1 → C0 | `IPC_CMD_REQUEST_STATUS` | Empty — request an immediate `IPC_MSG_DEVICE_STATUS` |
+| `0x85` | C1 → C0 | `IPC_CMD_SET_NODE_ALIAS` | `IpcPayloadSetNodeAlias` — node ID + alias UTF-8 |
+| `0x86` | C1 → C0 | `IPC_CMD_POWER_STATE`    | `IpcPayloadPowerState` — 0 ACTIVE / 1 IDLE / 2 SLEEP / 3 SHIPPING |
+| `0x87` | C1 → C0 | `IPC_CMD_REBOOT`         | Empty payload |
+| `0x88` | C1 → C0 | `IPC_CMD_FACTORY_RESET`  | Empty — wipes persistent config |
+| `0x89` | C1 → C0 | `IPC_CMD_GET_CONFIG`     | `IpcPayloadGetConfig` — `uint16_t key` |
+| `0x8A` | C1 → C0 | `IPC_CMD_SET_CONFIG`     | `IpcPayloadConfigValue` — key + typed value |
+| `0x8B` | C1 → C0 | `IPC_CMD_COMMIT_CONFIG`  | Empty — save pending changes (may reboot) |
+| `0xF0` | both    | `IPC_MSG_LOG_LINE`       | `IpcPayloadLogLine` — level, originating core, UTF-8 text[] |
+| `0xFE` | both    | `IPC_MSG_PANIC`          | Cross-core panic notification (reserved for M6) |
+| `0xFF` | both    | `IPC_BOOT_READY`         | Boot handshake marker (also written to shared handshake block) |
 
-#### CMake Build Isolation
+**GPS data does not use an IPC message.** The `IpcGpsBuf` double-buffer in shared SRAM
+is the GPS transport; Core 1 flips `write_idx` atomically after committing a sentence,
+and Core 0 reads `buf[write_idx ^ 1]`. No doorbell is required — the `write_idx` flip
+*is* the signal.
 
-The CMake build system enforces the license boundary at the linker level:
+`IpcConfigKey` in `ipc_protocol.h` enumerates 18 typed config keys across 7
+categories (Device, LoRa, Position, Power, Display, Channel, Owner) — consumed by the
+`GET_CONFIG` / `SET_CONFIG` / `COMMIT_CONFIG` triple.
+
+#### Dual Build System Isolation
+
+The dual-licence boundary is reinforced by using **two independent build tools** —
+not one unified CMake tree. Core 0 uses PlatformIO (to track the upstream Meshtastic
+toolchain); Core 1 uses CMake + Ninja (to use the Pico SDK directly without Arduino-Pico).
+`scripts/build_and_flash.sh` drives both builds, then flashes the two flash slots via J-Link.
 
 ```
 firmware/
-├── core0/           CMakeLists.txt  — GPL-3.0 target
-│   links: meshtastic_base, pico-sdk, pico_multicore, ipc_protocol (INTERFACE)
-├── core1/           CMakeLists.txt  — Apache-2.0 target
-│   links: freertos, lvgl, mie, pico-sdk, pico_multicore, ipc_protocol (INTERFACE)
-├── mie/             CMakeLists.txt  — MIT static library (no Pico SDK dependency)
-└── shared/ipc/      CMakeLists.txt  — INTERFACE header-only target, zero library deps
-    provides: ipc_protocol header to both cores
+├── core0/meshtastic/                    — Core 0, PlatformIO, GPL-3.0
+│   .pio/build/rp2350b-mokya/firmware.elf  → flash @ 0x10000000
+│   variants/.../patch_arduinopico.py       — idempotent framework patches at build time
+│
+├── core1/m1_bridge/                     — Core 1, CMake + Ninja, Apache-2.0
+│   build/core1_bridge/core1_bridge.bin    → flash @ 0x10200000 (raw bytes, no IMAGE_DEF)
+│   memmap_core1_bridge.ld                 — Core 1 linker script
+│
+├── mie/                                 — MIT static library, no Pico SDK dependency
+│                                           host-only unit-test build runs on PC
+│
+└── shared/ipc/                          — header-only, MIT
+    ipc_protocol.h, ipc_shared_layout.h    shared by both builds, #include <stdint.h> only
 ```
 
 **Rules:**
-- `core1` target must **not** `target_link_libraries` to any `core0` static library or object file.
-- `core0` target must **not** `target_link_libraries` to any `core1` static library or object file.
-- `ipc_protocol` is a CMake `INTERFACE` (header-only) target; its only dependency is `<stdint.h>`.
-- `ipc_protocol` is the **only** shared compile-time dependency between `core0` and `core1`.
-- The top-level `add_executable` that packages both images for the Pico SDK linker is the sole
-  permitted point of cross-core linkage in the build graph.
+- PlatformIO `build_src_filter` excludes `firmware/core1/` — Core 0 cannot link Core 1 objects.
+- Core 1 CMake `add_executable()` lists sources explicitly; no Meshtastic include path is
+  available — Core 1 cannot `#include` any Meshtastic header.
+- `firmware/shared/ipc/` is the only compile-time surface shared by both builds; its headers
+  may `#include` only `<stdint.h>` / `<stddef.h>`.
+- Post-link CI check: `nm` both ELFs and assert `g_ipc_shared` resolves to the identical
+  address. Layout drift between `ipc_shared_layout.h` and the two linker regions becomes a
+  build-break, not a silent memory stomp.
+- There is **no** top-level CMake tree that links both cores together. Cross-core coupling
+  exists only at flash-programming time — the J-Link script programs two independent
+  artefacts (`firmware.elf` + `core1_bridge.bin`) into two non-overlapping flash slots.
+
+See `docs/design-notes/firmware-architecture.md` §8 for the full build-system description.
 
 #### Meshtastic PhoneAPI Porting
 
@@ -225,11 +278,11 @@ This is the **only structural addition to Meshtastic** on Core 0:
 
 | Meshtastic Component             | Adaptation                                                         |
 |----------------------------------|--------------------------------------------------------------------|
-| `PhoneAPI`                       | Subclassed as `IPCPhoneAPI` — serialises into `ipc_frame_t`, writes to `c0_to_c1` ring buffer |
+| `PhoneAPI`                       | Subclassed as `IPCPhoneAPI` — serialises into `IpcRingSlot`, writes to `c0_to_c1` DATA ring |
 | `GPSDriver`                      | Replaced by GPS adapter that reads `gps_buf[]` (plain bytes, no I2C) |
 | `SerialAPI` / `BLEApi`           | Excluded from Core 0 build                                         |
 | `Router`, `MeshService`, all Modules | **No changes**                                               |
-| `NodeDB` / `config`              | Core 1 requests data via `IPC_CMD_GET_NODE_LIST` / `IPC_CMD_SET_CONFIG`; Core 0 serialises and replies. No direct cross-core memory access. |
+| `NodeDB` / `config`              | Core 0 pushes node entries via `IPC_MSG_NODE_UPDATE` (unsolicited, on change) and answers config round-trips via `IPC_CMD_GET_CONFIG` / `IPC_CMD_SET_CONFIG` / `IPC_CMD_COMMIT_CONFIG`. No direct cross-core memory access. |
 | `OSThread` / `Scheduler`         | Runs entirely on Core 0, no changes                                |
 
 #### Intent Declaration
@@ -283,13 +336,15 @@ All HAL drivers listed below run on **Core 1** and exclusively own their respect
 
 - **Fusion:** Kalman filter or Madgwick algorithm for 9-DOF data fusion.
 
-### `GPSDriver_I2C` — ST Teseo-LIV3FL [Core 1 · I2C0 · 0x3A]
+### `GPSDriver_I2C` — ST Teseo-LIV3FL [Core 1 · sensor bus `i2c1` GPIO 34/35 · 0x3A]
 
-- **Transport:** I2C0 polling mode.
+- **Transport:** `i2c1` polling mode on the sensor bus (shared with IMU 0x6A, Mag 0x1E, Baro 0x5D).
 - **Init:** disable unused NMEA sentences (keep RMC, GGA only); set 1 Hz update rate.
-- **IPC bridge:** parsed position fix written to `gps_double_buffer` (shared SRAM); doorbell sent
-  to Core 0 via `IPC_MSG_GPS_UPDATE`. Meshtastic's `PositionModule` reads from this buffer,
-  never directly from I2C.
+- **IPC bridge:** parsed NMEA sentence written into `IpcGpsBuf.buf[write_idx ^ 1]` in shared
+  SRAM. After `memcpy` + `len[]` update, a `__dmb()` barrier commits the new slot, then
+  `write_idx` is flipped atomically. **No doorbell is sent — the `write_idx` flip *is* the
+  signal.** Meshtastic's `PositionModule` on Core 0 polls `buf[write_idx ^ 1]` once per
+  second and never calls any I2C driver.
 
 ### `StatusController` — LM27965 LED Driver [Core 1 · I2C1 · 0x36]
 
@@ -309,36 +364,48 @@ All HAL drivers listed below run on **Core 1** and exclusively own their respect
 
 ## 3. Power Management State Machine
 
-Power management runs on **Core 1**. Power state changes are communicated to Core 0 via
-`IPC_CMD_POWER_STATE` so that Core 0 can adjust LoRa duty cycle and radio behaviour accordingly.
+Power management runs on **Core 1**. The FSM has four states that map 1:1 to
+`IpcPowerState` in `ipc_protocol.h`. Every transition is announced to Core 0 via
+`IPC_CMD_POWER_STATE` so that Core 0 can adjust LoRa duty cycle and radio behaviour.
 
 ### States
 
-| State   | Screen | CPU Clock | LoRa          | Trigger                                   |
-|---------|--------|-----------|---------------|-------------------------------------------|
-| ACTIVE  | ON     | 133 MHz   | Rx/Tx         | Any key press                             |
-| STANDBY | OFF    | 48 MHz    | Duty-cycle Rx | 30 s idle; any key wakes                  |
-| DORMANT | OFF    | OSC OFF   | Standby / OFF | Manual power-off or battery < 15 %        |
+| # | State (`IpcPowerState`) | Screen | CPU Clock | LoRa                         | Trigger                                               |
+|---|-------------------------|--------|-----------|------------------------------|-------------------------------------------------------|
+| 0 | `IPC_POWER_ACTIVE`      | ON     | 133 MHz   | Rx / Tx                      | Any key press; boot                                   |
+| 1 | `IPC_POWER_IDLE`        | OFF    | 48 MHz    | Rx (short duty cycle)        | 60 s idle in ACTIVE; any key or IMU WoM → ACTIVE      |
+| 2 | `IPC_POWER_SLEEP`       | OFF    | WFI + clock-gated | Rx (long duty cycle) | 5 min in IDLE; LoRa IRQ / power key / USB wakes       |
+| 3 | `IPC_POWER_SHIPPING`    | OFF    | OSC OFF   | OFF                          | Hold PWR 3 s — all peripherals off, BQ25622 ship-mode latch |
 
-### STANDBY Behaviour
+The `IDLE` + `SLEEP` split replaces the old single STANDBY bucket so Core 0 can pick
+different LoRa duty cycles for "briefly stepping away" vs. "pocket for hours".
+`SHIPPING` is the cold-ship factory mode — exit requires USB insertion or a long
+PWR press that triggers a full reboot from BQ25622 ship-mode latch.
 
-- Core 1 sends `IPC_CMD_POWER_STATE = STANDBY` to Core 0; Core 0 switches LoRa to duty-cycle Rx.
-- LVGL rendering halted; only keypad scan and LoRa packet monitoring remain active.
+### IDLE / SLEEP Behaviour
+
+- Core 1 sends `IPC_CMD_POWER_STATE = IDLE` or `SLEEP`; Core 0 adjusts LoRa duty cycle accordingly.
+- LVGL rendering halted; only the keypad scan loop, IMU WoM ISR, and IPC drain remain live.
 - LCD `Sleep In` command sent; backlight off.
+- In `SLEEP`, FreeRTOS suspends non-essential tasks; only `IPCRxTask`, `PowerTask`, and the
+  keypad / WoM ISRs are active.
 
-### DORMANT Wakeup Sources
+### Wakeup Sources (SLEEP / SHIPPING)
 
-| Source        | GPIO                       |
-|---------------|----------------------------|
-| Power button  | GPIO 33                    |
-| LoRa interrupt | GPIO 29 (SX1262 DIO1)     |
-| USB insertion | GPIO 1                     |
+| Source         | GPIO                       |
+|----------------|----------------------------|
+| Power button   | GPIO 33                    |
+| LoRa interrupt | GPIO 29 (SX1262 DIO1)      |
+| USB insertion  | GPIO 1                     |
+| IMU WoM        | LSM6DSV16X INT1 pin        |
 
 ### Wakeup Sequence
 
 1. IRQ detected → CPU clock restored → peripherals reinitialised → wakeup reason checked.
-2. **LoRa IRQ:** Core 0 reads packet → sends `IPC_MSG_PACKET_RECEIVED` to Core 1 → Core 1 displays notification or vibrates → returns to STANDBY.
-3. **Power key:** Core 1 turns on screen → sends `IPC_CMD_POWER_STATE = ACTIVE` to Core 0 → returns to ACTIVE.
+2. **LoRa IRQ:** Core 0 reads packet → sends `IPC_MSG_RX_TEXT` (or other notification) to
+   Core 1 → Core 1 displays notification or vibrates → returns to `IDLE` / `SLEEP`.
+3. **Power key:** Core 1 turns on screen → sends `IPC_CMD_POWER_STATE = ACTIVE` to Core 0 →
+   enters `ACTIVE`.
 
 ---
 
