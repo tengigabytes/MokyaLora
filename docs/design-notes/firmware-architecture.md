@@ -4,7 +4,16 @@
 **Status:** Phase 2 — Core 0/Core 1 dual-image production firmware (Rev A)
 **Last updated:** 2026-04-15
 
-This document is the integrated architecture reference for MokyaLora's dual-core firmware.
+This document is the **single source of truth** for how MokyaLora's dual-core
+firmware is built. If it conflicts with the SRS
+(`docs/requirements/software-requirements.md`) or with CLAUDE.md on any
+implementation detail — memory map, IPC byte layout, build flow, boot sequence,
+licence boundary — this document and the normative headers it references
+(`ipc_protocol.h`, `ipc_shared_layout.h`, `memmap_core1_bridge.ld`) win.
+
+The SRS specifies **what** the firmware must do (user behaviour, performance
+targets, compatibility). This document specifies **how** that is realised.
+
 It covers:
 
 1. Dual-core AMP topology and licence boundary (§1)
@@ -1291,9 +1300,10 @@ versions disagree, and the status LED enters safe mode with a distinct pattern.
 
 | Document                                         | Scope                                                   |
 |--------------------------------------------------|---------------------------------------------------------|
-| `docs/requirements/software-requirements.md`     | Normative SRS — what the firmware must do               |
-| `docs/requirements/hardware-requirements.md`     | Full BOM, power tree, GPIO map                          |
-| `docs/design-notes/firmware-architecture.md`     | **This doc** — how Core 0 + Core 1 are actually built   |
+| `docs/requirements/system-requirements.md`       | System & hardware spec — BOM, operating modes, mandatory HW rules |
+| `docs/requirements/hardware-requirements.md`     | Full BOM, power tree, GPIO map, keypad matrix            |
+| `docs/requirements/software-requirements.md`     | SRS — what the firmware must do (behaviour, performance) |
+| `docs/design-notes/firmware-architecture.md`     | **This doc** — how the firmware is actually built (HOW)  |
 | `docs/design-notes/ipc-ram-replan.md`            | Derivation / budget record for the 176/312 split        |
 | `docs/design-notes/mie-architecture.md`          | MIE (MokyaInput Engine) internals                       |
 | `docs/bringup/phase2-log.md`                     | Per-milestone bring-up log, issue IDs (P2-n)            |

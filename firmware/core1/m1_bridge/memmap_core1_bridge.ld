@@ -4,8 +4,8 @@
  * re-targeted for the multicore_launch_core1_raw() boot model:
  *
  *   - FLASH origin moves from 0x10000000 to 0x10200000 (2 MB region carved
- *     out of W25Q128JW, matches docs/requirements/software-requirements.md
- *     §1.2 Core 1 firmware slot).
+ *     out of W25Q128JW, matches docs/design-notes/firmware-architecture.md
+ *     §2.1 Core 1 firmware slot).
  *   - RAM origin moves from 0x20000000 to 0x2002C000 (312 KB carve-out:
  *     Core 0 keeps 0x20000000..0x2002C000 = 176 KB, Core 1 gets
  *     0x2002C000..0x2007A000 = 312 KB, with NO overlap).

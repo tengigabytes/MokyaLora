@@ -67,8 +67,8 @@ Use one full-screen framebuffer in SRAM (240 × 320 × 16bpp = 150 KB) with LVGL
 rectangles to the LCD via PIO 8080.
 
 **Rationale:**
-- Original spec (software-requirements.md §1.3) called for ~10 KB partial render
-  buffer, but direct mode gives better visual quality (no strip-boundary tearing)
+- Original spec called for ~10 KB partial render buffer, but direct mode gives
+  better visual quality (no strip-boundary tearing)
   and simpler DMA logic (one base address, rect offsets).
 - Single buffer (150 KB) vs double buffer (300 KB): saves 150 KB. The tradeoff is
   that LVGL must wait for the DMA flush callback before modifying the buffer — this
