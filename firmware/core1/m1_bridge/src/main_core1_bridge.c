@@ -79,6 +79,8 @@
 #include "ipc_shared_layout.h"
 #include "ipc_ringbuf.h"
 
+#include "display.h"
+
 /* ── Doorbell IPC notification (M2) ─────────────────────────────────────── *
  * We use raw SIO register writes instead of pico_multicore API to avoid
  * runtime_init side effects from linking pico_multicore into Core 1.       */
@@ -353,6 +355,57 @@ static void bridge_task(void *pv)
     }
 }
 
+/* ── M3.1 display standalone test ─────────────────────────────────────────── *
+ * Boots the ST7789VI panel, then loops through five solid colours so we can
+ * eyeball that the bus, init sequence, and backlight all came up. Will be
+ * replaced by the LVGL flush_cb path in M3.2.                                */
+static void display_test_task(void *arg)
+{
+    (void)arg;
+    dbg_u32(0x2007FFD8u, 0xD15CA110u);   /* task entered */
+    if (!display_init()) {
+        dbg_u32(0x2007FFD8u, 0xDEAD0BADu);
+        vTaskDelete(NULL);
+        return;
+    }
+    dbg_u32(0x2007FFD8u, 0xD15C0001u);   /* init returned true */
+
+    static const uint16_t cycle[] = {
+        0xF800, /* red   */
+        0x07E0, /* green */
+        0x001F, /* blue  */
+        0xFFFF, /* white */
+        0x0000, /* black */
+    };
+    uint32_t frame = 0;
+    for (;;) {
+        display_fill_solid(cycle[frame % (sizeof(cycle)/sizeof(cycle[0]))]);
+        dbg_u32(0x2007FFD8u, 0xD15C1000u | frame);
+        frame++;
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+/* ── FreeRTOS SysTick override ──────────────────────────────────────────────
+ * The RP2350_ARM_NTZ port's default vPortSetupTimerInterrupt() computes the
+ * SysTick reload from clock_get_hz(clk_sys). But Core 1 skips
+ * runtime_init_clocks (Core 0 owns clock init), so configured_freq[clk_sys]
+ * stays 0 and the reload silently wraps to 0x00FFFFFF — tick rate collapses
+ * to ~9 Hz, making vTaskDelay(1000 ms) wait ~112 s. Override with the known
+ * configCPU_CLOCK_HZ (Arduino-Pico default 150 MHz) so SysTick fires at the
+ * configured configTICK_RATE_HZ. */
+#define MOKYA_SYSTICK_CTRL    ( *( ( volatile uint32_t * ) 0xE000E010 ) )
+#define MOKYA_SYSTICK_LOAD    ( *( ( volatile uint32_t * ) 0xE000E014 ) )
+#define MOKYA_SYSTICK_CURRENT ( *( ( volatile uint32_t * ) 0xE000E018 ) )
+
+void vPortSetupTimerInterrupt(void)
+{
+    MOKYA_SYSTICK_CTRL    = 0x00000004u;  /* CLKSOURCE=proc, disabled */
+    MOKYA_SYSTICK_CURRENT = 0u;
+    MOKYA_SYSTICK_LOAD    = (configCPU_CLOCK_HZ / configTICK_RATE_HZ) - 1u;
+    MOKYA_SYSTICK_CTRL    = 0x00000007u;  /* CLKSOURCE=proc | TICKINT | ENABLE */
+}
+
 /* ── main ────────────────────────────────────────────────────────────────── */
 
 int main(void)
@@ -360,7 +413,7 @@ int main(void)
     /* 0. Unique boot marker — verifies over SWD that THIS build is running.
      * Written to shared IPC tail-pad (immune to both cores' crt0 zeroing).
      * Change the value each build to confirm a fresh boot. */
-    dbg_u32(0x2007FFD4u, 0xDEAD0003u);  /* bump suffix each flash attempt */
+    dbg_u32(0x2007FFD4u, 0xDEAD0305u);  /* M3.1 — bump suffix each flash */
 
     /* 1. Life signal — first thing after SDK runtime hands over. */
     dbg_u32(BRIDGE_SENTINEL_ADDR,   BRIDGE_SENTINEL_VALUE);
@@ -437,10 +490,26 @@ int main(void)
     /* 8. Hand off to FreeRTOS. */
     /* Both tasks at the same priority so taskYIELD() round-robins
      * between them without the 1 ms vTaskDelay floor. */
-    xTaskCreate(usb_device_task, "usb",    1024, NULL,
+    BaseType_t rc_usb = xTaskCreate(usb_device_task, "usb",    1024, NULL,
                 tskIDLE_PRIORITY + 2, NULL);
-    xTaskCreate(bridge_task,     "bridge", 1024, NULL,
+    BaseType_t rc_brg = xTaskCreate(bridge_task,     "bridge", 1024, NULL,
                 tskIDLE_PRIORITY + 2, &g_bridge_task_handle);
+    /* Display test runs at the same priority as usb / bridge so the
+     * round-robin scheduler hands it CPU between their yields. A lower
+     * priority would be starved by usb_device_task's tight tud_task()
+     * + taskYIELD() loop. */
+    BaseType_t rc_dsp = xTaskCreate(display_test_task, "disp", 1024, NULL,
+                tskIDLE_PRIORITY + 2, NULL);
+
+    /* Heap-exhaustion breadcrumb: encode pdPASS(=1) / errCOULD_NOT_ALLOCATE(=-1)
+     * for each task in a single word so SWD can distinguish creation failures
+     * from silent starvation. Layout: 0xCR EA TE XX where XX = usb<<4|brg<<2|dsp
+     * (bit set means pdPASS). */
+    uint32_t rc_word = 0xC7EA7E00u
+        | ((rc_usb == pdPASS ? 1u : 0u) << 4)
+        | ((rc_brg == pdPASS ? 1u : 0u) << 2)
+        | ((rc_dsp == pdPASS ? 1u : 0u) << 0);
+    dbg_u32(0x2007FFDCu, rc_word);
 
     vTaskStartScheduler();
 

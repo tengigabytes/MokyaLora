@@ -11,8 +11,9 @@
  * Heap budget:
  *   Core 1 has a 64 KB RAM carve-out at 0x20040000..0x20050000. After
  *   SDK runtime (ram_vector_table, newlib TLS, mutex array) and the FreeRTOS
- *   kernel's own .bss we expect ~45 KB free. 16 KB Heap4 leaves headroom for
- *   the main stack and future growth.
+ *   kernel's own .bss we expect ~45 KB free. 32 KB Heap4 fits the M3.1 task
+ *   set (usb/bridge/disp @ 1024 words each + Timer + Idle) with headroom for
+ *   LVGL glue and future growth.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -50,7 +51,7 @@
 /* ── Memory — Heap4 ─────────────────────────────────────────────────────── */
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configSUPPORT_STATIC_ALLOCATION         0
-#define configTOTAL_HEAP_SIZE                   ( 16 * 1024 )
+#define configTOTAL_HEAP_SIZE                   ( 32 * 1024 )
 
 /* ── Interrupt priorities ────────────────────────────────────────────────── */
 /* Per the RP2350_ARM_NTZ port README, configMAX_SYSCALL_INTERRUPT_PRIORITY

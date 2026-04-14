@@ -1,0 +1,59 @@
+;
+; tft_8080.pio — 8080-series 8-bit parallel write driver for ST7789VI
+;
+; SPDX-License-Identifier: Apache-2.0
+;
+; Side-set 1 bit drives nWR. OUT 8 bits drive D[7:0]. nCS, DCX, nRST stay on
+; SIO and only flip at command/data boundaries — no PIO bandwidth lost on them.
+;
+; One byte per loop iteration:
+;   cycle 0..1   nWR LOW,  data on bus     (out + 1 delay)
+;   cycle 2..3   nWR HIGH, ST7789 latches  (nop + 1 delay)
+;
+; Timing at sys_clk = 150 MHz:
+;   clkdiv  PIO ns  TWC (4 cyc)   nWR pulse (2 cyc)
+;     2     13.33   53.3 ns       26.7 ns          ← violates ST7789 TWC=66 min
+;     3     20.00   80.0 ns       40.0 ns          ← production default (21% margin)
+;     4     26.67  106.7 ns       53.3 ns          ← conservative
+;
+; ST7789VI Table 4 (datasheet V1.3, p.41) at VDDI 1.65–3.6 V:
+;   TWC  ≥ 66 ns, TWRH ≥ 15 ns, TWRL ≥ 15 ns, TDST ≥ 10 ns, TDHT ≥ 10 ns.
+;
+; FIFO: autopull threshold 8 bits, shift right. Push one uint32_t per byte
+; (byte placed in bits[7:0]). DMA 8-bit writes to TX FIFO are bus-replicated
+; into all 4 byte lanes — bits[7:0] still carry the correct value.
+
+.program tft_8080
+.side_set 1
+
+.wrap_target
+    out pins, 8   side 0  [1]
+    nop           side 1  [1]
+.wrap
+
+% c-sdk {
+#include "hardware/pio.h"
+
+static inline void tft_8080_program_init(PIO pio, uint sm, uint offset,
+                                         uint pin_data_base, uint pin_nwr,
+                                         float clkdiv)
+{
+    pio_sm_config c = tft_8080_program_get_default_config(offset);
+
+    sm_config_set_out_pins(&c, pin_data_base, 8);
+    sm_config_set_sideset_pins(&c, pin_nwr);
+    sm_config_set_out_shift(&c, true, true, 8);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    for (uint i = 0; i < 8; i++) pio_gpio_init(pio, pin_data_base + i);
+    pio_gpio_init(pio, pin_nwr);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_data_base, 8, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_nwr, 1, true);
+
+    pio_sm_init(pio, sm, offset, &c);
+
+    /* Park nWR HIGH before enabling — ST7789 ignores any in-flight transition. */
+    pio_sm_set_pins_with_mask(pio, sm, 1u << pin_nwr, 1u << pin_nwr);
+}
+%}

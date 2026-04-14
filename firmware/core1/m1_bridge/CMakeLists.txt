@@ -78,6 +78,9 @@ target_link_libraries(lvgl PUBLIC FreeRTOS-Kernel)
 # ── Shared IPC TU ────────────────────────────────────────────────────────────
 set(SHARED_IPC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/ipc)
 
+# ── Display driver (M3) ──────────────────────────────────────────────────────
+set(DISPLAY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/display)
+
 # ── Executable ───────────────────────────────────────────────────────────────
 # core1_reset.S MUST be the first source so its .vectors input section lands
 # at offset 0 of the final .text output (i.e. flash 0x10200000). The SDK
@@ -89,11 +92,20 @@ add_executable(core1_bridge
     src/main_core1_bridge.c
     src/usb_descriptors.c
     ${SHARED_IPC_DIR}/ipc_ringbuf.c
+    ${DISPLAY_DIR}/display.c
+    ${DISPLAY_DIR}/st7789vi.c
+)
+
+# Generate tft_8080.pio.h next to the .pio source via pioasm.
+pico_generate_pio_header(core1_bridge
+    ${DISPLAY_DIR}/tft_8080.pio
+    OUTPUT_DIR ${DISPLAY_DIR}
 )
 
 target_include_directories(core1_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${SHARED_IPC_DIR}
+    ${DISPLAY_DIR}
 )
 
 # Compile defs — skip runtime_init hooks that would fight Core 0 for hardware.
@@ -127,6 +139,9 @@ target_link_libraries(core1_bridge
     hardware_irq
     hardware_sync
     hardware_exception
+    hardware_pio
+    hardware_dma
+    hardware_i2c
     tinyusb_device
     FreeRTOS-Kernel
     FreeRTOS-Kernel-Heap4
