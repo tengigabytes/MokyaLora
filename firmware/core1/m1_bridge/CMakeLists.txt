@@ -66,14 +66,18 @@ add_subdirectory(
 set(LV_CONF_PATH
     "${CMAKE_CURRENT_SOURCE_DIR}/src/lv_conf.h"
     CACHE FILEPATH "Path to project-specific lv_conf.h" FORCE)
-set(LV_CONF_BUILD_DISABLE_EXAMPLES       ON CACHE BOOL "" FORCE)
-set(LV_CONF_BUILD_DISABLE_DEMOS          ON CACHE BOOL "" FORCE)
+set(LV_CONF_BUILD_DISABLE_EXAMPLES       ON  CACHE BOOL "" FORCE)
+# Demos enabled so we can link lv_demo_benchmark — see MOKYA_LVGL_BENCHMARK
+# in lvgl_glue.c.
+set(LV_CONF_BUILD_DISABLE_DEMOS          OFF CACHE BOOL "" FORCE)
 set(LV_CONF_BUILD_DISABLE_THORVG_INTERNAL ON CACHE BOOL "" FORCE)
 
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../lvgl" lvgl_build)
 
 # LVGL's FreeRTOS OSAL needs FreeRTOS headers at compile time.
 target_link_libraries(lvgl PUBLIC FreeRTOS-Kernel)
+# lvgl_demos also compiles against FreeRTOS (timers etc via lvgl).
+target_link_libraries(lvgl_demos PUBLIC FreeRTOS-Kernel)
 
 # ── Shared IPC TU ────────────────────────────────────────────────────────────
 set(SHARED_IPC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/ipc)
@@ -147,6 +151,7 @@ target_link_libraries(core1_bridge
     FreeRTOS-Kernel
     FreeRTOS-Kernel-Heap4
     lvgl
+    lvgl_demos
 )
 
 # Override the SDK's default memmap with our own — this is what redirects

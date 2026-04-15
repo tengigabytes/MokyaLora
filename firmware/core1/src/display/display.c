@@ -68,7 +68,7 @@ static void i2c_set_baudrate_core1(i2c_inst_t *i2c, uint baudrate)
 
 /* ── Bus + PIO selection ─────────────────────────────────────────────────── */
 #define DISPLAY_PIO          pio1
-#define DISPLAY_PIO_CLKDIV   3.0f   /* 80 ns write cycle @ 150 MHz sys_clk */
+#define DISPLAY_PIO_CLKDIV   2.0f   /* 53 ns write cycle @ 150 MHz sys_clk */
 
 /* ── LM27965 backlight (provisional) ─────────────────────────────────────── */
 #define BL_I2C            i2c1
@@ -315,10 +315,20 @@ void display_flush_rect_strided(uint16_t x0, uint16_t y0,
         const uint16_t *src = fb_base +
                               (uint32_t)(y0 + r) * (uint32_t)fb_stride_px +
                               (uint32_t)x0;
-        uint16_t *dst = (uint16_t *)s_flush_scratch;
-        for (uint16_t i = 0; i < w; i++) {
-            uint16_t p = src[i];
-            dst[i] = (uint16_t)((p >> 8) | (p << 8));
+        /* Fast byte-swap using ARM REV16: swaps both halfwords in a 32-bit
+         * word simultaneously. Process 2 pixels per iteration. */
+        const uint32_t *src32 = (const uint32_t *)src;
+        uint32_t *dst32 = (uint32_t *)s_flush_scratch;
+        uint16_t pairs = w >> 1;
+        for (uint16_t i = 0; i < pairs; i++) {
+            uint32_t v = src32[i];
+            __asm__ volatile ("rev16 %0, %1" : "=r"(v) : "r"(v));
+            dst32[i] = v;
+        }
+        /* Handle odd trailing pixel if width is odd. */
+        if (w & 1u) {
+            uint16_t p = src[w - 1u];
+            ((uint16_t *)s_flush_scratch)[w - 1u] = (uint16_t)((p >> 8) | (p << 8));
         }
 
         dma_channel_configure(s_dma_ch, &cfg,
