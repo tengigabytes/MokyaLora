@@ -865,6 +865,18 @@ flushes/sec (= 6 full 240×320 frames/sec with the 40-line partial buffer).
 - `firmware/core1/m1_bridge/src/main_core1_bridge.c` — `display_test_task` removed, `lvgl_glue_start(tskIDLE_PRIORITY + 2)` wired in its place
 - `firmware/core1/m1_bridge/src/lv_conf.h` — `LV_USE_OS = LV_OS_NONE` (see P3-2), `LV_ASSERT_HANDLER` stamps `0xA55E1700` at `0x2007FFF8` before spinning so an LVGL assert is distinguishable from a generic hang over SWD
 
+**P3-3 fix — LM27965 backlight I2C clock misconfiguration:** Backlight only ~20% brightness instead of target 40%. Root cause: Core 1 skips `runtime_init_clocks` (Core 0 owns clock init), so `clock_get_hz(clk_peri)` returns 0. `i2c_init()` uses this to compute the baudrate divisor, resulting in garbage SCL timing. BANKA duty write consistently NACKed while GP write succeeded by timing luck. Fix: add `i2c_set_baudrate_core1()` that manually computes SCL timing from the known clk_peri frequency (150 MHz). Also adds `bus_b_recovery()` (9 SCL pulses + manual STOP) and SWD diagnostic breadcrumb at `0x2007FFF4`.
+
+**P3-4 perf — Display flush optimization (4.5× speedup):**
+
+| Change | Before | After |
+|--------|--------|-------|
+| PIO clkdiv | 3.0 (80 ns) | 2.0 (53 ns) |
+| Byte-swap | Per-pixel C loop | ARM REV16 (2 pixels/iter) |
+| Flush time | 6.3 ms | 1.4 ms |
+
+Also enabled `LV_USE_SYSMON = 1` for benchmark FPS overlay, `LV_FONT_MONTSERRAT_24` for benchmark demo, adjusted `LV_DEF_REFR_PERIOD` to 33 ms (realistic for DIRECT mode blocking flush).
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
