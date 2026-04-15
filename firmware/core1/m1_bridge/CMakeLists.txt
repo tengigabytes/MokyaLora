@@ -94,6 +94,7 @@ add_executable(core1_bridge
     ${SHARED_IPC_DIR}/ipc_ringbuf.c
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
+    ${DISPLAY_DIR}/lvgl_glue.c
 )
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.

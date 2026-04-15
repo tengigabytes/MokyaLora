@@ -800,6 +800,73 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 
 ---
 
+## Milestone 3 — Core 1 HAL drivers + LVGL UI runtime
+
+**Status:** 🚧 In progress (M3.1 ✅, M3.2 ✅, M3.3 next)
+**Goal:** Bring up Core 1's user-facing hardware (display, keypad, sensors, power) as FreeRTOS-task driven HAL modules under `firmware/core1/src/`, and stand up LVGL v9.2.2 as the rendering runtime. Keypad driver is written from day-1 against the multi-producer `KeyEvent` queue with `key_source_t` flag (G2 from DEC-2), so M9 USB Control injection only adds a producer — never refactors the queue.
+
+### M3 sub-milestones
+
+| Sub-milestone | Deliverable |
+|---------------|-------------|
+| M3.1 | ST7789VI display driver standalone (PIO 8080-8 + DMA, panel init, partial flush, TE polling, LM27965 backlight) |
+| M3.2 | LVGL v9.2.2 integration — `lv_display_t` flush_cb wired to `display_flush_rect`, FreeRTOS tick source, `lv_timer_handler` task, hello-world screen |
+| M3.3 | 6×6 keypad PIO scanner + debounce → `keymap_matrix.h` translation → multi-producer `KeyEvent` queue (HW source flag) |
+| M3.4 | Sensor + power HAL — IMU / mag / baro on sensor bus (i2c1 GPIO 34/35), charger / fuel gauge / LED driver on power bus (i2c1 GPIO 6/7), GPS bridge to Core 0 via shared SRAM double-buffer |
+
+### Not in M3 scope
+
+- LVGL custom font driver loading `font_glyphs.bin` from PSRAM — M4
+- MIE RP2350 PIO HAL (KeyEvent queue → MIE processor) — M4
+- USB Control Interface (`UsbCtrlTask` second producer) — M9
+- Audio drivers — removed from project scope
+
+### M3 implementation log
+
+#### M3.1 — Display driver standalone ✅ (2026-04-15)
+
+LVGL v9.2.2 vendored under `firmware/core1/lvgl/` (commit `af405ad`). ST7789VI driver landed under `firmware/core1/src/display/` (commit `e70c28b`):
+
+- **Bus**: PIO1 program drives nWR + D[7:0] at 80 ns write cycle (`DISPLAY_PIO_CLKDIV = 3.0` @ 150 MHz); nCS / DCX / nRST / TE stay on SIO. Single DMA channel feeds the SM TX FIFO with autopull pacing.
+- **Panel init**: ST7789VI sequence (SLPOUT, COLMOD 0x55, MADCTL, INVON, NORON, DISPON) per `st7789vi.c`.
+- **Backlight**: LM27965 on power-bus i2c1 (GPIO 6/7), Bank A duty `0x16`, GP `0x21` to enable TFT rail.
+- **Public API**: `display_init()`, `display_flush_rect(x0,y0,x1,y1, pixels)` (RGB565 big-endian byte order — bytes[0]=hi, bytes[1]=lo for COLMOD 0x55), `display_wait_te_rise()` (M3.1 polls GPIO 22; M3.2 will switch to GPIO IRQ + task notify), `display_fill_solid(rgb565)`.
+- **Standalone test**: `display_test_task` cycles red → green → blue → white → black at 1 Hz via `display_fill_solid`. Runs at the same FreeRTOS priority as `usb_device_task` / `bridge_task` so the round-robin scheduler hands it CPU. Will be replaced by the LVGL flush path in M3.2.
+
+**P3-1 fix — Core 1 SysTick reload silently 0xFFFFFF:** The RP2350_ARM_NTZ port's default `vPortSetupTimerInterrupt()` derives the SysTick reload from `clock_get_hz(clk_sys)`. But Core 1 skips `runtime_init_clocks` (Core 0 owns clock init), so `configured_freq[clk_sys]` stays 0 and the reload silently wraps to `0xFFFFFF` — tick rate collapses to ~9 Hz, making `vTaskDelay(1000 ms)` wait ~112 s. Fix: override `vPortSetupTimerInterrupt` in `main_core1_bridge.c` to write `(configCPU_CLOCK_HZ / configTICK_RATE_HZ) - 1` directly (150 MHz / 1000 Hz = 150 000 - 1). Tick rate now matches `configTICK_RATE_HZ` and the 1-second colour cycle ticks over correctly.
+
+**Files added (parent repo):**
+- `firmware/core1/lvgl/` — LVGL v9.2.2 vendored (examples/demos/ThorVG disabled via CMake options)
+- `firmware/core1/m1_bridge/src/lv_conf.h` — `LV_COLOR_DEPTH=16`, `LV_USE_OS=LV_OS_FREERTOS`, `LV_USE_FREERTOS_TASK_NOTIFY=1`, `LV_MEM_SIZE=48 KB`, `LV_DEF_REFR_PERIOD=5 ms`
+- `firmware/core1/src/display/{display.[ch], st7789vi.[ch], tft_8080.pio, tft_8080.pio.h}`
+- `firmware/core1/m1_bridge/CMakeLists.txt` — added LVGL subdirectory + display sources + `pico_generate_pio_header`
+- `firmware/core1/m1_bridge/src/main_core1_bridge.c` — `display_test_task`, `vPortSetupTimerInterrupt` override
+
+#### M3.2 — LVGL flush_cb integration ✅ (2026-04-15)
+
+`display_test_task` replaced by LVGL-driven render loop in
+`firmware/core1/src/display/lvgl_glue.[ch]`. Red → green → blue background
+rotation visually confirmed on the Rev A panel; flush throughput ~48
+flushes/sec (= 6 full 240×320 frames/sec with the 40-line partial buffer).
+
+- **Draw buffer**: single `240 × 40` RGB565 buffer = 19 200 B, BSS static, 4-byte aligned. Partial render mode.
+- **Tick source**: `lv_tick_set_cb(xTaskGetTickCount)` — `configTICK_RATE_HZ=1000` so the value is already in ms.
+- **flush_cb**: `lv_draw_sw_rgb565_swap(px_map, pixel_count)` in place (LVGL renders little-endian, the panel under COLMOD 0x55 expects big-endian), then blocking `display_flush_rect(x0,y0,x1,y1, px_map)`, then `lv_display_flush_ready(disp)` synchronously. M3.3 will replace the blocking wait with a DMA-complete task notification + TE IRQ for tearing avoidance.
+- **Task**: `lvgl_task` (priority `tskIDLE_PRIORITY + 2`, 16 KB stack, 4096 words). Runs `display_init()` → `lv_init()` → `lv_display_create(240, 320)` → buffer + flush_cb setup, then loops `lv_timer_handler()` + `vTaskDelay(pdMS_TO_TICKS(next))` where `next` is clamped to `[LV_DEF_REFR_PERIOD, 100 ms]`.
+- **Smoke test**: active screen `bg_color` cycles red → green → blue on a 1 Hz `xTaskGetTickCount`-based timer inside the task loop.
+
+**P3-2 fix — LVGL FreeRTOS OSAL recursive-mutex deadlock:** First call to `lv_timer_handler()` blocked forever. Root cause: LVGL v9.2.2's FreeRTOS OSAL creates its global mutex with `xSemaphoreCreateRecursiveMutex()` (`lv_freertos.c:438`) but acquires it with the *non-recursive* `xSemaphoreTake()` (`lv_freertos.c:132`). On FreeRTOS that combination blocks on the first `lv_lock()` inside `lv_timer_handler()`. Fix: switch `LV_USE_OS` from `LV_OS_FREERTOS` to `LV_OS_NONE` in `lv_conf.h`. Our LVGL access is serialised through a single task (`lvgl_task`) so the OSAL lock is redundant anyway; revisit if a future milestone needs multi-task LVGL access.
+
+**Files added:**
+- `firmware/core1/src/display/lvgl_glue.[ch]`
+- `firmware/core1/m1_bridge/CMakeLists.txt` — added `lvgl_glue.c` to sources
+
+**Files changed:**
+- `firmware/core1/m1_bridge/src/main_core1_bridge.c` — `display_test_task` removed, `lvgl_glue_start(tskIDLE_PRIORITY + 2)` wired in its place
+- `firmware/core1/m1_bridge/src/lv_conf.h` — `LV_USE_OS = LV_OS_NONE` (see P3-2), `LV_ASSERT_HANDLER` stamps `0xA55E1700` at `0x2007FFF8` before spinning so an LVGL assert is distinguishable from a generic hang over SWD
+
+---
+
 ## Cross-cutting Decisions (2026-04-15)
 
 ### DEC-1 — MIE keycode API refactor (out-of-band, pre-M3)

@@ -80,6 +80,7 @@
 #include "ipc_ringbuf.h"
 
 #include "display.h"
+#include "lvgl_glue.h"
 
 /* ── Doorbell IPC notification (M2) ─────────────────────────────────────── *
  * We use raw SIO register writes instead of pico_multicore API to avoid
@@ -355,37 +356,6 @@ static void bridge_task(void *pv)
     }
 }
 
-/* ── M3.1 display standalone test ─────────────────────────────────────────── *
- * Boots the ST7789VI panel, then loops through five solid colours so we can
- * eyeball that the bus, init sequence, and backlight all came up. Will be
- * replaced by the LVGL flush_cb path in M3.2.                                */
-static void display_test_task(void *arg)
-{
-    (void)arg;
-    dbg_u32(0x2007FFD8u, 0xD15CA110u);   /* task entered */
-    if (!display_init()) {
-        dbg_u32(0x2007FFD8u, 0xDEAD0BADu);
-        vTaskDelete(NULL);
-        return;
-    }
-    dbg_u32(0x2007FFD8u, 0xD15C0001u);   /* init returned true */
-
-    static const uint16_t cycle[] = {
-        0xF800, /* red   */
-        0x07E0, /* green */
-        0x001F, /* blue  */
-        0xFFFF, /* white */
-        0x0000, /* black */
-    };
-    uint32_t frame = 0;
-    for (;;) {
-        display_fill_solid(cycle[frame % (sizeof(cycle)/sizeof(cycle[0]))]);
-        dbg_u32(0x2007FFD8u, 0xD15C1000u | frame);
-        frame++;
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
 /* ── FreeRTOS SysTick override ──────────────────────────────────────────────
  * The RP2350_ARM_NTZ port's default vPortSetupTimerInterrupt() computes the
  * SysTick reload from clock_get_hz(clk_sys). But Core 1 skips
@@ -413,7 +383,7 @@ int main(void)
     /* 0. Unique boot marker — verifies over SWD that THIS build is running.
      * Written to shared IPC tail-pad (immune to both cores' crt0 zeroing).
      * Change the value each build to confirm a fresh boot. */
-    dbg_u32(0x2007FFD4u, 0xDEAD0305u);  /* M3.1 — bump suffix each flash */
+    dbg_u32(0x2007FFD4u, 0xDEAD030Cu);  /* M3.2 — bump suffix each flash */
 
     /* 1. Life signal — first thing after SDK runtime hands over. */
     dbg_u32(BRIDGE_SENTINEL_ADDR,   BRIDGE_SENTINEL_VALUE);
@@ -494,12 +464,12 @@ int main(void)
                 tskIDLE_PRIORITY + 2, NULL);
     BaseType_t rc_brg = xTaskCreate(bridge_task,     "bridge", 1024, NULL,
                 tskIDLE_PRIORITY + 2, &g_bridge_task_handle);
-    /* Display test runs at the same priority as usb / bridge so the
+    /* LVGL service task runs at the same priority as usb / bridge so the
      * round-robin scheduler hands it CPU between their yields. A lower
      * priority would be starved by usb_device_task's tight tud_task()
-     * + taskYIELD() loop. */
-    BaseType_t rc_dsp = xTaskCreate(display_test_task, "disp", 1024, NULL,
-                tskIDLE_PRIORITY + 2, NULL);
+     * + taskYIELD() loop. lvgl_task owns display_init() — main() must not
+     * also call it. */
+    BaseType_t rc_dsp = lvgl_glue_start(tskIDLE_PRIORITY + 2);
 
     /* Heap-exhaustion breadcrumb: encode pdPASS(=1) / errCOULD_NOT_ALLOCATE(=-1)
      * for each task in a single word so SWD can distinguish creation failures
