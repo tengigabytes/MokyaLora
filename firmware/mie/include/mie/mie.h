@@ -24,6 +24,8 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+#include <mie/keycode.h>
+
 // ── Opaque handles ────────────────────────────────────────────────────────────
 
 /** Opaque dictionary handle (wraps mie::TrieSearcher). */
@@ -67,10 +69,11 @@ void mie_set_commit_cb(mie_ctx_t* ctx,
                         void* user_data);
 
 /** Feed one key event.
- *  row, col — 0-based key matrix position (0–5 × 0–5).
- *  pressed  — non-zero = key-down; zero = key-up.
+ *  keycode — semantic keycode from <mie/keycode.h> (MOKYA_KEY_*, 0x01..0x3F).
+ *            MOKYA_KEY_NONE (0x00) and codes ≥ MOKYA_KEY_LIMIT are ignored.
+ *  pressed — non-zero = key-down; zero = key-up.
  *  Returns non-zero if the UI should be refreshed (display or candidates changed). */
-int mie_process_key(mie_ctx_t* ctx, uint8_t row, uint8_t col, int pressed);
+int mie_process_key(mie_ctx_t* ctx, uint8_t keycode, int pressed);
 
 /** Clear all input state (resets buffer, candidates, mode stays unchanged). */
 void mie_clear_input(mie_ctx_t* ctx);

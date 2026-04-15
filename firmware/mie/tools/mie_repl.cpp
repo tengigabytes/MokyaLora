@@ -29,6 +29,7 @@
 #include "../hal/pc/hal_pc_stdin.h"
 #include "../hal/pc/key_map.h"
 #include <mie/ime_logic.h>
+#include <mie/keycode.h>
 #include <mie/trie_searcher.h>
 
 #include <cstdio>
@@ -65,7 +66,7 @@ static void log_close() {
 // label_en:    shown in SmartEn / DirectUpper mode (nullptr = same as label_zh).
 // label_lower: shown in DirectLower mode (nullptr = same as label_en).
 struct KeyLabel {
-    uint8_t row; uint8_t col;
+    mokya_keycode_t keycode;
     const char* pc_hint;
     const char* label_zh;
     const char* label_en;
@@ -73,25 +74,27 @@ struct KeyLabel {
 };
 
 // clang-format off
+// Layout is preserved as a 6-row visual grid (row-major by keycode value).
 static const KeyLabel kLabels[] = {
     // Row 0: tone/digit keys — digits in all direct modes
-    {0,0,"1",   "ㄅㄉ", "1/2","1/2" },{0,1,"3",  "ˇˋ",  "3/4","3/4" },{0,2,"5",  "ㄓˊ","5/6","5/6" },
-    {0,3,"7",   "˙ㄚ",  "7/8","7/8" },{0,4,"9/-","ㄞㄢㄦ","9/0","9/0" },{0,5,"F1","FUNC",nullptr,nullptr},
-    // Row 1: ㄆㄊ=QW  ㄍㄐ=ER  ㄔㄗ=TY  ㄧㄛ=UI  ㄟㄣ=OP
-    {1,0,"q",   "ㄆㄊ","Q/W","q/w"},{1,1,"e",  "ㄍㄐ","E/R","e/r"},{1,2,"t",  "ㄔㄗ","T/Y","t/y"},
-    {1,3,"u",   "ㄧㄛ","U/I","u/i"},{1,4,"o",  "ㄟㄣ","O/P","o/p"},{1,5,"F2", "SET", nullptr,nullptr},
-    // Row 2: ㄇㄋ=AS  ㄎㄑ=DF  ㄕㄘ=GH  ㄨㄜ=JK  ㄠㄤ=L/;
-    {2,0,"a",   "ㄇㄋ","A/S","a/s"},{2,1,"d",  "ㄎㄑ","D/F","d/f"},{2,2,"g",  "ㄕㄘ","G/H","g/h"},
-    {2,3,"j",   "ㄨㄜ","J/K","j/k"},{2,4,"l/;","ㄠㄤ","L",  "l"  },{2,5,"BS","BACK",nullptr,nullptr},
-    // Row 3: ㄈㄌ=ZX  ㄏㄒ=CV  ㄖㄙ=BN  ㄩㄝ=M/,  ㄡㄥ=\.//
-    {3,0,"z",   "ㄈㄌ","Z/X","z/x"},{3,1,"c",  "ㄏㄒ","C/V","c/v"},{3,2,"b",  "ㄖㄙ","B/N","b/n"},
-    {3,3,"m/,", "ㄩㄝ","M",  "m"  },{3,4,"\\/.","ㄡㄥ","—", "—"  },{3,5,"Del","DEL",nullptr,nullptr},
-    // Rows 4-5: same in all modes
-    {4,0,"`",   "MODE",nullptr,nullptr},{4,1,"Tab","TAB",nullptr,nullptr},{4,2,"Spc","SPACE",nullptr,nullptr},
-    {4,3,"[",   "，SYM",nullptr,nullptr},{4,4,"]","。？",nullptr,nullptr},{4,5,"=","VOL+",nullptr,nullptr},
-    {5,0,"\xe2\x86\x91","UP",  nullptr,nullptr},{5,1,"\xe2\x86\x93","DOWN", nullptr,nullptr},
-    {5,2,"\xe2\x86\x90","LEFT",nullptr,nullptr},{5,3,"\xe2\x86\x92","RIGHT",nullptr,nullptr},
-    {5,4,"\xe2\x8f\x8e","OK",  nullptr,nullptr},{5,5,"_","VOL-",nullptr,nullptr},
+    {MOKYA_KEY_1,   "1",    "ㄅㄉ", "1/2","1/2" },{MOKYA_KEY_3, "3",   "ˇˋ",  "3/4","3/4" },{MOKYA_KEY_5, "5",   "ㄓˊ","5/6","5/6" },
+    {MOKYA_KEY_7,   "7",    "˙ㄚ",  "7/8","7/8" },{MOKYA_KEY_9, "9/-", "ㄞㄢㄦ","9/0","9/0" },{MOKYA_KEY_FUNC,"F1","FUNC",nullptr,nullptr},
+    // Row 1
+    {MOKYA_KEY_Q,   "q",    "ㄆㄊ","Q/W","q/w"},{MOKYA_KEY_E, "e",   "ㄍㄐ","E/R","e/r"},{MOKYA_KEY_T, "t",   "ㄔㄗ","T/Y","t/y"},
+    {MOKYA_KEY_U,   "u",    "ㄧㄛ","U/I","u/i"},{MOKYA_KEY_O, "o",   "ㄟㄣ","O/P","o/p"},{MOKYA_KEY_SET, "F2", "SET", nullptr,nullptr},
+    // Row 2
+    {MOKYA_KEY_A,   "a",    "ㄇㄋ","A/S","a/s"},{MOKYA_KEY_D, "d",   "ㄎㄑ","D/F","d/f"},{MOKYA_KEY_G, "g",   "ㄕㄘ","G/H","g/h"},
+    {MOKYA_KEY_J,   "j",    "ㄨㄜ","J/K","j/k"},{MOKYA_KEY_L, "l/;", "ㄠㄤ","L",  "l"  },{MOKYA_KEY_BACK,"BS", "BACK",nullptr,nullptr},
+    // Row 3
+    {MOKYA_KEY_Z,   "z",    "ㄈㄌ","Z/X","z/x"},{MOKYA_KEY_C, "c",   "ㄏㄒ","C/V","c/v"},{MOKYA_KEY_B, "b",   "ㄖㄙ","B/N","b/n"},
+    {MOKYA_KEY_M,   "m/,",  "ㄩㄝ","M",  "m"  },{MOKYA_KEY_BACKSLASH,"\\/.","ㄡㄥ","—","—"  },{MOKYA_KEY_DEL, "Del","DEL",nullptr,nullptr},
+    // Row 4
+    {MOKYA_KEY_MODE,"`",    "MODE",nullptr,nullptr},{MOKYA_KEY_TAB, "Tab","TAB",nullptr,nullptr},{MOKYA_KEY_SPACE,"Spc","SPACE",nullptr,nullptr},
+    {MOKYA_KEY_SYM1,"[",    "，SYM",nullptr,nullptr},{MOKYA_KEY_SYM2,"]","。？",nullptr,nullptr},{MOKYA_KEY_VOL_UP,"=","VOL+",nullptr,nullptr},
+    // Row 5
+    {MOKYA_KEY_UP,  "\xe2\x86\x91","UP",  nullptr,nullptr},{MOKYA_KEY_DOWN, "\xe2\x86\x93","DOWN", nullptr,nullptr},
+    {MOKYA_KEY_LEFT,"\xe2\x86\x90","LEFT",nullptr,nullptr},{MOKYA_KEY_RIGHT,"\xe2\x86\x92","RIGHT",nullptr,nullptr},
+    {MOKYA_KEY_OK,  "\xe2\x8f\x8e","OK",  nullptr,nullptr},{MOKYA_KEY_VOL_DOWN,"_","VOL-",nullptr,nullptr},
 };
 // clang-format on
 
@@ -163,9 +166,10 @@ static void render(const mie::ImeLogic& ime) {
     for (int row = 0; row < 6; ++row) {
         fputs("\xe2\x94\x82 ", stdout);
         for (int col = 0; col < 6; ++col) {
+            const mokya_keycode_t target = (mokya_keycode_t)(row * 6 + col + 1);
             const char* pc = "?"; const char* lb = "?";
             for (const auto& k : kLabels) {
-                if (k.row == row && k.col == col) {
+                if (k.keycode == target) {
                     pc = k.pc_hint;
                     switch (ime.mode()) {
                         case mie::InputMode::SmartEn:
@@ -359,25 +363,25 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // ESC to quit (HalPcStdin maps ESC to row=0xFF signal)
-        if (ev.row == 0xFF) break;
+        // ESC to quit (HalPcStdin maps ESC to MOKYA_KEY_NONE + pressed=false)
+        if (ev.keycode == MOKYA_KEY_NONE) break;
 
-        LOG("key: row=%u col=%u\n", (unsigned)ev.row, (unsigned)ev.col);
+        LOG("key: kc=0x%02X\n", (unsigned)ev.keycode);
 
         // When no IME input is pending, intercept navigation/edit keys for the
         // committed text cursor instead of passing them to ImeLogic.
         bool cursor_handled = false;
         if (ime.input_bytes() == 0) {
-            if (ev.row == 5 && ev.col == 2) {  // LEFT → cursor left
+            if (ev.keycode == MOKYA_KEY_LEFT) {
                 cursor_move_left();
                 cursor_handled = true;
-            } else if (ev.row == 5 && ev.col == 3) {  // RIGHT → cursor right
+            } else if (ev.keycode == MOKYA_KEY_RIGHT) {
                 cursor_move_right();
                 cursor_handled = true;
-            } else if (ev.row == 2 && ev.col == 5) {  // BACK → delete before cursor
+            } else if (ev.keycode == MOKYA_KEY_BACK) {
                 cursor_backspace();
                 cursor_handled = true;
-            } else if (ev.row == 3 && ev.col == 5) {  // DEL → delete at cursor
+            } else if (ev.keycode == MOKYA_KEY_DEL) {
                 cursor_delete();
                 cursor_handled = true;
             }

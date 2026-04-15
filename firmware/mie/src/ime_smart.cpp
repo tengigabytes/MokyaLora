@@ -7,10 +7,12 @@
 namespace mie {
 
 bool ImeLogic::process_smart(const KeyEvent& ev) {
-    // BACK (2,5) / DEL (3,5): remove last key from both buffers.
+    const mokya_keycode_t kc = ev.keycode;
+
+    // BACK / DEL: remove last key from both buffers.
     // Use rebuild_input_buf() so removing an invisible 0x20 first-tone marker
     // does not accidentally erase the preceding phoneme from the display.
-    if ((ev.row == 2 && ev.col == 5) || (ev.row == 3 && ev.col == 5)) {
+    if (kc == MOKYA_KEY_BACK || kc == MOKYA_KEY_DEL) {
         if (key_seq_len_ > 0) {
             --key_seq_len_;
             key_seq_buf_[key_seq_len_] = '\0';
@@ -20,12 +22,12 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return true;
     }
 
-    // SPACE (4,2):
+    // SPACE:
     //   SmartZh, no input  → output full-width space U+3000.
     //   SmartZh, pending   → append first-tone marker (0x20); second press = no-op.
     //   SmartEn, no input  → output half-width space.
     //   SmartEn, pending   → commit first candidate + auto-append space.
-    if (ev.row == 4 && ev.col == 2) {
+    if (kc == MOKYA_KEY_SPACE) {
         if (key_seq_len_ == 0) {
             const char* sp = (mode_ == InputMode::SmartEn || context_lang_ == EN)
                              ? " " : "\xe3\x80\x80";  // U+3000 ideographic space
@@ -59,8 +61,8 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return true;
     }
 
-    // OK (5,4): commit the currently navigated candidate (partial commit).
-    if (ev.row == 5 && ev.col == 4) {
+    // OK: commit the currently navigated candidate (partial commit).
+    if (kc == MOKYA_KEY_OK) {
         if (key_seq_len_ == 0) return false;
         const char* word;
         int lang, plen;
@@ -89,8 +91,8 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return true;
     }
 
-    // TAB (4,1): advance to start of next candidate page.
-    if (ev.row == 4 && ev.col == 1) {
+    // TAB: advance to start of next candidate page.
+    if (kc == MOKYA_KEY_TAB) {
         if (merged_count_ > 0) {
             int next = (cand_page() + 1) * kCandPageSize;
             merged_sel_ = (next >= merged_count_) ? 0 : next;
@@ -99,8 +101,8 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return false;
     }
 
-    // UP (5,0): previous candidate (wraps).
-    if (ev.row == 5 && ev.col == 0) {
+    // UP / LEFT: previous candidate (wraps).
+    if (kc == MOKYA_KEY_UP || kc == MOKYA_KEY_LEFT) {
         if (merged_count_ > 0) {
             merged_sel_ = (merged_sel_ - 1 + merged_count_) % merged_count_;
             return true;
@@ -108,8 +110,8 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return false;
     }
 
-    // DOWN (5,1): next candidate (wraps).
-    if (ev.row == 5 && ev.col == 1) {
+    // DOWN / RIGHT: next candidate (wraps).
+    if (kc == MOKYA_KEY_DOWN || kc == MOKYA_KEY_RIGHT) {
         if (merged_count_ > 0) {
             merged_sel_ = (merged_sel_ + 1) % merged_count_;
             return true;
@@ -117,36 +119,18 @@ bool ImeLogic::process_smart(const KeyEvent& ev) {
         return false;
     }
 
-    // LEFT (5,2): previous candidate (wraps).
-    if (ev.row == 5 && ev.col == 2) {
-        if (merged_count_ > 0) {
-            merged_sel_ = (merged_sel_ - 1 + merged_count_) % merged_count_;
-            return true;
-        }
-        return false;
-    }
-
-    // RIGHT (5,3): next candidate (wraps).
-    if (ev.row == 5 && ev.col == 3) {
-        if (merged_count_ > 0) {
-            merged_sel_ = (merged_sel_ + 1) % merged_count_;
-            return true;
-        }
-        return false;
-    }
-
-    // Input keys (rows 0-3, col 0-4): append to key sequence and re-run search.
-    if (ev.row <= 3 && ev.col <= 4) {
+    // Dictionary-input keys: append slot byte to key sequence and re-run search.
+    int slot = keycode_to_input_slot(kc);
+    if (slot >= 0) {
         if (key_seq_len_ < kMaxKeySeq) {
-            uint8_t key_index = ev.row * 5 + ev.col;
-            char    new_byte  = (char)(key_index + 0x21);
+            char new_byte = (char)(slot + 0x21);
             key_seq_buf_[key_seq_len_++] = new_byte;
             key_seq_buf_[key_seq_len_]   = '\0';
             if (mode_ == InputMode::SmartEn) {
-                const char* lt = key_to_direct_label(ev.row, ev.col, 3);
+                const char* lt = key_to_direct_label(kc, 3);
                 if (lt) append_to_display(lt);
             } else {
-                const char* ph = key_to_phoneme(ev.row, ev.col);
+                const char* ph = key_to_phoneme(kc);
                 if (ph) append_to_display(ph);
             }
             run_search();

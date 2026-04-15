@@ -32,8 +32,8 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
 {
     key_seq_buf_[0] = '\0';
     input_buf_[0]   = '\0';
-    direct_      = { 0xFF, 0xFF, 0 };
-    sym_pending_ = { 0xFF, 0 };
+    direct_      = { MOKYA_KEY_NONE, 0 };
+    sym_pending_ = { MOKYA_KEY_NONE, 0 };
 }
 
 void ImeLogic::set_commit_callback(CommitCallback cb, void* ctx) {
@@ -51,17 +51,19 @@ void ImeLogic::clear_input() {
     merged_count_       = 0;
     merged_sel_         = 0;
     matched_prefix_len_ = 0;
-    direct_             = { 0xFF, 0xFF, 0 };
-    sym_pending_        = { 0xFF, 0 };
+    direct_             = { MOKYA_KEY_NONE, 0 };
+    sym_pending_        = { MOKYA_KEY_NONE, 0 };
 }
 
 bool ImeLogic::process_key(const KeyEvent& ev) {
     if (!ev.pressed) return false;
 
-    // MODE key (4,0): commit pending input, then cycle 中→EN→ABC→abc→ㄅ→中.
-    if (ev.row == 4 && ev.col == 0) {
+    const mokya_keycode_t kc = ev.keycode;
+
+    // MODE key: commit pending input, then cycle 中→EN→ABC→abc→ㄅ→中.
+    if (kc == MOKYA_KEY_MODE) {
         if (mode_ == InputMode::SmartZh || mode_ == InputMode::SmartEn) {
-            if (sym_pending_.key_col != 0xFF) {
+            if (sym_pending_.keycode != MOKYA_KEY_NONE) {
                 commit_sym_pending();
             } else if (key_seq_len_ > 0) {
                 if (merged_count_ > 0) {
@@ -72,11 +74,11 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
                 }
             }
         } else {
-            if (sym_pending_.key_col != 0xFF) {
+            if (sym_pending_.keycode != MOKYA_KEY_NONE) {
                 commit_sym_pending();
-            } else if (direct_.row != 0xFF) {
-                const char* lbl = direct_mode_slot_label(direct_.row, direct_.col, direct_.label_idx);
-                direct_ = { 0xFF, 0xFF, 0 };
+            } else if (direct_.keycode != MOKYA_KEY_NONE) {
+                const char* lbl = direct_mode_slot_label(direct_.keycode, direct_.label_idx);
+                direct_ = { MOKYA_KEY_NONE, 0 };
                 input_len_ = 0; input_buf_[0] = '\0';
                 if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
             }
@@ -92,12 +94,12 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
         return true;
     }
 
-    // Symbol keys (row 4, col 3 or 4).
-    if (ev.row == 4 && (ev.col == 3 || ev.col == 4))
-        return process_sym_key(ev.col);
+    // Symbol keys.
+    if (kc == MOKYA_KEY_SYM1 || kc == MOKYA_KEY_SYM2)
+        return process_sym_key(kc);
 
     // Any non-symbol, non-MODE key cancels a pending symbol cycle.
-    if (sym_pending_.key_col != 0xFF) {
+    if (sym_pending_.keycode != MOKYA_KEY_NONE) {
         commit_sym_pending();
         // Fall through: the new key is also processed.
     }
