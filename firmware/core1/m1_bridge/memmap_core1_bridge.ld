@@ -150,6 +150,18 @@ SECTIONS
         *(.ram_vector_table)
     } > RAM
 
+    /* LVGL DIRECT-mode primary framebuffer — 240x320x16bpp = 150 KB.
+     * Architecture §2.2 places the framebuffer at the start of Core 1's
+     * 312 KB carve-out. NOLOAD: zeroed by LVGL on first draw; we don't
+     * burn flash bytes shipping the image. */
+    .framebuffer (NOLOAD): {
+        . = ALIGN(4);
+        __framebuffer_start__ = .;
+        *(.framebuffer)
+        . = ALIGN(4);
+        __framebuffer_end__ = .;
+    } > RAM
+
     .uninitialized_data (NOLOAD): {
         . = ALIGN(4);
         *(.uninitialized_data*)
