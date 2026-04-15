@@ -29,6 +29,18 @@ void display_flush_rect(uint16_t x0, uint16_t y0,
                         uint16_t x1, uint16_t y1,
                         const uint8_t *pixels);
 
+/* DIRECT-mode flush: the source pixels are the [x0..x1, y0..y1] sub-rect of
+ * a larger framebuffer whose row stride is `fb_stride_px` pixels. `fb_base`
+ * points to pixel (0, 0) of that framebuffer in native little-endian RGB565
+ * (which is what LVGL writes). Each row is byte-swapped through an internal
+ * scratch buffer before being DMA'd to the panel, so the framebuffer itself
+ * is never mutated. Blocks until the last DMA finishes and the PIO TX FIFO
+ * drains. */
+void display_flush_rect_strided(uint16_t x0, uint16_t y0,
+                                uint16_t x1, uint16_t y1,
+                                const uint16_t *fb_base,
+                                uint16_t fb_stride_px);
+
 /* Block until the next TE rising edge (start of V-blank). M3.1 implements
  * this by polling GPIO 22; M3.2 will switch to GPIO IRQ + task notify. */
 void display_wait_te_rise(void);
