@@ -92,7 +92,16 @@
  * - LV_OS_WINDOWS
  * - LV_OS_MQX
  * - LV_OS_CUSTOM */
-#define LV_USE_OS   LV_OS_FREERTOS
+/* MokyaLora: LV_OS_NONE rather than LV_OS_FREERTOS.
+ *
+ * All LVGL API access is serialised through a single task (lvgl_task in
+ * lvgl_glue.c), so the OSAL lock is redundant. We also hit a deadlock in
+ * LVGL v9.2.2's FreeRTOS OSAL: lv_freertos.c:438 creates the global mutex
+ * with xSemaphoreCreateRecursiveMutex() but lv_freertos.c:132 acquires it
+ * with the non-recursive xSemaphoreTake(). On FreeRTOS that combination
+ * blocks forever on the first lv_lock() call. Revisit if a future milestone
+ * needs multi-task LVGL access. */
+#define LV_USE_OS   LV_OS_NONE
 
 #if LV_USE_OS == LV_OS_CUSTOM
     #define LV_OS_CUSTOM_INCLUDE <stdint.h>
@@ -335,7 +344,13 @@
 
 /*Add a custom handler when assert happens e.g. to restart the MCU*/
 #define LV_ASSERT_HANDLER_INCLUDE <stdint.h>
-#define LV_ASSERT_HANDLER while(1);   /*Halt by default*/
+/* MokyaLora M3.2: stamp an SWD-readable tag at 0x2007FFF8 before spinning,
+ * so we can tell whether an LVGL assert is the cause of a task hang.
+ * LVGL inlines this inside an `if (!(expr)) { LV_LOG_ERROR(...); LV_ASSERT_HANDLER }`
+ * block so we must expand to plain semicolon-terminated statements — not
+ * a `do { ... } while(0)` (no trailing `;` would leave the outer `}` dangling). */
+#define LV_ASSERT_HANDLER \
+    *(volatile uint32_t *)0x2007FFF8u = 0xA55E1700u; while(1);
 
 /*-------------
  * Debug
