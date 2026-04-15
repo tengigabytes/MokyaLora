@@ -19,7 +19,7 @@ It covers:
 1. Dual-core AMP topology and licence boundary (§1)
 2. Full memory map — Flash layout, SRAM partition, PSRAM allocation (§2)
 3. Per-core software stacks — from HW peripheral up through driver → HAL → service → app (§3, §4)
-4. USB Mode A / Mode B — charge-only vs CDC data-terminal (§4.6)
+4. USB Mode OFF / COMM — charge-only vs composite CDC (Meshtastic + Control) (§4.6); Control Protocol (§4.7)
 5. Shared-SRAM IPC — 24 KB byte map, message catalogue, end-to-end flows, doorbell (§5)
 6. MIE user-dictionary persistence via IPC (§5.7, planned for M5+)
 7. Cross-image non-interference — link, boot, SRAM, SPSC, memory ordering, flash safety (§6)
@@ -336,13 +336,14 @@ architecture — the next hardware revision removes both devices.
 │                IMU (LSM6DSV16X)    · Mag (LIS2MDL) · Baro (LPS22HH)  │
 │                GPS (Teseo-LIV3FL)  · StatusLED (LM27965)             │
 │                HapticMotor (PWM)   · KeypadScan (PIO+DMA) · LCD (PIO)│
-│                USB CDC (TinyUSB)                                     │
+│                USB Composite (TinyUSB) — CDC#0 Meshtastic + CDC#1 Ctrl│
 ├──────────────────────────────────────────────────────────────────────┤
 │ DRIVER         I2C abstraction · PIO program loader · DMA dispatch   │
 │                TinyUSB device core                                   │
 ├──────────────────────────────────────────────────────────────────────┤
 │ SCHEDULER      FreeRTOS V11.3.0 preemptive (single-core port)        │
-│                tasks: UI, IPCRx, KeypadScan, Sensors, Power, USB     │
+│                tasks: UI, IPCRx, KeypadScan, Sensors, Power, USB,    │
+│                       UsbCtrl (CDC#1, build-gated)                   │
 ├──────────────────────────────────────────────────────────────────────┤
 │ HW             i2c1 (34/35 sensor) · i2c1 (6/7 power) · SPI0 (free)  │
 │                PIO0 (LCD) · PIO1 (keypad) · PWM (motor) · USB        │
@@ -363,9 +364,14 @@ Heap scheme: `heap_4` (`ucHeap[configTOTAL_HEAP_SIZE]` in `.bss`).
 | `SensorsTask`  | 2        | 2 KB    | 50 ms tick            | Poll IMU/mag/baro, update model            |
 | `GPSTask`      | 2        | 2 KB    | I2C IRQ / 100 ms      | Read Teseo, write `IpcGpsBuf`              |
 | `PowerTask`    | 2        | 1.5 KB  | 1 s tick              | Poll BQ25622 + BQ27441, run power FSM      |
-| `USBTask`      | 3        | 2 KB    | TinyUSB callback      | Serve CDC — console + bridged CLI traffic  |
+| `USBTask`      | 3        | 2 KB    | TinyUSB callback      | Serve CDC#0 — Meshtastic console + bridged CLI |
+| `UsbCtrlTask`  | 3        | 2.5 KB  | CDC#1 RX              | Serve CDC#1 — Control Protocol (§4.7)      |
 | `IMETask`      | 3        | 4 KB    | Keypad event          | Run MIE FSM on input chord                 |
 | `IdleHook`     | 0        | —       | idle                  | Feed watchdog, enter WFI                   |
+
+`UsbCtrlTask` is linked only when `MOKYA_ENABLE_USB_CONTROL` is set; its
+TinyUSB descriptor entry is added conditionally by the same flag. See §4.7
+for the full gate design.
 
 `UITask` holds the LVGL mutex. All HAL→UI data pushes go through FreeRTOS queues drained by
 `UITask`; no other task directly touches LVGL objects.
@@ -380,9 +386,36 @@ the NHD 2.4″ LCD via PIO 8080. Target 60–80 FPS. PSRAM is explicitly avoided
 ### 4.4 Input path
 
 PIO1 program scans the 6×6 keypad matrix with SDM03U40 Schottky diodes (NKRO), DMA copies
-the 6-byte column state into a ring buffer. `KeypadScan` task debounces (20 ms) and emits
-`KeyEvent { code, type }` into a queue consumed by `IMETask` (in IME mode) or `UITask` (in
-UI-navigation mode).
+the 6-byte column state into a ring buffer. `KeypadScan` task debounces (20 ms), translates
+the matrix (row, col) through `firmware/core1/src/keymap_matrix.h` into a keycode defined
+in `firmware/mie/include/mie/keycode.h`, and enqueues a `key_event_t` into the shared
+KeyEvent queue consumed by `IMETask` (in IME mode) or `UITask` (in UI-navigation mode).
+
+```c
+typedef enum {
+    KEY_SOURCE_HW     = 0,   // PIO1 scan via KeypadScan
+    KEY_SOURCE_INJECT = 1,   // CDC#1 Control Protocol via UsbCtrlTask (§4.7)
+} key_source_t;
+
+typedef struct {
+    uint8_t       keycode;     // value from mie/keycode.h, 0x01..0x3F
+    uint8_t       pressed : 1;
+    key_source_t  source  : 1;
+    uint8_t       flags   : 6; // reserved — long-press hint, future use
+} key_event_t;
+```
+
+The queue is **multi-producer**: `KeypadScan` pushes HW events, `UsbCtrlTask`
+pushes INJECT events. Arbitration rule — if HW and INJECT arrive for the same
+keycode within the debounce window, HW wins and INJECT returns `ERR_BUSY` to
+the host. Once past the queue, both sources are indistinguishable to `IMETask`
+/ `UITask` except via the `source` field, which is read for breadcrumb tagging
+and for safe-mode rejection (§9.4).
+
+Matrix geometry (6×6) exists only inside `KeypadScan` and `keymap_matrix.h`.
+Every layer above the queue — MIE, UI, Control Protocol, host tooling — sees
+only keycodes. Adding a non-matrix key (power button, future side button) means
+adding a constant to `keycode.h` and an enqueue site; no other layer changes.
 
 ### 4.5 Power FSM
 
@@ -397,49 +430,110 @@ UI-navigation mode).
 `IPC_CMD_POWER_STATE` notifies Core 0 whenever the FSM transitions; Core 0 adjusts
 transmit cadence + sleep behaviour accordingly.
 
-### 4.6 USB Modes — charge-only vs data-terminal
+### 4.6 USB Modes — OFF vs COMM (composite CDC)
 
-Per `system-requirements.md` §4, the device supports two mutually exclusive USB modes,
-selected by the user on VBUS insertion. Both modes live on Core 1 (Core 0 never touches
-USB — `-D NO_USB` strips it from the Arduino-Pico build).
+Per `software-requirements.md` §1 and §6, the device presents two USB modes
+selected by the user on VBUS insertion. Both modes live on Core 1 (Core 0
+never touches USB — `-D NO_USB` strips it from the Arduino-Pico build).
 
-| Mode | TinyUSB | Host view                    | Data path                                    |
-|------|---------|------------------------------|----------------------------------------------|
-| A    | dormant | dumb charging sink           | Charger manages VBUS only — no enumeration   |
-| B    | running | USB CDC virtual COM port     | `USBTask` bridges CDC ↔ `IPC_MSG_SERIAL_BYTES` (M1 bridge, §5.5) |
+| Mode | TinyUSB | Host view                            | Interfaces                                   |
+|------|---------|--------------------------------------|----------------------------------------------|
+| OFF  | dormant | dumb charging sink                   | Charger manages VBUS only — no enumeration   |
+| COMM | running | composite device: **two** virtual COM ports | CDC#0 Meshtastic bridge + CDC#1 Control (§4.7) |
+
+COMM is the only TinyUSB-enabled mode. CDC#0 and CDC#1 enumerate together —
+there is no "Serial only" or "Control only" sub-mode. Reasons:
+
+- Composite CDC is stable in TinyUSB; adding CDC#1 is one descriptor entry,
+  not a mode-switch state machine.
+- The two interfaces have independent framings (CDC#0 transparent Meshtastic
+  bytes; CDC#1 SLIP+COBS) and independent handlers (`USBTask` vs
+  `UsbCtrlTask`). A host opens whichever COM port it needs; the other stays
+  idle without any device-side coordination.
+- Build flag `MOKYA_ENABLE_USB_CONTROL=OFF` drops CDC#1 entirely from the
+  descriptor so a certified shipment sees a single-CDC device. No runtime
+  branching.
 
 **Mode selection on VBUS insert (GPIO 1 IRQ):**
 
 ```
   VBUS IRQ ──► PowerTask reads settings key IPC_CFG_USB_MODE (M5+) or fallback default
-    ├─ "Always charge-only"  → Mode A: leave TinyUSB uninitialised; BQ25622 handles VBUS
-    ├─ "Always data"         → Mode B: call tud_init(); USBTask resumed
+    ├─ "Always charge-only"  → Mode OFF:  leave TinyUSB uninitialised; BQ25622 handles VBUS
+    ├─ "Always data"         → Mode COMM: call tud_init(); USBTask + UsbCtrlTask resumed
     └─ "Ask every time"      → Show 3 s LVGL pop-up; OK defaults per pairing history
 ```
 
-**Runtime switch A ↔ B (Settings → USB Mode):**
+**Runtime switch OFF ↔ COMM (Settings → USB Mode):**
 
-- A → B: call `tud_init(BOARD_TUD_RHPORT)`; resume `USBTask`. Host sees new device
-  enumerate within ~2 s (no reboot).
-- B → A: flush CDC TX queue; call `tud_disconnect()`; suspend `USBTask`. Host sees the
-  COM port disappear within ~300 ms.
+- OFF → COMM: call `tud_init(BOARD_TUD_RHPORT)`; resume `USBTask` and
+  `UsbCtrlTask`. Host sees the composite device enumerate within ~2 s.
+- COMM → OFF: flush both CDC TX queues; call `tud_disconnect()`; suspend
+  both USB tasks. Host sees both COM ports disappear within ~300 ms.
 
-**Byte-bridge data flow (Mode B steady state):**
+**CDC#0 byte-bridge data flow (COMM steady state):**
 
 ```
-  PC ──► (CDC OUT) ──► TinyUSB ── CDC RX queue ──► USBTask
+  PC ──► (CDC#0 OUT) ──► TinyUSB ── CDC#0 RX queue ──► USBTask
           → ipc_ring_push(CMD, IPC_MSG_SERIAL_BYTES, payload≤256)
           → SIO doorbell ──► Core 0 SerialConsole hook consumes bytes
                              drives Meshtastic admin CLI
-  Core 0 ──► IPC_MSG_SERIAL_BYTES (DATA) ──► USBTask → CDC IN ──► PC
+  Core 0 ──► IPC_MSG_SERIAL_BYTES (DATA) ──► USBTask → CDC#0 IN ──► PC
 ```
 
 The 256 B slot size matches `IPC_MSG_PAYLOAD_MAX` and allows TinyUSB's 64 B packets to
 batch into a single IPC slot, which is the throughput optimization from M1 Part B.
 
-**Relationship to safe mode (§9.4):** safe mode forces **Mode B** regardless of setting.
+**CDC#1 Control data flow:** see §4.7.
+
+**Relationship to safe mode (§9.4):** safe mode forces **Mode COMM** regardless of setting.
 When the device cannot boot normally, the PC is the only recovery surface; charge-only
-would strand the user.
+would strand the user. Within COMM, CDC#1 Control rejects all state-mutating commands
+while in safe mode (see §9.4 and Control Protocol §8.3).
+
+### 4.7 USB Control Protocol (CDC#1)
+
+CDC#1 exposes a host-driven control channel used for automated testing,
+remote debugging, and development tooling. This section summarises the
+integration surface; the wire protocol, command catalogue, ACK semantics,
+framing (SLIP+COBS), and HMAC-SHA256 authentication are normatively defined
+in [`usb-control-protocol.md`](usb-control-protocol.md).
+
+**Ownership:** `UsbCtrlTask` (FreeRTOS task, priority 3, 2.5 KB stack) owns
+the CDC#1 endpoints. It shares nothing with `USBTask` except the TinyUSB
+device stack; each task drains its own CDC RX queue.
+
+**Gates (both must be open):**
+
+1. **Build flag** `MOKYA_ENABLE_USB_CONTROL`. Default ON for all current builds
+   (no CE/FCC submission planned). OFF drops CDC#1 descriptor and `UsbCtrlTask`
+   at link time.
+2. **Runtime flag** `settings.usb_control_enabled`. Default OFF at every boot.
+   User opens it via Settings UI or via a pre-authorised remote-unlock signed
+   by the pairing key (supports remote-debug when the device is not
+   physically reachable).
+
+**Injection path (happy case):**
+
+```
+  Host ──► (CDC#1 OUT, SLIP+COBS frame) ──► TinyUSB ── CDC#1 RX queue ──► UsbCtrlTask
+    ├─ HMAC-authenticate (HELLO/AUTH handshake)
+    ├─ parse opcode → validate payload
+    ├─ KEY/UI_CMD: enqueue key_event_t{source=INJECT} into KeyEvent queue (§4.4)
+    ├─ TYPE:       synthesise commit events to focused text widget
+    ├─ SCREEN:     copy framebuffer under LVGL mutex → async stream fragments
+    └─ UI_STATE/LOG_TAIL/EVENT_SUB: immediate read-only response
+
+  (after effect observable) ──► build ACK frame ──► (CDC#1 IN) ──► Host
+```
+
+**Arbitration with hardware keypad:** HW events win for the same keycode
+within the 20 ms debounce window; INJECT events losing arbitration are
+dropped with `ERR_BUSY` returned to the host. See §4.4 for the queue
+structure and §9.3 for breadcrumb tagging of INJECT events.
+
+**No IPC involvement.** CDC#1 is entirely a Core 1 concern. The Control
+Protocol never crosses the IPC boundary; neither `ipc_protocol.h` nor Core 0
+know it exists.
 
 ---
 
@@ -1081,7 +1175,7 @@ normal init. A clean 10 s uptime in normal mode clears `SCRATCH[1]` back to 0.
 | LoRa radio (SX1262)         | OFF                | eliminate radio IRQ as WDT trigger            |
 | Core 1 LVGL UI task         | suspended          | eliminate LVGL deadlock as WDT trigger        |
 | Core 1 `IPCRxTask`          | running            | required to serve CDC console                 |
-| Core 1 `USBTask` + TinyUSB  | running (Mode B forced) | primary out-of-band recovery path        |
+| Core 1 `USBTask` + TinyUSB  | running (Mode COMM forced) | primary out-of-band recovery path; CDC#1 Control read-only (see §4.7 / Control Protocol §8.3) |
 | J-Link SWD                  | always on          | hardware — independent of firmware state      |
 | LCD (PIO + DMA)             | OFF                | avoid any PIO/DMA path implicated in fault    |
 | Keypad scan (PIO1)          | OFF                | only PWR key read via direct GPIO poll        |

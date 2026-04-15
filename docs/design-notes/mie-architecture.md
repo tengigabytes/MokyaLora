@@ -39,7 +39,9 @@ open-source repository in the future with minimal refactoring.
 │                    dict_dat, dict_values              │
 ├──────────────────────────┬──────────────────────────┤
 │  HAL — RP2350            │  HAL — PC stub            │  Platform-specific
-│  (PIO scan → KeyEvent)   │  (stdin → KeyEvent)       │
+│  (PIO scan +             │  (stdin → keycode →       │
+│   keymap_matrix →        │   KeyEvent)               │
+│   keycode → KeyEvent)    │                           │
 └──────────────────────────┴──────────────────────────┘
 ```
 
@@ -77,7 +79,7 @@ firmware/mie/
 │   └── ime_direct.cpp          # process_direct, process_sym_key, commit_sym_pending
 ├── hal/
 │   ├── hal_port.h              # Shim → redirects to include/mie/hal_port.h
-│   ├── rp2350/                 # RP2350 PIO scan → KeyEvent adapter (Phase 2)
+│   ├── rp2350/                 # RP2350 PIO scan + keymap_matrix → keycode → KeyEvent (Phase 2)
 │   └── pc/                     # PC keyboard adapters (host build only)
 │       ├── key_map.h           #   Static PC key → KeyEvent{row,col} table
 │       ├── hal_pc_stdin.h      #   HalPcStdin class declaration
@@ -392,22 +394,42 @@ No multi-character word prediction.
 
 ## 7. HAL Interface Contract
 
+MIE is a **service**: it accepts a stream of keycode events and produces
+input/candidate state. It has no knowledge of matrix geometry, scan hardware,
+or physical key layout — all of that is confined to the adapters below the
+`IHalPort` interface and, on the embedded target, to
+`firmware/core1/src/keymap_matrix.h`.
+
 All platform implementations must satisfy `mie::IHalPort`:
 
 ```cpp
-// hal/hal_port.h
+// include/mie/hal_port.h
+#include <mie/keycode.h>   // MOKYA_KEY_* constants, 0x01..0x3F
+
 namespace mie {
-    struct KeyEvent { uint8_t row; uint8_t col; bool pressed; };
+    struct KeyEvent { uint8_t keycode; bool pressed; };
     class IHalPort {
     public:
         virtual ~IHalPort() = default;
-        virtual bool poll(KeyEvent& out) = 0;  // non-blocking
+        virtual bool poll(KeyEvent& out) = 0;   // non-blocking
     };
 }
 ```
 
-- RP2350 implementation (`hal/rp2350/`): reads from the DMA ring buffer populated by the PIO keypad scanner.
-- PC implementation (`hal/pc/`): maps PC keyboard input to `KeyEvent` via a static key map table (see §7.1).
+`keycode` is a value from `firmware/mie/include/mie/keycode.h` — a compact
+semantic enumeration where the power button, matrix keys, and future side
+buttons all share the same namespace (`0x01..0x3F`). `0x00` is reserved
+(`MOKYA_KEY_NONE`).
+
+Two header rule:
+
+| Header                                        | Owner       | Purpose                                                    |
+|-----------------------------------------------|-------------|------------------------------------------------------------|
+| `firmware/mie/include/mie/keycode.h`          | MIE (MIT)   | Canonical keycode constants. Shared by MIE, Core 1 UI, USB Control Protocol, and host tooling (Python binding generates `Key` enum from this file). |
+| `firmware/core1/src/keymap_matrix.h`          | Core 1      | 6×6 matrix `(row, col) → keycode` lookup. Used **once** inside `KeypadScan` before events enter the KeyEvent queue. Nothing above `KeypadScan` sees matrix coordinates. |
+
+- RP2350 implementation (`hal/rp2350/`): reads from the DMA ring buffer populated by the PIO keypad scanner, applies `keymap_matrix.h`, and emits `KeyEvent { keycode, pressed }`.
+- PC implementation (`hal/pc/`): maps PC keyboard input directly to `keycode` — no matrix translation, since the PC has no matrix (see §7.1).
 
 ### 7.1 PC Virtual Half-Keyboard
 
@@ -417,7 +439,12 @@ keyboard cannot reproduce this directly, so `hal/pc/` provides a virtual mapping
 
 **Mapping rule:** use the first letter printed on each physical key as the PC trigger key.
 
-#### PC Key → Matrix Position Map
+#### PC Key → MokyaLora Keycode Map
+
+The `Row` and `Col` columns below show the **hardware matrix location** for
+reference only — they are not used by the PC HAL, which maps directly to
+`keycode`. The canonical `MOKYA_KEY_*` constants and their numeric values
+live in `firmware/mie/include/mie/keycode.h`.
 
 | PC Key | MokyaLora Key | Row | Col | Bopomofo |
 |--------|--------------|-----|-----|----------|
@@ -462,7 +489,7 @@ keyboard cannot reproduce this directly, so `hal/pc/` provides a virtual mapping
 
 | File | Description |
 |------|-------------|
-| `hal/pc/key_map.h` | Static `pc_key_map[]` table: `char → KeyEvent{row, col}` |
+| `hal/pc/key_map.h` | Static `pc_key_map[]` table: `char → keycode_t` (one lookup, no matrix translation) |
 | `hal/pc/hal_pc_stdin.cpp` | `IHalPort` implementation; sets terminal to raw mode, polls stdin |
 | `tools/mie_repl.cpp` | Interactive REPL: renders virtual keyboard layout + candidate bar in terminal |
 
@@ -553,7 +580,7 @@ The keyboard panel mirrors the physical PCB layout from the assembly drawing:
 ```
 SDL2 event loop
     │
-    ├── keyboard / mouse event → KeyEvent{row, col, pressed}
+    ├── keyboard / mouse event → KeyEvent{keycode, pressed}
     │       (same mapping as hal/pc/key_map.h)
     │
     └── ImeLogic::process_key(event)
@@ -565,7 +592,7 @@ SDL2 event loop
 
 `mie_gui` links against the `mie` static library and `HalPcStdin` is **not** used
 (events come from ImGui/SDL2 directly). The `pc_key_map[]` table from `hal/pc/key_map.h`
-is reused to convert SDL keycodes to `KeyEvent` values.
+is reused to convert SDL keycodes to MokyaLora keycodes.
 
 #### CMake Target
 
@@ -621,7 +648,7 @@ builds the `mie_gui` target using the MSVC/Ninja toolchain.
 
 ### Phase 2 — Hardware Integration (MokyaLora Rev A)
 
-- [ ] `hal/rp2350/`: bridge PIO+DMA key state buffer to `mie::KeyEvent`.
+- [ ] `hal/rp2350/`: bridge PIO+DMA key state buffer through `keymap_matrix.h` → `keycode_t` → `mie::KeyEvent`.
 - [ ] Boot loader: copy DAT + values from Flash to PSRAM; measure search latency.
 - [ ] Display: render `font_glyphs.bin` via LVGL custom font driver on NHD 2.4″.
 - [ ] UI: integrate candidate bar widget with Trie-Searcher output.
@@ -683,7 +710,7 @@ void        mie_dict_close(mie_dict_t*);
 mie_ctx_t*  mie_ctx_create(mie_dict_t* zh, mie_dict_t* en);  /* en may be NULL */
 void        mie_ctx_destroy(mie_ctx_t*);
 void        mie_set_commit_cb(mie_ctx_t*, void(*cb)(const char*, void*), void*);
-int         mie_process_key(mie_ctx_t*, uint8_t row, uint8_t col, int pressed);
+int         mie_process_key(mie_ctx_t*, uint8_t keycode, int pressed);
 void        mie_clear_input(mie_ctx_t*);
 
 /* ── Display ─────────────────────────────────────────────── */

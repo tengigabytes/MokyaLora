@@ -800,6 +800,70 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 
 ---
 
+## Cross-cutting Decisions (2026-04-15)
+
+### DEC-1 — MIE keycode API refactor (out-of-band, pre-M3)
+
+`mie::KeyEvent` changes from `{ row, col, pressed }` to `{ keycode, pressed }`.
+MIE C API changes from `mie_process_key(ctx, row, col, pressed)` to
+`mie_process_key(ctx, keycode, pressed)`.
+
+**Rationale.** MIE is a service layer; exposing 6×6 matrix geometry through
+its public API leaked hardware knowledge into the IME. Subsequent
+multi-producer requirements (M3 keypad + M9 USB Control injection) would have
+forced the injection path to reconstruct matrix coordinates just to call MIE
+— a layering inversion. Folding the matrix into a single translation table
+inside `KeypadScan` lets every layer above see only semantic keycodes.
+
+**Two-header split:**
+
+| Header | Owner | Content |
+|--------|-------|---------|
+| `firmware/mie/include/mie/keycode.h` | MIE (MIT) | Canonical `MOKYA_KEY_*` constants, `0x01..0x3F`; no matrix concept |
+| `firmware/core1/src/keymap_matrix.h` | Core 1 (Apache-2.0) | 6×6 `(row, col) → keycode` lookup, applied once inside `KeypadScan` |
+
+**Scope.** `hal_port.h`, `mie.h`, `ime_logic.*`, `mie_c_api.cpp`, 120
+GoogleTest cases, `mie_gui`, `hal/pc/key_map.h`. Android / Windows IME
+bindings inherit via the updated C API signature.
+
+**Timing.** Immediately, in `dev-Sblzm`, before M3 starts. M3 keypad driver
+writes directly against the new API; no intermediate (row, col) phase.
+
+### DEC-2 — USB Control Interface added to Phase 2 as M9
+
+Phase 2 milestone blueprint now carries M9. See
+[`docs/design-notes/usb-control-protocol.md`](../design-notes/usb-control-protocol.md)
+for the normative wire protocol and
+[`docs/requirements/software-requirements.md`](../requirements/software-requirements.md) §6
+for the non-functional requirements.
+
+**Integration summary.**
+
+- USB Mode renamed from `A/B` to `OFF/COMM`. Mode COMM is a composite
+  TinyUSB device exposing two CDC interfaces: CDC#0 (Meshtastic bridge,
+  unchanged) and CDC#1 (Control Protocol).
+- Core 1 adds `UsbCtrlTask` (priority 3, 2.5 KB stack). Build flag
+  `MOKYA_ENABLE_USB_CONTROL=ON` by default (no CE/FCC submission planned);
+  when OFF, CDC#1 descriptor and the task are dropped entirely at link time.
+- `key_event_t` is upgraded to carry a `source` flag (`HW` vs `INJECT`).
+  HW events win arbitration within the 20 ms debounce window; INJECT events
+  losing the race return `ERR_BUSY` to the host. Safe mode rejects all
+  state-mutating INJECT commands.
+- Authentication uses HMAC-SHA256 challenge-response against a 32-byte
+  pairing key in LittleFS. Supports remote-debug use case (device away from
+  the user, still auditable via signed HMAC).
+
+**M3/M4 implication (G2).** Keypad driver is written from day-1 against the
+multi-producer KeyEvent queue with source flag — even though `UsbCtrlTask`
+is not yet implemented, the queue shape is the final shape. M9 then only
+adds a second producer, not a queue refactor.
+
+**Host tooling.** `tools/mokya-ctl/` Python package (CLI + reusable
+`mokya_control` module) ships alongside the firmware; `Key` / `UiAction`
+Python enums are generated from the C headers to prevent drift.
+
+---
+
 ## Issues Log (Phase 2)
 
 | # | Date | Area | Issue | Resolution |
