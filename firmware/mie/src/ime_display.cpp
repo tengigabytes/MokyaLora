@@ -62,9 +62,9 @@ const char* ImeLogic::compound_input_str() const {
             if (pos + 2 < 639) { memcpy(buf + pos, "\xcb\x89", 2); pos += 2; }
             continue;
         }
-        uint8_t idx = b - 0x21;
-        uint8_t row = idx / 5, col = idx % 5;
-        const DirectEntry* e = find_direct_entry(row, col);
+        int slot = (int)b - 0x21;
+        if (slot < 0 || slot >= 20) continue;
+        const DirectEntry* e = find_direct_entry(input_slot_to_keycode(slot));
         if (!e) continue;
         const char* phs[3] = { e->labels[0], e->labels[1], e->labels[2] };
         int np = 0;
@@ -97,9 +97,9 @@ int ImeLogic::matched_prefix_compound_bytes() const {
     for (int i = 0; i < matched_prefix_len_ && i < key_seq_len_ && pos < 630; ++i) {
         uint8_t b = (uint8_t)key_seq_buf_[i];
         if (b == 0x20) { pos += 2; continue; }  // "ˉ" = 2 UTF-8 bytes
-        uint8_t idx = b - 0x21;
-        uint8_t row = idx / 5, col = idx % 5;
-        const DirectEntry* e = find_direct_entry(row, col);
+        int slot = (int)b - 0x21;
+        if (slot < 0 || slot >= 20) continue;
+        const DirectEntry* e = find_direct_entry(input_slot_to_keycode(slot));
         if (!e) continue;
         const char* phs[3] = { e->labels[0], e->labels[1], e->labels[2] };
         int np = 0; while (np < 3 && phs[np]) ++np;

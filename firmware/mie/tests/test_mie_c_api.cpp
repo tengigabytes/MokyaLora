@@ -41,7 +41,7 @@ static std::vector<TEntry> one_word() {
 TEST(CApiNull, DictClose)       { mie_dict_close(nullptr); }
 TEST(CApiNull, CtxDestroy)      { mie_ctx_destroy(nullptr); }
 TEST(CApiNull, CtxCreateNull)   { EXPECT_EQ(nullptr, mie_ctx_create(nullptr, nullptr)); }
-TEST(CApiNull, ProcessKey)      { EXPECT_EQ(0, mie_process_key(nullptr, 0, 0, 1)); }
+TEST(CApiNull, ProcessKey)      { EXPECT_EQ(0, mie_process_key(nullptr, MOKYA_KEY_1, 1)); }
 TEST(CApiNull, ClearInput)      { mie_clear_input(nullptr); }
 TEST(CApiNull, SetCommitCb)     { mie_set_commit_cb(nullptr, nullptr, nullptr); }
 TEST(CApiNull, InputStr)        { EXPECT_STREQ("", mie_input_str(nullptr)); }
@@ -104,8 +104,7 @@ TEST(CApiDisplay, ModeAdvancesOnModeKey) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    // MODE key = (4, 0)
-    mie_process_key(ctx, 4, 0, 1);
+    mie_process_key(ctx, MOKYA_KEY_MODE, 1);
     EXPECT_STREQ("EN", mie_mode_indicator(ctx));
     mie_ctx_destroy(ctx);
 }
@@ -125,7 +124,7 @@ TEST(CApiDisplay, ProcessKeyUpdatesInputStr) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    int refresh = mie_process_key(ctx, 0, 0, 1);  // (0,0) = ㄅ/ㄉ
+    int refresh = mie_process_key(ctx, MOKYA_KEY_1, 1);  // (0,0) = ㄅ/ㄉ
     EXPECT_NE(0, refresh);
     EXPECT_NE(0, (int)strlen(mie_input_str(ctx)));
     mie_ctx_destroy(ctx);
@@ -135,7 +134,7 @@ TEST(CApiDisplay, CompoundStrNonEmptyAfterKey) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    mie_process_key(ctx, 0, 0, 1);
+    mie_process_key(ctx, MOKYA_KEY_1, 1);
     EXPECT_NE(0, (int)strlen(mie_compound_str(ctx)));
     mie_ctx_destroy(ctx);
 }
@@ -154,7 +153,7 @@ TEST(CApiCand, CandidatesAfterKeyPress) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    mie_process_key(ctx, 0, 0, 1);  // (0,0) → key 0x21 in dict
+    mie_process_key(ctx, MOKYA_KEY_1, 1);  // (0,0) → key 0x21 in dict
     EXPECT_GT(mie_candidate_count(ctx), 0);
     mie_ctx_destroy(ctx);
 }
@@ -163,7 +162,7 @@ TEST(CApiCand, CandidateWordAndLang) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    mie_process_key(ctx, 0, 0, 1);
+    mie_process_key(ctx, MOKYA_KEY_1, 1);
     ASSERT_GT(mie_candidate_count(ctx), 0);
     const char* word = mie_candidate_word(ctx, 0);
     ASSERT_NE(nullptr, word);
@@ -176,7 +175,7 @@ TEST(CApiCand, OutOfRangeReturnsNull) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    mie_process_key(ctx, 0, 0, 1);
+    mie_process_key(ctx, MOKYA_KEY_1, 1);
     int n = mie_candidate_count(ctx);
     EXPECT_EQ(nullptr, mie_candidate_word(ctx, n));
     EXPECT_EQ(-1,       mie_candidate_lang(ctx, n));
@@ -197,9 +196,9 @@ TEST(CApiCommit, CallbackFiresOnOk) {
         },
         &committed);
 
-    mie_process_key(ctx, 0, 0, 1);   // press (0,0) → candidates
+    mie_process_key(ctx, MOKYA_KEY_1, 1);       // press MOKYA_KEY_1 → candidates
     ASSERT_GT(mie_candidate_count(ctx), 0);
-    mie_process_key(ctx, 5, 4, 1);   // OK → commit first candidate
+    mie_process_key(ctx, MOKYA_KEY_OK, 1);      // OK → commit first candidate
     EXPECT_FALSE(committed.empty());
     mie_ctx_destroy(ctx);
 }
@@ -216,8 +215,8 @@ TEST(CApiCommit, ClearCallbackWithNull) {
 
     // Replace with nullptr — subsequent commits must not crash
     mie_set_commit_cb(ctx, nullptr, nullptr);
-    mie_process_key(ctx, 0, 0, 1);
-    mie_process_key(ctx, 5, 4, 1);
+    mie_process_key(ctx, MOKYA_KEY_1, 1);
+    mie_process_key(ctx, MOKYA_KEY_OK, 1);
     EXPECT_EQ(0, fired);
     mie_ctx_destroy(ctx);
 }
@@ -228,7 +227,7 @@ TEST(CApiCtx, ClearInputResetsState) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    mie_process_key(ctx, 0, 0, 1);
+    mie_process_key(ctx, MOKYA_KEY_1, 1);
     EXPECT_GT(mie_candidate_count(ctx), 0);
     mie_clear_input(ctx);
     EXPECT_STREQ("", mie_input_str(ctx));
@@ -246,7 +245,7 @@ TEST(CApiPage, InitialPageState) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    mie_process_key(ctx, 0, 0, 1);
+    mie_process_key(ctx, MOKYA_KEY_1, 1);
     EXPECT_EQ(0, mie_cand_page(ctx));
     EXPECT_GE(mie_cand_page_count(ctx), 1);
     EXPECT_GT(mie_page_cand_count(ctx), 0);
@@ -260,7 +259,7 @@ TEST(CApiPage, PageCandWordOobReturnsNull) {
     CDictFixture f(one_word());
     mie_ctx_t* ctx = mie_ctx_create(f.dict, nullptr);
     ASSERT_NE(nullptr, ctx);
-    mie_process_key(ctx, 0, 0, 1);
+    mie_process_key(ctx, MOKYA_KEY_1, 1);
     int pcnt = mie_page_cand_count(ctx);
     EXPECT_EQ(nullptr, mie_page_cand_word(ctx, pcnt));
     EXPECT_EQ(-1,       mie_page_cand_lang(ctx, pcnt));

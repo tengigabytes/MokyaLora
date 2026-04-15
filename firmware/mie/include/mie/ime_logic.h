@@ -17,6 +17,7 @@
 #pragma once
 #include <stdint.h>
 #include <mie/hal_port.h>
+#include <mie/keycode.h>
 #include <mie/trie_searcher.h>
 
 namespace mie {
@@ -144,9 +145,9 @@ private:
     bool process_smart(const KeyEvent& ev);
     bool process_direct(const KeyEvent& ev);
 
-    // ── Symbol key handler (row 4 col 3/4, used in both modes) ───────────
+    // ── Symbol key handler (MOKYA_KEY_SYM1/SYM2, used in both modes) ─────
     // Returns true if the event was consumed.
-    bool process_sym_key(uint8_t col);
+    bool process_sym_key(mokya_keycode_t kc);
 
     // Commit current pending symbol (if any).
     void commit_sym_pending();
@@ -179,13 +180,14 @@ private:
     void set_display(const char* utf8); // replace entire display string
 
     // ── Static key tables ─────────────────────────────────────────────────
-    // Primary Bopomofo phoneme for (row 0-3, col 0-4). nullptr = not a phoneme key.
-    static const char* key_to_phoneme(uint8_t row, uint8_t col);
+    // Primary Bopomofo phoneme for a dictionary-input key. nullptr if kc is
+    // not one of the 20 input keys.
+    static const char* key_to_phoneme(mokya_keycode_t kc);
 
     // idx-th cycle label for Direct Mode (phoneme[0], phoneme[1], letter[0], letter[1]).
     // nullptr when idx >= label count.
-    static const char* key_to_direct_label(uint8_t row, uint8_t col, int idx);
-    static int         direct_label_count(uint8_t row, uint8_t col);
+    static const char* key_to_direct_label(mokya_keycode_t kc, int idx);
+    static int         direct_label_count(mokya_keycode_t kc);
 
     // Mode-aware Direct cycling helpers (depend on mode_).
     // direct_mode_slot_count(): how many choices the current direct mode exposes.
@@ -193,12 +195,12 @@ private:
     //   DirectBopomofo → phoneme slots only (idx 0 = labels[0], 1 = labels[1]).
     //   DirectUpper    → letter/digit slots as-is (idx 0 = labels[2], 1 = labels[3]).
     //   DirectLower    → same slots but uppercase ASCII letters converted to lowercase.
-    int         direct_mode_slot_count(uint8_t row, uint8_t col) const;
-    const char* direct_mode_slot_label(uint8_t row, uint8_t col, int idx) const;
+    int         direct_mode_slot_count(mokya_keycode_t kc) const;
+    const char* direct_mode_slot_label(mokya_keycode_t kc, int idx) const;
 
-    // idx-th symbol for sym key at col (3 or 4), given current context_lang_.
-    const char* sym_label(uint8_t col, int idx) const;
-    int         sym_label_count(uint8_t col)    const;
+    // idx-th symbol for sym key (MOKYA_KEY_SYM1 or MOKYA_KEY_SYM2), given current context_lang_.
+    const char* sym_label(mokya_keycode_t kc, int idx) const;
+    int         sym_label_count(mokya_keycode_t kc)    const;
 
     // ── Members ───────────────────────────────────────────────────────────
     TrieSearcher&  zh_searcher_;
@@ -238,15 +240,14 @@ private:
 
     // Direct Mode cycle state.
     struct DirectState {
-        uint8_t row;        // 0xFF = idle
-        uint8_t col;
-        int     label_idx;
+        mokya_keycode_t keycode;    // MOKYA_KEY_NONE = idle
+        int             label_idx;
     } direct_;
 
-    // Symbol key pending state (row 4, col 3 or 4).
+    // Symbol key pending state (MOKYA_KEY_SYM1 or MOKYA_KEY_SYM2).
     struct SymPendingState {
-        uint8_t key_col;    // 3 or 4; 0xFF = idle
-        int     sym_idx;
+        mokya_keycode_t keycode;    // SYM1/SYM2; MOKYA_KEY_NONE = idle
+        int             sym_idx;
     } sym_pending_;
 
     // Candidate navigation state (Smart Mode).

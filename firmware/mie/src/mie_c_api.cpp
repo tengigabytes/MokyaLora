@@ -66,11 +66,10 @@ void mie_set_commit_cb(mie_ctx_t* ctx,
     if (ctx) ctx->logic.set_commit_callback(cb, user_data);
 }
 
-int mie_process_key(mie_ctx_t* ctx, uint8_t row, uint8_t col, int pressed) {
+int mie_process_key(mie_ctx_t* ctx, uint8_t keycode, int pressed) {
     if (!ctx) return 0;
     mie::KeyEvent ev;
-    ev.row     = row;
-    ev.col     = col;
+    ev.keycode = keycode;
     ev.pressed = (pressed != 0);
     return ctx->logic.process_key(ev) ? 1 : 0;
 }

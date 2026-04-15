@@ -81,7 +81,7 @@ firmware/mie/
 │   ├── hal_port.h              # Shim → redirects to include/mie/hal_port.h
 │   ├── rp2350/                 # RP2350 PIO scan + keymap_matrix → keycode → KeyEvent (Phase 2)
 │   └── pc/                     # PC keyboard adapters (host build only)
-│       ├── key_map.h           #   Static PC key → KeyEvent{row,col} table
+│       ├── key_map.h           #   Static PC key → mokya_keycode_t table
 │       ├── hal_pc_stdin.h      #   HalPcStdin class declaration
 │       └── hal_pc_stdin.cpp    #   IHalPort impl: raw terminal + non-blocking stdin
 ├── tools/

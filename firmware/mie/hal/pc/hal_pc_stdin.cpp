@@ -129,15 +129,15 @@ bool HalPcStdin::poll(KeyEvent& out) {
     int pc_key = read_pc_key();
     if (pc_key < 0) return false;
 
-    // ESC signals quit: caller checks ev.row == 0xFF.
+    // ESC signals quit: caller checks ev.keycode == MOKYA_KEY_NONE with pressed=false.
     if (pc_key == KEY_ESCAPE) {
-        out = KeyEvent{0xFF, 0xFF, false};
+        out = KeyEvent{MOKYA_KEY_NONE, false};
         return true;
     }
 
     for (const KeyMapEntry* e = kPcKeyMap; e->pc_key != -1; ++e) {
         if (e->pc_key == pc_key) {
-            out = KeyEvent{e->row, e->col, true};
+            out = KeyEvent{e->keycode, true};
             return true;
         }
     }

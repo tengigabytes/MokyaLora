@@ -95,13 +95,14 @@ void ImeLogic::rebuild_input_buf() {
     for (int i = 0; i < key_seq_len_; ++i) {
         uint8_t b = (uint8_t)key_seq_buf_[i];
         if (b == 0x20) continue;
-        uint8_t idx = b - 0x21;
-        uint8_t row = idx / 5, col = idx % 5;
+        int slot = (int)b - 0x21;
+        if (slot < 0 || slot >= 20) continue;
+        mokya_keycode_t kc = input_slot_to_keycode(slot);
         if (mode_ == InputMode::SmartEn) {
-            const char* lt = key_to_direct_label(row, col, 3);
+            const char* lt = key_to_direct_label(kc, 3);
             if (lt) append_to_display(lt);
         } else {
-            const char* ph = key_to_phoneme(row, col);
+            const char* ph = key_to_phoneme(kc);
             if (ph) append_to_display(ph);
         }
     }
@@ -113,13 +114,14 @@ int ImeLogic::matched_prefix_display_bytes() const {
     for (int i = 0; i < matched_prefix_len_ && i < key_seq_len_; ++i) {
         uint8_t b = (uint8_t)key_seq_buf_[i];
         if (b == 0x20) continue;
-        uint8_t idx = b - 0x21;
-        uint8_t row = idx / 5, col = idx % 5;
+        int slot = (int)b - 0x21;
+        if (slot < 0 || slot >= 20) continue;
+        mokya_keycode_t kc = input_slot_to_keycode(slot);
         if (mode_ == InputMode::SmartEn) {
-            const char* lt = key_to_direct_label(row, col, 3);
+            const char* lt = key_to_direct_label(kc, 3);
             if (lt) bytes += (int)strlen(lt);
         } else {
-            const char* ph = key_to_phoneme(row, col);
+            const char* ph = key_to_phoneme(kc);
             if (ph) bytes += (int)strlen(ph);
         }
     }

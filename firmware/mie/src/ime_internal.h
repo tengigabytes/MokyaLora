@@ -6,16 +6,17 @@
 #pragma once
 
 #include <mie/ime_logic.h>
+#include <mie/keycode.h>
 #include <cstring>
 
 namespace mie {
 
-// ── Direct Mode label table ───────────────────────────────────────────────
+// ── Direct Mode label table (indexed by keycode) ──────────────────────────
 // Defined here (not in ime_keys.cpp) so that ime_display.cpp can also use
 // find_direct_entry() for compound_input_str() / matched_prefix_compound_bytes().
 
 struct DirectEntry {
-    uint8_t     row, col;
+    mokya_keycode_t keycode;
     // [0]=phoneme-primary  [1]=phoneme-secondary  [2]=phoneme-tertiary
     // [3]=letter-primary   [4]=letter-secondary
     // nullptr marks absent slots.
@@ -24,38 +25,64 @@ struct DirectEntry {
 
 // clang-format off
 static const DirectEntry kDirectTable[] = {
-    { 0, 0, { "ㄅ","ㄉ",nullptr,"1","2"      } },
-    { 0, 1, { "ˇ", "ˋ",nullptr,"3","4"      } },
-    { 0, 2, { "ㄓ","ˊ",nullptr,"5","6"      } },
-    { 0, 3, { "˙", "ㄚ",nullptr,"7","8"     } },
-    { 0, 4, { "ㄞ","ㄢ","ㄦ","9","0"        } },
+    { MOKYA_KEY_1, { "ㄅ","ㄉ",nullptr,"1","2"      } },
+    { MOKYA_KEY_3, { "ˇ", "ˋ",nullptr,"3","4"      } },
+    { MOKYA_KEY_5, { "ㄓ","ˊ",nullptr,"5","6"      } },
+    { MOKYA_KEY_7, { "˙", "ㄚ",nullptr,"7","8"     } },
+    { MOKYA_KEY_9, { "ㄞ","ㄢ","ㄦ","9","0"        } },
 
-    { 1, 0, { "ㄆ","ㄊ",nullptr,"Q","W"     } },
-    { 1, 1, { "ㄍ","ㄐ",nullptr,"E","R"     } },
-    { 1, 2, { "ㄔ","ㄗ",nullptr,"T","Y"     } },
-    { 1, 3, { "ㄧ","ㄛ",nullptr,"U","I"     } },
-    { 1, 4, { "ㄟ","ㄣ",nullptr,"O","P"     } },
+    { MOKYA_KEY_Q, { "ㄆ","ㄊ",nullptr,"Q","W"     } },
+    { MOKYA_KEY_E, { "ㄍ","ㄐ",nullptr,"E","R"     } },
+    { MOKYA_KEY_T, { "ㄔ","ㄗ",nullptr,"T","Y"     } },
+    { MOKYA_KEY_U, { "ㄧ","ㄛ",nullptr,"U","I"     } },
+    { MOKYA_KEY_O, { "ㄟ","ㄣ",nullptr,"O","P"     } },
 
-    { 2, 0, { "ㄇ","ㄋ",nullptr,"A","S"     } },
-    { 2, 1, { "ㄎ","ㄑ",nullptr,"D","F"     } },
-    { 2, 2, { "ㄕ","ㄘ",nullptr,"G","H"     } },
-    { 2, 3, { "ㄨ","ㄜ",nullptr,"J","K"     } },
-    { 2, 4, { "ㄠ","ㄤ",nullptr,"L",nullptr } },
+    { MOKYA_KEY_A, { "ㄇ","ㄋ",nullptr,"A","S"     } },
+    { MOKYA_KEY_D, { "ㄎ","ㄑ",nullptr,"D","F"     } },
+    { MOKYA_KEY_G, { "ㄕ","ㄘ",nullptr,"G","H"     } },
+    { MOKYA_KEY_J, { "ㄨ","ㄜ",nullptr,"J","K"     } },
+    { MOKYA_KEY_L, { "ㄠ","ㄤ",nullptr,"L",nullptr } },
 
-    { 3, 0, { "ㄈ","ㄌ",nullptr,"Z","X"     } },
-    { 3, 1, { "ㄏ","ㄒ",nullptr,"C","V"     } },
-    { 3, 2, { "ㄖ","ㄙ",nullptr,"B","N"     } },
-    { 3, 3, { "ㄩ","ㄝ",nullptr,"M",nullptr } },
-    { 3, 4, { "ㄡ","ㄥ",nullptr,nullptr,nullptr } },
+    { MOKYA_KEY_Z,         { "ㄈ","ㄌ",nullptr,"Z","X"     } },
+    { MOKYA_KEY_C,         { "ㄏ","ㄒ",nullptr,"C","V"     } },
+    { MOKYA_KEY_B,         { "ㄖ","ㄙ",nullptr,"B","N"     } },
+    { MOKYA_KEY_M,         { "ㄩ","ㄝ",nullptr,"M",nullptr } },
+    { MOKYA_KEY_BACKSLASH, { "ㄡ","ㄥ",nullptr,nullptr,nullptr } },
 };
 // clang-format on
 
-static inline const DirectEntry* find_direct_entry(uint8_t row, uint8_t col) {
+static inline const DirectEntry* find_direct_entry(mokya_keycode_t kc) {
     static const int kCount = (int)(sizeof(kDirectTable) / sizeof(kDirectTable[0]));
     for (int i = 0; i < kCount; ++i)
-        if (kDirectTable[i].row == row && kDirectTable[i].col == col)
+        if (kDirectTable[i].keycode == kc)
             return &kDirectTable[i];
     return nullptr;
+}
+
+// ── Dictionary-key byte encoding ──────────────────────────────────────────
+// MIE dictionary keys are a compact 20-key alphabet over rows 0-3 cols 0-4
+// (the physical Bopomofo/Latin input area). Each input key maps to one byte
+// in the range 0x21..0x34 (slot 0..19 + 0x21). kInputKeys[] lists the
+// input keycodes in slot order; the inverse mapping is handled by
+// keycode_to_input_slot() below.
+
+static const mokya_keycode_t kInputKeys[20] = {
+    MOKYA_KEY_1, MOKYA_KEY_3, MOKYA_KEY_5, MOKYA_KEY_7, MOKYA_KEY_9,
+    MOKYA_KEY_Q, MOKYA_KEY_E, MOKYA_KEY_T, MOKYA_KEY_U, MOKYA_KEY_O,
+    MOKYA_KEY_A, MOKYA_KEY_D, MOKYA_KEY_G, MOKYA_KEY_J, MOKYA_KEY_L,
+    MOKYA_KEY_Z, MOKYA_KEY_C, MOKYA_KEY_B, MOKYA_KEY_M, MOKYA_KEY_BACKSLASH,
+};
+
+// Returns 0..19 if kc is one of the 20 dictionary-input keys, else -1.
+static inline int keycode_to_input_slot(mokya_keycode_t kc) {
+    for (int i = 0; i < 20; ++i)
+        if (kInputKeys[i] == kc) return i;
+    return -1;
+}
+
+// Inverse of keycode_to_input_slot(). slot must be 0..19.
+static inline mokya_keycode_t input_slot_to_keycode(int slot) {
+    return kInputKeys[slot];
 }
 
 // ── UTF-8 helper ──────────────────────────────────────────────────────────

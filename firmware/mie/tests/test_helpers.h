@@ -12,6 +12,7 @@
 
 #include <gtest/gtest.h>
 #include <mie/ime_logic.h>
+#include <mie/keycode.h>
 #include <mie/trie_searcher.h>
 
 #include <cstring>
@@ -20,19 +21,37 @@
 #include <vector>
 
 // ── Key event helpers ─────────────────────────────────────────────────────
+//
+// Tests are written against physical (row, col) for historical readability.
+// Matrix-to-keycode translation is the same mapping that Core 1's
+// keymap_matrix.h will apply on real hardware (row*6 + col + 1 for 0x01..0x24),
+// so tests continue to exercise the IME through its semantic keycode API.
+
+static inline mokya_keycode_t kc_from_rc(uint8_t row, uint8_t col) {
+    return (mokya_keycode_t)(row * 6 + col + 1);
+}
 
 static inline mie::KeyEvent kev(uint8_t row, uint8_t col, bool pressed = true) {
     mie::KeyEvent e;
-    e.row = row; e.col = col; e.pressed = pressed;
+    e.keycode = kc_from_rc(row, col);
+    e.pressed = pressed;
     return e;
 }
 
-static const mie::KeyEvent kMODE  = kev(4, 0);
-static const mie::KeyEvent kSPACE = kev(4, 2);
-static const mie::KeyEvent kOK    = kev(5, 4);
-static const mie::KeyEvent kBACK  = kev(2, 5);
-static const mie::KeyEvent kSYM3  = kev(4, 3);  // ，SYM
-static const mie::KeyEvent kSYM4  = kev(4, 4);  // 。.？
+// Keycode-native variant (for tests that want to reference MOKYA_KEY_* directly).
+static inline mie::KeyEvent kev_kc(mokya_keycode_t kc, bool pressed = true) {
+    mie::KeyEvent e;
+    e.keycode = kc;
+    e.pressed = pressed;
+    return e;
+}
+
+static const mie::KeyEvent kMODE  = kev_kc(MOKYA_KEY_MODE);
+static const mie::KeyEvent kSPACE = kev_kc(MOKYA_KEY_SPACE);
+static const mie::KeyEvent kOK    = kev_kc(MOKYA_KEY_OK);
+static const mie::KeyEvent kBACK  = kev_kc(MOKYA_KEY_BACK);
+static const mie::KeyEvent kSYM3  = kev_kc(MOKYA_KEY_SYM1);  // ，SYM
+static const mie::KeyEvent kSYM4  = kev_kc(MOKYA_KEY_SYM2);  // 。.？
 
 // ── Binary buffer builders ────────────────────────────────────────────────
 
