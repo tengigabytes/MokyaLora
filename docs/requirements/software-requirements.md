@@ -338,3 +338,91 @@ produces single-character candidates.
 - [ ] Spatial + phonetic fuzzy correction.
 - [ ] User-defined word list in LittleFS, merged into DAT at runtime.
 - [ ] Additional language pack slots.
+
+---
+
+## 6. Debug / Test Control Interface
+
+A secondary USB CDC interface (`CDC#1`) provides a host-driven control channel
+for automated testing, remote debugging, and development tooling, in parallel
+with the Meshtastic CLI bridge on `CDC#0`.
+
+This is a **non-functional requirement** — it is invisible to the end user
+during normal operation, but firmware MUST support it so the product can be
+tested, field-debugged, and iterated on at engineering velocity.
+
+Wire format, command catalogue, ACK semantics, and authentication are
+normatively defined in
+[`docs/design-notes/usb-control-protocol.md`](../design-notes/usb-control-protocol.md).
+USB mode architecture (composite device, OFF/COMM selection) is in FA §4.6.
+
+### 6.1 Use Cases
+
+1. **Host-driven input injection** — the host synthesises key events, text
+   input, and semantic UI navigation commands. The device executes them as if
+   they came from the physical keypad, with an origin flag so the UI can
+   distinguish hardware from injected input.
+2. **UI state capture** — the host can query current screen, focus path, and
+   a framebuffer (full RGB565 or CRC-only) for visual regression testing.
+3. **Remote diagnostics** — the host can subscribe to push events (UI
+   transitions, IME commits, power-state changes, watchdog-near warnings) and
+   stream the breadcrumb log ring.
+4. **Hardware-in-the-loop CI** — a Python test harness drives real hardware
+   over CDC#1, making deterministic assertions via command ACKs.
+
+### 6.2 Functional Requirements
+
+- **FR-CTRL-1:** Every Control command MUST return a deterministic ACK with
+  a host-supplied sequence number. No command is fire-and-forget. Strict
+  serial order: the device MUST process one request at a time.
+- **FR-CTRL-2:** ACKs MUST be sent only after the command's effect is
+  observable (e.g. `KEY` ACK after the next LVGL tick, `TYPE` ACK after the
+  last codepoint is dispatched). See protocol §6.2 for the per-opcode table.
+- **FR-CTRL-3:** Injected key events MUST carry a `source = INJECT` flag
+  distinguishable from hardware events (`source = HW`). The UI layer MUST
+  honour the flag for arbitration (FR-CTRL-4) and logging (FR-CTRL-5).
+- **FR-CTRL-4:** Hardware key events MUST take priority over injected
+  events for the same keycode within the 20 ms debounce window. Injected
+  events losing arbitration return `ERR_BUSY`.
+- **FR-CTRL-5:** The breadcrumb log (FA §9.3) MUST tag injected events
+  distinguishably from hardware events, so post-mortem analysis can tell
+  automated activity from human activity.
+- **FR-CTRL-6:** `UI_STATE` responses MUST include enough information
+  (screen id, focus path, state hash) for a host to make deterministic
+  assertions without screenshot comparisons.
+
+### 6.3 Non-Functional Requirements
+
+- **NFR-CTRL-1 (Build-time kill switch):** the entire Control surface MUST
+  be removable via a single build flag (`MOKYA_ENABLE_USB_CONTROL=OFF`),
+  resulting in an image that does not declare CDC#1, does not link
+  `UsbCtrlTask`, and exposes zero Control attack surface. Reserved for
+  future certified shipments.
+- **NFR-CTRL-2 (Runtime gate):** even with the build flag ON, the feature
+  MUST start **disabled** at every boot. Activation requires an explicit
+  user action — either via Settings UI, or via a pre-authorised remote-unlock
+  flow signed by the pairing key.
+- **NFR-CTRL-3 (Authenticated sessions):** state-mutating commands (`KEY`,
+  `TYPE`, `UI_CMD`, `EVENT_SUB`) MUST require prior HMAC-SHA256
+  challenge-response authentication against a 32-byte control key stored in
+  LittleFS. Three authentication failures within 60 s MUST lock CDC#1 for
+  5 minutes.
+- **NFR-CTRL-4 (Safe-mode restriction):** during safe mode (§1.1), Control
+  MUST reject all state-mutating commands with `ERR_SAFE_MODE`. Read-only
+  commands (`UI_STATE`, `LOG_TAIL`, `MODE_GET`, `HELLO`) MAY remain available
+  for remote diagnosis.
+- **NFR-CTRL-5 (No UI degradation):** Control traffic MUST NOT stall the UI.
+  The `SCREEN` command MUST copy the framebuffer under the LVGL mutex within
+  one 5 ms tick, then stream asynchronously.
+
+### 6.4 Host Tooling Requirements
+
+- **HT-CTRL-1:** A Python CLI (`mokya-ctl`) MUST ship with the firmware
+  repository and provide command-line access to every Control opcode.
+- **HT-CTRL-2:** A reusable Python module (`mokya_control`) MUST expose the
+  protocol as a library so external `pytest` suites can drive the device
+  without subprocessing the CLI.
+- **HT-CTRL-3:** Keycode and UI-action enumerations used by the host MUST be
+  generated from the same C headers the firmware uses
+  (`firmware/mie/include/mie/keycode.h`, `firmware/core1/include/ui_actions.h`),
+  so firmware and host cannot drift.
