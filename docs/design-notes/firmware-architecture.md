@@ -318,6 +318,11 @@ owns every peripheral that isn't LoRa: the LCD, keypad, all I2C sensors and PMIC
 haptic motor, status LED, USB CDC. Audio (PDM mic + I2S amp) is **not** on the target
 architecture — the next hardware revision removes both devices.
 
+> **Writing a new Core 1 driver?** Read
+> [`core1-driver-development.md`](core1-driver-development.md) first. It captures
+> the RP2350B board-header requirement, GPIO / FreeRTOS / I2C / SysTick rules,
+> and the top-down debug playbook distilled from M1–M3.3 incidents.
+
 ### 4.1 Layered stack (bottom → top)
 
 ```
