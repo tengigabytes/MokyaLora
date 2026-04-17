@@ -14,8 +14,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define DISPLAY_W 240u
-#define DISPLAY_H 320u
+/* Landscape orientation: MADCTL = 0x60 (MV=1, MX=1) swaps the panel's
+ * native 240×320 into 320×240 with the top-left origin at the physical
+ * keypad-side edge. Framebuffer byte count is unchanged (150 KB). */
+#define DISPLAY_W 320u
+#define DISPLAY_H 240u
 
 /* Configure GPIO / PIO / DMA, run the ST7789VI init sequence, and turn the
  * LM27965 backlight on. Returns false if the PIO program could not be loaded

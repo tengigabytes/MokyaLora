@@ -32,9 +32,11 @@ void st7789_init(st7789_send_cmd_fn send_cmd, st7789_send_data_fn send_data)
      *               DBI[2:0]=101 (16-bit MCU interface). */
     send_cmd(ST7789_COLMOD); send_data(0x55);
 
-    /* MADCTL = 0x00 → MY=MX=MV=ML=RGB=MH=0 → portrait, top-left origin,
-     * RGB colour order, no row/column flip. */
-    send_cmd(ST7789_MADCTL); send_data(0x00);
+    /* MADCTL = 0x60 → MY=0 MX=1 MV=1 → landscape, page/column swapped
+     * and X mirrored. Native panel 240x320 presents as 320x240 with the
+     * long edge horizontal, top-left origin on the keypad side. RGB
+     * colour order unchanged. */
+    send_cmd(ST7789_MADCTL); send_data(0x60);
 
     /* Porch: BPA=0x0C, FPA=0x0C, PSEN=0, BPB/FPB=0x33, BPC/FPC=0x33.
      * Datasheet recommended defaults — eliminates wrap-around tearing. */

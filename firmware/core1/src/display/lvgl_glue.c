@@ -33,18 +33,12 @@
 
 #include "lvgl_glue.h"
 #include "display.h"
+#include "keypad_view.h"
 
 #include "lvgl.h"
-#include "demos/lv_demos.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
-
-/* Run lv_demo_benchmark() instead of the colour-cycle smoke test. Compile
- * with -DMOKYA_LVGL_BENCHMARK=0 to go back to the red/green/blue cycle.  */
-#ifndef MOKYA_LVGL_BENCHMARK
-#define MOKYA_LVGL_BENCHMARK 1
-#endif
 
 /* ── Framebuffer ─────────────────────────────────────────────────────────── *
  * 240 x 320 x 2 B/px = 153 600 B = exactly 150 KB. Lives in the dedicated
@@ -80,15 +74,6 @@ static void lvgl_flush_cb(lv_display_t *disp,
     lv_display_flush_ready(disp);
 }
 
-/* ── Smoke-test screen colour rotation ──────────────────────────────────── *
- * Flips the active screen's background colour every second. This exercises
- * the full LVGL -> flush_cb -> panel path; M3.3 replaces it with widgets.  */
-static const lv_color_t s_smoke_colours[] = {
-    LV_COLOR_MAKE(0xFF, 0x00, 0x00), /* red   */
-    LV_COLOR_MAKE(0x00, 0xFF, 0x00), /* green */
-    LV_COLOR_MAKE(0x00, 0x00, 0xFF), /* blue  */
-};
-
 /* ── LVGL service task ──────────────────────────────────────────────────── */
 static void lvgl_task(void *arg)
 {
@@ -114,33 +99,12 @@ static void lvgl_task(void *arg)
                            LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
 
-#if MOKYA_LVGL_BENCHMARK
-    /* Benchmark mode: let lv_demo_benchmark() build its own widget tree
-     * and cycle through render/blend/image scenes. Perf monitor overlay
-     * reports FPS in the bottom-right corner. */
-    lv_demo_benchmark();
-#else
-    /* Colour-cycle smoke test. */
-    lv_obj_set_style_bg_color(lv_screen_active(), s_smoke_colours[0],
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, LV_PART_MAIN);
-    uint32_t colour_idx = 0;
-    TickType_t last_swap = xTaskGetTickCount();
-#endif
+    /* Phase C diagnostic view — 6×6 grid driven by the KeyEvent queue. */
+    keypad_view_init(lv_screen_active());
 
     for (;;) {
-#if !MOKYA_LVGL_BENCHMARK
-        if ((xTaskGetTickCount() - last_swap) >= pdMS_TO_TICKS(1000)) {
-            colour_idx = (colour_idx + 1u) %
-                         (sizeof(s_smoke_colours) / sizeof(s_smoke_colours[0]));
-            lv_obj_set_style_bg_color(lv_screen_active(),
-                                      s_smoke_colours[colour_idx],
-                                      LV_PART_MAIN);
-            last_swap = xTaskGetTickCount();
-        }
-#endif
-
         uint32_t next = lv_timer_handler();
+        keypad_view_tick();
         if (next == LV_NO_TIMER_READY || next > 100u) {
             next = 100u;
         }
