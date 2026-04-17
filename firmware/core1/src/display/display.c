@@ -153,11 +153,6 @@ static dma_channel_config make_pixel_cfg(bool read_inc, bool ring_2b)
 
 /* ── Backlight (LM27965 over I2C bus B) ──────────────────────────────────── */
 
-/* SWD-readable breadcrumb at 0x2007FFF4:
- *   0xB1FF<r1><r2> where r1=BANKA write result, r2=GP write result.
- *   Each byte: 0x02 = 2 bytes written OK, 0xFF = NACK/timeout.              */
-#define BL_DIAG_ADDR     0x2007FFF4u
-
 /* Bus B recovery: 9 SCL pulses + manual STOP, per bringup i2c_custom_scan.c.
  * Handles the case where a slave has SDA clamped low after a boot-time glitch
  * on the 1.8V pull-up rail. Called before any I2C traffic on bus B.          */
@@ -198,8 +193,6 @@ static void bus_b_recovery(void)
 
 static void backlight_init(void)
 {
-    *(volatile uint32_t *)BL_DIAG_ADDR = 0xB1000000u; /* entered */
-
     /* bus_b_recovery() unsticks SDA if a slave is holding it low. */
     bus_b_recovery();
 
@@ -218,16 +211,12 @@ static void backlight_init(void)
     const uint8_t enable_a[2] = { LM27965_REG_GP,    LM27965_GP_TFT_ON  };
 
     /* Order: duty first, GP second — matches bringup_tft.c and led_apply(). */
-    int r1 = i2c_write_timeout_us(BL_I2C, LM27965_ADDR, set_duty, 2, false, 50000);
-    int r2 = i2c_write_timeout_us(BL_I2C, LM27965_ADDR, enable_a, 2, false, 50000);
+    (void)i2c_write_timeout_us(BL_I2C, LM27965_ADDR, set_duty, 2, false, 50000);
+    (void)i2c_write_timeout_us(BL_I2C, LM27965_ADDR, enable_a, 2, false, 50000);
 
     i2c_deinit(BL_I2C);
     gpio_set_function(PIN_BL_SDA, GPIO_FUNC_NULL);
     gpio_set_function(PIN_BL_SCL, GPIO_FUNC_NULL);
-
-    /* SWD-readable summary: 0xB1FF<r1><r2> where r1/r2 = 0x02 means 2 bytes OK */
-    *(volatile uint32_t *)BL_DIAG_ADDR =
-        0xB1FF0000u | (((uint32_t)r1 & 0xFFu) << 8) | ((uint32_t)r2 & 0xFFu);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
