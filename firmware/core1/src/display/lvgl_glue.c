@@ -153,7 +153,11 @@ static void lvgl_task(void *arg)
 
 BaseType_t lvgl_glue_start(UBaseType_t priority)
 {
-    /* 16 KB stack (= 4096 words). LVGL SW render recurses through widget
-     * + draw layers; DIRECT mode keeps per-flush locals modest. */
-    return xTaskCreate(lvgl_task, "lvgl", 4096, NULL, priority, NULL);
+    /* 12 KB stack (= 3072 words). LVGL SW render recurses through widget
+     * + draw layers; DIRECT mode keeps per-flush locals modest. 16 KB
+     * was the Phase 3.2 default before keypad_probe_task competed for
+     * the 32 KB FreeRTOS heap; benchmark + flush path is well under
+     * 12 KB of actual stack use. Bump back up if HighWaterMark ever
+     * drops close to the limit. */
+    return xTaskCreate(lvgl_task, "lvgl", 3072, NULL, priority, NULL);
 }

@@ -73,6 +73,7 @@
 
 #include "display.h"
 #include "lvgl_glue.h"
+#include "keypad_min.h"
 
 /* ── Doorbell IPC notification (M2) ─────────────────────────────────────── *
  * We use raw SIO register writes instead of pico_multicore API to avoid
@@ -363,6 +364,25 @@ void vPortSetupTimerInterrupt(void)
     MOKYA_SYSTICK_CTRL    = 0x00000007u;  /* CLKSOURCE=proc | TICKINT | ENABLE */
 }
 
+/* ── M3.3 Phase A keypad probe ──────────────────────────────────────────── *
+ * Polls the 6x6 matrix every 20 ms and publishes the result to
+ * g_kp_snapshot. Read it over SWD with `mem8 <addr> 6` to verify that
+ * Core 1 can control GPIO 36-47 through the SDK. No debounce, no
+ * keymap translation, no queue — Phase B adds those.                       */
+static void keypad_probe_task(void *pv)
+{
+    (void)pv;
+    keypad_min_init();
+    for (;;) {
+        uint8_t buf[KEY_ROWS];
+        keypad_min_scan_once(buf);
+        for (uint32_t r = 0; r < KEY_ROWS; r++) {
+            g_kp_snapshot[r] = buf[r];
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 /* ── main ────────────────────────────────────────────────────────────────── */
 
 int main(void)
@@ -451,7 +471,17 @@ int main(void)
      * + taskYIELD() loop. lvgl_task owns display_init() — main() must not
      * also call it. */
     BaseType_t rc_dsp = lvgl_glue_start(tskIDLE_PRIORITY + 2);
-    (void)rc_usb; (void)rc_brg; (void)rc_dsp;  /* creation failures surface via task absence */
+
+    /* Keypad probe — MUST run at the same priority as usb / bridge / lvgl.
+     * usb_device_task is a `tud_task(); taskYIELD();` loop with no blocking
+     * call, so it is always Ready at priority tskIDLE_PRIORITY + 2. Under
+     * preemptive scheduling, any strictly-lower-priority task is starved.
+     * Equal priority enables round-robin time-slicing, giving keypad its
+     * slot between the 20 ms vTaskDelay pauses. 512-word stack is plenty
+     * for a polling loop with a 6-byte local buffer. */
+    BaseType_t rc_kp  = xTaskCreate(keypad_probe_task, "kpad", 512, NULL,
+                tskIDLE_PRIORITY + 2, NULL);
+    (void)rc_usb; (void)rc_brg; (void)rc_dsp; (void)rc_kp;
 
     vTaskStartScheduler();
 

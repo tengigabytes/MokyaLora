@@ -34,7 +34,11 @@ cmake_minimum_required(VERSION 3.20)
 
 # ── Pico SDK discovery (before project()) ────────────────────────────────────
 set(PICO_PLATFORM rp2350-arm-s CACHE STRING "Pico platform")
-set(PICO_BOARD pico2 CACHE STRING "Pico board (closest match for RP2350B)")
+# MokyaLora Rev A = RP2350B (48 GPIOs).  The stock `pico2` board header targets
+# RP2350A (30 GPIOs) and leaves GPIO 36-47 pads isolated, so we supply our own
+# header via PICO_BOARD_HEADER_DIRS + PICO_BOARD.
+list(APPEND PICO_BOARD_HEADER_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/boards")
+set(PICO_BOARD mokya_rev_a CACHE STRING "MokyaLora Rev A (RP2350B)" FORCE)
 
 include(pico_sdk_import.cmake)
 
@@ -85,6 +89,9 @@ set(SHARED_IPC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/ipc)
 # ── Display driver (M3) ──────────────────────────────────────────────────────
 set(DISPLAY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/display)
 
+# ── Keypad driver (M3.3 Phase A) ─────────────────────────────────────────────
+set(KEYPAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/keypad)
+
 # ── Executable ───────────────────────────────────────────────────────────────
 # core1_reset.S MUST be the first source so its .vectors input section lands
 # at offset 0 of the final .text output (i.e. flash 0x10200000). The SDK
@@ -99,6 +106,7 @@ add_executable(core1_bridge
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
+    ${KEYPAD_DIR}/keypad_min.c
 )
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.
@@ -111,6 +119,7 @@ target_include_directories(core1_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${SHARED_IPC_DIR}
     ${DISPLAY_DIR}
+    ${KEYPAD_DIR}
 )
 
 # Compile defs — skip runtime_init hooks that would fight Core 0 for hardware.
