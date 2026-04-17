@@ -7,9 +7,11 @@ Core 1 `m1_bridge` image (Apache-2.0, `firmware/core1/`). Core 0
 scope here.
 
 It distils lessons from M1 (USB bridge), M2 (doorbell + flash
-safety), M3.1/M3.2 (display + LVGL), and M3.3 Phase A (keypad). Every
-rule here is a rule **because something silently broke once**. If you
-are about to add a new driver, read this before writing code.
+safety), M3.1/M3.2 (display + LVGL), and M3.3 (keypad — Phase A
+PIO+DMA scan, Phase B 20 ms debounce + multi-producer KeyEvent
+queue). Every rule here is a rule **because something silently broke
+once**. If you are about to add a new driver, read this before
+writing code.
 
 ---
 
@@ -235,7 +237,8 @@ Current post-boot allocation (M3.3 Phase A):
 | `usb_device_task` stack  | 4096 |
 | `bridge_task` stack      | 4096 |
 | `lvgl_task` stack        | 12288 |
-| `keypad_probe_task` stack | 2048 |
+| `keypad_scan_task` stack | 2048 |
+| `KeyEvent` queue (16 × 2 B + ctrl) | ~112 |
 | Idle task stack          | 2048 |
 | Timer service task stack | 2048 |
 | TCBs + queues            | ~1.5 KB |

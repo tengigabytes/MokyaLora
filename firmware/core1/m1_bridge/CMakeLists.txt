@@ -107,6 +107,7 @@ add_executable(core1_bridge
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
     ${KEYPAD_DIR}/keypad_scan.c
+    ${KEYPAD_DIR}/key_event.c
 )
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.
@@ -126,6 +127,7 @@ target_include_directories(core1_bridge PRIVATE
     ${SHARED_IPC_DIR}
     ${DISPLAY_DIR}
     ${KEYPAD_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/include
 )
 
 # Compile defs — skip runtime_init hooks that would fight Core 0 for hardware.

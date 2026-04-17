@@ -74,6 +74,7 @@
 #include "display.h"
 #include "lvgl_glue.h"
 #include "keypad_scan.h"
+#include "key_event.h"
 
 /* ── Doorbell IPC notification (M2) ─────────────────────────────────────── *
  * We use raw SIO register writes instead of pico_multicore API to avoid
@@ -364,22 +365,6 @@ void vPortSetupTimerInterrupt(void)
     MOKYA_SYSTICK_CTRL    = 0x00000007u;  /* CLKSOURCE=proc | TICKINT | ENABLE */
 }
 
-/* ── M3.3 keypad probe ──────────────────────────────────────────────────── *
- * One-shot keypad_init() brings up PIO0 + 2 DMA channels; after that the
- * CPU never touches the PIO FIFOs. This task just keypad_read()s the
- * DMA-filled ring every 20 ms to make the matrix state SWD-observable
- * via g_kp_snapshot. Phase B replaces the polling body with debounce +
- * KeyEvent queue production.                                                */
-static void keypad_probe_task(void *pv)
-{
-    (void)pv;
-    keypad_init();
-    for (;;) {
-        keypad_read(g_kp_snapshot);
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-}
-
 /* ── main ────────────────────────────────────────────────────────────────── */
 
 int main(void)
@@ -469,14 +454,20 @@ int main(void)
      * also call it. */
     BaseType_t rc_dsp = lvgl_glue_start(tskIDLE_PRIORITY + 2);
 
-    /* Keypad probe — MUST run at the same priority as usb / bridge / lvgl.
+    /* KeyEvent queue — allocate before creating keypad_scan_task so the
+     * very first debounce commit (possible within ~20 ms of boot if a
+     * key is held) finds the queue ready. Producer/consumer are both
+     * future tasks; only the scan task enqueues in Phase B. */
+    key_event_init();
+
+    /* Keypad scan task — MUST run at the same priority as usb / bridge / lvgl.
      * usb_device_task is a `tud_task(); taskYIELD();` loop with no blocking
      * call, so it is always Ready at priority tskIDLE_PRIORITY + 2. Under
      * preemptive scheduling, any strictly-lower-priority task is starved.
      * Equal priority enables round-robin time-slicing, giving keypad its
-     * slot between the 20 ms vTaskDelay pauses. 512-word stack is plenty
-     * for a polling loop with a 6-byte local buffer. */
-    BaseType_t rc_kp = xTaskCreate(keypad_probe_task, "kpad", 512, NULL,
+     * slot between the 5 ms debounce pauses. 512-word stack is plenty
+     * for the loop with 6-byte local raw buffer and no nested calls. */
+    BaseType_t rc_kp = xTaskCreate(keypad_scan_task, "kpad", 512, NULL,
                 tskIDLE_PRIORITY + 2, NULL);
     (void)rc_usb; (void)rc_brg; (void)rc_dsp; (void)rc_kp;
 

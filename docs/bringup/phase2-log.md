@@ -802,7 +802,7 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 
 ## Milestone 3 — Core 1 HAL drivers + LVGL UI runtime
 
-**Status:** 🚧 In progress (M3.1 ✅, M3.2 ✅, M3.3 next)
+**Status:** 🚧 In progress (M3.1 ✅, M3.2 ✅, M3.3 ✅, M3.4 next)
 **Goal:** Bring up Core 1's user-facing hardware (display, keypad, sensors, power) as FreeRTOS-task driven HAL modules under `firmware/core1/src/`, and stand up LVGL v9.2.2 as the rendering runtime. Keypad driver is written from day-1 against the multi-producer `KeyEvent` queue with `key_source_t` flag (G2 from DEC-2), so M9 USB Control injection only adds a producer — never refactors the queue.
 
 ### M3 sub-milestones
@@ -876,6 +876,57 @@ flushes/sec (= 6 full 240×320 frames/sec with the 40-line partial buffer).
 | Flush time | 6.3 ms | 1.4 ms |
 
 Also enabled `LV_USE_SYSMON = 1` for benchmark FPS overlay, `LV_FONT_MONTSERRAT_24` for benchmark demo, adjusted `LV_DEF_REFR_PERIOD` to 33 ms (realistic for DIRECT mode blocking flush).
+
+#### M3.3 — Keypad driver ✅ (2026-04-18)
+
+Delivered in two phases. **Phase A** (commit `b6a9665`) switched the 6×6
+matrix scanner from CPU polling to PIO + 2 DMA channels (zero CPU after
+`keypad_init()`), with an RP2350B board-header fix (`mokya_rev_a.h`) so
+GPIO 36–47 pads stop silently no-op'ing (see Gotcha in
+`core1-driver-development.md` §7.2).
+
+**Phase B** (this commit) layers per-key debounce, matrix→keycode
+translation, and the multi-producer `KeyEvent` queue on top of the
+Phase A raw scanner.
+
+- **Debounce**: `keypad_scan_task` runs every 5 ms and maintains three
+  bytes of per-key state (`stable`, `pending`, `count`). A new reading
+  must match the pending candidate for 4 consecutive ticks (= 20 ms)
+  before it commits and triggers an enqueue. File-static arrays so the
+  task stack stays at 512 words (§4.1 heap budget).
+- **Keymap**: `firmware/core1/src/keypad/keymap_matrix.h` holds the sole
+  `(r, c) → mokya_keycode_t` LUT (Apache-2.0, Core 1 private per DEC-1).
+  The (r, c) order is the firmware scan order from Step 6 of the Rev A
+  bring-up log — not the hardware-requirements electrical matrix.
+- **Queue**: `key_event.[ch]` wraps a 16-slot × 2-byte FreeRTOS queue
+  with a 64-bit "HW currently pressed" bitmap. `key_event_push_hw()`
+  updates the bitmap before enqueuing. `key_event_push_inject()`
+  (reserved for M9 `UsbCtrlTask`) rejects with `ERR_BUSY` if HW already
+  holds the same keycode — the §9.1 arbitration rule locked in so M9
+  only adds a producer, never refactors the queue.
+- **Observability (kept after bring-up)**: `g_kp_scan_tick` counts scan
+  iterations, `g_kp_stable[6]` mirrors the debounced state bitmap,
+  `g_key_event_pushed / dropped / rejected` are the SWD counters, and a
+  16-entry `g_key_event_log[]` ring captures `(pressed<<7 | keycode)`
+  for every enqueued event so keymap translation is verifiable over SWD
+  without a downstream consumer. All symbols are name-resolved (not
+  fixed-address), so they sit in Core 1's BSS and don't consume the
+  §9.3 breadcrumb region.
+
+**Verification (2026-04-18)**: 5 physical press/releases across R1 C0–C4
+produced exactly 10 events (`0x81 0x01 0x82 0x02 0x83 0x03 0x84 0x04
+0x85 0x05`) decoding to `MOKYA_KEY_1, 3, 5, 7, 9` press/release pairs —
+keymap translation correct. `meshtastic --info` full-config round-trip
+still works → no bridge regression.
+
+**Files added:**
+- `firmware/core1/src/keypad/keymap_matrix.h`
+- `firmware/core1/src/keypad/key_event.{h,c}`
+
+**Files changed:**
+- `firmware/core1/src/keypad/keypad_scan.{h,c}` — added `keypad_scan_task` with debounce + keymap + queue push
+- `firmware/core1/m1_bridge/src/main_core1_bridge.c` — replaced `keypad_probe_task` with `keypad_scan_task`, added `key_event_init()` before scheduler start
+- `firmware/core1/m1_bridge/CMakeLists.txt` — added `key_event.c` source and `firmware/mie/include` to include dirs (for `mie/keycode.h`)
 
 ---
 

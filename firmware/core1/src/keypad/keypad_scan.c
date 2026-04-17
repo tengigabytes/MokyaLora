@@ -29,11 +29,18 @@
 
 #include "keypad_scan.h"
 #include "keypad_scan.pio.h"
+#include "keymap_matrix.h"
+#include "key_event.h"
 
 #include "hardware/pio.h"
 #include "hardware/dma.h"
 
-volatile uint8_t g_kp_snapshot[KEY_ROWS];
+#include "FreeRTOS.h"
+#include "task.h"
+
+volatile uint8_t  g_kp_snapshot[KEY_ROWS];
+volatile uint8_t  g_kp_stable[KEY_ROWS];
+volatile uint32_t g_kp_scan_tick;
 
 /* PIO0 — PIO1 is owned by the display driver. */
 #define KEY_PIO           pio0
@@ -135,5 +142,93 @@ void keypad_read(volatile uint8_t out_state[KEY_ROWS])
      * being stale by a single scan. Phase B debounce absorbs that. */
     for (uint32_t r = 0; r < KEY_ROWS; r++) {
         out_state[r] = (uint8_t)((~s_rx_ring[r]) & 0x3Fu);
+    }
+}
+
+/* ── Phase B — per-key debounce + keymap + KeyEvent enqueue ─────────── *
+ *
+ * Task period:         5 ms   (vTaskDelay granularity)
+ * Stability threshold: 4 ticks = 20 ms window
+ *
+ * Each of the 36 keys carries an independent debounce FSM with three
+ * bytes of state:
+ *   stable[r][c]  — currently committed state (0 = released, 1 = pressed)
+ *   pending[r][c] — the candidate new state we are validating
+ *   count[r][c]   — number of consecutive scans where the raw reading
+ *                   has equalled pending; commit when count >= threshold
+ *
+ * On commit: update g_kp_stable, translate through g_keymap, push an
+ * event into the KeyEvent queue (KEY_SOURCE_HW). Drops from a full
+ * queue are counted in g_key_event_dropped but never stall the scan.
+ */
+#define KP_SCAN_PERIOD_MS     5u
+#define KP_DEBOUNCE_THRESHOLD 4u
+
+void keypad_scan_task(void *pv)
+{
+    (void)pv;
+
+    /* 36-byte per-key state — file-static scope to keep scan-task stack
+     * small. Zero-initialised via BSS. */
+    static uint8_t stable[KEY_ROWS][KEY_COLS];
+    static uint8_t pending[KEY_ROWS][KEY_COLS];
+    static uint8_t count[KEY_ROWS][KEY_COLS];
+
+    uint8_t raw[KEY_ROWS];
+
+    keypad_init();
+
+    const TickType_t period = pdMS_TO_TICKS(KP_SCAN_PERIOD_MS);
+    TickType_t last_wake = xTaskGetTickCount();
+
+    for (;;) {
+        keypad_read(raw);
+
+        for (uint32_t r = 0; r < KEY_ROWS; r++) {
+            g_kp_snapshot[r] = raw[r];
+
+            uint8_t stable_row = g_kp_stable[r];
+            for (uint32_t c = 0; c < KEY_COLS; c++) {
+                const uint8_t bit     = (uint8_t)((raw[r] >> c) & 1u);
+                const uint8_t stbl    = stable[r][c];
+
+                if (bit == stbl) {
+                    /* Matches committed state — drop any pending change. */
+                    count[r][c]   = 0u;
+                    pending[r][c] = stbl;
+                    continue;
+                }
+
+                /* Differs from committed state: track a candidate. */
+                if (bit == pending[r][c]) {
+                    if (count[r][c] < 0xFFu) {
+                        count[r][c]++;
+                    }
+                } else {
+                    pending[r][c] = bit;
+                    count[r][c]   = 1u;
+                }
+
+                if (count[r][c] >= KP_DEBOUNCE_THRESHOLD) {
+                    /* Commit the new state. */
+                    stable[r][c] = bit;
+                    count[r][c]  = 0u;
+                    if (bit) {
+                        stable_row |= (uint8_t)(1u << c);
+                    } else {
+                        stable_row &= (uint8_t)~(1u << c);
+                    }
+
+                    const mokya_keycode_t kc = g_keymap[r][c];
+                    if (kc != MOKYA_KEY_NONE) {
+                        (void)key_event_push_hw(kc, bit != 0u);
+                    }
+                }
+            }
+            g_kp_stable[r] = stable_row;
+        }
+
+        g_kp_scan_tick++;
+        vTaskDelayUntil(&last_wake, period);
     }
 }
