@@ -32,7 +32,7 @@
 | Fuel Gauge | TI BQ27441DRZR | SON-12 | Impedance Track™; must be in series with battery current path |
 | 1.8 V Buck | TI TPS62840DLCR | VSON-8 | 60 nA Iq — minimises standby current |
 | 3.3 V LDO | TI TPS7A2033 | WSON-6 | 300 mA, ultra-low noise (high PSRR) — clean supply for GPS/RF analogue |
-| LED / BL Driver | TI LM27965 | WQFN-24 | Dual-bank I2C dimming (I2C1); Bank A = LCD BL, Bank B = keypad BL; HWEN tied to 1.8 V |
+| LED / BL Driver | TI LM27965 | WQFN-24 | Dual-bank I2C dimming (I2C0 — Power bus); Bank A = LCD BL, Bank B = keypad BL; HWEN tied to 1.8 V |
 | Battery | Nokia BL-4C | — | Li-ion 3.7 V, ~890 mAh |
 | Battery Connector | AVX 009155003301006 | 3-pin pogo | 2.5 mm pitch; polarity marked on silkscreen |
 
@@ -94,7 +94,7 @@ GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
 | Role | Part | Package | Notes |
 |------|------|---------|-------|
-| GNSS Receiver | ST Teseo-LIV3FL | LGA-14 | Multi-constellation; I2C0, address 0x3A |
+| GNSS Receiver | ST Teseo-LIV3FL | LGA-14 | Multi-constellation; I2C1 (Sensor + GNSS bus), address 0x3A |
 | LNA | Infineon BGA123N6 | — | GPS/GNSS LNA; 1.8 V VPON enable |
 | SAW Filter | Qualcomm B39162B4327P810 | — | L1 bandpass, after LNA |
 | GNSS Antenna | Kyocera AVX M830120 | Chip | Placed at left PCB edge |
@@ -127,7 +127,7 @@ GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 | TFT_D8–D15 | 8-bit parallel data bus (PIO)           |
 | TFT_nRST   | Reset                                   |
 | TFT_TE     | Tearing effect                          |
-| Backlight  | LM27965 Bank A, I2C1 dimming            |
+| Backlight  | LM27965 Bank A, I2C0 dimming            |
 
 GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
@@ -168,18 +168,18 @@ GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
 ### 7.1 Components
 
-| Role | Part | Package | I2C0 Address | Address Setting |
+| Role | Part | Package | I2C1 Address | Address Setting |
 |------|------|---------|-------------|-----------------|
-| IMU (ACC + GYRO) | ST LSM6DSV16X | LGA-14 | 0x6A | SA0 → GND (default 0x6B conflicts with charger) |
+| IMU (ACC + GYRO) | ST LSM6DSV16X | LGA-14 | 0x6A | SA0 → GND (default 0x6B conflicts with charger on the other bus) |
 | Magnetometer | ST LIS2MDL | LGA-12 | 0x1E | Fixed |
 | Barometer | ST LPS22HH | LGA-10 | 0x5D | SA0 → 3.3 V (Rev A confirmed; schematic ties SA0 to 3.3 V) |
 
-All sensors share the **sensor bus (GPIO 34 / 35, `i2c1` in Pico SDK)** with the GNSS receiver.
+All sensors share the **sensor + GNSS bus (GPIO 34 / 35, `i2c1` in Pico SDK)** with the Teseo-LIV3FL GNSS receiver. The Power bus (`i2c0`, GPIO 6/7) runs concurrently on a separate SDK peripheral.
 
 **Design constraints:**
-- LSM6DSV16X SA0 must be tied to GND — default address 0x6B conflicts with BQ25622 on I2C1.
+- LSM6DSV16X SA0 must be tied to GND — default address 0x6B would collide with BQ25622 if both were on the same bus.
 - LPS22HH SA0 is tied to 3.3 V → address 0x5D (confirmed Rev A bring-up).
-- I2C0 pull-ups: 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL.
+- I2C1 pull-ups: 2.2 kΩ–4.7 kΩ to 1.8 V on SDA and SCL.
 
 ---
 
@@ -191,7 +191,7 @@ All sensors share the **sensor bus (GPIO 34 / 35, `i2c1` in Pico SDK)** with the
 |------|------|-------|
 | Keypad Switches | SWT0105 | Metal dome sheet |
 | Anti-ghost Diodes | Diodes Inc. SDM03U40 | SOD-523 Schottky, Vf ~0.37 V @ 30 mA; enables NKRO at 1.8 V logic |
-| Keypad BL LEDs | LiteOn LTST-C191TBWET (×6–8) | White; driven by LM27965 Bank B (I2C1) |
+| Keypad BL LEDs | LiteOn LTST-C191TBWET (×6–8) | White; driven by LM27965 Bank B (I2C0 — Power bus) |
 
 **Scan mechanism:** RP2350 PIO drives 6 column lines, samples 6 row lines. DMA writes key state directly to RAM — zero CPU overhead. Logic level 1.8 V, active-low. GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 

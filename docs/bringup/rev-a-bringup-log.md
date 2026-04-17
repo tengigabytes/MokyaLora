@@ -45,13 +45,13 @@ For build/flash scripts, shell commands, and source layout see
 
 | Address | Device         | Bus  | Result | Notes |
 |---------|----------------|------|--------|-------|
-| 0x6B    | BQ25622        | I2C1 | ✅ PASS | After TP101 fix (Issue 2) |
-| 0x55    | BQ27441        | I2C1 | ⚠️ CONDITIONAL | Cold boot NACK — see Issue 9 (BIE) + Issue 10 (latchup). Workaround: boot without battery → charge_on → insert battery |
-| 0x6A    | LSM6DSV16X     | I2C0 | ✅ PASS | |
-| 0x1E    | LIS2MDL        | I2C0 | ✅ PASS | After R54/R55 jumper fix (Issue 3) |
-| 0x5D    | LPS22HH        | I2C0 | ✅ PASS | Address is **0x5D** (SA0 = 3.3 V); design docs incorrectly stated 0x5C — see Issue 4 |
-| 0x3A    | Teseo-LIV3FL   | I2C0 | ✅ PASS | |
-| 0x36    | LM27965        | I2C1 | ✅ PASS | |
+| 0x6B    | BQ25622        | I2C0 | ✅ PASS | After TP101 fix (Issue 2) |
+| 0x55    | BQ27441        | I2C0 | ⚠️ CONDITIONAL | Cold boot NACK — see Issue 9 (BIE) + Issue 10 (latchup). Workaround: boot without battery → charge_on → insert battery |
+| 0x6A    | LSM6DSV16X     | I2C1 | ✅ PASS | |
+| 0x1E    | LIS2MDL        | I2C1 | ✅ PASS | After R54/R55 jumper fix (Issue 3) |
+| 0x5D    | LPS22HH        | I2C1 | ✅ PASS | Address is **0x5D** (SA0 = 3.3 V); design docs incorrectly stated 0x5C — see Issue 4 |
+| 0x3A    | Teseo-LIV3FL   | I2C1 | ✅ PASS | |
+| 0x36    | LM27965        | I2C0 | ✅ PASS | |
 
 #### Sensor Live Readings
 

@@ -16,8 +16,8 @@
 | 3    | DBG_RX       | Debug UART RX                                   | UART        |
 | 4    | MIC_CLK      | PDM Microphone Clock                            | PIO         |
 | 5    | MIC_DATA     | PDM Microphone Data                             | PIO         |
-| 6    | PWR_SDA      | I2C1 SDA — Power + Backlight bus                | I2C1        |
-| 7    | PWR_SCL      | I2C1 SCL — Power + Backlight bus                | I2C1        |
+| 6    | PWR_SDA      | I2C0 SDA — Power + Backlight bus                | I2C0        |
+| 7    | PWR_SCL      | I2C0 SCL — Power + Backlight bus                | I2C0        |
 | 8    | PWR_INT      | Power Management Interrupt (open-drain, 1.8 V pull-up) | SIO  |
 | 9    | MTR_PWM      | Vibration Motor PWM (drives low-side MOSFET)    | PWM4_B      |
 | 10   | TFT_nCS      | LCD Chip Select                                 | SIO         |
@@ -44,8 +44,8 @@
 | 31   | AMP_FSR      | Audio I2S Frame Sync                            | PIO         |
 | 32   | AMP_DAC      | Audio I2S Data Out                              | PIO         |
 | 33   | PWR_BTN      | Power / Wakeup Button — wakeup source from DORMANT | SIO      |
-| 34   | IMU_SDA      | I2C1 SDA — Sensor bus (SDK: `i2c1`)            | I2C1        |
-| 35   | IMU_SCL      | I2C1 SCL — Sensor bus (SDK: `i2c1`)            | I2C1        |
+| 34   | IMU_SDA      | I2C1 SDA — Sensor + GNSS bus                    | I2C1        |
+| 35   | IMU_SCL      | I2C1 SCL — Sensor + GNSS bus                    | I2C1        |
 | 36   | KEY_C0       | Keypad Column 0                                 | PIO         |
 | 37   | KEY_C1       | Keypad Column 1                                 | PIO         |
 | 38   | KEY_C2       | Keypad Column 2                                 | PIO         |
@@ -67,12 +67,11 @@
 
 ## I2C Bus Allocation
 
-### Sensor bus — GPIO 34 / 35 (`i2c1` in Pico SDK)
+### Sensor + GNSS bus — GPIO 34 / 35 (`i2c1` in Pico SDK)
 
-> **Note:** Despite being labelled "I2C0" in schematic net names and earlier design docs,
-> GPIO 34 / 35 map to the **`i2c1`** peripheral in the RP2350 SDK
-> (I2C1_SDA / I2C1_SCL — pattern: I2C1_SDA on GPIO 2, 6, 10 … 34, 38).
-> Use `i2c1` in firmware. The KiCad net names (`IMU_SDA` / `IMU_SCL`) are unaffected.
+> **SDK peripheral:** `i2c1`. On RP2350B, GPIO 34 / 35 support both `i2c0` and
+> `i2c1` via the pinmux; firmware assigns this bus to `i2c1` so the two buses
+> can run concurrently (see Power bus below).
 
 | Device        | Part           | 7-bit Address | Note                                    |
 |---------------|----------------|---------------|-----------------------------------------|
@@ -81,11 +80,11 @@
 | Barometer     | LPS22HH        | 0x5D          | SA0 tied to 3.3 V (Rev A confirmed; design docs previously stated 0x5C / SA0=GND) |
 | GPS           | Teseo-LIV3FL   | 0x3A          | Fixed address. **I2C only** — `nRST` not routed to MCU; no GPIO enable. Software reset via `$PSTMSRR` / `$PSTMCOLDSTART`. |
 
-### Power + Backlight bus — GPIO 6 / 7 (`i2c1` in Pico SDK)
+### Power + Backlight bus — GPIO 6 / 7 (`i2c0` in Pico SDK)
 
-> **Note:** GPIO 6 / 7 also map to **`i2c1`** (I2C1_SDA / I2C1_SCL).
-> Both buses share the same peripheral; they cannot be active simultaneously.
-> Bring-up firmware switches between them via `i2c_deinit` / `i2c_init` with different GPIO pairs.
+> **SDK peripheral:** `i2c0`. GPIO 6 / 7 support both `i2c0` and `i2c1` via the
+> pinmux; firmware assigns this bus to `i2c0` so it can run **concurrently**
+> with the sensor bus on `i2c1`. No `i2c_deinit` / re-init switching needed.
 
 | Device        | Part           | 7-bit Address | Note                                    |
 |---------------|----------------|---------------|-----------------------------------------|
@@ -103,4 +102,4 @@
 2. LCD data bus (GPIO 13–20) is driven by a dedicated PIO state machine for 8-bit parallel 8080 write cycles.
 3. Keypad scan uses PIO + DMA: PIO drives columns, samples rows, DMA writes state to RAM — zero CPU overhead.
 4. LORA_DIO1 (GPIO 29) doubles as a DORMANT wakeup source for background LoRa Rx.
-5. **I2C peripheral naming:** Both I2C buses map to the `i2c1` SDK peripheral. GPIO 6/7 and GPIO 34/35 are both I2C1_SDA/SCL pin options on RP2350. Design docs use the logical labels "Sensor bus" (GPIO 34/35) and "Power bus" (GPIO 6/7); firmware must use `i2c1` for both. They cannot be active simultaneously — switch by calling `i2c_deinit` / `i2c_init` with different GPIO pairs.
+5. **I2C peripheral assignment:** The two I2C buses use **separate SDK peripherals** so they run concurrently — Power bus (GPIO 6/7) on `i2c0`, Sensor+GNSS bus (GPIO 34/35) on `i2c1`. On RP2350B both GPIO pairs are pinmux-capable of either peripheral; firmware fixes this split to avoid `i2c_deinit` / `i2c_init` swapping between frames. Drivers must pass the correct `i2c_inst_t*` (`i2c0` or `i2c1`) to all `i2c_*` SDK calls.

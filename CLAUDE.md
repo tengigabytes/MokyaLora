@@ -90,10 +90,10 @@ sheet, not authoritative.
 
 ### I2C Bus Layout (day-to-day reference; SYS §7 / hw-requirements is authoritative)
 
-> **RP2350 SDK peripheral note:** Both buses map to `i2c1` in the Pico SDK — GPIO 6/7 and GPIO 34/35 are both I2C1 pin options. They cannot be active simultaneously; switch by reinitialising `i2c1` with different GPIO pairs.
+> **SDK peripheral split:** The two buses use **separate** SDK peripherals so they run concurrently. On RP2350B both GPIO pairs are pinmux-capable of either peripheral; firmware fixes the split as below.
 
-- **Sensor bus** (`i2c1`, GPIO 34/35): IMU 0x6A, Mag 0x1E, Baro 0x5D, GPS 0x3A
-- **Power bus** (`i2c1`, GPIO 6/7): Charger BQ25622 0x6B, Fuel Gauge BQ27441 0x55, LED Driver LM27965 0x36
+- **Sensor + GNSS bus** (`i2c1`, GPIO 34/35): IMU 0x6A, Mag 0x1E, Baro 0x5D, GPS 0x3A
+- **Power bus** (`i2c0`, GPIO 6/7): Charger BQ25622 0x6B, Fuel Gauge BQ27441 0x55, LED Driver LM27965 0x36
 
 ## License Boundary Rules (CRITICAL)
 
