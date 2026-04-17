@@ -31,22 +31,14 @@
  *   7. main() creates usb_device_task + bridge_task and starts the
  *      FreeRTOS scheduler. It never returns.
  *
- * Breadcrumbs (SWD-readable, survive resets as long as RAM is not cleared):
- *   0x2007FFC0  sentinel 0xC1B01200 on main() entry
+ * Operational counters (SWD-readable via `mem32`, survive resets as long as
+ * RAM is not cleared). Every new slot must be registered in
+ * firmware-architecture.md §9.3 before use; see feedback on breadcrumb
+ * lifecycle discipline — solved-issue breadcrumbs are released in the fix
+ * commit, not left as permanent fixtures:
  *   0x2007FFC4  rx total   — bytes drained from c0_to_c1 ring (→ CDC IN)
  *   0x2007FFC8  tx total   — bytes drained from CDC OUT (→ c1_to_c0 ring)
  *   0x2007FFCC  usb state  — bit0=mounted, bit1=cdc_connected (DTR)
- *   0x2007FFD0  loop count — bridge_task iterations (liveness)
- *
- * Placement rationale:
- *   The last 64 bytes of the .shared_ipc region (0x2007FFC0..0x20080000) lie
- *   within g_ipc_shared._tail_pad and are NOT touched by any ring traffic.
- *   Both Core 0 and Core 1 linker scripts reserve this address range as a
- *   NOLOAD shared-SRAM block, so it is immune to Core 0's FreeRTOS heap /
- *   Meshtastic task stacks — unlike the old 0x20078000 window which, despite
- *   the ipc_shared_layout.h comment, is inside Core 0's RAM region
- *   (0x20000000..0x2007A000) and gets clobbered once Meshtastic's heap
- *   usage climbs.
  *
  * Note on tud_cdc_connected() vs tud_mounted():
  *   tud_cdc_connected() returns true only after the host sends
@@ -102,14 +94,12 @@ static inline void doorbell_clear_own(uint32_t num)
     sio_hw->doorbell_in_clr = 1u << num;
 }
 
-/* ── SWD breadcrumbs ─────────────────────────────────────────────────────── */
-/* Last 64 B of .shared_ipc — guaranteed outside Core 0's heap & task stacks */
-#define BRIDGE_SENTINEL_ADDR   0x2007FFC0u
-#define BRIDGE_SENTINEL_VALUE  0xC1B01200u
+/* ── Operational counters in .shared_ipc tail pad ──────────────────────── */
+/* Last 64 B of .shared_ipc — guaranteed outside Core 0's heap & task stacks.
+ * Registered slots only (see firmware-architecture.md §9.3).                */
 #define BRIDGE_RX_COUNT_ADDR   0x2007FFC4u
 #define BRIDGE_TX_COUNT_ADDR   0x2007FFC8u
 #define BRIDGE_USB_STATE_ADDR  0x2007FFCCu
-#define BRIDGE_LOOP_COUNT_ADDR 0x2007FFD0u
 
 #define USB_STATE_MOUNTED      (1u << 0)
 #define USB_STATE_CDC          (1u << 1)
@@ -121,7 +111,6 @@ static inline void dbg_u32(uintptr_t addr, uint32_t val)
 
 static volatile uint32_t g_rx_total;
 static volatile uint32_t g_tx_total;
-static volatile uint32_t g_loop_count;
 
 /* ── Flash-park handler (MUST reside in RAM — runs while XIP is off) ───── *
  *
@@ -337,10 +326,8 @@ static void bridge_task(void *pv)
             }
         }
 
-        /* Update liveness breadcrumbs. */
-        g_loop_count++;
-        if ((g_loop_count & 0xFFu) == 0u) {
-            dbg_u32(BRIDGE_LOOP_COUNT_ADDR, g_loop_count);
+        /* Refresh USB state counter (<= 100 Hz due to 10 ms notify wait). */
+        {
             uint32_t st = 0;
             if (tud_mounted())       st |= USB_STATE_MOUNTED;
             if (tud_cdc_connected()) st |= USB_STATE_CDC;
@@ -380,17 +367,11 @@ void vPortSetupTimerInterrupt(void)
 
 int main(void)
 {
-    /* 0. Unique boot marker — verifies over SWD that THIS build is running.
-     * Written to shared IPC tail-pad (immune to both cores' crt0 zeroing).
-     * Change the value each build to confirm a fresh boot. */
-    dbg_u32(0x2007FFD4u, 0xDEAD030Cu);  /* M3.2 — bump suffix each flash */
-
-    /* 1. Life signal — first thing after SDK runtime hands over. */
-    dbg_u32(BRIDGE_SENTINEL_ADDR,   BRIDGE_SENTINEL_VALUE);
+    /* Zero operational counters in the tail pad so SWD sees 0 before the
+     * bridge task starts publishing real values. */
     dbg_u32(BRIDGE_RX_COUNT_ADDR,   0u);
     dbg_u32(BRIDGE_TX_COUNT_ADDR,   0u);
     dbg_u32(BRIDGE_USB_STATE_ADDR,  0u);
-    dbg_u32(BRIDGE_LOOP_COUNT_ADDR, 0u);
     __dmb();
 
     /* 2. Wait for Core 0's shared-SRAM publication. Core 0 writes
@@ -470,16 +451,7 @@ int main(void)
      * + taskYIELD() loop. lvgl_task owns display_init() — main() must not
      * also call it. */
     BaseType_t rc_dsp = lvgl_glue_start(tskIDLE_PRIORITY + 2);
-
-    /* Heap-exhaustion breadcrumb: encode pdPASS(=1) / errCOULD_NOT_ALLOCATE(=-1)
-     * for each task in a single word so SWD can distinguish creation failures
-     * from silent starvation. Layout: 0xCR EA TE XX where XX = usb<<4|brg<<2|dsp
-     * (bit set means pdPASS). */
-    uint32_t rc_word = 0xC7EA7E00u
-        | ((rc_usb == pdPASS ? 1u : 0u) << 4)
-        | ((rc_brg == pdPASS ? 1u : 0u) << 2)
-        | ((rc_dsp == pdPASS ? 1u : 0u) << 0);
-    dbg_u32(0x2007FFDCu, rc_word);
+    (void)rc_usb; (void)rc_brg; (void)rc_dsp;  /* creation failures surface via task absence */
 
     vTaskStartScheduler();
 

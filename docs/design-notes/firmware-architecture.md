@@ -1134,13 +1134,37 @@ ready in the shared handshake block. Time flows downward.
 | `g_ipc_shared.boot_magic != "MOKY"`         | Reinit shared region; re-launch Core 1 once | Transient LCD blank, recovers within ~1 s   |
 | Watchdog reset loop (>3 hits in 10 s)       | Enter safe mode — CDC only, radio off       | USB CDC responds to admin only              |
 
-### 9.3 Breadcrumbs (post-mortem trace)
+### 9.3 Shared-IPC tail pad (SWD post-mortem / operational counters)
 
-The final 64 B of the shared region (`0x2007FFC0 – 0x2007FFFF`) is a ring of one-byte
-event codes written by both cores at key state transitions (boot stage, IRQ source, flash
-lock acquire/release, task panic). On a watchdog-induced reset the region survives, and
-the safe-mode console dumps it as the first post-mortem artefact. Codes are defined in
-`ipc_shared_layout.h`.
+The final 64 B of the shared region (`0x2007FFC0 – 0x2007FFFF`) lives inside
+`g_ipc_shared._tail_pad`, outside both cores' heaps and task stacks, so it survives a
+watchdog-induced reset. It holds **operational counters** that live code keeps updated,
+plus a single permanent assert tag. It is **not** a free-for-all scratchpad — every slot
+must appear in the table below before code writes to it.
+
+**Allocated slots:**
+
+| Address      | Writer                         | Purpose                                               |
+|--------------|--------------------------------|-------------------------------------------------------|
+| `0x2007FFC4` | `main_core1_bridge.c`          | `rx total` — bytes drained from `c0_to_c1` → CDC IN   |
+| `0x2007FFC8` | `main_core1_bridge.c`          | `tx total` — bytes drained from CDC OUT → `c1_to_c0`  |
+| `0x2007FFCC` | `main_core1_bridge.c`          | USB state: bit0=mounted, bit1=cdc_connected (DTR)     |
+| `0x2007FFF8` | `lv_conf.h` `LV_ASSERT_HANDLER`| LVGL assert stamp `0xA55E1700` before spinning        |
+
+**Free:** `0x2007FFC0`, `0x2007FFD0 – 0x2007FFF4`, `0x2007FFFC` (13 × 4 B slots).
+
+**Lifecycle discipline.** Debug breadcrumbs are discouraged by default (prefer `printf`
+over CDC or SWD `mem32 <named-symbol>`). When a breadcrumb is genuinely necessary for an
+investigation, it is part of the PR that introduces it and must be removed in the same
+commit that lands the root-cause fix. Solved-issue breadcrumbs from P2-5/6, P3-2, P3-3,
+and the M1.1-B bring-up sentinel were released in the dev-Sblzm 2026-04-18 cleanup; do
+not reintroduce them. Before adding any new slot, `grep -rn "0x2007FF" firmware/` to
+verify the address is free and update this table in the same diff.
+
+**Watchdog-survive post-mortem ring (future).** Section 9.4 describes a planned 1-byte
+event ring dumped by the safe-mode console after a WDT-induced reset. That ring is not
+yet implemented; when it is, it will claim a documented sub-range of the free region
+above and this table will be extended.
 
 ### 9.4 Watchdog Discipline & Safe Mode
 
