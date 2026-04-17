@@ -70,7 +70,7 @@ USB-C VBUS ──┐
 |--------------------|-----------------------------------------------|
 | Part               | BQ25622RWMR (WQFN-18, no D+/D− detection)    |
 | Input current limit| Hardware ILIM resistor sets 500 mA default; I2C raises to 1 A–2 A after enumeration |
-| Charge control     | I2C (I2C1, 0x6B)                             |
+| Charge control     | I2C (I2C0 — Power bus, 0x6B)                 |
 | ADC                | 16-bit monitoring of VBUS, VBAT, IBAT, TS    |
 | Inductor           | Murata DFE322520F-1R5M (1.5 µH, metal alloy) |
 | OTG                | Boost to 5 V via PMID; 2 A capable           |
@@ -85,13 +85,13 @@ USB-C VBUS ──┐
 - Algorithm: Impedance Track™ — accurate remaining time estimate.
 - Sense path: SRX/VSS must be in series with battery current path; keep trace short and wide.
 - Design Capacity setting: 1000 mAh (software initialisation).
-- Address: 0x55 on I2C1.
+- Address: 0x55 on I2C0 (Power bus).
 
 ---
 
 ## 6. LED Driver — TI LM27965
 
-- Address: 0x36 on I2C0.
+- Address: 0x36 on I2C0 (Power bus).
 - HWEN pin: tied to 1.8 V (always enabled; software controls via I2C).
 - Bank A: LCD backlight — PWM dimming.
 - Bank B: Keypad backlight (white LEDs) — PWM dimming.
