@@ -159,6 +159,65 @@ bit 1: SCHMITT
 bit 0: SLEWFAST
 ```
 
+### 3.4 PIO on high GPIOs — `pio_set_gpio_base(pio, 16)` is mandatory
+
+A PIO instance can address only 32 consecutive GPIOs at a time. On
+RP2350B the PIO's "GPIO base" register selects whether the SM pinctrl
+fields refer to GPIOs 0–31 (default) or 16–47. Any peripheral that
+lives on GPIO 32–47 (keypad columns/rows, sensor-bus pins on some
+revisions) **must** call `pio_set_gpio_base(pio, 16)` **before**
+`pio_sm_init`. Skip it and `pio_sm_init` returns
+`PICO_ERROR_BAD_ALIGNMENT` — a silent failure in release builds where
+the assertion is compiled out.
+
+The SDK helpers `sm_config_set_out_pins()`, `sm_config_set_in_pins()`
+etc. accept raw GPIO numbers (36–47) and stash the high bits in
+`pio_sm_config.pinhi` when `PICO_PIO_USE_GPIO_BASE=1` (automatically
+set for RP2350B via our board header). `pio_sm_init()` then validates
+the config against the current `gpiobase`; mismatch → error.
+
+Standard keypad init sequence:
+
+```c
+pio_set_gpio_base(pio0, 16);        /* required BEFORE sm init */
+uint sm = pio_claim_unused_sm(pio0, true);
+uint off = pio_add_program(pio0, &keypad_scan_program);
+keypad_scan_program_init(pio0, sm, off, ROW_BASE, COL_BASE, clkdiv);
+pio_sm_set_enabled(pio0, sm, true);
+```
+
+`pio_gpio_init(pio, pin)` itself takes the raw GPIO number — the SDK
+adjusts internally.
+
+### 3.5 PIO + DMA continuous-scan pattern
+
+For periodic scanners (keypad, sensor polling) the canonical zero-CPU
+pattern is PIO + 2 DMA channels, both in ring mode:
+
+- **TX DMA** streams a fixed mask table from RAM into the PIO TX FIFO.
+  `channel_config_set_ring(&cfg, false, N)` makes read-addr wrap at a
+  2^N-byte boundary, so the table loops forever without CPU attention.
+- **RX DMA** drains PIO RX FIFO into a mirror buffer in RAM.
+  `channel_config_set_ring(&cfg, true, N)` wraps write-addr so the
+  buffer always holds the latest `2^N` results.
+- Both channels use 8-bit transfers even though the PIO FIFO is
+  32-bit wide: an 8-bit DMA transfer pops one full FIFO word and keeps
+  the low byte, advancing memory by 1 byte. Align the RAM buffers to
+  `2^N` so ring mode doesn't partially wrap.
+- Use `dma_start_channel_mask((1u << tx) | (1u << rx))` to start both
+  simultaneously, then `pio_sm_set_enabled()`.
+- `transfer_count = 0xFFFFFFFFu` gives ~5.8 days at our scan rate
+  before the channels exhaust. Chain a pair of channels per direction
+  (each chained_to the other) if uptime demand exceeds that.
+
+The consumer task just reads the RX mirror buffer — no PIO FIFO
+interaction. Single-byte DMA-concurrent reads of individual ring slots
+are safe; composite reads across multiple slots may catch one slot
+mid-write. For keypad that is fine because debounce absorbs the
+single-row staleness. For higher-integrity snapshots (sensor triplets
+that must agree), add a double-buffer with a DMA-complete IRQ to
+signal "buffer A is stable".
+
 ---
 
 ## 4. FreeRTOS Rules on Core 1
@@ -323,6 +382,8 @@ new one bites you.
 | `extern void gpio_set_dir(...)` links but does nothing | SDK `gpio_set_dir` is `static inline`; `extern` declaration has no definition to link | `#include "hardware/gpio.h"` directly, never re-declare SDK symbols      |
 | Debug breadcrumb corrupted or flickering     | Slot collision — another writer at same `0x2007FFxx`       | See firmware-architecture.md §9.3 and `feedback_breadcrumb_discipline`   |
 | Driver "works sometimes"                     | Task runs but read happens between scans (halt caught the sleep) | Hold the stimulus steady; read `scan_count` to confirm multiple iterations |
+| `pio_sm_init` returns `PICO_ERROR_BAD_ALIGNMENT`, or SM runs but pins don't move | PIO tries to address GPIO ≥ 32 with default `gpiobase = 0` | Call `pio_set_gpio_base(pio, 16)` before `pio_sm_init` (this doc §3.4) |
+| Two tasks both want to "own" the same GPIO   | `gpio_init` (SIO) vs `pio_gpio_init` (PIO0/1) fight over FUNCSEL; last call wins | One driver per pin group; use compile flag or explicit start/stop transitions when A/B testing |
 
 ### 7.3 SWD one-liners
 

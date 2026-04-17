@@ -106,13 +106,19 @@ add_executable(core1_bridge
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
-    ${KEYPAD_DIR}/keypad_min.c
+    ${KEYPAD_DIR}/keypad_scan.c
 )
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.
 pico_generate_pio_header(core1_bridge
     ${DISPLAY_DIR}/tft_8080.pio
     OUTPUT_DIR ${DISPLAY_DIR}
+)
+
+# Generate keypad_scan.pio.h next to its source.
+pico_generate_pio_header(core1_bridge
+    ${KEYPAD_DIR}/keypad_scan.pio
+    OUTPUT_DIR ${KEYPAD_DIR}
 )
 
 target_include_directories(core1_bridge PRIVATE

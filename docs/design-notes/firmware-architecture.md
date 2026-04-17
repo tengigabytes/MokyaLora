@@ -913,8 +913,8 @@ read or written across the IPC boundary.
 | Sensor bus (`i2c1`, GPIO 34/35) | Core 1 | LSM6DSV16X 0x6A · LIS2MDL 0x1E · LPS22HH 0x5D · Teseo 0x3A |
 | Power  bus (`i2c1`, GPIO 6/7)   | Core 1 | BQ25622 0x6B · BQ27441 0x55 · LM27965 0x36                 |
 | SPI1 (GPIO 24–27)               | Core 0 | SX1262 LoRa                                                |
-| PIO0                            | Core 1 | LCD 8-bit 8080 parallel, NHD-2.4″                          |
-| PIO1                            | Core 1 | 6×6 keypad matrix, GPIO 36–47                              |
+| PIO0                            | Core 1 | 6×6 keypad matrix (GPIO 36–47), continuous PIO+DMA scan    |
+| PIO1                            | Core 1 | LCD 8-bit 8080 parallel, NHD-2.4″                          |
 | PWM                             | Core 1 | Haptic motor (GPIO 9)                                      |
 | USB CDC                         | Core 1 | TinyUSB device — console + bridged CLI                     |
 | Flash (QMI / XIP)               | shared | XIP read both cores; writes only Core 0                    |
