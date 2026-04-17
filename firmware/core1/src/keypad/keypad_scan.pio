@@ -1,0 +1,100 @@
+; keypad_scan.pio — PIO program for continuous 6x6 keypad matrix scan.
+;
+; The state machine loops forever: pulls a 6-bit row mask from TX FIFO,
+; drives the 6 ROW pins with it, waits for the pull-up + diode RC to
+; settle, reads the 6 COL pins, and pushes the result into RX FIFO.
+; A DMA channel feeds a fixed 8-entry mask ring into TX FIFO and a
+; second DMA channel drains the RX FIFO into a matching 8-entry
+; result ring — so once initialised the CPU never has to touch the
+; PIO FIFOs again.
+;
+; GPIO mapping (set at init, see keypad_scan_program_init below):
+;   OUT base = KEY_ROW_BASE (GPIO 42) — 6 consecutive row outputs
+;   IN  base = KEY_COL_BASE (GPIO 36) — 6 consecutive column inputs
+;   On RP2350B, pio_set_gpio_base(pio, 16) MUST be set before SM init
+;   (these pins live in the 32-47 window, outside the default 0-31).
+;
+; Timing: at sys_clk=150 MHz with KEY_PIO_CLKDIV=150, each PIO cycle = 1 us.
+;   pull + out          = 2 cycles =  2 us
+;   nop [15]            = 16 cycles = 16 us settling
+;   in + push           = 2 cycles =  2 us
+;   Total per row       = 20 us
+;   Full 6-row scan     = ~120 us   (plus 2x dummy 0x3F entries in the ring,
+;                                    all active-low HIGH row-selects, no effect)
+;
+; SPDX-License-Identifier: Apache-2.0
+
+.program keypad_scan
+
+.wrap_target
+    pull block              ; TX FIFO -> OSR (6-bit row mask in LSBs)
+    out pins, 6             ; ROW[5:0] <- OSR[5:0]
+    nop [15]                ; 16-cycle settling (diode + pull-up RC)
+    in pins, 6              ; ISR <- COL[5:0] (active-low: 0 = pressed)
+    push                    ; RX FIFO <- ISR
+.wrap
+
+
+% c-sdk {
+#include "hardware/pio.h"
+#include "hardware/gpio.h"
+
+/* Initialise a PIO state machine for the keypad scanner.
+ *
+ *   pio       — PIO instance (pio0 on MokyaLora; pio1 is owned by display)
+ *   sm        — state machine index (0..3)
+ *   offset    — program load offset returned by pio_add_program
+ *   row_base  — first GPIO for row outputs (6 consecutive)
+ *   col_base  — first GPIO for column inputs (6 consecutive)
+ *   clkdiv    — PIO clock divider (150.0 -> 1 MHz -> 1 us per cycle)
+ *
+ * Does NOT enable the SM. Caller must pio_sm_set_enabled() after this. */
+static inline void keypad_scan_program_init(PIO pio, uint sm, uint offset,
+                                             uint row_base, uint col_base,
+                                             float clkdiv)
+{
+    pio_sm_config c = keypad_scan_program_get_default_config(offset);
+
+    /* OUT pin range: 6 row outputs starting at row_base. */
+    sm_config_set_out_pins(&c, row_base, 6);
+
+    /* IN pin range: 6 column inputs starting at col_base. */
+    sm_config_set_in_pins(&c, col_base);
+
+    /* OSR: shift right, no autopull, threshold 8. Explicit `pull block` in
+     * the program so one TX FIFO byte = one row scan. */
+    sm_config_set_out_shift(&c, true, false, 8);
+
+    /* ISR: shift LEFT so newly-shifted bits land in the LSBs. After one
+     * `in pins, 6` starting from ISR=0, ISR holds (col_pins & 0x3F). The
+     * RX DMA's 8-bit transfer pops the 32-bit FIFO word and keeps the
+     * low byte, giving us the 6-bit col state directly. */
+    sm_config_set_in_shift(&c, false, false, 8);
+
+    sm_config_set_clkdiv(&c, clkdiv);
+
+    /* Hand the ROW pins to this PIO instance and make them outputs. */
+    for (uint i = 0; i < 6; i++) {
+        pio_gpio_init(pio, row_base + i);
+    }
+    pio_sm_set_consecutive_pindirs(pio, sm, row_base, 6, true);
+
+    /* Hand the COL pins to this PIO instance, enable pull-ups (diode
+     * anode-to-COL topology needs COLs pulled HIGH when not selected),
+     * and make them inputs. */
+    for (uint i = 0; i < 6; i++) {
+        pio_gpio_init(pio, col_base + i);
+        gpio_pull_up(col_base + i);
+    }
+    pio_sm_set_consecutive_pindirs(pio, sm, col_base, 6, false);
+
+    /* Drive all ROW pins HIGH (idle) before the SM starts executing, so
+     * the scan loop's first `out pins, 6` doesn't race with an undefined
+     * pin state. */
+    pio_sm_set_pins_with_mask(pio, sm,
+                              0x3Fu << row_base,   /* value: all HIGH */
+                              0x3Fu << row_base);  /* mask: the 6 row pins */
+
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}
