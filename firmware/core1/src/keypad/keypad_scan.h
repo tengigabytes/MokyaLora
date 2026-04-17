@@ -39,6 +39,25 @@ void keypad_init(void);
  * — just 6 memory reads with inversion, no PIO interaction. */
 void keypad_read(volatile uint8_t out_state[KEY_ROWS]);
 
-/* SWD-observable snapshot, updated at ~20 ms rate by the probe task in
- * main_core1_bridge.c. Equivalent to polling keypad_read() from outside. */
+/* FreeRTOS task entry point — owns keypad_init() + the 5 ms scan /
+ * 20 ms per-key debounce loop. On every debounced state change it
+ * translates (r, c) through keymap_matrix.h and enqueues a key_event_t
+ * with source=KEY_SOURCE_HW into the multi-producer KeyEvent queue
+ * (see key_event.h). g_kp_snapshot is still refreshed every tick for
+ * SWD observation. Created via xTaskCreate() from main. */
+void keypad_scan_task(void *pv);
+
+/* SWD-observable raw matrix snapshot, refreshed every scan tick by
+ * keypad_scan_task. Equivalent to polling keypad_read() from outside.
+ * Survives Phase A→B since several debug workflows already grep for it. */
 extern volatile uint8_t g_kp_snapshot[KEY_ROWS];
+
+/* SWD-observable debounced matrix snapshot — one byte per row, bit C
+ * set iff (r=row, c=col) is currently in the "pressed" debounced state.
+ * Updated only when a debounce commit happens, i.e. the state the
+ * KeyEvent queue sees. */
+extern volatile uint8_t g_kp_stable[KEY_ROWS];
+
+/* Scan task iteration counter; strictly monotonic so SWD can verify
+ * the task is running (debug playbook §7.1 step 2). */
+extern volatile uint32_t g_kp_scan_tick;
