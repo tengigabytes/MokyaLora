@@ -928,6 +928,49 @@ still works → no bridge regression.
 - `firmware/core1/m1_bridge/src/main_core1_bridge.c` — replaced `keypad_probe_task` with `keypad_scan_task`, added `key_event_init()` before scheduler start
 - `firmware/core1/m1_bridge/CMakeLists.txt` — added `key_event.c` source and `firmware/mie/include` to include dirs (for `mie/keycode.h`)
 
+**Phase C** — LVGL keypad visualiser + landscape display (2026-04-18).
+
+The Phase B queue had no consumer; this phase adds one inside `lvgl_task`
+so `g_key_event_dropped` actually exercises the pop path, and switches
+the panel to landscape so the diagnostic view matches how the PCB is held.
+
+- **Display rotation**: `ST7789_MADCTL` changed from `0x00` (portrait)
+  to `0x60` (MV=1, MX=1 → 320×240 landscape, keypad-side top-left).
+  `DISPLAY_W/H` in `display.h` swapped to 320/240. Framebuffer byte
+  count unchanged (150 KB); `s_flush_scratch` grows from 480 B to 640 B.
+  `LCMCTRL` left at its portrait value `0x2C` — no visual regression
+  observed. If colour order ever looks wrong revisit this first.
+- **Consumer**: `keypad_view_tick()` drains `key_event_pop(..., 0)` at
+  the end of every `lvgl_task` iteration. No new FreeRTOS task — LVGL
+  runs with `LV_USE_OS = LV_OS_NONE`, so all widget mutations must stay
+  on the `lvgl_task` context (P3-2 lesson).
+- **Layout** mirrors the physical PCB:
+  - upper-left: FUNC / BACK (stacked)
+  - upper-centre: DPAD cross (UP / LEFT / OK / RIGHT / DOWN)
+  - upper-right: 2×2 column-major — left col SET (top) / DEL (bot),
+    right col V+ (top) / V- (bot)
+  - lower: 5×5 half-keyboard (digits row → MODE/TAB/SPACE/SYM1/SYM2)
+  - status strip at y=0..13 showing `LAST: <name> P|R` and
+    `p=<pushed> d=<dropped> r=<rejected>`
+
+**Verification (2026-04-18)**: `meshtastic --info` full round-trip still
+works (no bridge regression). SWD snapshot after boot: `g_key_event_pushed`
+monotonic, `g_key_event_dropped = 0`, `xFreeBytesRemaining ≈ 5.1 KB`
+(unchanged from Phase B — LVGL widgets come out of the separate 48 KB
+`lv_mem` pool, not FreeRTOS heap). Visual press/release colour toggle
+confirmed on the panel.
+
+**Files added:**
+- `firmware/core1/src/keypad/key_name.h` — keycode → short display name
+- `firmware/core1/src/ui/keypad_view.{h,c}` — 6×6 LVGL view + consumer
+
+**Files changed:**
+- `firmware/core1/src/display/display.h` — `DISPLAY_W=320`, `DISPLAY_H=240`
+- `firmware/core1/src/display/st7789vi.c` — `MADCTL = 0x60` (landscape)
+- `firmware/core1/src/display/lvgl_glue.c` — removed benchmark, calls
+  `keypad_view_init()` + `keypad_view_tick()` each lv_timer iteration
+- `firmware/core1/m1_bridge/CMakeLists.txt` — new `UI_DIR` + `keypad_view.c`
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

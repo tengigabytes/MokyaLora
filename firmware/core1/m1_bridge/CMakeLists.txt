@@ -92,6 +92,9 @@ set(DISPLAY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/display)
 # ── Keypad driver (M3.3 Phase A) ─────────────────────────────────────────────
 set(KEYPAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/keypad)
 
+# ── UI diagnostic views (M3.3 Phase C) ───────────────────────────────────────
+set(UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui)
+
 # ── Executable ───────────────────────────────────────────────────────────────
 # core1_reset.S MUST be the first source so its .vectors input section lands
 # at offset 0 of the final .text output (i.e. flash 0x10200000). The SDK
@@ -108,6 +111,7 @@ add_executable(core1_bridge
     ${DISPLAY_DIR}/lvgl_glue.c
     ${KEYPAD_DIR}/keypad_scan.c
     ${KEYPAD_DIR}/key_event.c
+    ${UI_DIR}/keypad_view.c
 )
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.
@@ -127,6 +131,7 @@ target_include_directories(core1_bridge PRIVATE
     ${SHARED_IPC_DIR}
     ${DISPLAY_DIR}
     ${KEYPAD_DIR}
+    ${UI_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/include
 )
 
