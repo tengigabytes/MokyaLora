@@ -286,7 +286,14 @@ static void render_sats(const teseo_rf_state_t *r)
     }
 }
 
-void rf_debug_view_tick(void)
+void rf_debug_view_apply(const key_event_t *ev)
+{
+    (void)ev;
+    /* No per-key bindings in the RF view for now. FUNC is swallowed by
+     * the router before it reaches us. */
+}
+
+void rf_debug_view_refresh(void)
 {
     const teseo_state_t    *st = teseo_get_state();
     const teseo_sat_view_t *sv = teseo_get_sat_view();

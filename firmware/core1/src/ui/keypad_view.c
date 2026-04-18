@@ -250,22 +250,15 @@ static void apply_event(const key_event_t *ev)
     lv_label_set_text(s_header_label, buf);
 }
 
-void keypad_view_tick(void)
+void keypad_view_apply(const key_event_t *ev)
 {
-    key_event_t ev;
-    bool any = false;
-    while (key_event_pop(&ev, 0)) {
-        apply_event(&ev);
-        any = true;
-    }
+    apply_event(ev);
 
-    if (any) {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "p=%lu d=%lu r=%lu",
-                 (unsigned long)g_key_event_pushed,
-                 (unsigned long)g_key_event_dropped,
-                 (unsigned long)g_key_event_rejected);
-        lv_label_set_text(s_footer_label, buf);
-        lv_obj_align(s_footer_label, LV_ALIGN_TOP_RIGHT, -6, 0);
-    }
+    char buf[32];
+    snprintf(buf, sizeof(buf), "p=%lu d=%lu r=%lu",
+             (unsigned long)g_key_event_pushed,
+             (unsigned long)g_key_event_dropped,
+             (unsigned long)g_key_event_rejected);
+    lv_label_set_text(s_footer_label, buf);
+    lv_obj_align(s_footer_label, LV_ALIGN_TOP_RIGHT, -6, 0);
 }

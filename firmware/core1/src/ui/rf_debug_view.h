@@ -22,10 +22,16 @@
 
 #include "lvgl.h"
 
-/* Build all widgets under `parent` (usually lv_screen_active()). Must be
- * called after lv_init() and the display driver is attached. */
+#include "key_event.h"
+
+/* Build all widgets under `parent` (usually a router-owned panel). Must
+ * be called after lv_init() and the display driver is attached. */
 void rf_debug_view_init(lv_obj_t *parent);
 
-/* Refresh label text from the latest driver snapshot. Call once per
- * lvgl_task iteration after lv_timer_handler(). Non-blocking. */
-void rf_debug_view_tick(void);
+/* Refresh label text from the latest driver snapshot. Call periodically
+ * from the router tick; non-blocking. */
+void rf_debug_view_refresh(void);
+
+/* Accept a key event — the diagnostic view has no interactive bindings
+ * today, but the hook exists so future per-view gestures plug in cleanly. */
+void rf_debug_view_apply(const key_event_t *ev);

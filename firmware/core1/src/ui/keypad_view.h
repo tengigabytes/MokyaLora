@@ -17,10 +17,13 @@
 
 #include "lvgl.h"
 
-/* Create the grid + labels under `parent` (usually lv_screen_active()).
+#include "key_event.h"
+
+/* Create the grid + labels under `parent` (usually a router-owned panel).
  * Must be called after lv_init() and a display has been attached. */
 void keypad_view_init(lv_obj_t *parent);
 
-/* Drain any queued KeyEvents and apply them to the view. Call once per
- * lvgl_task iteration, after lv_timer_handler(). */
-void keypad_view_tick(void);
+/* Feed a single KeyEvent into the view — highlight the cell, update
+ * footer counters. Caller owns the queue; keypad_view no longer drains
+ * it on its own. */
+void keypad_view_apply(const key_event_t *ev);
