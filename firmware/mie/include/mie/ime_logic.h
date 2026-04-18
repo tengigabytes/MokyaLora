@@ -1,20 +1,43 @@
 // SPDX-License-Identifier: MIT
-// MokyaInput Engine — IME Logic public API
+// MokyaInput Engine — IME Logic public API (v2, listener-based)
 //
-// ImeLogic sits between HAL key events and TrieSearcher.
-// Five input modes (MODE key at row 4, col 0 cycles 中→EN→ABC→abc→ㄅ→中):
+// ImeLogic is a platform-agnostic input method service. The UI pushes key
+// events and periodic ticks; ImeLogic drives internal state and fires
+// events on an IImeListener that the UI implements. The UI owns the text
+// buffer and cursor; MIE owns only pending composition and candidate
+// state.
 //
-//   SmartZh Mode    — Bopomofo prediction: ZH dict only, phoneme display.
-//   SmartEn Mode    — English T9 prediction: EN dict only, letter display.
-//   DirectUpper     — cycle uppercase letters/digits; OK confirms pending char.
-//   DirectLower     — cycle lowercase letters/digits; OK confirms pending char.
-//   DirectBopomofo  — cycle Bopomofo phonemes only; OK confirms pending char.
+// Three input modes, cycled by MOKYA_KEY_MODE (SmartZh → SmartEn → Direct
+// → SmartZh):
+//   SmartZh — Bopomofo half-keyboard prefix prediction (ZH dictionary).
+//   SmartEn — English T9 letter prediction on rows 1-3 keys plus
+//             Direct-style multi-tap on the row 0 digit keys (digits are
+//             not in the English dictionary).
+//   Direct  — Full multi-tap cycling across all 20 input keys (letter
+//             keys cycle a/s/A/S; digit keys cycle 1/2). Used for
+//             out-of-dictionary content such as passwords or rare
+//             characters.
 //
-// Symbol keys (row 4, col 3 = ，SYM ; row 4, col 4 = 。.？):
-//   In SmartZh/SmartEn: cycle context-sensitive punctuation list (ZH or EN set).
-//   In Direct modes:    cycle a combined symbol list.
+// Time is injected by the caller; MIE has no intrinsic clock. Event
+// producers must populate KeyEvent::now_ms at the source, and tick() must
+// be driven from the same time base.
+//
+// Key routing contract:
+//   MOKYA_KEY_BACK — never consumed by MIE; the router must filter BACK
+//                    before dispatch. BACK is reserved for UI /
+//                    application layer (return, exit service).
+//   MOKYA_KEY_DEL  — MIE-exclusive. Priority: if pending composition is
+//                    non-empty, delete the last-appended key; otherwise
+//                    fire on_delete_before() for the UI to delete the
+//                    character before the textarea cursor.
+//   DPAD           — if candidates are showing, navigate the candidate
+//                    list (Left/Right = select, Up/Down = page).
+//                    Otherwise fire on_cursor_move(dir) so the UI can
+//                    move the textarea cursor.
+//   MOKYA_KEY_MODE — commit any pending state, then cycle input mode.
 
 #pragma once
+
 #include <stdint.h>
 #include <mie/hal_port.h>
 #include <mie/keycode.h>
@@ -24,246 +47,210 @@ namespace mie {
 
 // ── Input modes ──────────────────────────────────────────────────────────────
 enum class InputMode : uint8_t {
-    SmartZh        = 0,  // Chinese prediction — ZH dict only, Bopomofo display
-    SmartEn        = 1,  // English T9 prediction — EN dict only, letter display
-    DirectUpper    = 2,  // Direct uppercase letters/digits — cycle letter slots
-    DirectLower    = 3,  // Direct lowercase letters/digits — cycle letter slots
-    DirectBopomofo = 4,  // Direct Bopomofo — cycle phoneme slots only
+    SmartZh = 0,   // 注音
+    SmartEn = 1,   // 智慧英數
+    Direct  = 2,   // 直選英數
+};
+
+/// Direction for candidate navigation or textarea cursor movement.
+enum class NavDir : uint8_t { Left, Right, Up, Down };
+
+/// Style hint for rendering the pending composition string.
+enum class PendingStyle : uint8_t {
+    None,         ///< Pending buffer is empty (PendingView::str == "").
+    PrefixBold,   ///< SmartZh / SmartEn letter: [matched prefix bold][rest normal].
+    Inverted,     ///< Direct / SmartEn digit / SYM cycling: draw entire string inverted.
+};
+
+/// Pending composition snapshot. The UI renders this directly without
+/// querying additional state. The str pointer is owned by ImeLogic and
+/// remains valid until the next mutating call (process_key / tick /
+/// abort) on the same thread.
+struct PendingView {
+    const char*  str;                    ///< UTF-8, null-terminated.
+    int          byte_len;               ///< bytes in str (excludes the \0).
+    int          matched_prefix_bytes;   ///< 0..byte_len; 0 when style == Inverted.
+    PendingStyle style;
+};
+
+// ── Listener interface (UI implements) ───────────────────────────────────────
+//
+// Event flow:
+//   UI → process_key() / tick() → ImeLogic updates state → listener fires.
+//   After on_composition_changed(), UI re-queries pending_view() and the
+//   candidate accessors.
+//
+// All callbacks are synchronous. The listener implementation MUST NOT
+// call back into ImeLogic from within a callback; re-entrancy is
+// unsupported. The single-consumer architectural rule (one FreeRTOS task
+// owns the ImeLogic instance and drains the KeyEvent queue) guarantees
+// this at the system level.
+class IImeListener {
+public:
+    virtual ~IImeListener() = default;
+
+    /// Insert UTF-8 text at the current textarea cursor; UI advances its
+    /// cursor. Fired by OK / SPACE commits, multi-tap timeout, long-press
+    /// symbol picker, and partial-commit on candidate selection.
+    virtual void on_commit(const char* utf8) = 0;
+
+    /// DPAD pressed while no candidates are showing — UI moves textarea cursor.
+    virtual void on_cursor_move(NavDir dir) {}
+
+    /// DEL pressed while pending composition is empty — UI deletes the
+    /// character before the cursor.
+    virtual void on_delete_before() {}
+
+    /// Pending composition or candidate list changed — UI repaints both panels.
+    virtual void on_composition_changed() {}
 };
 
 // ── ImeLogic ─────────────────────────────────────────────────────────────────
 class ImeLogic {
 public:
-    // CommitCallback: called whenever text is confirmed.
-    // utf8 — null-terminated UTF-8 string to append to the output.
-    // ctx  — opaque pointer provided to set_commit_callback().
-    typedef void (*CommitCallback)(const char* utf8, void* ctx);
+    // Timing constants.
+    static constexpr uint32_t kMultiTapTimeoutMs = 800;   ///< Direct / digit / SYM2 auto-commit.
+    static constexpr uint32_t kLongPressMs       = 500;   ///< SYM1 long-press threshold.
 
-    // zh_searcher: required Chinese dictionary.
-    // en_searcher: optional English dictionary; nullptr disables English candidates.
-    explicit ImeLogic(TrieSearcher& zh_searcher,
-                      TrieSearcher* en_searcher = nullptr);
+    // Candidate display.
+    static constexpr int      kPageSize          = 5;
+    static constexpr int      kMaxCandidates     = 50;
 
-    // Register a commit callback.
-    void set_commit_callback(CommitCallback cb, void* ctx);
+    // Internal buffer limits.
+    static constexpr int      kMaxKeySeq         = 64;
+    static constexpr int      kMaxDisplayBytes   = 256;
 
-    // Feed one key event.  Returns true if the display should be refreshed.
+    /// @param zh_searcher  Required Chinese dictionary (used in SmartZh).
+    /// @param en_searcher  Optional English dictionary (SmartEn letter
+    ///                     mode). nullptr disables English prediction but
+    ///                     leaves SmartEn digit multi-tap working.
+    explicit ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher = nullptr);
+
+    /// Attach the event listener. Single slot; nullptr detaches.
+    void set_listener(IImeListener* listener);
+
+    /// Feed one key event (down or up).
+    /// ev.now_ms must be non-decreasing across calls on the same instance.
+    /// MOKYA_KEY_BACK is silently ignored (router should pre-filter).
+    /// @return true if the event mutated MIE state (listener may have fired).
     bool process_key(const KeyEvent& ev);
 
-    // ── Query ─────────────────────────────────────────────────────────────
-    InputMode mode() const { return mode_; }
+    /// Advance internal timers. Call periodically (~20 ms recommended)
+    /// from the UI task. Drives multi-tap auto-commit and SYM1 long-press
+    /// firing. now_ms must share the time base used by KeyEvent::now_ms.
+    /// @return true if state changed during this tick.
+    bool tick(uint32_t now_ms);
 
-    // Display string (UTF-8, null-terminated):
-    //   SmartZh Mode — accumulated primary phonemes, e.g. "ㄆㄍㄔ"
-    //   SmartEn Mode — accumulated primary letters, e.g. "PAPAYA"
-    //   Direct Mode  — current pending label, e.g. "ㄊ" or "W"
-    //   Symbol pending — current symbol, e.g. "、"
-    const char* input_str()   const { return input_buf_; }
-    int         input_bytes() const { return input_len_; }
+    /// Abort any pending composition or cycling state without committing.
+    /// Call when the textarea cursor moves externally (touch, focus
+    /// change) or when the IME session is being torn down. Fires
+    /// on_composition_changed() when state was non-empty.
+    void abort();
 
-    // Chinese candidates (SmartZh Mode only; always 0 in SmartEn / Direct).
-    int              zh_candidate_count() const { return zh_cand_count_; }
-    const Candidate& zh_candidate(int i)  const { return zh_candidates_[i]; }
+    // ── Query ────────────────────────────────────────────────────────────
+    InputMode   mode()           const { return mode_; }
+    const char* mode_indicator() const;    ///< "中" / "EN" / "ABC"
 
-    // English candidates (SmartEn Mode only; requires en_searcher != nullptr).
-    int              en_candidate_count() const { return en_cand_count_; }
-    const Candidate& en_candidate(int i)  const { return en_candidates_[i]; }
+    bool        has_pending()    const { return display_len_ > 0; }
+    bool        has_candidates() const { return cand_count_ > 0; }
 
-    // Merged interleaved ZH+EN candidates (ZH[0], EN[0], ZH[1], EN[1], ...).
-    // Empty slots are skipped, so count <= zh_count + en_count.
-    // merged_candidate_lang(i): 0 = ZH, 1 = EN.
-    int              merged_candidate_count()  const { return merged_count_; }
-    const Candidate& merged_candidate(int i)   const { return *merged_[i].cand; }
-    int              merged_candidate_lang(int i) const { return merged_[i].lang; }
+    /// Single-snapshot pending composition with style hint.
+    PendingView pending_view()   const;
 
-    // ── Pagination ────────────────────────────────────────────────────────
-    // Candidates are grouped into pages of kCandPageSize.
-    // TAB (row 4, col 1) in Smart Mode advances to the next page.
-    // LEFT/RIGHT/UP/DOWN navigate globally (may cross pages).
-    static constexpr int kCandPageSize = 5;
+    // ── Candidates ───────────────────────────────────────────────────────
+    int              candidate_count() const { return cand_count_; }
+    const Candidate& candidate(int i)  const { return candidates_[i]; }
+    int              selected()        const { return selected_; }
 
-    // Current page number (0-indexed, derived from merged_sel_).
-    int cand_page() const {
-        return (merged_count_ > 0) ? merged_sel_ / kCandPageSize : 0;
-    }
-    // Total number of pages available.
-    int cand_page_count() const {
-        return (merged_count_ + kCandPageSize - 1) / kCandPageSize;
-    }
-    // Number of candidates on the current page (may be < kCandPageSize on the last page).
-    int page_cand_count() const {
-        int start = cand_page() * kCandPageSize;
-        int rem   = merged_count_ - start;
-        return (rem < kCandPageSize) ? rem : kCandPageSize;
-    }
-    // i-th candidate on the current page (0 ≤ i < page_cand_count()).
-    const Candidate& page_cand(int i) const {
-        return merged_candidate(cand_page() * kCandPageSize + i);
-    }
-    int page_cand_lang(int i) const {
-        return merged_candidate_lang(cand_page() * kCandPageSize + i);
-    }
-    // Selection index within the current page (0..kCandPageSize-1).
-    int page_sel() const { return merged_sel_ % kCandPageSize; }
-
-    // Clear all input state.
-    void clear_input();
-
-    // Current candidate group (0 = ZH, 1 = EN) derived from the highlighted
-    // position in the merged candidate list.
-    // candidate_index() returns the merged-list position (merged_sel_).
-    // Updated by LEFT/RIGHT/UP/DOWN navigation in Smart Mode.
-    int candidate_group() const {
-        return (merged_count_ > 0)
-            ? merged_[(merged_sel_ < merged_count_ ? merged_sel_ : 0)].lang : 0;
-    }
-    int candidate_index() const { return merged_sel_; }
-
-    // How many bytes of key_seq_buf_ were matched by the last run_search().
-    // Zero when no candidates found.
-    int matched_prefix_len() const { return matched_prefix_len_; }
-
-    // How many bytes of input_str() correspond to the matched prefix.
-    // Use this to split the display into "matched | remaining" in the UI.
-    int matched_prefix_display_bytes() const;
-
-    // Compound display string (SmartZh only):
-    //   Each key is shown as "[ph0ph1]" (or bare "ph" if only one phoneme).
-    //   First-tone marker (0x20) renders as "ˉ".
-    //   SmartEn / Direct modes: falls back to input_str().
-    // The returned pointer is valid until the next call to any ImeLogic method.
-    const char* compound_input_str() const;
-    int         compound_input_bytes() const;
-    // Number of bytes of compound_input_str() covered by the matched prefix.
-    int         matched_prefix_compound_bytes() const;
-
-    // Short mode label for UI display: "中", "EN", "ABC", "abc", or "ㄅ".
-    const char* mode_indicator() const;
+    // Pagination (page size is kPageSize).
+    int page()            const { return cand_count_ ? selected_ / kPageSize : 0; }
+    int page_count()      const { return (cand_count_ + kPageSize - 1) / kPageSize; }
+    int page_cand_count() const;
+    const Candidate& page_cand(int i) const;
+    int page_sel()        const { return cand_count_ ? selected_ % kPageSize : 0; }
 
 private:
-    // ── Mode handlers ─────────────────────────────────────────────────────
-    bool process_smart(const KeyEvent& ev);
-    bool process_direct(const KeyEvent& ev);
+    // ── Mode handlers (ime_smart.cpp / ime_direct.cpp) ───────────────────
+    bool handle_smart(const KeyEvent& ev);
+    bool handle_direct(const KeyEvent& ev);
+    bool handle_sym1(bool pressed, uint32_t now_ms);
+    bool handle_sym2(uint32_t now_ms);
+    bool handle_dpad(mokya_keycode_t kc);
+    bool handle_del();
+    void cycle_mode();
 
-    // ── Symbol key handler (MOKYA_KEY_SYM1/SYM2, used in both modes) ─────
-    // Returns true if the event was consumed.
-    bool process_sym_key(mokya_keycode_t kc);
+    // ── Multi-tap state machine (Direct / digit / SYM2) ──────────────────
+    void multitap_press(mokya_keycode_t kc, int slot_count, bool inverted, uint32_t now_ms);
+    void multitap_commit();
 
-    // Commit current pending symbol (if any).
-    void commit_sym_pending();
-
-    // ── Search & commit ───────────────────────────────────────────────────
-    // Greedy-prefix search: tries key_seq_buf_[0..len] for decreasing len
-    // until candidates are found.  Sets matched_prefix_len_ on success.
-    void run_search();
-    // Rebuild merged_[] from zh_candidates_ + en_candidates_ (interleaved).
-    void build_merged();
-
-    // Full-clear commit (used by sym key, mode switch, Direct Mode).
-    // lang_hint: 0=ZH, 1=EN, 2=neutral.
-    void do_commit(const char* utf8, int lang_hint = 2);
-
-    // Partial commit: fire callback for utf8, then remove the first
-    // prefix_len bytes from key_seq_buf_ and re-run search on the rest.
-    void do_commit_partial(const char* utf8, int lang_hint, int prefix_len);
-
-    // Rebuild input_buf_ (display phonemes or letters) from key_seq_buf_.
-    void rebuild_input_buf();
-
-    // ── Commit-state helpers ───────────────────────────────────────────────
-    // Update en_capitalize_next_ based on what was just committed.
+    // ── Commit helpers (ime_commit.cpp) ──────────────────────────────────
+    void emit_commit(const char* utf8);
+    void commit_selected_candidate();
+    void commit_partial(const char* utf8, int prefix_keys);
     void did_commit(const char* utf8);
 
-    // ── Display buffer helpers ─────────────────────────────────────────────
-    void append_to_display(const char* utf8);
-    void backspace_display();           // remove last UTF-8 codepoint
-    void set_display(const char* utf8); // replace entire display string
+    // ── Search helpers (ime_search.cpp) ──────────────────────────────────
+    void run_search();
+    void rebuild_display_smart();
 
-    // ── Static key tables ─────────────────────────────────────────────────
-    // Primary Bopomofo phoneme for a dictionary-input key. nullptr if kc is
-    // not one of the 20 input keys.
-    static const char* key_to_phoneme(mokya_keycode_t kc);
+    // ── Display helpers (ime_display.cpp) ────────────────────────────────
+    void display_clear();
+    void display_set(const char* utf8);
 
-    // idx-th cycle label for Direct Mode (phoneme[0], phoneme[1], letter[0], letter[1]).
-    // nullptr when idx >= label count.
-    static const char* key_to_direct_label(mokya_keycode_t kc, int idx);
-    static int         direct_label_count(mokya_keycode_t kc);
+    // ── Notification ─────────────────────────────────────────────────────
+    void notify_changed();
 
-    // Mode-aware Direct cycling helpers (depend on mode_).
-    // direct_mode_slot_count(): how many choices the current direct mode exposes.
-    // direct_mode_slot_label(): idx-th label within those choices (nullptr on OOB).
-    //   DirectBopomofo → phoneme slots only (idx 0 = labels[0], 1 = labels[1]).
-    //   DirectUpper    → letter/digit slots as-is (idx 0 = labels[2], 1 = labels[3]).
-    //   DirectLower    → same slots but uppercase ASCII letters converted to lowercase.
-    int         direct_mode_slot_count(mokya_keycode_t kc) const;
-    const char* direct_mode_slot_label(mokya_keycode_t kc, int idx) const;
-
-    // idx-th symbol for sym key (MOKYA_KEY_SYM1 or MOKYA_KEY_SYM2), given current context_lang_.
-    const char* sym_label(mokya_keycode_t kc, int idx) const;
-    int         sym_label_count(mokya_keycode_t kc)    const;
-
-    // ── Members ───────────────────────────────────────────────────────────
+    // ── State data ───────────────────────────────────────────────────────
     TrieSearcher&  zh_searcher_;
     TrieSearcher*  en_searcher_;
+    IImeListener*  listener_ = nullptr;
 
-    InputMode mode_;
+    InputMode      mode_ = InputMode::SmartZh;
 
-    // Context language: updated on each commit; controls punctuation set.
-    enum Lang : uint8_t { ZH = 0, EN = 1 } context_lang_;
+    // Smart mode key sequence — byte-encoded (slot + 0x21, 0x20
+    // first-tone marker, 0x22 for the ˇ/ˋ tone key).
+    char           key_seq_[kMaxKeySeq + 1] = {0};
+    int            key_seq_len_ = 0;
 
-    // Smart Mode: key-index byte sequence for dictionary search.
-    static constexpr int kMaxKeySeq = 64;
-    char key_seq_buf_[kMaxKeySeq + 1];
-    int  key_seq_len_;
+    // Display buffer backing pending_view().str. Contents depend on mode:
+    //   SmartZh — compound "ㄅㄉ, ㄆㄊ" (grouped phonemes per key).
+    //   SmartEn — accumulated letters "we".
+    //   Direct / SmartEn digit — current cycling character "a" / "1".
+    //   SYM2 cycling — current symbol "。" / ".".
+    char           display_[kMaxDisplayBytes + 1] = {0};
+    int            display_len_ = 0;
 
-    // Display buffer.
-    static constexpr int kMaxDisplayBytes = 256;
-    char input_buf_[kMaxDisplayBytes + 1];
-    int  input_len_;
+    PendingStyle   pending_style_        = PendingStyle::None;
+    int            matched_prefix_bytes_ = 0;   // in display_ bytes
+    int            matched_prefix_keys_  = 0;   // in key_seq_ bytes
 
-    // Candidate arrays (grouped).
-    // Up to kMaxCandidates results fetched per language; paged in groups of kCandPageSize.
-    static constexpr int kMaxCandidates = 50;
-    Candidate zh_candidates_[kMaxCandidates];
-    int       zh_cand_count_;
-    Candidate en_candidates_[kMaxCandidates];
-    int       en_cand_count_;
+    // Candidate pool (single-language per run; lang tag per Candidate).
+    Candidate      candidates_[kMaxCandidates];
+    int            cand_count_ = 0;
+    int            selected_   = 0;
 
-    // Merged interleaved view (rebuilt after every run_search()).
-    struct MergedCandidate {
-        const Candidate* cand;
-        int lang;  // 0 = ZH, 1 = EN
-    };
-    static constexpr int kMaxMerged = kMaxCandidates * 2;
-    MergedCandidate merged_[kMaxMerged];
-    int             merged_count_;
+    // Multi-tap state (Direct / SmartEn digit / SYM2).
+    struct MultiTapState {
+        mokya_keycode_t keycode    = MOKYA_KEY_NONE;
+        uint8_t         slot_idx   = 0;
+        uint8_t         slot_count = 0;
+        bool            inverted   = false;
+        uint32_t        last_ms    = 0;
+    } multitap_;
 
-    // Direct Mode cycle state.
-    struct DirectState {
-        mokya_keycode_t keycode;    // MOKYA_KEY_NONE = idle
-        int             label_idx;
-    } direct_;
+    // SYM1 press tracking (short-press vs long-press differentiation).
+    struct Sym1State {
+        bool     down          = false;
+        bool     long_fired    = false;
+        uint32_t pressed_at_ms = 0;
+    } sym1_;
 
-    // Symbol key pending state (MOKYA_KEY_SYM1 or MOKYA_KEY_SYM2).
-    struct SymPendingState {
-        mokya_keycode_t keycode;    // SYM1/SYM2; MOKYA_KEY_NONE = idle
-        int             sym_idx;
-    } sym_pending_;
+    // SYM picker (opened by SYM1 long-press; DPAD navigates, OK commits).
+    bool sym_picker_open_ = false;
+    int  sym_picker_sel_  = 0;
 
-    // Candidate navigation state (Smart Mode).
-    // merged_sel_: highlighted position in merged_[] list (0..merged_count_-1).
-    // Reset to 0 on every run_search(), do_commit*(), and clear_input().
-    int merged_sel_;
-
-    // How many bytes of key_seq_buf_ were matched by the last run_search() call.
-    int matched_prefix_len_;
-
-    // SmartEn auto-capitalize: true after sentence-ending punctuation (. ? ! 。 ？ ！).
-    bool en_capitalize_next_;
-
-    // Commit callback.
-    CommitCallback commit_cb_;
-    void*          commit_ctx_;
+    // SmartEn auto-capitalize after sentence-ending punctuation.
+    bool en_capitalize_next_ = false;
 };
 
 } // namespace mie
