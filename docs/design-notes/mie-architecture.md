@@ -63,46 +63,47 @@ firmware/mie/
 ├── CMakeLists.txt              # Builds as static library; no Pico SDK dependency
 ├── include/
 │   └── mie/                    # All public headers — consumers include <mie/...>
-│       ├── hal_port.h          # IHalPort interface + KeyEvent struct
-│       ├── trie_searcher.h     # TrieSearcher public API
-│       └── ime_logic.h         # ImeLogic public API
+│       ├── keycode.h           # MOKYA_KEY_* semantic keycodes (0x01..0x3F)
+│       ├── hal_port.h          # KeyEvent struct (keycode + pressed + now_ms)
+│       ├── trie_searcher.h     # TrieSearcher public API (prefix scan)
+│       ├── ime_logic.h         # ImeLogic + IImeListener + PendingView
+│       └── mie.h               # C API (function-pointer listener; Phase D)
 ├── src/
 │   ├── mie_init.cpp            # Placeholder TU (keeps library target non-empty)
-│   ├── trie_searcher.cpp       # Sorted-index binary search implementation
-│   ├── ime_internal.h          # Internal inline helpers (NOT public)
-│   ├── ime_logic.cpp           # Constructor + process_key dispatcher (~120 lines)
-│   ├── ime_keys.cpp            # Static phoneme/symbol tables + key_to_* lookups
-│   ├── ime_search.cpp          # run_search, build_merged, rebuild_input_buf
-│   ├── ime_display.cpp         # compound_input_str, matched_prefix_*, display helpers
-│   ├── ime_commit.cpp          # do_commit, do_commit_partial, did_commit
-│   ├── ime_smart.cpp           # process_smart (SmartZh + SmartEn modes)
-│   └── ime_direct.cpp          # process_direct, process_sym_key, commit_sym_pending
+│   ├── trie_searcher.cpp       # Sorted-index prefix scan + top-N by freq + de-dup
+│   ├── ime_internal.h          # KeyEntry table + inline helpers (not public)
+│   ├── ime_logic.cpp           # Constructor + process_key dispatcher + tick + abort + cycle_mode
+│   ├── ime_keys.cpp            # kKeyTable[20] — 3-layer labels per key
+│   ├── ime_search.cpp          # run_search (prefix scan across slen 6→1) + rebuild_display_smart
+│   ├── ime_display.cpp         # display_set/clear, mode_indicator, pending_view
+│   ├── ime_commit.cpp          # emit_commit, commit_selected_candidate, commit_partial, did_commit
+│   ├── ime_smart.cpp           # handle_smart (SmartZh phoneme append / SmartEn T9 + digit multi-tap)
+│   ├── ime_direct.cpp          # handle_direct + multi-tap state machine + SYM1/SYM2
+│   └── mie_c_api.cpp           # (Phase D — retired in Phase A refactor, to be reinstated)
 ├── hal/
-│   ├── hal_port.h              # Shim → redirects to include/mie/hal_port.h
-│   ├── rp2350/                 # RP2350 PIO scan + keymap_matrix → keycode → KeyEvent (Phase 2)
+│   ├── rp2350/                 # (Phase 2) PIO scan + keymap_matrix → keycode → KeyEvent
 │   └── pc/                     # PC keyboard adapters (host build only)
 │       ├── key_map.h           #   Static PC key → mokya_keycode_t table
 │       ├── hal_pc_stdin.h      #   HalPcStdin class declaration
-│       └── hal_pc_stdin.cpp    #   IHalPort impl: raw terminal + non-blocking stdin
+│       └── hal_pc_stdin.cpp    #   Raw-mode stdin reader; stamps now_ms from std::chrono
 ├── tools/
-│   ├── gen_font.py             # Unifont → font_glyphs.bin + font_index.bin
-│   ├── gen_dict.py             # MoE CSV → dict_dat.bin + dict_values.bin (MIED format)
-│   ├── mie_repl.cpp            # Terminal REPL: IME-connected, keyboard + candidate bar
-│   └── mie_gui.cpp             # GUI test tool: graphical keyboard + IME display
+│   ├── gen_font.py             # Unifont → mie_unifont_*.bin (MIEF format)
+│   ├── gen_dict.py             # MoE / libchewing CSV → dict_*.bin (MIED format, with per-syllable abbrev)
+│   └── mie_repl.cpp            # Terminal REPL: listener-based UI, multi-tap tick, ANSI-styled pending
 ├── data/                       # Generated binary assets — NOT committed to git
-│   ├── font_glyphs.bin
-│   ├── font_index.bin
-│   ├── dict_dat.bin
-│   ├── dict_values.bin
+│   ├── dict_dat.bin / dict_values.bin       # Chinese
+│   ├── en_dat.bin  / en_values.bin          # English
+│   ├── mie_unifont_sm_16.bin               # charlist-subset font (embedded)
 │   └── dict_meta.json
 └── tests/                      # GoogleTest unit tests (host-only build)
     ├── CMakeLists.txt
-    ├── test_helpers.h           # Shared fixture: TEntry, kev helpers, build_single/multi
-    ├── test_trie_stub.cpp       # Build-environment smoke test
-    ├── test_trie_searcher.cpp   # TrieSearcher unit tests (14 cases)
-    ├── test_ime_basic.cpp       # ImeLogic: SmartMode, DirectMode, SymbolKeys, CandidateNav
-    ├── test_ime_modes.cpp       # ImeLogic: ModeSwitch, ModeSeparation
-    └── test_ime_advanced.cpp    # ImeLogic: GreedyPrefix, ToneSort, SmartEn, DirectBopomofo…
+    ├── test_helpers.h          # MockListener, press() helper, build_single/multi, dict builders
+    ├── test_trie_stub.cpp      # Build-environment smoke test
+    ├── test_trie_searcher.cpp  # TrieSearcher unit tests (14 cases)
+    ├── test_ime_core.cpp       # MODE / DEL / DPAD routing, abort, listener events
+    ├── test_ime_smart.cpp      # SmartZh compound display, tone sort, partial commit; SmartEn + English spacing
+    ├── test_ime_direct.cpp     # Direct multi-tap (a/s/A/S); SYM1 short-press; SYM2 cycle
+    └── test_ime_timer.cpp      # tick() multi-tap timeout, SYM1 long-press at 500 ms
 ```
 
 ---
@@ -310,16 +311,27 @@ Font glyphs remain in Flash and are read on demand (cache-friendly sequential ac
 
 ## 5. Input Modes
 
-The MODE key cycles through five modes in order.  Each press of MODE advances by one;
-wraps back to `SmartZh` after `DirectBopomofo`.
+The MODE key cycles through **three** modes in order. Each press of MODE
+advances by one; wraps back to `SmartZh` after `Direct`.
 
 | # | `InputMode` enum | Trigger | Description |
 |---|-----------------|---------|-------------|
 | 0 | `SmartZh` | default / MODE×0 | Bopomofo prefix prediction; SPACE appends first-tone marker `ˉ` |
-| 1 | `SmartEn` | MODE×1 | Half-keyboard letter-pair English prediction (MIED `en_dat.bin`) |
-| 2 | `DirectUpper` | MODE×2 | Multi-tap uppercase letters / digits |
-| 3 | `DirectLower` | MODE×3 | Multi-tap lowercase letters |
-| 4 | `DirectBopomofo` | MODE×4 | Single Bopomofo phoneme cycling; produces single-char candidates |
+| 1 | `SmartEn` | MODE×1 | English T9 prediction on rows 1–3; Direct multi-tap on the row 0 digit keys (digits are not in the dict) |
+| 2 | `Direct`  | MODE×2 | Full multi-tap on all 20 input keys (a/s/A/S on letter keys, 1/2 on digit keys); no dictionary lookup |
+
+The v1 design had five modes (`SmartZh`, `SmartEn`, `DirectUpper`,
+`DirectLower`, `DirectBopomofo`). v2 collapses the two case-specific
+direct modes into a single `Direct` that cycles a/s/A/S, and drops
+`DirectBopomofo` altogether (Bopomofo input is served exclusively by
+`SmartZh`). Per-keystroke input behaviour:
+
+- **Multi-tap timeout**: 800 ms. Same key within the window cycles the
+  slot; a different key commits the pending slot; `OK` also commits.
+- **`tick(now_ms)` cadence**: driver-agnostic — the UI task calls
+  `tick` every ~20 ms with a monotonic timestamp; MIE compares against
+  `KeyEvent::now_ms` to detect timeouts without any hardware clock
+  dependency.
 
 ### 5.1 Tone-Aware Candidate Ranking (SmartZh)
 
@@ -367,20 +379,55 @@ expands an n-key sequence into up to 2ⁿ letter combinations and queries a
 frequency-sorted English MIED dictionary (`en_dat.bin` / `en_values.bin`).
 Results from all valid prefix combinations are merged and returned in frequency order.
 
-### 5.4 DirectUpper / DirectLower Modes (multi-tap)
+### 5.4 Direct Mode (multi-tap, no dictionary)
 
-Multi-tap cycling with no dictionary lookup.  `DirectUpper` produces uppercase letters
-and digits; `DirectLower` produces lowercase letters.
+Multi-tap cycling for out-of-dictionary content — passwords, rare
+characters, mixed alphanumeric strings.
 
-- First press of a key → primary character.
-- Consecutive press of the same key → next character in the slot's cycle list.
-- A different key press (or BACK) confirms the pending character and starts a new one.
+- Rows 1–3 letter keys: 4-slot cycle `primary_lower → secondary_lower →
+  primary_upper → secondary_upper`, wrapping. Single-letter keys (`L`,
+  `M`) have a 2-slot cycle (lowercase → uppercase).
+- Row 0 digit keys: 2-slot cycle (`1/2`, `3/4`, …, `9/0`).
+- `BACKSLASH` has no letter or digit slots — NOP in Direct mode.
+- First press of a key shows the slot label as reverse-video pending.
+- Same key within `kMultiTapTimeoutMs` (800 ms) advances to the next slot.
+- A different input key, `OK`, or the 800 ms timeout commits the pending
+  slot.
+- `DEL` cancels the pending slot without committing.
 
-### 5.5 DirectBopomofo Mode
+### 5.5 English Sentence Spacing (SmartEn)
 
-Single Bopomofo phoneme per key, cycling through the two phonemes printed on each key.
-Produces single-character candidates that match the selected phoneme exactly.
-No multi-character word prediction.
+SmartEn tracks two sentence-aware flags to produce English-style output
+without the user having to type explicit spaces between words:
+
+- `en_capitalize_next_` — raised by the first commit after a sentence-
+  ending punctuation (`. ? !` ASCII or `。？！` full-width, trailing
+  whitespace allowed). Default `true` so the first word out of a fresh
+  `ImeLogic` (or `abort()`) is capitalised.
+- `en_last_ended_with_space_` — tracks whether the last commit emitted
+  ended with a space-like character (ASCII space or U+3000). Default
+  `true` (sentence start).
+
+On a word commit:
+
+- If `en_capitalize_next_` is true, the first letter is uppercased and
+  the flag clears once the word is committed (via `did_commit`).
+- If `en_last_ended_with_space_` is false and we're in SmartEn,
+  `commit_selected_candidate` prepends a single leading space before
+  the word commit.
+
+On a punctuation commit:
+
+- SmartEn SYM1 short-press emits `", "` (comma + trailing space).
+- SmartEn SYM2 multi-tap (. / ? / !) appends a trailing space after
+  the label.
+- SmartZh and Direct modes do not auto-trail — Chinese convention has
+  no inter-word space, and Direct content is literal.
+
+External edits (DEL that reaches committed text, cursor moves via
+`on_cursor_move`, paste) take the flags out of sync; the UI must call
+`ImeLogic::set_text_context(prev_utf8)` after any such edit to resync
+based on what sits immediately before the new cursor position.
 
 ---
 
@@ -392,34 +439,82 @@ No multi-character word prediction.
 
 ---
 
-## 7. HAL Interface Contract
+## 7. HAL Interface Contract (v2 — listener-based)
 
-MIE is a **service**: it accepts a stream of keycode events and produces
-input/candidate state. It has no knowledge of matrix geometry, scan hardware,
-or physical key layout — all of that is confined to the adapters below the
-`IHalPort` interface and, on the embedded target, to
-`firmware/core1/src/keymap_matrix.h`.
-
-All platform implementations must satisfy `mie::IHalPort`:
+MIE is a **service**: it receives key events pushed in via
+`ImeLogic::process_key()` and periodic `tick(now_ms)` calls from the UI
+task, drives internal state, and fires events on a C++
+`IImeListener` that the UI implements. The UI owns the text buffer and
+cursor; MIE owns only the pending composition and candidate state. It
+has no knowledge of matrix geometry, scan hardware, or physical key
+layout — all of that is confined to the platform's key-event producer
+and, on the embedded target, to `firmware/core1/src/keymap_matrix.h`.
 
 ```cpp
-// include/mie/hal_port.h
+// include/mie/hal_port.h — v2 struct only (no pull interface)
 #include <mie/keycode.h>   // MOKYA_KEY_* constants, 0x01..0x3F
 
 namespace mie {
-    struct KeyEvent { uint8_t keycode; bool pressed; };
-    class IHalPort {
-    public:
-        virtual ~IHalPort() = default;
-        virtual bool poll(KeyEvent& out) = 0;   // non-blocking
+    struct KeyEvent {
+        mokya_keycode_t keycode;   // MOKYA_KEY_*
+        bool            pressed;   // true = key-down, false = key-up
+        uint32_t        now_ms;    // monotonic ms at event source
     };
 }
 ```
 
-`keycode` is a value from `firmware/mie/include/mie/keycode.h` — a compact
-semantic enumeration where the power button, matrix keys, and future side
-buttons all share the same namespace (`0x01..0x3F`). `0x00` is reserved
-(`MOKYA_KEY_NONE`).
+`KeyEvent::now_ms` must be populated at the event's source from a
+monotonic millisecond clock that is shared with the `tick()` clock —
+this is what lets MIE measure multi-tap and long-press windows against
+mixed producers (hardware keypad scanner, USB Control injection) without
+mistiming.
+
+```cpp
+// include/mie/ime_logic.h (excerpt)
+class IImeListener {
+public:
+    virtual void on_commit(const char* utf8) = 0;
+    virtual void on_cursor_move(NavDir dir)        {}   // DPAD w/o candidates
+    virtual void on_delete_before()                {}   // DEL w/o pending
+    virtual void on_composition_changed()          {}   // UI repaint hint
+};
+
+class ImeLogic {
+public:
+    bool process_key(const KeyEvent& ev);
+    bool tick(uint32_t now_ms);
+    void abort();
+    void set_text_context(const char* prev_utf8);   // post-external-edit sync
+    ...
+};
+```
+
+Event flow:
+
+```
+UI → process_key() / tick() → ImeLogic updates state → fires listener
+                                                      ↓
+UI observes pending_view() + candidate() after on_composition_changed()
+```
+
+Key routing contract (enforced inside `ImeLogic::process_key`):
+
+| Key | Behaviour |
+|-----|-----------|
+| `MOKYA_KEY_BACK` | **Never consumed by MIE.** Router must filter BACK before dispatch. Reserved for UI / application navigation. |
+| `MOKYA_KEY_DEL`  | MIE-exclusive. Priority: cancel multi-tap pending → pop last byte from key_seq → fire `on_delete_before()` for the UI to delete the character before its cursor. |
+| DPAD (UP/DOWN/LEFT/RIGHT) | Candidates present → navigate (LEFT/RIGHT select, UP/DOWN page). Absent → fire `on_cursor_move(dir)` for the UI. |
+| `MOKYA_KEY_MODE` | Commit pending, then cycle `SmartZh → SmartEn → Direct`. |
+| `MOKYA_KEY_SYM1` | Key-up-aware: short press emits `，/ ,`; long press (500 ms via `tick`) opens the punctuation picker. |
+| `MOKYA_KEY_SYM2` | Multi-tap cycle (。/？/！ in SmartZh, ./?/! in SmartEn). |
+
+`keycode` is a value from `firmware/mie/include/mie/keycode.h` — a
+compact semantic enumeration where the power button, matrix keys, and
+future side buttons all share the same namespace (`0x01..0x3F`). `0x00`
+is reserved (`MOKYA_KEY_NONE`). The v1 `IHalPort::poll()` pull interface
+was retired when the listener model landed; `hal/pc/hal_pc_stdin.cpp`
+now exposes a plain `poll(KeyEvent& out, uint32_t now_ms)` method used
+only by the REPL main loop.
 
 Two header rule:
 
@@ -470,8 +565,15 @@ live in `firmware/mie/include/mie/keycode.h`.
 | `\` | —   | 3 | 4 | ㄡ ㄥ |
 | F1 | FUNC | 0 | 5 | — |
 | F2 | SET  | 1 | 5 | — |
-| `Backspace` | BACK | 2 | 5 | — |
+| `Backspace` | DEL  | 3 | 5 | — |
 | `Delete`    | DEL  | 3 | 5 | — |
+| `ESC`       | quit REPL | — | — | — |
+
+**BACK note:** No PC key maps to `MOKYA_KEY_BACK` — BACK is reserved
+for UI-layer "go back / exit service" navigation and is explicitly
+filtered before the router dispatches to MIE. The REPL uses `ESC` to
+exit; on real hardware BACK will exit the IME session to the caller's
+previous screen.
 | `` ` ``     | MODE | 4 | 0 | — |
 | `Tab`       | TAB  | 4 | 1 | — |
 | `Space`     | SPACE | 4 | 2 | — |
@@ -490,7 +592,7 @@ live in `firmware/mie/include/mie/keycode.h`.
 | File | Description |
 |------|-------------|
 | `hal/pc/key_map.h` | Static `pc_key_map[]` table: `char → keycode_t` (one lookup, no matrix translation) |
-| `hal/pc/hal_pc_stdin.cpp` | `IHalPort` implementation; sets terminal to raw mode, polls stdin |
+| `hal/pc/hal_pc_stdin.cpp` | Raw-mode stdin reader; `poll(KeyEvent&, now_ms)` stamps events from `std::chrono::steady_clock`. REPL main loop synthesizes a key-release after each press so SYM1 short-press fires. |
 | `tools/mie_repl.cpp` | Interactive REPL: renders virtual keyboard layout + candidate bar in terminal |
 
 #### REPL Terminal Layout
@@ -509,22 +611,22 @@ live in `firmware/mie/include/mie/keycode.h`.
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### 7.2 PC GUI Test Tool (`mie_gui`)
+### 7.2 PC GUI Test Tool (`mie_gui`) — retired in v2 refactor
 
-`tools/mie_gui.cpp` is a host-only graphical application that provides an interactive
-virtual keyboard and IME status display. It targets developers who need to test the full
-key-input → disambiguation → candidate pipeline without physical MokyaLora hardware.
+A v1 Dear ImGui + SDL2 GUI test tool formerly lived at
+`tools/mie_gui.cpp`. It was dropped during the v2 listener API
+refactor because its pull-based rendering loop no longer maps onto the
+push-based listener model without significant rework, and the
+terminal `mie_repl` now covers the same UAT surface (keyboard input →
+candidate display → commit) with less maintenance burden.
 
-#### Technology Stack
+If a GUI consumer is needed again (graphical UX tuning, or sharing
+with external testers unfamiliar with the terminal), a v2 rewrite
+against `IImeListener` is the entry path — the data shown below is
+retained here for reference only.
 
-| Component | Library | Rationale |
-|-----------|---------|-----------|
-| GUI framework | Dear ImGui (docking branch) | Immediate-mode, zero external styling, single-header, MIT |
-| Backend renderer | SDL2 + OpenGL 3 | Cross-platform; `imgui_impl_sdl2` + `imgui_impl_opengl3` bundled with ImGui |
-| IME integration | `mie::ImeLogic` (existing) | Pure display consumer — no changes to MIE core library |
-
-The tool is a **pure display consumer**: it calls `ImeLogic::process_key()` and reads
-`ImeLogic::input_str()` / `ImeLogic::candidate()`. No MIE source files are modified.
+<details>
+<summary>Legacy v1 mie_gui layout (for reference)</summary>
 
 #### UI Layout
 
@@ -620,6 +722,8 @@ builds the `mie_gui` target using the MSVC/Ninja toolchain.
 | C | Keyboard input (PC keys + button clicks) → `ImeLogic::process_key()`; live IME status panel (mode, input, candidates, committed text) | Done |
 | D | `--dat`/`--val` CLI arguments; dictionary status indicator; full candidate display with click-to-commit | Done |
 
+</details>
+
 ---
 
 ## 8. Development Roadmap
@@ -646,12 +750,44 @@ builds the `mie_gui` target using the MSVC/Ninja toolchain.
 - [ ] Push `libmie-standalone` to `tengigabytes/libmie` *(deferred — awaiting repo creation)*.
 - [ ] Replace `firmware/mie/` with submodule pointing to `tengigabytes/libmie`.
 
+### Phase 1.75 — v2 Listener API refactor ✓ complete (dev-mie-v2-listener)
+
+- [x] Rewrite `ImeLogic` against a push-based `IImeListener` interface
+      (`on_commit`, `on_cursor_move`, `on_delete_before`,
+      `on_composition_changed`); `tick(now_ms)` + `abort()` surfaces.
+- [x] Collapse 5 modes → 3 (SmartZh / SmartEn / Direct multi-tap).
+- [x] `KeyEvent` carries `now_ms` so HW keypad and USB Control inject
+      share one timebase for multi-tap (800 ms) and long-press (500 ms).
+- [x] `TrieSearcher::search` upgraded from exact-match to prefix scan
+      with per-candidate de-dup and top-N by freq.
+- [x] English-sentence spacing model (leading space on word commit
+      when not at sentence start; trailing space on `, . ? !`;
+      auto-capitalise first-word / post-punctuation).
+- [x] `set_text_context()` sync API so DEL / cursor-move / paste can
+      re-seed the sentence-aware flags from UI buffer state.
+- [x] `mie_repl` + `hal/pc/` rewritten against the new API; full UAT.
+- [x] **95 GoogleTest cases passing** (was 120 — 37 C API tests return
+      in Phase D when `mie_c_api.cpp` is ported).
+
 ### Phase 2 — Hardware Integration (MokyaLora Rev A)
 
-- [ ] `hal/rp2350/`: bridge PIO+DMA key state buffer through `keymap_matrix.h` → `keycode_t` → `mie::KeyEvent`.
-- [ ] Boot loader: copy DAT + values from Flash to PSRAM; measure search latency.
-- [ ] Display: render `font_glyphs.bin` via LVGL custom font driver on NHD 2.4″.
-- [ ] UI: integrate candidate bar widget with Trie-Searcher output.
+- [ ] `hal/rp2350/`: bridge PIO+DMA key state buffer through
+      `keymap_matrix.h` → `keycode_t` → `mie::KeyEvent` (include
+      `now_ms` from the FreeRTOS tick clock).
+- [ ] Boot loader: copy DAT + values from Flash to PSRAM; measure
+      prefix-scan latency against realistic corpora.
+- [ ] Display: render `font_glyphs.bin` via LVGL custom font driver
+      on NHD 2.4″.
+- [ ] UI: integrate candidate bar widget with
+      `ImeLogic::candidate()`; implement `IImeListener` to drive
+      LVGL textarea + candidate panel.
+
+### Phase D — C API port (pending)
+
+- [ ] Rewrite `mie_c_api.cpp` + `mie.h` against the v2 listener API.
+- [ ] Expose listener as a `mie_listener_t` function-pointer struct
+      (see §10) and add `mie_tick` + `mie_abort` + `mie_set_text_context`.
+- [ ] Restore ~37 C API GoogleTest cases.
 
 ### Phase 3 — Optimisation & Extension
 
@@ -691,13 +827,15 @@ library code during extraction.
 
 ---
 
-## 10. Cross-Platform Targets & C API
+## 10. Cross-Platform Targets & C API (Phase D — pending)
 
-MIE exposes a stable C API via `include/mie/mie.h` (opaque handles, C-linkage,
-no C++ exceptions crossing the boundary). Implemented in `src/mie_c_api.cpp`; covered
-by 37 dedicated tests in `tests/test_mie_c_api.cpp`.
+MIE exposes a stable C API via `include/mie/mie.h` (opaque handles,
+C-linkage, no C++ exceptions crossing the boundary). Implemented in
+`src/mie_c_api.cpp`. The v1 API (commit-callback only, 5 modes) was
+retired in Phase A of the v2 refactor; the v2 replacement is staged for
+Phase D once the core library and REPL have stabilised through UAT.
 
-### C API surface (`include/mie/mie.h`)
+### Target C API surface (Phase D)
 
 ```c
 /* ── Dictionary ──────────────────────────────────────────── */
@@ -709,19 +847,32 @@ void        mie_dict_close(mie_dict_t*);
 /* ── Context ─────────────────────────────────────────────── */
 mie_ctx_t*  mie_ctx_create(mie_dict_t* zh, mie_dict_t* en);  /* en may be NULL */
 void        mie_ctx_destroy(mie_ctx_t*);
-void        mie_set_commit_cb(mie_ctx_t*, void(*cb)(const char*, void*), void*);
-int         mie_process_key(mie_ctx_t*, uint8_t keycode, int pressed);
-void        mie_clear_input(mie_ctx_t*);
+
+/* Listener struct (C-ABI mirror of IImeListener). NULL slots are skipped. */
+typedef struct {
+    void (*on_commit)(const char* utf8, void* user);
+    void (*on_cursor_move)(int dir_enum, void* user);       /* NavDir as int */
+    void (*on_delete_before)(void* user);
+    void (*on_composition_changed)(void* user);
+} mie_listener_t;
+void mie_set_listener(mie_ctx_t*, const mie_listener_t*, void* user);
+
+int  mie_process_key(mie_ctx_t*, uint8_t keycode, int pressed, uint32_t now_ms);
+int  mie_tick(mie_ctx_t*, uint32_t now_ms);
+void mie_abort(mie_ctx_t*);
+void mie_set_text_context(mie_ctx_t*, const char* prev_utf8);
 
 /* ── Display ─────────────────────────────────────────────── */
-const char* mie_input_str(mie_ctx_t*);       /* raw phoneme/letter display */
-const char* mie_compound_str(mie_ctx_t*);    /* [ph0ph1]ˉ compound display */
-const char* mie_mode_indicator(mie_ctx_t*);  /* "中" / "EN" / "ABC" / "abc" / "ㄅ" */
+const char* mie_pending_str(mie_ctx_t*);      /* pending_view().str */
+int         mie_pending_bytes(mie_ctx_t*);
+int         mie_pending_matched_prefix_bytes(mie_ctx_t*);
+int         mie_pending_style(mie_ctx_t*);    /* None / PrefixBold / Inverted */
+const char* mie_mode_indicator(mie_ctx_t*);   /* "中" / "EN" / "ABC" */
 
-/* ── Candidates (merged ZH+EN list) ─────────────────────── */
+/* ── Candidates (single per-run language list) ──────────── */
 int         mie_candidate_count(mie_ctx_t*);
 const char* mie_candidate_word(mie_ctx_t*, int idx);
-int         mie_candidate_lang(mie_ctx_t*, int idx);  /* 0=ZH 1=EN -1=OOB */
+int         mie_candidate_tone(mie_ctx_t*, int idx);
 
 /* ── Pagination (page size = 5) ──────────────────────────── */
 int         mie_page_size(void);
@@ -729,9 +880,13 @@ int         mie_cand_page(mie_ctx_t*);
 int         mie_cand_page_count(mie_ctx_t*);
 int         mie_page_cand_count(mie_ctx_t*);
 const char* mie_page_cand_word(mie_ctx_t*, int idx);
-int         mie_page_cand_lang(mie_ctx_t*, int idx);
 int         mie_page_sel(mie_ctx_t*);
 ```
+
+The internal bridge (`mie_c_api.cpp`) wraps an `IImeListener` adapter
+that forwards virtual-method calls to the caller-provided
+`mie_listener_t` function pointers. Android JNI / Windows TSF / pure-C
+consumers bind exclusively through this header and never touch C++ ABI.
 
 ### Platform wrappers
 
