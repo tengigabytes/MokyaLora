@@ -37,6 +37,13 @@ typedef enum {
     BQ25622_WD_200S  = 3,   /* 200 s                                       */
 } bq25622_wd_window_t;
 
+typedef enum {
+    BQ25622_BATFET_NORMAL   = 0,   /* Normal operation (POR default)        */
+    BQ25622_BATFET_SHUTDOWN = 1,   /* BATFET off; VSYS still runs from VBUS */
+    BQ25622_BATFET_SHIP     = 2,   /* Battery fully disconnected — storage  */
+    BQ25622_BATFET_SYSRESET = 3,   /* Momentary system power reset          */
+} bq25622_batfet_mode_t;
+
 typedef struct {
     bool                online;        /* false → I2C comms lost recently */
     /* ADC (12-bit, 1 Hz refresh) */
@@ -46,6 +53,8 @@ typedef struct {
     uint16_t            vpmid_mv;
     int16_t             ibus_ma;
     int16_t             ibat_ma;
+    uint16_t            ts_pct_x10;    /* TS pin voltage, percent × 10     */
+    int16_t             tdie_cx10;     /* IC junction temperature, °C × 10 */
     /* Status */
     uint8_t             chg_stat;      /* 0=NoCHG 1=CC 2=Taper 3=TopOff  */
     uint8_t             vbus_stat;     /* 0=None 4=UnknownAdapter 7=OTG  */
@@ -77,5 +86,16 @@ const bq25622_state_t   *bq25622_get_state(void);
  * Returns true on I2C success. */
 bool                     bq25622_set_charge_enabled(bool enabled);
 bool                     bq25622_set_watchdog(bq25622_wd_window_t win);
+
+/* HIZ mode — input stage high-impedance, converter off; used by the sleep
+ * state machine to minimise quiescent current. Battery still powers VSYS
+ * via BATFET. Cleared automatically on WATCHDOG expiry (§8.6.2.12). */
+bool                     bq25622_set_hiz(bool enabled);
+
+/* BATFET control — SHUTDOWN / SHIP / SYSRESET modes use BATFET_DLY = 12.5 s
+ * (POR default). WARNING: SHIP disconnects the battery — on a device
+ * powered only by battery, SHIP will shut down the MCU after the delay.
+ * Call only when VBUS is present or immediately before intended power-off. */
+bool                     bq25622_set_batfet_mode(bq25622_batfet_mode_t mode);
 
 #endif /* MOKYA_CORE1_BQ25622_H */
