@@ -802,7 +802,7 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 
 ## Milestone 3 — Core 1 HAL drivers + LVGL UI runtime
 
-**Status:** 🚧 In progress (M3.1 ✅, M3.2 ✅, M3.3 ✅, M3.4.1/.2 ✅, M3.4.3+ next)
+**Status:** 🚧 In progress (M3.1 ✅, M3.2 ✅, M3.3 ✅, M3.4.1/.2/.3 ✅, M3.4.4+ next)
 **Goal:** Bring up Core 1's user-facing hardware (display, keypad, sensors, power) as FreeRTOS-task driven HAL modules under `firmware/core1/src/`, and stand up LVGL v9.2.2 as the rendering runtime. Keypad driver is written from day-1 against the multi-producer `KeyEvent` queue with `key_source_t` flag (G2 from DEC-2), so M9 USB Control injection only adds a producer — never refactors the queue.
 
 ### M3 sub-milestones
@@ -1064,6 +1064,48 @@ divider — both independently confirm the field decoders.
 - `firmware/core1/m1_bridge/CMakeLists.txt` — `POWER_DIR` + source
 - `firmware/core1/m1_bridge/src/main_core1_bridge.c` — `bq25622_start_task()`
   alongside other task creates
+
+#### M3.4.3 — LM27965 LED driver refactor ✅ (2026-04-18)
+
+Replaces the provisional `backlight_init()` inline in `display.c` with a
+standalone 3-bank LED driver under `firmware/core1/src/power/`. The
+driver owns all GP / Bank-A / Bank-B / Bank-C register writes and
+maintains a cached GP byte so partial updates (e.g. toggling EN3B) do
+not clobber other enables.
+
+**API:**
+- `lm27965_init(tft_duty)` — writes Bank A duty before asserting ENA to
+  avoid a current-spike flash at the previous POR duty (31/31 full
+  scale). Bank B / C start off.
+- `lm27965_set_tft_backlight(duty)` — 5-bit code; duty 0 auto-clears ENA
+  for software-driven fade-to-off.
+- `lm27965_set_keypad_backlight(kbd_on, green_on, duty)` — Rev A Issue
+  #6 couples D3B green and D1B/D2B through the Bank-B duty register, so
+  the two enables are independent but the duty is shared.
+- `lm27965_set_led_red(on, duty)` — Bank C, 2-bit code (4 steps).
+- `lm27965_all_off()` — clears all GP enables, keeps the reserved bit 5
+  set. Bank duty registers preserved so a subsequent re-enable restores
+  the last brightness (fast sleep ↔ wake).
+- `lm27965_get_state()` — cached snapshot for UI / SWD observers.
+
+Call-site move: `lvgl_task` now calls `display_init()` (panel up,
+backlight still off) followed by `lm27965_init(0x16)` so the panel has
+already loaded GRAM contents before the backlight lights up — no flash
+of garbage. `display.c` loses all I2C / LM27965 code.
+
+**Smoke test (2026-04-18):** boot → TFT 40 % → red 100 % → kbd+green
+40 % → TFT 100 % → all off → TFT 40 %. All six transitions visually
+confirmed on the board.
+
+**Files added:**
+- `firmware/core1/src/power/lm27965.{h,c}`
+
+**Files changed:**
+- `firmware/core1/src/display/display.c` — backlight_init removed; i2c /
+  i2c_bus includes dropped
+- `firmware/core1/src/display/lvgl_glue.c` — calls `lm27965_init()`
+  post `display_init()`
+- `firmware/core1/m1_bridge/CMakeLists.txt` — new `lm27965.c` source
 
 ---
 
