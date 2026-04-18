@@ -1242,6 +1242,55 @@ ST HAL: `cx10 = 250 + (raw × 5) / 4`.
   master tick (`LIS2MDL_PERIOD_TICKS = 1`).
 - `firmware/core1/m1_bridge/CMakeLists.txt` — add `lis2mdl.c`.
 
+#### M3.4.5c — LSM6DSV16X IMU driver ✅ (2026-04-18)
+
+Third sensor-bus driver. 6-axis (3× accel + 3× gyro) + internal temp, 10 Hz
+poll from `sensor_task` with the device running 30 Hz high-performance so
+BDU always has a fresh sample between reads.
+
+**Production config** (DS13510 Rev 4 §9.14-§9.21):
+- `CTRL1 = 0x04` — ODR_XL = 30 Hz (Table 52), OP_MODE_XL = high-performance
+- `CTRL2 = 0x04` — ODR_G  = 30 Hz (Table 55), OP_MODE_G  = high-performance
+- `CTRL3 = 0x44` — BDU = 1, IF_INC = 1 (matches post-reset default)
+- `CTRL6 = 0x01` — FS_G = ±250 dps (8.75 mdps/LSB)
+- `CTRL8 = 0x00` — FS_XL = ±2 g (0.061 mg/LSB)
+- Address = 0x6A; WHO_AM_I = 0x70 (§9.13)
+
+**Single 14-byte burst.** Unlike LIS2MDL, auto-increment traverses
+`OUT_TEMP_L` → gyro → accel cleanly, so one read of 0x20..0x2D captures
+T + G + A atomically under BDU.
+
+**Decoders:**
+- accel_mg = `raw × 61 / 1000` (fits int16_t at ±2000 mg)
+- gyro_dps_x10 = `raw × 875 / 10000` (fits int16_t at ±2500)
+- temperature_cx10 = `250 + raw × 5 / 128` (256 LSB/°C, zero = 25 °C,
+  per ST HAL `lsm6dsv16x_from_lsb_to_celsius_t`)
+
+**Soft-reset.** `CTRL3 |= SW_RESET(0x01)`, then poll bit 0 every 1 ms up
+to 50 ms (datasheet §9.16 states self-clearing).
+
+**Validation (2026-04-18):**
+- SWD read `s_state` at `0x20053598`: `online=1`, `fail_count=0`.
+- `accel_mg ≈ (+54, +17, -993)` mg — ≈ 1 g on Z (board face-down),
+  X/Y within ±60 mg noise.
+- `gyro_dps_x10 ≈ (-5, +1, +3)` → ≈ (-0.5, +0.1, +0.3) dps static bias,
+  well under the ±50 tolerance.
+- `temperature_cx10 = 322` → **32.2 °C**, consistent with LPS22HH 32.4 °C
+  and LIS2MDL 28.3 °C on the same bus.
+- `python -m meshtastic --port COM16 --info` returns normal node info.
+
+**Spec correction.** Plan handed in `CTRL1 = CTRL2 = 0x03` for 30 Hz, but
+Table 52/55 encode 30 Hz as ODR=0100 → value 0x04. Driver uses 0x04;
+the 0x03 value would have programmed 15 Hz.
+
+**Files added:**
+- `firmware/core1/src/sensor/lsm6dsv16x.{h,c}`
+
+**Files changed:**
+- `firmware/core1/src/sensor/sensor_task.c` — init LSM6DSV16X, poll
+  every master tick (`LSM6DSV16X_PERIOD_TICKS = 1`).
+- `firmware/core1/m1_bridge/CMakeLists.txt` — add `lsm6dsv16x.c`.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
