@@ -523,6 +523,63 @@ TEST(SmartEn, PunctuationTrailingSpace) {
     EXPECT_EQ(L.committed, ". ");       // . + trailing space
 }
 
+TEST(SmartEn, SetTextContextResetsFlagsAfterExternalEdit) {
+    // Regression: after a DEL reaches committed text (or cursor moves
+    // via listener), MIE's sentence-aware flags go stale. The UI is
+    // expected to call set_text_context() with the bytes immediately
+    // before the cursor so the next word commit formats correctly.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x2B\x2A\x2A\x2F\x27", 5, "apple", 100, 0 } }, dat, val);
+    TrieSearcher en;
+    ASSERT_TRUE(en.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    TrieSearcher zh;
+    ImeLogic ime(zh, &en);
+    MockListener L; ime.set_listener(&L);
+
+    press(ime, MOKYA_KEY_MODE);
+    // First word commit — flags go to cap=false, space=false.
+    press(ime, MOKYA_KEY_A); press(ime, MOKYA_KEY_O); press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L); press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);
+    ASSERT_EQ(L.committed, "Apple");
+
+    // Simulate UI deleting back to empty, then calling sync.
+    ime.set_text_context("");
+    L.reset();
+
+    // Next word should behave as fresh sentence: cap + no prepend.
+    press(ime, MOKYA_KEY_A); press(ime, MOKYA_KEY_O); press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L); press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "Apple");
+
+    // Simulate UI cursor moving to after "hello " (text ending with space).
+    ime.set_text_context("o ");
+    L.reset();
+
+    // Next word: flag=true (trailing space) → no prepend; cap=false → lowercase.
+    press(ime, MOKYA_KEY_A); press(ime, MOKYA_KEY_O); press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L); press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "apple");
+
+    // Simulate cursor after ". " — should cap and no prepend.
+    ime.set_text_context(". ");
+    L.reset();
+    press(ime, MOKYA_KEY_A); press(ime, MOKYA_KEY_O); press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L); press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "Apple");
+
+    // Simulate cursor after "ex" (mid-word) — should lowercase and prepend.
+    ime.set_text_context("ex");
+    L.reset();
+    press(ime, MOKYA_KEY_A); press(ime, MOKYA_KEY_O); press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L); press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, " apple");
+}
+
 TEST(SmartEn, AutoCapitalizeAfterPeriod) {
     // End-to-end: a SmartEn "." commit (via SYM2 multi-tap timeout)
     // emits ". ", and the NEXT word commit capitalizes without any

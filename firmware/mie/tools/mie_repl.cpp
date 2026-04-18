@@ -121,6 +121,8 @@ static void cursor_delete_before() {
 // ── Listener — wire MIE events into the local text buffer ──────────────────
 
 struct ReplListener : public mie::IImeListener {
+    mie::ImeLogic* ime = nullptr;   // back-pointer for context sync
+
     void on_commit(const char* utf8) override {
         if (!utf8 || !*utf8) return;
         int len = (int)std::strlen(utf8);
@@ -138,17 +140,42 @@ struct ReplListener : public mie::IImeListener {
             case mie::NavDir::Down:
                 break;   // single-line REPL: nothing to do
         }
+        sync_text_context();
         g_dirty = true;
         LOG("listener: cursor_move dir=%d -> %d\n", (int)d, g_cursor);
     }
 
     void on_delete_before() override {
         cursor_delete_before();
+        sync_text_context();
         g_dirty = true;
         LOG("listener: delete_before -> cursor %d, len %zu\n", g_cursor, g_text.size());
     }
 
     void on_composition_changed() override { g_dirty = true; }
+
+    // Feed MIE the last two codepoints immediately before the cursor so
+    // its SmartEn leading-space / cap-next flags match the real text
+    // state after external edits. Walks two UTF-8 codepoints back from
+    // the cursor (enough to see ". ", ", ", 「。」, …).
+    void sync_text_context() {
+        if (!ime) return;
+        if (g_cursor <= 0 || g_text.empty()) {
+            ime->set_text_context("");
+            return;
+        }
+        int end   = g_cursor;
+        int start = end;
+        for (int cp = 0; cp < 2 && start > 0; ++cp) {
+            --start;
+            while (start > 0 &&
+                   ((unsigned char)g_text[start] & 0xC0) == 0x80) {
+                --start;
+            }
+        }
+        std::string suffix = g_text.substr((size_t)start, (size_t)(end - start));
+        ime->set_text_context(suffix.c_str());
+    }
 };
 
 // ── Rendering ───────────────────────────────────────────────────────────────
@@ -304,6 +331,7 @@ int main(int argc, char** argv) {
 
     mie::ImeLogic ime(zh_searcher, en_loaded ? &en_searcher : nullptr);
     ReplListener listener;
+    listener.ime = &ime;       // enable set_text_context sync after edits
     ime.set_listener(&listener);
     LOG("main: ime + listener wired\n");
 

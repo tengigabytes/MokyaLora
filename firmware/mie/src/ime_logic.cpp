@@ -113,6 +113,37 @@ bool ImeLogic::tick(uint32_t now_ms) {
 
 // ── Abort pending composition (external cursor move, session teardown) ──────
 
+void ImeLogic::set_text_context(const char* prev_utf8) {
+    if (!prev_utf8 || !prev_utf8[0]) {
+        en_capitalize_next_       = true;
+        en_last_ended_with_space_ = true;
+        return;
+    }
+    const size_t len = std::strlen(prev_utf8);
+
+    // Leading-space suppressor: set if the caller's last char is a space.
+    en_last_ended_with_space_ =
+        (prev_utf8[len - 1] == ' ') ||
+        (len >= 3 && std::memcmp(prev_utf8 + len - 3, "\xe3\x80\x80", 3) == 0);
+
+    // Capitalise next: scan past trailing whitespace and check for
+    // sentence-ending punctuation (ASCII . ? ! or full-width 。？！).
+    int end_pos = (int)len - 1;
+    while (end_pos > 0 && prev_utf8[end_pos] == ' ') --end_pos;
+    bool ends_sentence = false;
+    if (end_pos >= 0) {
+        const char c = prev_utf8[end_pos];
+        if (c == '.' || c == '?' || c == '!') ends_sentence = true;
+        if (!ends_sentence && end_pos >= 2 &&
+            (std::memcmp(prev_utf8 + end_pos - 2, "\xe3\x80\x82", 3) == 0 ||
+             std::memcmp(prev_utf8 + end_pos - 2, "\xef\xbc\x9f", 3) == 0 ||
+             std::memcmp(prev_utf8 + end_pos - 2, "\xef\xbc\x81", 3) == 0)) {
+            ends_sentence = true;
+        }
+    }
+    en_capitalize_next_ = ends_sentence;
+}
+
 void ImeLogic::abort() {
     bool had_state = has_pending() || has_candidates() ||
                      multitap_.keycode != MOKYA_KEY_NONE || sym_picker_open_;
