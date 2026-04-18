@@ -219,6 +219,20 @@ int TrieSearcher::search(const char* key_utf8,
                 continue;
             }
 
+            // De-dup: gen_dict.py stores each word at every per-syllable
+            // prefix combination, so the prefix scan encounters the same
+            // word many times under different abbreviation keys. Skip if
+            // we have already collected this word.
+            bool is_dup = false;
+            for (int j = 0; j < collected; ++j) {
+                if (strlen(out[j].word) == static_cast<size_t>(wlen) &&
+                    memcmp(out[j].word, val_ + vo, wlen) == 0) {
+                    is_dup = true;
+                    break;
+                }
+            }
+            if (is_dup) { vo += wlen; continue; }
+
             // Insert (word, freq) into out[] keeping freq-descending order.
             // Ties preserve insertion (lex-key) order because the shift
             // condition uses strict <.

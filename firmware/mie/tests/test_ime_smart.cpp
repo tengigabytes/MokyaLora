@@ -302,6 +302,63 @@ TEST(SmartEn, DigitAfterLetterCommitsLetterFirst) {
     EXPECT_STREQ(pending_str(ime), "1");
 }
 
+TEST(SmartZh, PrefixScanDedupsAbbreviationEntries) {
+    // Regression: gen_dict.py stores a Chinese phrase at many per-syllable
+    // prefix combinations, so the same word appears under several dict
+    // keys (e.g. 心理學 at \x31\x30\x31\x33 AND \x31\x30\x31\x33\x33
+    // AND \x31\x30\x31\x33\x33\x23). The prefix scan must collapse these
+    // duplicates — the user should see 心理學 exactly once.
+    std::vector<uint8_t> dat, val;
+    {
+        // Value records (one per key): each stores 心理學 with freq 1000.
+        uint32_t v1 = (uint32_t)val.size();
+        push_u16(val, 1);
+        push_u16(val, 1000); push_u8(val, 5); push_u8(val, 9);
+        push_str(val, "\xe5\xbf\x83\xe7\x90\x86\xe5\xad\xb8");  // 心理學
+        uint32_t v2 = (uint32_t)val.size();
+        push_u16(val, 1);
+        push_u16(val, 1000); push_u8(val, 5); push_u8(val, 9);
+        push_str(val, "\xe5\xbf\x83\xe7\x90\x86\xe5\xad\xb8");
+        uint32_t v3 = (uint32_t)val.size();
+        push_u16(val, 1);
+        push_u16(val, 1000); push_u8(val, 5); push_u8(val, 9);
+        push_str(val, "\xe5\xbf\x83\xe7\x90\x86\xe5\xad\xb8");
+
+        // Keys (lex-sorted): length 4 → length 5 → length 6.
+        std::vector<uint8_t> ks;
+        uint32_t k1 = (uint32_t)ks.size();
+        push_u8(ks, 4); push_raw(ks, "\x31\x30\x31\x33", 4);
+        uint32_t k2 = (uint32_t)ks.size();
+        push_u8(ks, 5); push_raw(ks, "\x31\x30\x31\x33\x33", 5);
+        uint32_t k3 = (uint32_t)ks.size();
+        push_u8(ks, 6); push_raw(ks, "\x31\x30\x31\x33\x33\x23", 6);
+
+        uint32_t kc  = 3;
+        uint32_t kdo = 16 + kc * 8;
+        push_str(dat, "MIED");
+        push_u16(dat, 2); push_u16(dat, 0);
+        push_u32(dat, kc); push_u32(dat, kdo);
+        push_u32(dat, k1); push_u32(dat, v1);
+        push_u32(dat, k2); push_u32(dat, v2);
+        push_u32(dat, k3); push_u32(dat, v3);
+        dat.insert(dat.end(), ks.begin(), ks.end());
+    }
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+
+    press(ime, MOKYA_KEY_C);     // ㄏㄒ byte 0x31
+    press(ime, MOKYA_KEY_Z);     // ㄈㄌ byte 0x30
+    press(ime, MOKYA_KEY_C);     // ㄏㄒ byte 0x31
+    press(ime, MOKYA_KEY_M);     // ㄩㄝ byte 0x33
+
+    // The dict has 心理學 at three key lengths (4, 5, 6) starting with
+    // the user's 4-byte input. Prefix scan finds all three; de-dup
+    // collapses them back to one candidate.
+    ASSERT_EQ(ime.candidate_count(), 1);
+    EXPECT_STREQ(ime.candidate(0).word, "\xe5\xbf\x83\xe7\x90\x86\xe5\xad\xb8");
+}
+
 TEST(SmartEn, PrefixScanFindsLongerWords) {
     // Regression: EN dict stores only full-word keys (no abbreviation
     // entries). TrieSearcher::search must scan forward and include
