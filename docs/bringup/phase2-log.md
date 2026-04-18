@@ -1356,6 +1356,67 @@ against 48 KB, not 32.
   shipped contract (always-on NMEA mask, runtime-adjustable ODR,
   caller-owned rate policy).
 
+#### M3.4.5d Part B — GNSS dynamic fix rate resolved ✅ (2026-04-18)
+
+Followed up on the deferred "SETPAR doesn't take effect" finding.
+
+**Mechanism found:** Teseo caches CDB 303 (GNSS FIX Rate) at engine init
+and does not re-read Current configuration while running. The working
+sequence is `$PSTMSETPAR,1303,<period>` + `$PSTMSAVEPAR` + `$PSTMSRR` —
+persist the new period to NVM and force the engine to reload via
+software reset. NVM endurance is 10k cycles and runtime rate changes
+happen at user cadence (mounting the satellite UI, toggling power
+modes), so wear is not a concern.
+
+**Shipped:**
+- `send_await(body, ok_kind, err_kind, timeout_ms)` — generic helper
+  that emits a `$PSTM...` command and blocks until `$PSTMxxxOK`,
+  `$PSTMxxxERROR`, or timeout is observed via the normal NMEA drain +
+  dispatcher. Reusable for any future ST proprietary command sequence.
+- `dispatch_pstm()` — matches `$PSTMSETPAROK`, `$PSTMSETPARERROR`,
+  `$PSTMSAVEPAROK`, `$PSTMSAVEPARERROR`, and the `$PSTMSETPAR,...`
+  synthetic reply to `$PSTMGETPAR`. Longest-prefix match order so
+  `ERROR` doesn't shadow `OK`.
+- `teseo_set_fix_rate(gnss_rate_t)` — now does the 3-step sequence, with
+  `$PSTMGPSRESTART` wake from OFF preserved. NOT called automatically
+  on boot (no NVM wear from startup); only fires when an application
+  layer explicitly requests a rate change.
+- `teseo_get_fix_rate_from_device()` — diagnostic public API, sends
+  `$PSTMGETPAR,11303` and captures the reported period. Reply parsing
+  ready but did not land during the validation run — cause unclear (may
+  be that Teseo routes GETPAR replies only to UART); kept as public
+  API because the dispatch plumbing is already there.
+- `DRAIN_BUF_SIZE` 256 → 1024 B so higher NMEA output rates don't
+  overflow the Teseo TX buffer on the 100 ms poll cadence.
+
+**Empirical rate ceiling.** The driver honors requested rates up to an
+effective ~3 Hz on MokyaLora Rev A — DS13881 Table 1 lists 10 Hz max
+fix rate for dual-constellation configurations, and bringup enabled all
+four (GPS + GLONASS + Galileo + BeiDou) in NVM. With that constellation
+mix, 5 Hz and 10 Hz requests both land as ~3 Hz NMEA output (6
+sentences/s for GGA+RMC), while 1 Hz and 2 Hz requests are honored
+proportionally (2/s and 4/s respectively). Not a driver bug; if a UI
+genuinely needs 10 Hz it should drop BeiDou via `$PSTMSETPAR,1200,...`
+first.
+
+**Validation (2026-04-18, indoor no fix):**
+- `s_test_set_rc = 1` (SETPAR OK + SAVEPAR OK + SRR sent)
+- `s_last_resp_count = 2` confirms both reply dispatch paths ran
+- Rate sweeps (steady state, GGA+RMC per-second counts):
+  - 1 Hz request → 2/s ✓
+  - 2 Hz request → 4/s ✓
+  - 5 Hz request → 6/s (clamp)
+  - 10 Hz request → 6/s (clamp)
+- Boot-time rate measurement after cleanup: 4/s (NVM still carries 2 Hz
+  from last validation write; driver never overwrites on boot). Proves
+  the NVM path persists across resets.
+- `python -m meshtastic --port COM16 --info` returns normal node info.
+
+**Files changed:**
+- `firmware/core1/src/sensor/teseo_liv3fl.{h,c}` — reply dispatch,
+  send_await, SETPAR+SAVEPAR+SRR sequence, GETPAR diagnostic API,
+  1 KB drain buffer.
+
 #### M3.4.5d follow-up — Core 1 memory budget hygiene ✅ (2026-04-18)
 
 Reactive heap bumps across M3.4.1 through M3.4.5d (32 KB → 48 KB via

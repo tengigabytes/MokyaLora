@@ -31,6 +31,7 @@
 #define MOKYA_CORE1_TESEO_LIV3FL_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef enum {
@@ -90,6 +91,13 @@ bool                         teseo_set_fix_rate(gnss_rate_t rate);
 /* Cached last-set value (independent of what Teseo currently has in
  * RAM; we don't read back to avoid a round-trip). */
 gnss_rate_t                  teseo_get_fix_rate(void);
+
+/* Diagnostic: send $PSTMGETPAR,11303 and capture the value Teseo reports
+ * as its Current CDB 303 (FIX rate period in seconds). Writes a decimal
+ * ASCII string to `out` (e.g. "0.1\0" for 10 Hz). Returns false on timeout.
+ * Blocks for up to 500 ms. */
+bool                         teseo_get_fix_rate_from_device(char *out,
+                                                             size_t out_size);
 
 const teseo_state_t         *teseo_get_state(void);
 const teseo_sat_view_t      *teseo_get_sat_view(void);
