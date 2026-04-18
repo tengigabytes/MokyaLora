@@ -74,6 +74,7 @@
 #include "i2c_bus.h"
 #include "bq25622.h"
 #include "sensor_task.h"
+#include "gps_task.h"
 #include "display.h"
 #include "lvgl_glue.h"
 #include "keypad_scan.h"
@@ -485,8 +486,13 @@ int main(void)
      * and LSM6DSV16X slot into the same tick in M3.4.5b / .5c. */
     bool rc_sns = sensor_task_start(tskIDLE_PRIORITY + 2);
 
+    /* GNSS task (M3.4.5d). Runs separately from sensor_task — NMEA drain
+     * cadence is 100 ms, faster than the 1/10 Hz sensor tick, and the
+     * line-accumulator parser carries state between ticks. */
+    bool rc_gps = gps_task_start(tskIDLE_PRIORITY + 2);
+
     (void)rc_usb; (void)rc_brg; (void)rc_dsp; (void)rc_kp; (void)rc_chg;
-    (void)rc_sns;
+    (void)rc_sns; (void)rc_gps;
 
     vTaskStartScheduler();
 
