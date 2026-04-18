@@ -34,6 +34,16 @@
 #include "lvgl_glue.h"
 #include "display.h"
 #include "keypad_view.h"
+#include "rf_debug_view.h"
+
+/* Boot view selector. Default = keypad matrix diagnostic from M3.3
+ * Phase C. Define MOKYA_BOOT_VIEW_RF_DEBUG at build time (e.g. via
+ * `-DMOKYA_BOOT_VIEW_RF_DEBUG=1` in the CMake configure step or an
+ * `add_compile_definitions` line) to switch to the GNSS RF debug view.
+ * Proper runtime view switching belongs to a later milestone. */
+#ifndef MOKYA_BOOT_VIEW_RF_DEBUG
+#define MOKYA_BOOT_VIEW_RF_DEBUG 0
+#endif
 #include "lm27965.h"
 
 #include "lvgl.h"
@@ -105,12 +115,20 @@ static void lvgl_task(void *arg)
                            LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
 
+#if MOKYA_BOOT_VIEW_RF_DEBUG
+    rf_debug_view_init(lv_screen_active());
+#else
     /* Phase C diagnostic view — 6×6 grid driven by the KeyEvent queue. */
     keypad_view_init(lv_screen_active());
+#endif
 
     for (;;) {
         uint32_t next = lv_timer_handler();
+#if MOKYA_BOOT_VIEW_RF_DEBUG
+        rf_debug_view_tick();
+#else
         keypad_view_tick();
+#endif
         if (next == LV_NO_TIMER_READY || next > 100u) {
             next = 100u;
         }

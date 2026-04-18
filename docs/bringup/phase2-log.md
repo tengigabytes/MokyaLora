@@ -1417,6 +1417,73 @@ first.
   send_await, SETPAR+SAVEPAR+SRR sequence, GETPAR diagnostic API,
   1 KB drain buffer.
 
+#### M3.4.5d Part C — RF debug plumbing + UI ✅ (2026-04-18)
+
+Expose Teseo's ST-proprietary RF diagnostics (`$PSTMRF`, `$PSTMNOISE`,
+`$PSTMNOTCHSTATUS`, `$PSTMCPU`, `$GPGST`) as a first-class driver
+snapshot with an LVGL view so commissioning / troubleshooting have
+structured telemetry instead of USB stdout greps.
+
+**Driver additions (`teseo_liv3fl.{h,c}`):**
+- `teseo_rf_state_t` — pooled snapshot: noise floor (GPS+GLN), ANF
+  status per path (freq, power, lock, mode, ovfs/jammer flag), CPU
+  usage + clock, up to 32-sat RF detail (PRN / C/N0 / freq / phase
+  noise). Accumulator for multi-sentence `$PSTMRF` mirrors the GSV
+  pattern.
+- Parsers in `dispatch_pstm()` for each of the four `$PSTM` lines plus
+  safe ignore for anything else.
+- `teseo_enable_rf_debug_messages(bool on)` — OR-/AND-NOT-patches the
+  CDB 231 mask (`0x408000A8` = GST + NOISE + RF + CPU + NOTCHSTATUS)
+  via the existing `SETPAR + SAVEPAR + SRR` utility. RAM-only SETPAR
+  with `mode=1` (OR) / `mode=2` (AND-NOT); NVM persisted once, so no
+  per-boot writes.
+
+**UI (`src/ui/rf_debug_view.{h,c}`):**
+- Landscape 320x240 layout: title, fix status, noise floor, CPU, ANF
+  GPS + GLN (freq / lock / mode / jammer flag), sat table top-9 by
+  C/N0. Shows "— not received —" per row until its respective counter
+  increments, plus a bottom hint pointing at the enable API when
+  nothing has arrived at all.
+- Selected via compile-time `MOKYA_BOOT_VIEW_RF_DEBUG` in `lvgl_glue.c`
+  (defaults to 0 = keypad_view). Proper runtime view switching belongs
+  to a later milestone that also adds FUNC-key navigation.
+
+**Commissioning:** ran once with `MOKYA_COMMISSION_RF_DEBUG` set in
+`gps_task.c` — on boot, calls `teseo_enable_rf_debug_messages(true)`;
+SETPAR/SAVEPAR OK, SRR fires, NVM committed. Flag immediately
+re-disabled for normal builds; subsequent flashes confirmed the
+diagnostic stream still arrives without any further writes.
+
+**Validation (2026-04-18 indoor):**
+- `s_rf_state` readback after commissioning:
+  - `noise_gps = noise_gln = 12500` (raw, both paths alive)
+  - `anf_gps`: freq ≈ 5.04 MHz, mode = AUTO, unlocked
+  - `anf_gln`: freq ≈ 8.18 MHz, mode = AUTO, **locked, ovfs = 1000
+    (jammer bit set — GLONASS notch is actively rejecting RFI)**
+  - `cpu_pct_x10 = 226` (22.6 %), `cpu_mhz = 98`
+  - `rf_update_count`, `noise_count`, `anf_count`, `cpu_count` all
+    incrementing at ~1 Hz
+- Post-reboot (commission flag removed) RF data still flows — NVM
+  persistence confirmed.
+- `meshtastic --info` regression clean.
+
+Followup ideas: (1) add UI-triggered enable button so user can flip the
+mask without a commissioning flash; (2) decode `cpu_mhz = 98` — not one
+of the datasheet-listed values (52/104/156/208); Teseo may be reporting
+actual rather than nominal clock.
+
+**Files added:**
+- `firmware/core1/src/ui/rf_debug_view.{h,c}`
+
+**Files changed:**
+- `firmware/core1/src/sensor/teseo_liv3fl.{h,c}` — RF state + parsers
+  + enable API.
+- `firmware/core1/src/sensor/gps_task.c` — optional commission hook
+  (disabled by default).
+- `firmware/core1/src/display/lvgl_glue.c` — boot-view selector.
+- `firmware/core1/m1_bridge/CMakeLists.txt` — add `rf_debug_view.c`.
+- `docs/design-notes/core1-memory-budget.md` — `s_rf_state` row.
+
 #### M3.4.5d follow-up — Core 1 memory budget hygiene ✅ (2026-04-18)
 
 Reactive heap bumps across M3.4.1 through M3.4.5d (32 KB → 48 KB via

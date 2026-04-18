@@ -52,7 +52,15 @@
 
 static teseo_state_t    s_state;
 static teseo_sat_view_t s_sat_view;
+static teseo_rf_state_t s_rf_state;
 static gnss_rate_t      s_fix_rate = GNSS_RATE_1HZ;   /* CDB 303 default */
+
+/* $PSTMRF accumulator — refreshed on MessgIndex=1, published on
+ * MessgIndex == MessgAmount. */
+static uint8_t         s_rf_expected_total;
+static uint8_t         s_rf_next_idx;
+static uint8_t         s_rf_tmp_count;
+static teseo_rf_sat_t  s_rf_tmp[32];
 
 /* NMEA line accumulator */
 static char     s_line[LINE_BUF_SIZE];
@@ -281,6 +289,93 @@ static volatile uint32_t     s_last_resp_count;
 static char              s_last_getpar_value[32];
 static volatile bool     s_last_getpar_valid;
 
+/* ── RF / diagnostic sentence parsers ─────────────────────────────────── */
+
+/* $PSTMNOISE,<GPS_raw_NF>,<GLONASS_raw_NF>*<cs>     (§11.5.45) */
+static void parse_pstm_noise(const char *body)
+{
+    char f[FIELD_BUF_SIZE];
+    if (nmea_field(body, 1, f, sizeof f)) s_rf_state.noise_gps = atoi(f);
+    if (nmea_field(body, 2, f, sizeof f)) s_rf_state.noise_gln = atoi(f);
+    s_rf_state.noise_count++;
+}
+
+/* $PSTMCPU,<usage>,-1,<speed>*<cs>                  (§11.5.46)
+ * usage is "ddd.dd" (percent), speed is MHz as an integer. */
+static void parse_pstm_cpu(const char *body)
+{
+    char f[FIELD_BUF_SIZE];
+    if (nmea_field(body, 1, f, sizeof f))
+        s_rf_state.cpu_pct_x10 = (uint16_t)(atof(f) * 10.0);
+    if (nmea_field(body, 3, f, sizeof f))
+        s_rf_state.cpu_mhz = (uint16_t)atoi(f);
+    s_rf_state.cpu_count++;
+}
+
+/* $PSTMNOTCHSTATUS,<freq_gps>,<lock_gps>,<pwr_gps>,<ovfs_gps>,<mode_gps>,
+ *                  <freq_gln>,<lock_gln>,<pwr_gln>,<ovfs_gln>,<mode_gln>
+ * (§11.5.58) */
+static void parse_pstm_notchstatus(const char *body)
+{
+    char f[FIELD_BUF_SIZE];
+    if (nmea_field(body, 1, f, sizeof f)) s_rf_state.anf_gps.freq_hz = (uint32_t)atoi(f);
+    if (nmea_field(body, 2, f, sizeof f)) s_rf_state.anf_gps.lock    = (uint8_t)atoi(f);
+    if (nmea_field(body, 3, f, sizeof f)) s_rf_state.anf_gps.power   = (uint32_t)atoi(f);
+    if (nmea_field(body, 4, f, sizeof f)) s_rf_state.anf_gps.ovfs    = (uint16_t)atoi(f);
+    if (nmea_field(body, 5, f, sizeof f)) s_rf_state.anf_gps.mode    = (uint8_t)atoi(f);
+    if (nmea_field(body, 6, f, sizeof f)) s_rf_state.anf_gln.freq_hz = (uint32_t)atoi(f);
+    if (nmea_field(body, 7, f, sizeof f)) s_rf_state.anf_gln.lock    = (uint8_t)atoi(f);
+    if (nmea_field(body, 8, f, sizeof f)) s_rf_state.anf_gln.power   = (uint32_t)atoi(f);
+    if (nmea_field(body, 9, f, sizeof f)) s_rf_state.anf_gln.ovfs    = (uint16_t)atoi(f);
+    if (nmea_field(body, 10, f, sizeof f)) s_rf_state.anf_gln.mode   = (uint8_t)atoi(f);
+    s_rf_state.anf_count++;
+}
+
+/* $PSTMRF,<MessgAmount>,<MessgIndex>,<used_sats>,[<SatID>,<PhN>,<Freq>,<CN0>]× ≤ 3
+ * (§11.5.35). Published into rf_sats[] on the final sentence of the group. */
+static void parse_pstm_rf(const char *body)
+{
+    char f[FIELD_BUF_SIZE];
+    if (!nmea_field(body, 1, f, sizeof f)) return;
+    uint8_t total = (uint8_t)atoi(f);
+    if (!nmea_field(body, 2, f, sizeof f)) return;
+    uint8_t idx = (uint8_t)atoi(f);
+
+    if (idx == 1) {
+        s_rf_expected_total = total;
+        s_rf_next_idx       = 1;
+        s_rf_tmp_count      = 0;
+    }
+    if (idx != s_rf_next_idx) {
+        s_rf_next_idx = 0;
+        return;
+    }
+
+    /* Fields 4..15 repeat 4 per satellite (ID, PhN, Freq, CN0). */
+    for (int sat = 0; sat < 3 && s_rf_tmp_count < 32; ++sat) {
+        int base = 4 + sat * 4;
+        char id_s[8], phn_s[8], frq_s[12], cn_s[8];
+        if (!nmea_field(body, base, id_s, sizeof id_s) || !id_s[0]) break;
+        nmea_field(body, base + 1, phn_s, sizeof phn_s);
+        nmea_field(body, base + 2, frq_s, sizeof frq_s);
+        nmea_field(body, base + 3, cn_s,  sizeof cn_s);
+        teseo_rf_sat_t *s = &s_rf_tmp[s_rf_tmp_count++];
+        s->prn         = (uint8_t)atoi(id_s);
+        s->phase_noise = (int16_t)atoi(phn_s);
+        s->freq_hz     = (int32_t)atoi(frq_s);
+        s->cn0_dbhz    = cn_s[0] ? (uint8_t)atoi(cn_s) : 0;
+    }
+    s_rf_next_idx = idx + 1;
+
+    if (idx == total) {
+        s_rf_state.rf_sat_count = s_rf_tmp_count;
+        for (int i = 0; i < s_rf_tmp_count; ++i)
+            s_rf_state.rf_sats[i] = s_rf_tmp[i];
+        s_rf_state.rf_update_count++;
+        s_rf_next_idx = 0;
+    }
+}
+
 static void dispatch_pstm(const char *body)
 {
     /* Matches run in decreasing length order so shorter prefixes don't
@@ -315,8 +410,17 @@ static void dispatch_pstm(const char *body)
             s_last_getpar_valid = true;
         }
     }
-    /* Other $PSTM... (CPU, NOISE, NOTCHSTATUS, RF, GPSSUSPENDED, etc.)
-     * are silently dropped — we have no consumers for them yet. */
+    else if (memcmp(body, "PSTMNOTCHSTATUS", 15) == 0) {
+        parse_pstm_notchstatus(body);
+    } else if (memcmp(body, "PSTMNOISE", 9) == 0) {
+        parse_pstm_noise(body);
+    } else if (memcmp(body, "PSTMCPU", 7) == 0) {
+        parse_pstm_cpu(body);
+    } else if (memcmp(body, "PSTMRF,", 7) == 0) {
+        parse_pstm_rf(body);
+    }
+    /* Other $PSTM... (PSTMTG, PSTMPA, GPSSUSPENDED, etc.) are silently
+     * dropped — no consumers yet. */
 }
 
 static void dispatch_line(void)
@@ -524,3 +628,33 @@ bool teseo_get_fix_rate_from_device(char *out, size_t out_size)
 gnss_rate_t              teseo_get_fix_rate(void)  { return s_fix_rate; }
 const teseo_state_t     *teseo_get_state(void)     { return &s_state; }
 const teseo_sat_view_t  *teseo_get_sat_view(void)  { return &s_sat_view; }
+const teseo_rf_state_t  *teseo_get_rf_state(void)  { return &s_rf_state; }
+
+/* CDB 231 bit mask for the RF debug sentence set (all low-32 bits):
+ *   bit  3 (0x00000008) $GPGST
+ *   bit  5 (0x00000020) $PSTMNOISE
+ *   bit  7 (0x00000080) $PSTMRF
+ *   bit 23 (0x00800000) $PSTMCPU
+ *   bit 30 (0x40000000) $PSTMNOTCHSTATUS
+ * UM2229 §12.14 defines the mask positions. */
+#define RF_DEBUG_MSG_MASK_LOW  0x408000A8u
+
+bool teseo_enable_rf_debug_messages(bool on)
+{
+    /* Build $PSTMSETPAR,1231,<mask>,<mode> where mode=1 OR-sets the bits,
+     * mode=2 AND-NOTs (clears) them. Current config → Teseo mutates in
+     * RAM; SAVEPAR commits, SRR reboots engine so the NMEA output stream
+     * reflects the new mask. */
+    char body[48];
+    int n = snprintf(body, sizeof body, "PSTMSETPAR,1231,%X,%u",
+                     (unsigned)RF_DEBUG_MSG_MASK_LOW, on ? 1u : 2u);
+    if (n <= 0 || n >= (int)sizeof body) return false;
+
+    if (!send_await(body, TESEO_RESP_SETPAR_OK, TESEO_RESP_SETPAR_ERR, 500))
+        return false;
+    if (!send_await("PSTMSAVEPAR",
+                    TESEO_RESP_SAVEPAR_OK, TESEO_RESP_SAVEPAR_ERR, 1500))
+        return false;
+    (void)send_nmea("PSTMSRR");
+    return true;
+}

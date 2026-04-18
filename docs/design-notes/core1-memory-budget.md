@@ -121,6 +121,7 @@ Not exhaustive — just the ones large enough (≥ 256 B) to care about.
 | `s_drain_buf` | `src/sensor/teseo_liv3fl.c` | 256 B | Teseo I2C burst read buffer. |
 | `s_gsv` accumulator × 4 | same | ~400 B | Per-talker satellite cycle builders. |
 | `s_sat_view` | same | ~200 B | Published 32-sat snapshot. |
+| `s_rf_state` | same | ~440 B | RF/signal diagnostics (noise, ANF, CPU, per-sat). Populated only after `teseo_enable_rf_debug_messages(true)` commissioning. |
 | `s_line` | same | 96 B | NMEA line accumulator. |
 | LVGL draw buffer | `src/display/lvgl_glue.c` | TBD | One partial buffer for ST7789VI; update when the allocation is promoted from `LV_MEM_SIZE` to explicit static. |
 
