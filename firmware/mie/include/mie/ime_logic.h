@@ -225,7 +225,13 @@ private:
     int            matched_prefix_keys_  = 0;   // in key_seq_ bytes
 
     // Candidate pool (single-language per run; lang tag per Candidate).
+    // candidates_prefix_keys_[i] = number of key_seq_ bytes matched by
+    // candidate i. Longer-match candidates appear first; each candidate
+    // remembers its own prefix length so commit_selected_candidate knows
+    // how many bytes to strip (different candidates can match different
+    // lengths of the same key sequence).
     Candidate      candidates_[kMaxCandidates];
+    uint8_t        candidates_prefix_keys_[kMaxCandidates] = {0};
     int            cand_count_ = 0;
     int            selected_   = 0;
 
