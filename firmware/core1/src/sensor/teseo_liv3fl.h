@@ -57,6 +57,13 @@ typedef struct {
     uint32_t utc_date;            /* ddmmyy                               */
     uint32_t i2c_fail_count;      /* running I2C drain error count        */
     uint32_t sentence_count;      /* parsed RMC + GGA running total       */
+    /* $GPGST — pseudorange noise stats. Enabled by the RF debug mask;
+     * populated only after that commissioning. Stored as meters × 10 to
+     * keep things integer; σ range fits in uint16_t (max 6553.5 m). */
+    uint16_t gst_sigma_lat_m_x10;
+    uint16_t gst_sigma_lon_m_x10;
+    uint16_t gst_sigma_alt_m_x10;
+    uint32_t gst_count;
 } teseo_state_t;
 
 typedef struct {
