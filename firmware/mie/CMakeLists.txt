@@ -14,6 +14,10 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
+# Phase A refactor (dev-mie-v2-listener): mie_c_api.cpp, tests/, tools/mie_repl
+# and hal/pc/ reference the v1 ImeLogic API and are temporarily excluded.
+# They will be re-enabled by Phase B (tests), Phase C (tools), and Phase D
+# (C API) respectively.
 add_library(mie STATIC
     src/mie_init.cpp
     src/trie_searcher.cpp
@@ -24,15 +28,14 @@ add_library(mie STATIC
     src/ime_commit.cpp
     src/ime_smart.cpp
     src/ime_direct.cpp
-    src/mie_c_api.cpp
 )
 
 target_include_directories(mie PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Host-only targets (REPL tool + unit tests)
-if(NOT CMAKE_CROSSCOMPILING)
+# Phase A: host targets disabled. Re-enable in Phase B (tests) and Phase C (tools).
+if(FALSE AND NOT CMAKE_CROSSCOMPILING)
     # Interactive REPL — virtual half-keyboard + IME output
     add_executable(mie_repl
         tools/mie_repl.cpp
