@@ -14,10 +14,8 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-# Phase A refactor (dev-mie-v2-listener): mie_c_api.cpp, tests/, tools/mie_repl
-# and hal/pc/ reference the v1 ImeLogic API and are temporarily excluded.
-# They will be re-enabled by Phase B (tests), Phase C (tools), and Phase D
-# (C API) respectively.
+# Phase A refactor (dev-mie-v2-listener): mie_c_api.cpp is temporarily
+# excluded until Phase D rewrites it against the listener API.
 add_library(mie STATIC
     src/mie_init.cpp
     src/trie_searcher.cpp
@@ -34,9 +32,18 @@ target_include_directories(mie PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Host-only tests (Phase B active). mie_repl + hal/pc remain disabled
-# until Phase C restores them against the listener API.
+# Host-only targets: REPL + unit tests.
 if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(mie_repl
+        tools/mie_repl.cpp
+        hal/pc/hal_pc_stdin.cpp
+    )
+    target_link_libraries(mie_repl PRIVATE mie)
+    target_include_directories(mie_repl PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/hal
+    )
+
     enable_testing()
     add_subdirectory(tests)
 endif()
