@@ -16,11 +16,14 @@
 
 #include "lis2mdl.h"
 #include "lps22hh.h"
+#include "lsm6dsv16x.h"
 
-#define TICK_PERIOD_MS       100u     /* 10 Hz master tick */
-#define LPS22HH_PERIOD_TICKS 10u      /* 1 Hz poll                        */
-#define LIS2MDL_PERIOD_TICKS 1u       /* 10 Hz poll (matches device ODR)  */
-#define INIT_RETRY_MS        500u
+#define TICK_PERIOD_MS          100u  /* 10 Hz master tick */
+#define LPS22HH_PERIOD_TICKS    10u   /* 1 Hz poll                          */
+#define LIS2MDL_PERIOD_TICKS    1u    /* 10 Hz poll (matches device ODR)    */
+#define LSM6DSV16X_PERIOD_TICKS 1u    /* 10 Hz poll (device ODR = 30 Hz,
+                                       * BDU guarantees fresh sample)      */
+#define INIT_RETRY_MS           500u
 
 static void sensor_task(void *pv)
 {
@@ -35,6 +38,9 @@ static void sensor_task(void *pv)
     while (!lis2mdl_init()) {
         vTaskDelay(pdMS_TO_TICKS(INIT_RETRY_MS));
     }
+    while (!lsm6dsv16x_init()) {
+        vTaskDelay(pdMS_TO_TICKS(INIT_RETRY_MS));
+    }
 
     TickType_t last = xTaskGetTickCount();
     uint32_t   tick = 0;
@@ -44,6 +50,9 @@ static void sensor_task(void *pv)
         }
         if ((tick % LIS2MDL_PERIOD_TICKS) == 0) {
             (void)lis2mdl_poll();
+        }
+        if ((tick % LSM6DSV16X_PERIOD_TICKS) == 0) {
+            (void)lsm6dsv16x_poll();
         }
         tick++;
         vTaskDelayUntil(&last, pdMS_TO_TICKS(TICK_PERIOD_MS));

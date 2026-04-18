@@ -122,6 +122,7 @@ add_executable(core1_bridge
     ${SENSOR_DIR}/sensor_task.c
     ${SENSOR_DIR}/lps22hh.c
     ${SENSOR_DIR}/lis2mdl.c
+    ${SENSOR_DIR}/lsm6dsv16x.c
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
