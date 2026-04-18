@@ -34,20 +34,9 @@ target_include_directories(mie PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Phase A: host targets disabled. Re-enable in Phase B (tests) and Phase C (tools).
-if(FALSE AND NOT CMAKE_CROSSCOMPILING)
-    # Interactive REPL — virtual half-keyboard + IME output
-    add_executable(mie_repl
-        tools/mie_repl.cpp
-        hal/pc/hal_pc_stdin.cpp
-    )
-    target_link_libraries(mie_repl PRIVATE mie)
-    target_include_directories(mie_repl PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/hal
-    )
-
-    # Unit tests
+# Host-only tests (Phase B active). mie_repl + hal/pc remain disabled
+# until Phase C restores them against the listener API.
+if(NOT CMAKE_CROSSCOMPILING)
     enable_testing()
     add_subdirectory(tests)
 endif()

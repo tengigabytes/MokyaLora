@@ -1,0 +1,271 @@
+// SPDX-License-Identifier: MIT
+// test_ime_smart.cpp — SmartZh (Bopomofo) and SmartEn (T9 + digit cycling).
+
+#include "test_helpers.h"
+
+namespace {
+
+using mie::ImeLogic;
+using mie::InputMode;
+using mie::PendingStyle;
+using mie::TrieSearcher;
+
+// ══════════════════════════════════════════════════════════════════════════
+// SmartZh — compound display, key accumulation, dict search, commit
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(SmartZh, SingleKeyShowsCompound) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_1);    // ㄅ/ㄉ key → compound "ㄅㄉ"
+    EXPECT_STREQ(pending_str(ime), "ㄅㄉ");
+    EXPECT_EQ(pending_style(ime), PendingStyle::PrefixBold);
+}
+
+TEST(SmartZh, ThreePhonemeKey) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_9);    // ㄞ/ㄢ/ㄦ
+    EXPECT_STREQ(pending_str(ime), "ㄞㄢㄦ");
+}
+
+TEST(SmartZh, ToneKeyCompound) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_3);    // ˇ/ˋ
+    EXPECT_STREQ(pending_str(ime), "ˇˋ");
+}
+
+TEST(SmartZh, MultipleKeysSeparatedByComma) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_1);    // ㄅㄉ
+    press(ime, MOKYA_KEY_Q);    // ㄆㄊ
+    EXPECT_STREQ(pending_str(ime), "ㄅㄉ, ㄆㄊ");
+}
+
+TEST(SmartZh, FourKeysCompound) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_1);    // ㄅㄉ
+    press(ime, MOKYA_KEY_Q);    // ㄆㄊ
+    press(ime, MOKYA_KEY_E);    // ㄍㄐ
+    press(ime, MOKYA_KEY_C);    // ㄏㄒ
+    EXPECT_STREQ(pending_str(ime), "ㄅㄉ, ㄆㄊ, ㄍㄐ, ㄏㄒ");
+}
+
+TEST(SmartZh, DELRemovesLastKey) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_1);
+    press(ime, MOKYA_KEY_Q);
+    press(ime, MOKYA_KEY_DEL);
+    EXPECT_STREQ(pending_str(ime), "ㄅㄉ");
+}
+
+TEST(SmartZh, SpaceIdleEmitsHalfWidth) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    press(ime, MOKYA_KEY_SPACE);
+    EXPECT_EQ(L.committed, " ");
+}
+
+TEST(SmartZh, SpacePendingAppendsFirstTone) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    press(ime, MOKYA_KEY_1);
+    press(ime, MOKYA_KEY_SPACE);    // first-tone marker ˉ
+    EXPECT_TRUE(L.committed.empty());
+    EXPECT_NE(std::string(pending_str(ime)).find("ˉ"), std::string::npos);
+}
+
+TEST(SmartZh, SpaceDoubleTapNoOp) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_1);
+    press(ime, MOKYA_KEY_SPACE);
+    int b1 = pending_bytes(ime);
+    press(ime, MOKYA_KEY_SPACE);
+    EXPECT_EQ(pending_bytes(ime), b1);  // second SPACE is no-op
+}
+
+TEST(SmartZh, DictSearchFindsCandidate) {
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "\xe5\xb7\xb4", 500 } }, dat, val);  // 巴
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+
+    press(ime, MOKYA_KEY_1);
+    ASSERT_EQ(ime.candidate_count(), 1);
+    EXPECT_STREQ(ime.candidate(0).word, "\xe5\xb7\xb4");  // 巴
+}
+
+TEST(SmartZh, OKCommitsSelectedCandidate) {
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "\xe5\xb7\xb4", 500 } }, dat, val);
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+
+    press(ime, MOKYA_KEY_1);
+    ASSERT_GT(ime.candidate_count(), 0);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "\xe5\xb7\xb4");  // 巴
+    EXPECT_FALSE(ime.has_pending());
+}
+
+TEST(SmartZh, PartialCommitKeepsUnmatchedTail) {
+    // Two keys pressed; dict matches only the first. OK commits that match
+    // and leaves the second key in pending.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "\xe5\xb7\xb4", 500 } }, dat, val);
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+
+    press(ime, MOKYA_KEY_1);
+    press(ime, MOKYA_KEY_Q);   // not in dict; greedy falls back to len=1 match
+    ASSERT_GT(ime.candidate_count(), 0);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "\xe5\xb7\xb4");
+    // Second key (ㄆㄊ) should remain in pending.
+    EXPECT_TRUE(ime.has_pending());
+    EXPECT_STREQ(pending_str(ime), "ㄆㄊ");
+}
+
+TEST(SmartZh, PartialCommitStripsTrailingToneByte) {
+    // Ensure the tone-byte-leak fix: after partial commit, leading tone
+    // marker (0x20) or tone-key byte (0x22) is stripped from the remainder.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "\xe5\xb7\xb4", 500 } }, dat, val);
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+
+    press(ime, MOKYA_KEY_1);      // 0x21
+    press(ime, MOKYA_KEY_SPACE);  // 0x20 first-tone marker
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "\xe5\xb7\xb4");
+    // Leading 0x20 should have been stripped.
+    EXPECT_FALSE(ime.has_pending());
+}
+
+TEST(SmartZh, MatchedPrefixBytesSplitsDisplay) {
+    // Match only the first key; matched_prefix_bytes points at end of first group.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x21", 1, "\xe5\xb7\xb4", 500 } }, dat, val);
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+
+    press(ime, MOKYA_KEY_1);
+    press(ime, MOKYA_KEY_Q);
+    int m = matched_prefix_bytes(ime);
+    // "ㄅㄉ" is 6 UTF-8 bytes.
+    EXPECT_EQ(m, 6);
+    EXPECT_EQ(pending_style(ime), PendingStyle::PrefixBold);
+}
+
+TEST(SmartZh, ToneTierSortPromotesMatchingTone) {
+    // Key 0x21 has two candidates at tone 1 and tone 3. With tone-3 intent
+    // (0x22 suffix), the tone-3 candidate should move to position 0.
+    std::vector<uint8_t> dat, val;
+    build_multi("\x21\x22", 2, {
+        std::make_tuple("\xe5\xb7\xb4", 500, (uint8_t)1),   // 巴 tone 1
+        std::make_tuple("\xe6\x8a\x8a", 300, (uint8_t)3),   // 把 tone 3
+    }, dat, val);
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+
+    press(ime, MOKYA_KEY_1);
+    press(ime, MOKYA_KEY_3);  // ˇ/ˋ tone key (0x22)
+    ASSERT_GT(ime.candidate_count(), 0);
+    // Tone-3/4 intent filter: tone-3 candidate should be first.
+    EXPECT_STREQ(ime.candidate(0).word, "\xe6\x8a\x8a");  // 把
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SmartEn — T9 letters + digit multi-tap
+// ══════════════════════════════════════════════════════════════════════════
+
+TEST(SmartEn, ModeIndicator) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_MODE);
+    EXPECT_STREQ(ime.mode_indicator(), "EN");
+}
+
+TEST(SmartEn, LetterKeyBuildsPending) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_MODE);
+    press(ime, MOKYA_KEY_Q);    // primary letter 'q'
+    press(ime, MOKYA_KEY_E);    // primary letter 'e'
+    EXPECT_STREQ(pending_str(ime), "qe");
+}
+
+TEST(SmartEn, DigitKeyCyclesMultiTap) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_MODE);
+    press(ime, MOKYA_KEY_1, 100);  // digit "1"
+    EXPECT_STREQ(pending_str(ime), "1");
+    EXPECT_EQ(pending_style(ime), PendingStyle::Inverted);
+    press(ime, MOKYA_KEY_1, 200);  // cycle → "2"
+    EXPECT_STREQ(pending_str(ime), "2");
+}
+
+TEST(SmartEn, SpacePendingCommitsAndSpaces) {
+    // SmartEn with no dict: no candidates; pending is discarded on SPACE.
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    press(ime, MOKYA_KEY_MODE);
+    press(ime, MOKYA_KEY_Q);
+    press(ime, MOKYA_KEY_SPACE);
+    EXPECT_EQ(L.committed, " ");       // just the auto-space
+    EXPECT_FALSE(ime.has_pending());
+}
+
+TEST(SmartEn, DigitAfterLetterCommitsLetterFirst) {
+    // Ensure the digit multi-tap boundary: pressing a digit while letter
+    // pending flushes the letter context first (discard on no candidate).
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    press(ime, MOKYA_KEY_MODE);
+    press(ime, MOKYA_KEY_Q);
+    press(ime, MOKYA_KEY_1, 50);
+    EXPECT_STREQ(pending_str(ime), "1");
+}
+
+TEST(SmartEn, TABAdvancesPage) {
+    // Use a letter key (Q = slot 5 → byte 0x26) for dict lookup; row-0
+    // digit keys don't hit the dict in SmartEn.
+    std::vector<std::tuple<const char*, uint16_t, uint8_t>> words;
+    const char* w[6] = { "a", "b", "c", "d", "e", "f" };
+    for (int i = 0; i < 6; ++i) words.emplace_back(w[i], (uint16_t)(100 - i), (uint8_t)0);
+
+    std::vector<uint8_t> dat, val;
+    build_multi("\x26", 1, words, dat, val);
+    TrieSearcher en;
+    ASSERT_TRUE(en.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    TrieSearcher zh;
+    ImeLogic ime(zh, &en);
+    press(ime, MOKYA_KEY_MODE);
+    press(ime, MOKYA_KEY_Q);
+    ASSERT_EQ(ime.candidate_count(), 6);
+    EXPECT_EQ(ime.page(), 0);
+    press(ime, MOKYA_KEY_TAB);
+    EXPECT_EQ(ime.page(), 1);
+    press(ime, MOKYA_KEY_TAB);
+    EXPECT_EQ(ime.page(), 0);  // wraps
+}
+
+} // namespace

@@ -25,13 +25,13 @@ const KeyEntry kKeyTable[20] = {
     { MOKYA_KEY_D, {"ㄎ","ㄑ",nullptr}, {nullptr,nullptr}, {"d","f","D","F"} },
     { MOKYA_KEY_G, {"ㄕ","ㄘ",nullptr}, {nullptr,nullptr}, {"g","h","G","H"} },
     { MOKYA_KEY_J, {"ㄨ","ㄜ",nullptr}, {nullptr,nullptr}, {"j","k","J","K"} },
-    { MOKYA_KEY_L, {"ㄠ","ㄤ",nullptr}, {nullptr,nullptr}, {"l",nullptr,"L",nullptr} },
+    { MOKYA_KEY_L, {"ㄠ","ㄤ",nullptr}, {nullptr,nullptr}, {"l","L",nullptr,nullptr} },
 
     // Row 3
     { MOKYA_KEY_Z,         {"ㄈ","ㄌ",nullptr}, {nullptr,nullptr}, {"z","x","Z","X"} },
     { MOKYA_KEY_C,         {"ㄏ","ㄒ",nullptr}, {nullptr,nullptr}, {"c","v","C","V"} },
     { MOKYA_KEY_B,         {"ㄖ","ㄙ",nullptr}, {nullptr,nullptr}, {"b","n","B","N"} },
-    { MOKYA_KEY_M,         {"ㄩ","ㄝ",nullptr}, {nullptr,nullptr}, {"m",nullptr,"M",nullptr} },
+    { MOKYA_KEY_M,         {"ㄩ","ㄝ",nullptr}, {nullptr,nullptr}, {"m","M",nullptr,nullptr} },
     { MOKYA_KEY_BACKSLASH, {"ㄡ","ㄥ",nullptr}, {nullptr,nullptr}, {nullptr,nullptr,nullptr,nullptr} },
 };
 

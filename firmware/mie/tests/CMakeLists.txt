@@ -13,10 +13,11 @@ FetchContent_MakeAvailable(googletest)
 add_executable(mie_tests
     test_trie_stub.cpp
     test_trie_searcher.cpp
-    test_ime_basic.cpp
-    test_ime_modes.cpp
-    test_ime_advanced.cpp
-    test_mie_c_api.cpp
+    test_ime_core.cpp
+    test_ime_smart.cpp
+    test_ime_direct.cpp
+    test_ime_timer.cpp
+    # test_mie_c_api.cpp — deferred to Phase D (C API rewrite)
 )
 
 target_link_libraries(mie_tests
