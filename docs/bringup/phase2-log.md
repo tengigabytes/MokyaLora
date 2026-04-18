@@ -1291,6 +1291,71 @@ the 0x03 value would have programmed 15 Hz.
   every master tick (`LSM6DSV16X_PERIOD_TICKS = 1`).
 - `firmware/core1/m1_bridge/CMakeLists.txt` — add `lsm6dsv16x.c`.
 
+#### M3.4.5d — Teseo-LIV3FL GNSS driver (Part A) ✅ (2026-04-18)
+
+First Core 1 driver that doesn't fit the `sensor_task` mold — GNSS is a
+streaming NMEA protocol, so it lives in its own `gps_task` (priority
+tskIDLE+2, 2 KB stack) running a 100 ms I2C drain. See software
+requirements §108 for the full contract.
+
+**Shipped:**
+- `teseo_liv3fl_{h,c}` — full driver with NMEA checksum verify, GGA +
+  RMC + GSV parsing (GSA / others ignored per design). Parsed snapshots
+  in `teseo_state_t` (lat/lon ×1e7 + UTC + speed/course + HDOP + fix
+  quality) and `teseo_sat_view_t` (up to 32 pooled sats PRN/el/az/SNR).
+- `gps_task.{h,c}` — 100 ms drain cadence; `gps_task_start()` wired
+  into `main_core1_bridge.c` at tskIDLE+2.
+- `teseo_set_fix_rate(GNSS_RATE_OFF)` — `$PSTMGPSSUSPEND`, verified via
+  SWD (sentence_count freezes after call).
+- `teseo_set_fix_rate(GNSS_RATE_1HZ)` — default, verified working.
+
+**Known issue — dynamic fix rate > 1 Hz not yet effective (deferred).**
+Command bytes are correct (`$PSTMSETPAR,1303,0.1*<cs>\r\n` captured
+verbatim at TX, write ACKs), but the Teseo engine continues to output at
+1 Hz. `$PSTMGPSRESTART` after SETPAR does not help; SUSPEND works as a
+sanity check that the write path is fine. Driver exposes the setter so
+application code can be written against the final API; future work:
+reverse-engineer which NVM bit / CDB entry gates runtime ODR changes on
+LIV3FL (candidates: CDB 201/228 message-list rate scaler, or the rate
+may require `$PSTMSAVEPAR` + `$PSTMSRR` to take effect — avoided here to
+preserve NVM write budget). Raise as a new issue when commissioning
+reaches the "satellite radar UI" milestone that actually needs 10 Hz.
+
+**Heap hit — +16 KB to `configTOTAL_HEAP_SIZE` (32→48 KB).** Adding a
+2 KB task pushed IDLE-task allocation in `vTaskStartScheduler` past the
+32 KB limit; caught by a FreeRTOS `configASSERT` at tasks.c:3790 → panic
+→ `_exit` bkpt HardFault with IPSR=3. Confirmed via CFSR/HFSR, MSP
+exception frame (stacked PC = `_exit`, format string = "FreeRTOS assert
+%s:%d" in `tasks.c`). Future task additions on Core 1 should budget
+against 48 KB, not 32.
+
+**Validation (2026-04-18):**
+- SWD read `s_state` after ~12 s indoor: `online=1`, `fix_valid=0`,
+  `fix_quality=0`, `hdop_x10=990` (99.0 = "no-fix" sentinel), `lat/lon=0`
+  (gated by `fix_quality`), `utc_time=103418` (10:34 UTC matches local
+  TPE 18:34), `sentence_count=32` (~2.7 Hz of GGA+RMC, matches 1 Hz base
+  rate × 2 sentences + some clock slop), `i2c_fail_count=0`.
+- `teseo_get_sat_view()` returns `count=0` indoor (no completed GSV
+  cycles without fix) — parser runs but can't populate anything.
+- `$PSTMGPSSUSPEND` round-trip: sentence_count delta over 5 s drops from
+  ~10 to 0 when rate set to OFF.
+- `python -m meshtastic --port COM16 --info` returns normal node info.
+
+**Files added:**
+- `firmware/core1/src/sensor/teseo_liv3fl.{h,c}`
+- `firmware/core1/src/sensor/gps_task.{h,c}`
+
+**Files changed:**
+- `firmware/core1/m1_bridge/CMakeLists.txt` — add `teseo_liv3fl.c` +
+  `gps_task.c`.
+- `firmware/core1/m1_bridge/src/main_core1_bridge.c` — spawn
+  `gps_task_start()` after sensor_task.
+- `firmware/core1/m1_bridge/src/FreeRTOSConfig.h` —
+  `configTOTAL_HEAP_SIZE` 32 KB → 48 KB.
+- `docs/requirements/software-requirements.md` §108 — rewrite around the
+  shipped contract (always-on NMEA mask, runtime-adjustable ODR,
+  caller-owned rate policy).
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

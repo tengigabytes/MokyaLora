@@ -108,9 +108,38 @@ assignment; see `docs/design-notes/mcu-gpio-allocation.md` for the GPIO map).
 ### `GPSDriver_I2C` — ST Teseo-LIV3FL
 
 - **Transport:** polling-mode I2C on the sensor bus (shared with IMU, Mag, Baro).
-- **Init:** disable unused NMEA sentences (keep RMC, GGA only); set 1 Hz update rate.
-- **Output:** parsed sentence committed to the shared GPS buffer for Core 0 to
-  consume. Implementation (double-buffer, atomic flip, no doorbell) in FA §5.4.
+  Driver lives in its own FreeRTOS task (`gps_task`, priority tskIDLE+2, 2 KB
+  stack) because the 100 ms drain cadence and line-accumulator parser state do
+  not fit the unified sensor tick.
+- **NMEA sentence set:** RMC + GGA + GSV + GSA kept **always on**. Runtime
+  mask switching is not implemented — bringup's `$PSTMSAVEPAR`-committed NVM
+  config already enables this set plus GLONASS and Galileo. Rationale: avoids a
+  state machine for per-screen mask toggling; total bandwidth at 10 Hz is
+  ~3 KB/s, trivial on a 400 kHz bus.
+- **Adjustable fix rate:** driver exposes
+  `teseo_set_fix_rate(GNSS_RATE_{OFF,1,2,5,10}HZ)`. The native ODR is the ceiling
+  for any consumer — device drives NMEA at `1 / period`, consumers read the
+  latest `teseo_get_state()` / `teseo_get_sat_view()` snapshot at whatever
+  cadence they want. Typical usage:
+  - Meshtastic position publish: 10 s – 60 s (background default; 1 Hz ceiling)
+  - UI satellite/speed screen: 10 Hz while mounted, back to 1 Hz on unmount
+  - Deep-sleep background: `GNSS_RATE_OFF` (`$PSTMGPSSUSPEND` — engine parked)
+  Policy (who requests what rate) is caller-owned; the driver does not
+  implement reference-counting in M3.4.5d.
+- **NVM policy:** driver never writes `$PSTMSAVEPAR`. Rate changes are RAM-only
+  (`$PSTMSETPAR,1303,<period>,0`) so the 10k NVM write cycle budget is preserved
+  for bringup / commissioning paths.
+- **State snapshots:**
+  - `teseo_state_t` — fix, lat/lon (×1e7), alt, speed, course, HDOP, UTC
+    time/date, sentence count, fail count. `lat_e7`/`lon_e7` chosen to feed
+    `IpcPayloadDeviceStatus` directly without conversion.
+  - `teseo_sat_view_t` — up to 32 satellites pooled from all talkers
+    (GP/GL/GA/BD), each with PRN + elevation + azimuth + SNR, plus an
+    `update_count` tick for UI staleness detection.
+- **Output:** M3.4.5d **does not yet populate `IpcGpsBuf`**. Core 0 still has no
+  GPS feed; Core 1 owns the snapshot. Wiring `IpcGpsBuf` (double-buffer, atomic
+  flip, no doorbell per FA §5.4) is deferred to a later milestone alongside
+  Core 0's position adapter.
 
 ### `StatusController` — LM27965 LED Driver
 
