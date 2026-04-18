@@ -63,6 +63,7 @@
 #include "hardware/sync.h"
 #include "hardware/structs/sio.h"
 #include "tusb.h"
+#include "pico/platform/panic.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -448,19 +449,35 @@ int main(void)
      *    The IRQ is enabled at the start of bridge_task (after scheduler runs). */
     irq_set_exclusive_handler(SIO_IRQ_BELL, ipc_doorbell_isr);
 
-    /* 8. Hand off to FreeRTOS. */
+    /* 8. Hand off to FreeRTOS.
+     *
+     * Every task-start is checked. Silent failures here caused a whole
+     * class of "HardFault in vTaskStartScheduler" debugging sessions —
+     * see phase2-log.md M3.4.5d. The panic message names the failing
+     * task so the USB CDC log points straight at the culprit.
+     *
+     * Heap budget is documented in docs/design-notes/core1-memory-budget.md;
+     * keep that file and the stack depths here in sync. */
+    #define TASK_START_OR_PANIC(expr, name) \
+        do { if (!(expr)) { panic("core1: " name " task_start failed"); } } while (0)
+
     /* Both tasks at the same priority so taskYIELD() round-robins
      * between them without the 1 ms vTaskDelay floor. */
-    BaseType_t rc_usb = xTaskCreate(usb_device_task, "usb",    1024, NULL,
-                tskIDLE_PRIORITY + 2, NULL);
-    BaseType_t rc_brg = xTaskCreate(bridge_task,     "bridge", 1024, NULL,
-                tskIDLE_PRIORITY + 2, &g_bridge_task_handle);
+    TASK_START_OR_PANIC(
+        xTaskCreate(usb_device_task, "usb", 1024, NULL,
+                    tskIDLE_PRIORITY + 2, NULL) == pdPASS,
+        "usb");
+    TASK_START_OR_PANIC(
+        xTaskCreate(bridge_task, "bridge", 1024, NULL,
+                    tskIDLE_PRIORITY + 2, &g_bridge_task_handle) == pdPASS,
+        "bridge");
+
     /* LVGL service task runs at the same priority as usb / bridge so the
      * round-robin scheduler hands it CPU between their yields. A lower
      * priority would be starved by usb_device_task's tight tud_task()
      * + taskYIELD() loop. lvgl_task owns display_init() — main() must not
      * also call it. */
-    BaseType_t rc_dsp = lvgl_glue_start(tskIDLE_PRIORITY + 2);
+    TASK_START_OR_PANIC(lvgl_glue_start(tskIDLE_PRIORITY + 2), "lvgl");
 
     /* KeyEvent queue — allocate before creating keypad_scan_task so the
      * very first debounce commit (possible within ~20 ms of boot if a
@@ -475,24 +492,36 @@ int main(void)
      * Equal priority enables round-robin time-slicing, giving keypad its
      * slot between the 5 ms debounce pauses. 512-word stack is plenty
      * for the loop with 6-byte local raw buffer and no nested calls. */
-    BaseType_t rc_kp = xTaskCreate(keypad_scan_task, "kpad", 512, NULL,
-                tskIDLE_PRIORITY + 2, NULL);
+    TASK_START_OR_PANIC(
+        xTaskCreate(keypad_scan_task, "kpad", 512, NULL,
+                    tskIDLE_PRIORITY + 2, NULL) == pdPASS,
+        "kpad");
 
     /* Charger (BQ25622) 1 Hz poll task — hw init runs inside the task so
      * first I2C traffic is post-scheduler, after i2c_bus mutex is usable. */
-    bool rc_chg = bq25622_start_task(tskIDLE_PRIORITY + 2);
+    TASK_START_OR_PANIC(bq25622_start_task(tskIDLE_PRIORITY + 2), "chg");
 
-    /* Sensor bus poll task (M3.4.5). Init + 1 Hz baro poll today; LIS2MDL
-     * and LSM6DSV16X slot into the same tick in M3.4.5b / .5c. */
-    bool rc_sns = sensor_task_start(tskIDLE_PRIORITY + 2);
+    /* Sensor bus poll task (M3.4.5). LPS22HH + LIS2MDL + LSM6DSV16X on
+     * a shared 10 Hz tick with per-sensor divider counters. */
+    TASK_START_OR_PANIC(sensor_task_start(tskIDLE_PRIORITY + 2), "sens");
 
     /* GNSS task (M3.4.5d). Runs separately from sensor_task — NMEA drain
      * cadence is 100 ms, faster than the 1/10 Hz sensor tick, and the
      * line-accumulator parser carries state between ticks. */
-    bool rc_gps = gps_task_start(tskIDLE_PRIORITY + 2);
+    TASK_START_OR_PANIC(gps_task_start(tskIDLE_PRIORITY + 2), "gps");
 
-    (void)rc_usb; (void)rc_brg; (void)rc_dsp; (void)rc_kp; (void)rc_chg;
-    (void)rc_sns; (void)rc_gps;
+    #undef TASK_START_OR_PANIC
+
+    /* Heap budget checkpoint (see docs/design-notes/core1-memory-budget.md §5).
+     * configTOTAL_HEAP_SIZE is 48 KB (M3.4.5d); we want ≥ 20 % unused
+     * after every task is created, for future driver growth. */
+    size_t heap_total = configTOTAL_HEAP_SIZE;
+    size_t heap_free  = xPortGetFreeHeapSize();
+    size_t heap_min   = heap_total / 5;   /* 20 % reserve target */
+    if (heap_free < heap_min) {
+        panic("core1: heap reserve below 20%% — used=%u / total=%u",
+              (unsigned)(heap_total - heap_free), (unsigned)heap_total);
+    }
 
     vTaskStartScheduler();
 
