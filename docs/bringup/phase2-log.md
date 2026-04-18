@@ -1043,6 +1043,19 @@ exposes the event counter via the public `bq25622_state_t` snapshot.
 - `bq25622_set_charge_enabled(bool)`
 - `bq25622_set_watchdog(window)` — OFF / 50 s / 100 s / 200 s, kicks
   WD_RST in the same write to prevent old-timer expiry mid-transition
+- `bq25622_set_hiz(bool)` — high-impedance mode; used by the future
+  sleep/DORMANT state machine. Auto-cleared on WATCHDOG expiry (§8.6.2.12).
+- `bq25622_set_batfet_mode(mode)` — NORMAL / SHUTDOWN / SHIP / SYSRESET
+  via CTRL3[1:0]. BATFET_DLY left at POR 1 (12.5 s delay) so the host has
+  time to finish shutdown work. SHIP fully disconnects the battery — do
+  not call on battery-only power.
+
+**ADC block extension:** after first validation, the ADC burst was extended
+from 12 to 16 bytes (REG0x28..REG0x37) to include TS_ADC (bits [11:0]
+unsigned, 0.0961 %/LSB) and TDIE_ADC (bits [11:0] 2's complement,
+0.5 °C/LSB). State adds `ts_pct_x10` and `tdie_cx10`. Verification:
+TDIE = 22.0 °C at room temperature, TS ≈ 56.1 % for the 10 kΩ NTC
+divider — both independently confirm the field decoders.
 
 **Files added:**
 - `firmware/core1/src/power/bq25622.{h,c}`

@@ -30,19 +30,24 @@
 #define REG_IINDPM_HI         0x07u   /* IINDPM[7:4] in [3:0]                 */
 #define REG_CHARGER_CTRL1     0x16u   /* EN_AUTO_IBATDIS|FORCE_IBATDIS|EN_CHG|
                                          EN_HIZ|FORCE_PMID_DIS|WD_RST|WATCHDOG */
+#define REG_CHARGER_CTRL3     0x18u   /* EN_OTG|PFM_*|BATFET_DLY|BATFET_CTRL  */
 #define REG_STATUS0           0x1Du   /* WD_STAT in [0], VSYS_STAT in [4]     */
 #define REG_STATUS1           0x1Eu   /* CHG_STAT [4:3], VBUS_STAT [2:0]      */
 #define REG_FAULT_STATUS      0x1Fu   /* BAT/SYS/TSHUT/TS                     */
 #define REG_ADC_CTRL          0x26u   /* ADC_EN[7] ADC_RATE[6] SAMPLE[5:4]    */
 #define REG_IBUS_ADC_LO       0x28u
-#define REG_VSYS_ADC_HI       0x33u   /* end of contiguous ADC block          */
+#define REG_TDIE_ADC_HI       0x37u   /* end of contiguous ADC block          */
 #define REG_PART_INFO         0x38u   /* PN[5:3] in 0x1F mask; DEV_REV[2:0]   */
 
 /* CTRL1 bitfields */
 #define CTRL1_EN_AUTO_IBATDIS (1u << 7)
 #define CTRL1_EN_CHG          (1u << 5)
+#define CTRL1_EN_HIZ          (1u << 4)
 #define CTRL1_WD_RST          (1u << 2)
 #define CTRL1_WATCHDOG_MASK   (0x3u)
+
+/* CTRL3 bitfields */
+#define CTRL3_BATFET_CTRL_MASK (0x3u)     /* bits [1:0] */
 
 /* ADC_CTRL value — ADC_EN=1, ADC_RATE=0 (continuous), SAMPLE=00 (12-bit),
  * ADC_AVG=0 (single), reserved bits=0. */
@@ -153,18 +158,22 @@ static void pack_iindpm(uint16_t ma, uint8_t *lo, uint8_t *hi)
     *hi = (uint8_t)((raw >> 4) & 0x0Fu);          /* IINDPM[7:4] → reg_hi[3:0] */
 }
 
-/* ── ADC block decoder (SLUSEG2D §8.6.2.30..35) ──────────────────────────── *
+/* ── ADC block decoder (SLUSEG2D §8.6.2.30..37) ──────────────────────────── *
  *
- * The 12-byte block starting at 0x28 packs 6 little-endian 16-bit words:
+ * The 16-byte block starting at 0x28 packs 8 little-endian 16-bit words:
  *     0x28/29 IBUS   bits[15:1]  signed  2 mA/step
  *     0x2A/2B IBAT   bits[15:2]  signed  4 mA/step
  *     0x2C/2D VBUS   bits[14:2]  usgn    3.97 mV/step
  *     0x2E/2F VPMID  bits[14:2]  usgn    3.97 mV/step
  *     0x30/31 VBAT   bits[12:1]  usgn    1.99 mV/step
  *     0x32/33 VSYS   bits[12:1]  usgn    1.99 mV/step
+ *     0x34/35 TS     bits[11:0]  usgn    0.0961%/step (VREGN reference)
+ *     0x36/37 TDIE   bits[11:0]  signed  0.5°C/step (2's complement)
  *
  * The raw bit widths are chosen so the low unused bit(s) decode as 0 and
  * arithmetic shift on signed raw values preserves sign extension.          */
+#define ADC_BLOCK_BYTES   16u
+
 static void decode_adc(const uint8_t *b, bq25622_state_t *s)
 {
     const uint16_t ibus_raw = (uint16_t)(b[0]  | (b[1]  << 8));
@@ -173,6 +182,8 @@ static void decode_adc(const uint8_t *b, bq25622_state_t *s)
     const uint16_t vpmid_raw= (uint16_t)(b[6]  | (b[7]  << 8));
     const uint16_t vbat_raw = (uint16_t)(b[8]  | (b[9]  << 8));
     const uint16_t vsys_raw = (uint16_t)(b[10] | (b[11] << 8));
+    const uint16_t ts_raw   = (uint16_t)(b[12] | (b[13] << 8)) & 0x0FFFu;
+    uint16_t       tdie_raw = (uint16_t)(b[14] | (b[15] << 8)) & 0x0FFFu;
 
     s->ibus_ma  = (int16_t)(((int16_t)ibus_raw >> 1) * 2);
     s->ibat_ma  = (int16_t)(((int16_t)ibat_raw >> 2) * 4);
@@ -180,6 +191,13 @@ static void decode_adc(const uint8_t *b, bq25622_state_t *s)
     s->vpmid_mv = (uint16_t)(((vpmid_raw >> 2) & 0x1FFFu) * 397u / 100u);
     s->vbat_mv  = (uint16_t)(((vbat_raw  >> 1) & 0x0FFFu) * 199u / 100u);
     s->vsys_mv  = (uint16_t)(((vsys_raw  >> 1) & 0x0FFFu) * 199u / 100u);
+
+    /* TS: 12-bit unsigned, 0.0961 % / LSB → percent × 10 for display */
+    s->ts_pct_x10 = (uint16_t)((ts_raw * 961u) / 1000u);
+
+    /* TDIE: 12-bit 2's complement, 0.5 °C / LSB. Sign-extend bit 11. */
+    if (tdie_raw & 0x0800u) tdie_raw |= 0xF000u;
+    s->tdie_cx10 = (int16_t)((int16_t)tdie_raw * 5);
 }
 
 /* ── Hardware init (datasheet §8.5 + §8.6) ───────────────────────────────── *
@@ -266,9 +284,10 @@ static void poll_once(bq25622_state_t *s)
     s->sys_fault = ((st[2] >> 5) & 1u) != 0u;
     s->bat_fault = ((st[2] >> 6) & 1u) != 0u;
 
-    /* ADC block: 12 bytes from 0x28 */
-    uint8_t adc[12];
-    if ((r = reg_read_block(bus, REG_IBUS_ADC_LO, adc, 12)) < 0) goto fail;
+    /* ADC block: 16 bytes from 0x28 (IBUS..TDIE) */
+    uint8_t adc[ADC_BLOCK_BYTES];
+    if ((r = reg_read_block(bus, REG_IBUS_ADC_LO, adc, ADC_BLOCK_BYTES)) < 0)
+        goto fail;
     decode_adc(adc, s);
 
     s->i2c_fail_count = 0;
@@ -358,4 +377,40 @@ bool bq25622_set_watchdog(bq25622_wd_window_t win)
 
     s_state.wd_window = win;
     return true;
+}
+
+bool bq25622_set_hiz(bool enabled)
+{
+    i2c_inst_t *bus = i2c_bus_acquire(MOKYA_I2C_POWER, portMAX_DELAY);
+    if (bus == NULL) return false;
+
+    /* Kick WD in the same write so this long-lived RMW doesn't race the
+     * watchdog. */
+    const uint8_t clear = enabled ? 0u           : CTRL1_EN_HIZ;
+    const uint8_t set   = enabled ? (uint8_t)(CTRL1_EN_HIZ | CTRL1_WD_RST)
+                                  : CTRL1_WD_RST;
+    int r = ctrl1_update(bus, clear, set);
+
+    i2c_bus_release(MOKYA_I2C_POWER);
+    return r >= 0;
+}
+
+bool bq25622_set_batfet_mode(bq25622_batfet_mode_t mode)
+{
+    i2c_inst_t *bus = i2c_bus_acquire(MOKYA_I2C_POWER, portMAX_DELAY);
+    if (bus == NULL) return false;
+
+    /* RMW CTRL3[1:0]. BATFET_DLY (bit 2) left at POR 1 = 12.5 s delay,
+     * giving the host time to finish shutdown work before the action
+     * actually takes effect. */
+    uint8_t v;
+    int r = reg_read_u8(bus, REG_CHARGER_CTRL3, &v);
+    if (r >= 0) {
+        v = (uint8_t)((v & (uint8_t)~CTRL3_BATFET_CTRL_MASK)
+                      | ((uint8_t)mode & CTRL3_BATFET_CTRL_MASK));
+        r = reg_write_u8(bus, REG_CHARGER_CTRL3, v);
+    }
+
+    i2c_bus_release(MOKYA_I2C_POWER);
+    return r >= 0;
 }
