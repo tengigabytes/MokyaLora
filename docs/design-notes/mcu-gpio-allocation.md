@@ -16,8 +16,8 @@
 | 3    | DBG_RX       | Debug UART RX                                   | UART        |
 | 4    | MIC_CLK      | PDM Microphone Clock                            | PIO         |
 | 5    | MIC_DATA     | PDM Microphone Data                             | PIO         |
-| 6    | PWR_SDA      | I2C0 SDA — Power + Backlight bus                | I2C0        |
-| 7    | PWR_SCL      | I2C0 SCL — Power + Backlight bus                | I2C0        |
+| 6    | PWR_SDA      | I2C1 SDA — Power + Backlight bus                | I2C1        |
+| 7    | PWR_SCL      | I2C1 SCL — Power + Backlight bus                | I2C1        |
 | 8    | PWR_INT      | Power Management Interrupt (open-drain, 1.8 V pull-up) | SIO  |
 | 9    | MTR_PWM      | Vibration Motor PWM (drives low-side MOSFET)    | PWM4_B      |
 | 10   | TFT_nCS      | LCD Chip Select                                 | SIO         |
@@ -67,11 +67,33 @@
 
 ## I2C Bus Allocation
 
-### Sensor + GNSS bus — GPIO 34 / 35 (`i2c1` in Pico SDK)
+> **RP2350 pinmux constraint (Rev A).** The two buses physically map to
+> different pin pairs but **share the same SDK peripheral**. On RP2350, I2C
+> pinmux follows a strict mod-4 rule:
+>
+> | GPIO mod 4 | Function |
+> |---|---|
+> | 0 (0, 4, 8, …, 32, 36, 40, 44) | I2C0 SDA |
+> | 1 (1, 5, 9, …, 33, 37, 41, 45) | I2C0 SCL |
+> | 2 (2, 6, 10, …, **34**, 38, 42, 46) | **I2C1 SDA** |
+> | 3 (3, 7, 11, …, **35**, 39, 43, 47) | **I2C1 SCL** |
+>
+> GPIO 6 / 7 and GPIO 34 / 35 both land on **i2c1 only** — there is no I2C0
+> alternative on either pair. The two buses therefore cannot run as separate
+> SDK peripherals on Rev A.
+>
+> **Rev A firmware** (`firmware/core1/src/i2c/i2c_bus.c`): one `i2c1` instance,
+> FUNCSEL switched between the two pin pairs on each access, FreeRTOS mutex
+> serialises bus use. Switching cost is ~4 register writes (~200 ns) —
+> negligible next to a 90 µs / byte I2C transfer at 100 kHz.
+>
+> **Rev B plan:** re-route the sensor + GNSS bus to a mod-4 = 0/1 GPIO pair
+> (candidate: GPIO 32 / 33) so power bus stays on i2c1 and sensor bus moves to
+> i2c0. That removes the mutex/mux dance and enables true concurrent access.
+> Also resolves the voltage-domain mismatch (power bus pull-up is 1.8 V; any
+> single-bus merge would need a level shifter).
 
-> **SDK peripheral:** `i2c1`. On RP2350B, GPIO 34 / 35 support both `i2c0` and
-> `i2c1` via the pinmux; firmware assigns this bus to `i2c1` so the two buses
-> can run concurrently (see Power bus below).
+### Sensor + GNSS bus — GPIO 34 / 35 (i2c1 peripheral, 3.3 V logic)
 
 | Device        | Part           | 7-bit Address | Note                                    |
 |---------------|----------------|---------------|-----------------------------------------|
@@ -80,11 +102,7 @@
 | Barometer     | LPS22HH        | 0x5D          | SA0 tied to 3.3 V (Rev A confirmed; design docs previously stated 0x5C / SA0=GND) |
 | GPS           | Teseo-LIV3FL   | 0x3A          | Fixed address. **I2C only** — `nRST` not routed to MCU; no GPIO enable. Software reset via `$PSTMSRR` / `$PSTMCOLDSTART`. |
 
-### Power + Backlight bus — GPIO 6 / 7 (`i2c0` in Pico SDK)
-
-> **SDK peripheral:** `i2c0`. GPIO 6 / 7 support both `i2c0` and `i2c1` via the
-> pinmux; firmware assigns this bus to `i2c0` so it can run **concurrently**
-> with the sensor bus on `i2c1`. No `i2c_deinit` / re-init switching needed.
+### Power + Backlight bus — GPIO 6 / 7 (i2c1 peripheral, 1.8 V logic)
 
 | Device        | Part           | 7-bit Address | Note                                    |
 |---------------|----------------|---------------|-----------------------------------------|
@@ -102,4 +120,4 @@
 2. LCD data bus (GPIO 13–20) is driven by a dedicated PIO state machine for 8-bit parallel 8080 write cycles.
 3. Keypad scan uses PIO + DMA: PIO drives columns, samples rows, DMA writes state to RAM — zero CPU overhead.
 4. LORA_DIO1 (GPIO 29) doubles as a DORMANT wakeup source for background LoRa Rx.
-5. **I2C peripheral assignment:** The two I2C buses use **separate SDK peripherals** so they run concurrently — Power bus (GPIO 6/7) on `i2c0`, Sensor+GNSS bus (GPIO 34/35) on `i2c1`. On RP2350B both GPIO pairs are pinmux-capable of either peripheral; firmware fixes this split to avoid `i2c_deinit` / `i2c_init` swapping between frames. Drivers must pass the correct `i2c_inst_t*` (`i2c0` or `i2c1`) to all `i2c_*` SDK calls.
+5. **I2C peripheral assignment (Rev A):** Both buses share the `i2c1` SDK peripheral — GPIO 6/7 and GPIO 34/35 are I2C1-only on RP2350 (no I2C0 pinmux alternative on either pair). Drivers must use `firmware/core1/src/i2c/i2c_bus.c` (`i2c_bus_acquire` / `i2c_bus_release`) which takes a FreeRTOS mutex and flips FUNCSEL between the two pin pairs on each acquire. Do **not** call `i2c_init` / `i2c_deinit` from drivers directly. See the I2C Bus Allocation section above for the Rev B plan to restore two independent peripherals.

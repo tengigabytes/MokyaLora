@@ -812,7 +812,7 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 | M3.1 | ST7789VI display driver standalone (PIO 8080-8 + DMA, panel init, partial flush, TE polling, LM27965 backlight) |
 | M3.2 | LVGL v9.2.2 integration — `lv_display_t` flush_cb wired to `display_flush_rect`, FreeRTOS tick source, `lv_timer_handler` task, hello-world screen |
 | M3.3 | 6×6 keypad PIO scanner + debounce → `keymap_matrix.h` translation → multi-producer `KeyEvent` queue (HW source flag) |
-| M3.4 | Sensor + power HAL — IMU / mag / baro on sensor+GNSS bus (`i2c1`, GPIO 34/35), charger / fuel gauge / LED driver on power bus (`i2c0`, GPIO 6/7) — both run concurrently on separate SDK peripherals; GPS bridge to Core 0 via shared SRAM double-buffer |
+| M3.4 | Sensor + power HAL — IMU / mag / baro on sensor+GNSS bus (GPIO 34/35) + charger / fuel gauge / LED driver on power bus (GPIO 6/7). Rev A: both pin pairs are I2C1-only on RP2350, so firmware time-muxes the single `i2c1` peripheral via a FreeRTOS mutex (`firmware/core1/src/i2c/i2c_bus.c`). GPS bridge to Core 0 via shared-SRAM double-buffer. |
 
 ### Not in M3 scope
 

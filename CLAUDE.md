@@ -90,10 +90,16 @@ sheet, not authoritative.
 
 ### I2C Bus Layout (day-to-day reference; SYS §7 / hw-requirements is authoritative)
 
-> **SDK peripheral split:** The two buses use **separate** SDK peripherals so they run concurrently. On RP2350B both GPIO pairs are pinmux-capable of either peripheral; firmware fixes the split as below.
+> **Shared peripheral (Rev A).** On RP2350 both pin pairs land on `i2c1` only —
+> GPIO mod-4 = 2/3 (which covers 6/7 and 34/35) has no I2C0 pinmux alternative.
+> Rev A firmware therefore time-multiplexes `i2c1` between the two pin pairs
+> via a FreeRTOS mutex — see `firmware/core1/src/i2c/i2c_bus.c`. Drivers MUST
+> go through `i2c_bus_acquire` / `i2c_bus_release`; never call `i2c_init` or
+> pass a raw `i2c_inst_t*` directly. Rev B plans to reroute the sensor bus to
+> a mod-4 = 0/1 pair (e.g. GPIO 32/33) to restore two independent peripherals.
 
-- **Sensor + GNSS bus** (`i2c1`, GPIO 34/35): IMU 0x6A, Mag 0x1E, Baro 0x5D, GPS 0x3A
-- **Power bus** (`i2c0`, GPIO 6/7): Charger BQ25622 0x6B, Fuel Gauge BQ27441 0x55, LED Driver LM27965 0x36
+- **Sensor + GNSS bus** (GPIO 34/35, `i2c1`): IMU 0x6A, Mag 0x1E, Baro 0x5D, GPS 0x3A
+- **Power bus** (GPIO 6/7, `i2c1`): Charger BQ25622 0x6B, Fuel Gauge BQ27441 0x55, LED Driver LM27965 0x36
 
 ## License Boundary Rules (CRITICAL)
 

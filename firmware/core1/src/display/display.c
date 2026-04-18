@@ -16,47 +16,15 @@
 
 #include "display.h"
 #include "st7789vi.h"
+#include "i2c_bus.h"
 
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
 #include "hardware/pio.h"
-#include "hardware/regs/i2c.h"
 #include "pico/stdlib.h"
 
 #include "tft_8080.pio.h"
-
-/* ── I2C baudrate fix for Core 1 ─────────────────────────────────────────────
- * Core 1 skips runtime_init_clocks (Core 0 owns clock init), so
- * clock_get_hz(clk_peri) returns 0 and i2c_init() silently computes a garbage
- * baudrate divisor. We manually set the SCL timing registers using the known
- * clk_peri frequency (Core 0 sets Arduino-Pico default 150 MHz).
- *
- * Formula (from Pico SDK i2c.c):
- *   period = freq_in / baudrate
- *   lcnt = period * 3/5 - 1   (low phase, slightly longer)
- *   hcnt = period - lcnt - 8  (high phase, account for rise time)
- *   For 100 kHz @ 150 MHz: period=1500, lcnt=899, hcnt=593
- */
-#define CORE1_CLK_PERI_HZ  150000000u
-
-static void i2c_set_baudrate_core1(i2c_inst_t *i2c, uint baudrate)
-{
-    uint period = CORE1_CLK_PERI_HZ / baudrate;
-    uint lcnt = period * 3u / 5u - 1u;
-    uint hcnt = period - lcnt - 8u;
-    /* Clamp to valid range (must be >= 8 for standard mode). */
-    if (hcnt < 8u) hcnt = 8u;
-    if (lcnt < 1u) lcnt = 1u;
-    i2c->hw->enable = 0;
-    hw_write_masked(&i2c->hw->con,
-                    I2C_IC_CON_SPEED_VALUE_STANDARD << I2C_IC_CON_SPEED_LSB,
-                    I2C_IC_CON_SPEED_BITS);
-    i2c->hw->ss_scl_hcnt = hcnt;
-    i2c->hw->ss_scl_lcnt = lcnt;
-    i2c->hw->fs_spklen = lcnt < 16u ? 1u : lcnt / 16u;
-    i2c->hw->enable = 1;
-}
 
 /* ── GPIO map (Rev A schematic) ──────────────────────────────────────────── */
 #define PIN_TFT_nCS    10u
@@ -70,10 +38,7 @@ static void i2c_set_baudrate_core1(i2c_inst_t *i2c, uint baudrate)
 #define DISPLAY_PIO          pio1
 #define DISPLAY_PIO_CLKDIV   2.0f   /* 53 ns write cycle @ 150 MHz sys_clk */
 
-/* ── LM27965 backlight (provisional) ─────────────────────────────────────── */
-#define BL_I2C            i2c1
-#define PIN_BL_SDA        6u
-#define PIN_BL_SCL        7u
+/* ── LM27965 backlight (provisional — M3.4.3 will move this to src/power) ── */
 #define LM27965_ADDR      0x36u
 #define LM27965_REG_GP    0x10u
 #define LM27965_REG_BANKA 0xA0u
@@ -151,72 +116,24 @@ static dma_channel_config make_pixel_cfg(bool read_inc, bool ring_2b)
     return cfg;
 }
 
-/* ── Backlight (LM27965 over I2C bus B) ──────────────────────────────────── */
-
-/* Bus B recovery: 9 SCL pulses + manual STOP, per bringup i2c_custom_scan.c.
- * Handles the case where a slave has SDA clamped low after a boot-time glitch
- * on the 1.8V pull-up rail. Called before any I2C traffic on bus B.          */
-static void bus_b_recovery(void)
-{
-    gpio_init(PIN_BL_SCL);
-    gpio_set_dir(PIN_BL_SCL, GPIO_OUT);
-    gpio_put(PIN_BL_SCL, 1);
-
-    gpio_init(PIN_BL_SDA);
-    gpio_set_dir(PIN_BL_SDA, GPIO_IN);
-    gpio_pull_up(PIN_BL_SDA);
-
-    sleep_us(10);
-
-    for (int i = 0; i < 9; i++) {
-        gpio_put(PIN_BL_SCL, 0);
-        sleep_us(5);
-        gpio_put(PIN_BL_SCL, 1);
-        sleep_us(5);
-        if (gpio_get(PIN_BL_SDA)) break;
-    }
-
-    /* Manual STOP: SDA rising edge while SCL HIGH. */
-    gpio_set_dir(PIN_BL_SDA, GPIO_OUT);
-    gpio_put(PIN_BL_SDA, 0);
-    sleep_us(5);
-    gpio_put(PIN_BL_SCL, 1);
-    sleep_us(5);
-    gpio_put(PIN_BL_SDA, 1);
-    sleep_us(10);
-
-    gpio_set_dir(PIN_BL_SCL, GPIO_IN);
-    gpio_set_dir(PIN_BL_SDA, GPIO_IN);
-    gpio_disable_pulls(PIN_BL_SCL);
-    gpio_disable_pulls(PIN_BL_SDA);
-}
+/* ── Backlight (LM27965 on power bus = i2c0) ─────────────────────────────── */
 
 static void backlight_init(void)
 {
-    /* bus_b_recovery() unsticks SDA if a slave is holding it low. */
-    bus_b_recovery();
-
-    /* i2c_init() brings the peripheral out of reset and enables it, but its
-     * baudrate calculation uses clock_get_hz(clk_peri) which returns 0 on
-     * Core 1 (we skip runtime_init_clocks). Call i2c_init with any baudrate
-     * then fix up with our known 150 MHz clk_peri. */
-    i2c_init(BL_I2C, 100 * 1000);
-    i2c_set_baudrate_core1(BL_I2C, 100 * 1000);
-    gpio_set_function(PIN_BL_SDA, GPIO_FUNC_I2C);
-    gpio_set_function(PIN_BL_SCL, GPIO_FUNC_I2C);
-    gpio_pull_up(PIN_BL_SDA);
-    gpio_pull_up(PIN_BL_SCL);
+    /* Power + sensor bus share the i2c1 peripheral (both GPIO pairs are
+     * I2C1-only on RP2350). i2c_bus_acquire() takes the mutex and muxes the
+     * POWER pair in. Until the LM27965 refactor (M3.4.3) this is the only
+     * power-bus consumer, so acquire always succeeds immediately. */
+    i2c_inst_t *bus = i2c_bus_acquire(MOKYA_I2C_POWER, portMAX_DELAY);
 
     const uint8_t set_duty[2] = { LM27965_REG_BANKA, LM27965_BANKA_DUTY };
     const uint8_t enable_a[2] = { LM27965_REG_GP,    LM27965_GP_TFT_ON  };
 
     /* Order: duty first, GP second — matches bringup_tft.c and led_apply(). */
-    (void)i2c_write_timeout_us(BL_I2C, LM27965_ADDR, set_duty, 2, false, 50000);
-    (void)i2c_write_timeout_us(BL_I2C, LM27965_ADDR, enable_a, 2, false, 50000);
+    (void)i2c_write_timeout_us(bus, LM27965_ADDR, set_duty, 2, false, 50000);
+    (void)i2c_write_timeout_us(bus, LM27965_ADDR, enable_a, 2, false, 50000);
 
-    i2c_deinit(BL_I2C);
-    gpio_set_function(PIN_BL_SDA, GPIO_FUNC_NULL);
-    gpio_set_function(PIN_BL_SCL, GPIO_FUNC_NULL);
+    i2c_bus_release(MOKYA_I2C_POWER);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
