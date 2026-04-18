@@ -182,6 +182,16 @@ Host compares before/after hashes to detect whether the keypress was consumed.
 ACK timing: sent after the KeyEvent has been drained by `UITask` / `IMETask`
 and the next LVGL tick completes. Typical latency: 5–20 ms.
 
+**Timestamp source (implementation requirement):** `UsbCtrlTask` must
+stamp the injected `KeyEvent` with a `now_ms` value read from the same
+monotonic clock that drives `IMETask`'s `ImeLogic::tick(now_ms)` calls
+(FreeRTOS `xTaskGetTickCount` on Core 1 post-M4). This is what lets
+`ImeLogic` measure multi-tap windows (800 ms) and SYM1 long-press
+thresholds (500 ms) consistently whether a press came from the PIO
+hardware scanner or from the host injection path. Hosts do NOT send a
+timestamp on the wire — the wire field set above is normative — the
+timestamp is injected locally at enqueue time.
+
 ### 5.2 `TYPE` (0x11)
 
 Injects a UTF-8 string bypassing the IME. Each codepoint is delivered as a
