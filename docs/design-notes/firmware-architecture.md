@@ -350,7 +350,7 @@ architecture — the next hardware revision removes both devices.
 │                tasks: UI, IPCRx, KeypadScan, Sensors, Power, USB,    │
 │                       UsbCtrl (CDC#1, build-gated)                   │
 ├──────────────────────────────────────────────────────────────────────┤
-│ HW             i2c1 (34/35 sensor+GNSS) · i2c0 (6/7 power) · SPI0    │
+│ HW             i2c1 mux (6/7 power · 34/35 sensor+GNSS) · SPI0       │
 │                PIO0 (LCD) · PIO1 (keypad) · PWM (motor) · USB        │
 │                SIO FIFO (inter-core doorbell)                        │
 └──────────────────────────────────────────────────────────────────────┘
@@ -910,8 +910,8 @@ read or written across the IPC boundary.
 
 | Bus / Peripheral                | Owner  | Devices / Pins                                             |
 |---------------------------------|--------|------------------------------------------------------------|
-| Sensor + GNSS bus (`i2c1`, GPIO 34/35) | Core 1 | LSM6DSV16X 0x6A · LIS2MDL 0x1E · LPS22HH 0x5D · Teseo 0x3A |
-| Power bus (`i2c0`, GPIO 6/7)    | Core 1 | BQ25622 0x6B · BQ27441 0x55 · LM27965 0x36                 |
+| Sensor + GNSS bus (GPIO 34/35, `i2c1`) | Core 1 | LSM6DSV16X 0x6A · LIS2MDL 0x1E · LPS22HH 0x5D · Teseo 0x3A |
+| Power bus (GPIO 6/7, `i2c1`)    | Core 1 | BQ25622 0x6B · BQ27441 0x55 · LM27965 0x36                 |
 | SPI1 (GPIO 24–27)               | Core 0 | SX1262 LoRa                                                |
 | PIO0                            | Core 1 | 6×6 keypad matrix (GPIO 36–47), continuous PIO+DMA scan    |
 | PIO1                            | Core 1 | LCD 8-bit 8080 parallel, NHD-2.4″                          |
@@ -920,9 +920,13 @@ read or written across the IPC boundary.
 | Flash (QMI / XIP)               | shared | XIP read both cores; writes only Core 0                    |
 | PSRAM (QMI / XIP)               | Core 1 | read only; bump-allocator heap + dict assets               |
 
-Note: the two I2C buses use separate SDK peripherals (`i2c0` for Power, `i2c1` for
-Sensor+GNSS), so they run concurrently. On RP2350B both GPIO pairs (6/7 and 34/35) are
-pinmux-capable of either peripheral; firmware fixes the split above.
+Note (Rev A): both buses map to the `i2c1` SDK peripheral — GPIO 6/7 and GPIO 34/35 are
+I2C1-only on RP2350 (mod-4 = 2/3 rule; no I2C0 pinmux alternative on either pair).
+Firmware time-multiplexes `i2c1` between the two pin pairs via a FreeRTOS mutex —
+drivers use `firmware/core1/src/i2c/i2c_bus.c` (`i2c_bus_acquire` /
+`i2c_bus_release`). Rev B should reroute the sensor bus to a mod-4 = 0/1 GPIO pair
+(e.g. 32/33) so `i2c0` and `i2c1` can run concurrently — see
+`docs/design-notes/mcu-gpio-allocation.md` for the full rationale.
 
 ---
 
@@ -1417,7 +1421,7 @@ only needs to rewrite the "Rev A specific" column.
 | Audio frontend            | IM69D130 PDM mic + NAU8315 amp + CMS-131304 speaker populated    | **Removed.** No PDM PIO program, no I2S task; firmware already has no audio task — removing the HW drops ~0 KB of Core 1 RAM |
 | Battery                   | Nokia BL-4C ~890 mAh (BQ27441 Design Capacity = 1000 mAh)        | Possibly larger; update `GaugeMonitor` init constant |
 | Sensor bus mix            | IMU 0x6A · Mag 0x1E · Baro 0x5D · GPS 0x3A on `i2c1` GPIO 34/35  | Unchanged unless part numbers change |
-| Power bus mix             | BQ25622 0x6B · BQ27441 0x55 · LM27965 0x36 on `i2c0` GPIO 6/7    | Unchanged |
+| Power bus mix             | BQ25622 0x6B · BQ27441 0x55 · LM27965 0x36 on GPIO 6/7 (`i2c1`)  | Rev B should move sensor bus to a mod-4=0/1 pair to free `i2c0`; Rev A time-muxes `i2c1` |
 | GNSS LNA / SAW            | BGA725L6 LNA + B39162B4327P810 SAW                               | Unchanged unless antenna retuned |
 | Optional wireless         | None                                                             | Bluetooth may be added via companion nRF52 on SPI0 / I2C / UART. Core 0 already sets `-D MESHTASTIC_EXCLUDE_BLUETOOTH`, so the integration point would be Core 1 |
 | USB transport             | TinyUSB CDC via RP2350 native USB                                | Unchanged |

@@ -71,6 +71,7 @@
 #include "ipc_shared_layout.h"
 #include "ipc_ringbuf.h"
 
+#include "i2c_bus.h"
 #include "display.h"
 #include "lvgl_glue.h"
 #include "keypad_scan.h"
@@ -433,6 +434,10 @@ int main(void)
     }
 
     __atomic_store_n(&g_ipc_shared.c1_ready, 1u, __ATOMIC_RELEASE);
+
+    /* Bring up both I2C buses before any driver starts. display_init()'s
+     * backlight setup and future power/sensor drivers all depend on this. */
+    i2c_bus_init_all();
 
     /* 7. Register doorbell ISR but do NOT enable yet — enabling before the
      *    FreeRTOS scheduler starts causes a HardFault because portYIELD_FROM_ISR

@@ -32,7 +32,7 @@
 | Fuel Gauge | TI BQ27441DRZR | SON-12 | Impedance Track™; must be in series with battery current path |
 | 1.8 V Buck | TI TPS62840DLCR | VSON-8 | 60 nA Iq — minimises standby current |
 | 3.3 V LDO | TI TPS7A2033 | WSON-6 | 300 mA, ultra-low noise (high PSRR) — clean supply for GPS/RF analogue |
-| LED / BL Driver | TI LM27965 | WQFN-24 | Dual-bank I2C dimming (I2C0 — Power bus); Bank A = LCD BL, Bank B = keypad BL; HWEN tied to 1.8 V |
+| LED / BL Driver | TI LM27965 | WQFN-24 | Dual-bank I2C dimming (Power bus, `i2c1` on RP2350); Bank A = LCD BL, Bank B = keypad BL; HWEN tied to 1.8 V |
 | Battery | Nokia BL-4C | — | Li-ion 3.7 V, ~890 mAh |
 | Battery Connector | AVX 009155003301006 | 3-pin pogo | 2.5 mm pitch; polarity marked on silkscreen |
 
@@ -127,7 +127,7 @@ GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 | TFT_D8–D15 | 8-bit parallel data bus (PIO)           |
 | TFT_nRST   | Reset                                   |
 | TFT_TE     | Tearing effect                          |
-| Backlight  | LM27965 Bank A, I2C0 dimming            |
+| Backlight  | LM27965 Bank A, Power-bus I2C dimming   |
 
 GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
@@ -174,7 +174,7 @@ GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 | Magnetometer | ST LIS2MDL | LGA-12 | 0x1E | Fixed |
 | Barometer | ST LPS22HH | LGA-10 | 0x5D | SA0 → 3.3 V (Rev A confirmed; schematic ties SA0 to 3.3 V) |
 
-All sensors share the **sensor + GNSS bus (GPIO 34 / 35, `i2c1` in Pico SDK)** with the Teseo-LIV3FL GNSS receiver. The Power bus (`i2c0`, GPIO 6/7) runs concurrently on a separate SDK peripheral.
+All sensors share the **sensor + GNSS bus (GPIO 34 / 35)** with the Teseo-LIV3FL GNSS receiver. The Power bus (GPIO 6 / 7) and the Sensor + GNSS bus both map to the `i2c1` SDK peripheral on RP2350 (no I2C0 pinmux alternative exists on either pin pair); Rev A firmware time-multiplexes `i2c1` between the two pin pairs via a FreeRTOS mutex. Rev B should reroute the sensor + GNSS bus to a mod-4 = 0/1 GPIO pair to restore two independent SDK peripherals — see `docs/design-notes/mcu-gpio-allocation.md` for details.
 
 **Design constraints:**
 - LSM6DSV16X SA0 must be tied to GND — default address 0x6B would collide with BQ25622 if both were on the same bus.
@@ -191,7 +191,7 @@ All sensors share the **sensor + GNSS bus (GPIO 34 / 35, `i2c1` in Pico SDK)** w
 |------|------|-------|
 | Keypad Switches | SWT0105 | Metal dome sheet |
 | Anti-ghost Diodes | Diodes Inc. SDM03U40 | SOD-523 Schottky, Vf ~0.37 V @ 30 mA; enables NKRO at 1.8 V logic |
-| Keypad BL LEDs | LiteOn LTST-C191TBWET (×6–8) | White; driven by LM27965 Bank B (I2C0 — Power bus) |
+| Keypad BL LEDs | LiteOn LTST-C191TBWET (×6–8) | White; driven by LM27965 Bank B (Power bus, `i2c1` on RP2350) |
 
 **Scan mechanism:** RP2350 PIO drives 6 column lines, samples 6 row lines. DMA writes key state directly to RAM — zero CPU overhead. Logic level 1.8 V, active-low. GPIO assignments: see `docs/design-notes/mcu-gpio-allocation.md`.
 
