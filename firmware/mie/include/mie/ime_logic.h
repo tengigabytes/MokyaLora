@@ -147,6 +147,24 @@ public:
     /// on_composition_changed() when state was non-empty.
     void abort();
 
+    /// Sync MIE's SmartEn sentence-aware state (auto-capitalize and
+    /// leading-space prepend) with the UI's text buffer. Call after
+    /// any external edit — DEL that reaches the committed text, cursor
+    /// moves, paste, clear — so the next word commit places spaces
+    /// and capitalisation correctly.
+    ///
+    /// prev_utf8: up to a few bytes of UTF-8 text immediately before
+    /// the cursor. Pass ""/nullptr when the cursor is at the start of
+    /// an empty buffer. Two codepoints is enough to detect ". ", ", ",
+    /// 「。」, etc. Caller must supply the bytes at a UTF-8 codepoint
+    /// boundary.
+    ///
+    /// Behaviour: ends-with-space → no leading-space on next word;
+    /// ends with . ? ! 。？！ (trailing whitespace allowed) → capitalise
+    /// next SmartEn word; otherwise → prepend leading space, do not
+    /// capitalise. Empty prev_utf8 → treat as sentence start.
+    void set_text_context(const char* prev_utf8);
+
     // ── Query ────────────────────────────────────────────────────────────
     InputMode   mode()           const { return mode_; }
     const char* mode_indicator() const;    ///< "中" / "EN" / "ABC"
