@@ -1107,6 +1107,34 @@ confirmed on the board.
   post `display_init()`
 - `firmware/core1/m1_bridge/CMakeLists.txt` — new `lm27965.c` source
 
+#### M3.4.4 — BQ27441 fuel gauge driver stub ✅ (2026-04-18)
+
+Rev A's BQ27441-G1 has two production-blocking defects (Issues #9 + #10
+in the bringup log): BIN pin unconnected and a cold-boot I2C NACK
+latchup that resists 9-clock bus recovery. Rev B is evaluating removing
+the part from the BOM in favour of a BQ25622 VBAT ADC + coulomb counter
+inside `charger_task`.
+
+Rather than port `bringup_gauge.c` to a driver we might delete, M3.4.4
+ships an API-only stub under `firmware/core1/src/power/bq27441.{h,c}`:
+
+- `bq27441_start_task(priority)` — no-op, returns true.
+- `bq27441_get_state()` — returns a pointer to a static
+  `{ .online = false, ... }` snapshot. UI / battery-monitor code can
+  bind against this and light up automatically once Rev B's decision
+  lands and the real driver fills the struct.
+
+No I2C traffic is generated and no FreeRTOS task is created. The stub
+is `#include`d nowhere outside the power module; it only has to
+compile and link. Bridge regression test passes — `python -m
+meshtastic --port COM16 --info` returns `nodedbCount: 11`.
+
+**Files added:**
+- `firmware/core1/src/power/bq27441.{h,c}`
+
+**Files changed:**
+- `firmware/core1/m1_bridge/CMakeLists.txt` — new `bq27441.c` source
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

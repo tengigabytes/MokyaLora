@@ -114,6 +114,7 @@ add_executable(core1_bridge
     ${SHARED_IPC_DIR}/ipc_ringbuf.c
     ${I2C_DIR}/i2c_bus.c
     ${POWER_DIR}/bq25622.c
+    ${POWER_DIR}/bq27441.c
     ${POWER_DIR}/lm27965.c
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
