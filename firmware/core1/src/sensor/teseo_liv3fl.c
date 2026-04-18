@@ -179,6 +179,22 @@ static void parse_gga(const char *body)
     s_state.sentence_count++;
 }
 
+/* $--GST,<utc>,<rms>,<smajor>,<sminor>,<orient>,<sigma_lat>,<sigma_lon>,<sigma_alt>
+ * Standard NMEA 0183 — std-dev of pseudorange residuals. We only capture
+ * the three orthogonal sigmas. Enabled by the RF-debug CDB 231 mask
+ * (bit 3 = $GPGST). */
+static void parse_gst(const char *body)
+{
+    char f[FIELD_BUF_SIZE];
+    if (nmea_field(body, 6, f, sizeof f) && f[0])
+        s_state.gst_sigma_lat_m_x10 = (uint16_t)(atof(f) * 10.0);
+    if (nmea_field(body, 7, f, sizeof f) && f[0])
+        s_state.gst_sigma_lon_m_x10 = (uint16_t)(atof(f) * 10.0);
+    if (nmea_field(body, 8, f, sizeof f) && f[0])
+        s_state.gst_sigma_alt_m_x10 = (uint16_t)(atof(f) * 10.0);
+    s_state.gst_count++;
+}
+
 static void parse_rmc(const char *body)
 {
     char f[FIELD_BUF_SIZE];
@@ -445,6 +461,7 @@ static void dispatch_line(void)
     if (memcmp(type + 2, "GGA", 3) == 0)      parse_gga(body);
     else if (memcmp(type + 2, "RMC", 3) == 0) parse_rmc(body);
     else if (memcmp(type + 2, "GSV", 3) == 0) parse_gsv(type, body);
+    else if (memcmp(type + 2, "GST", 3) == 0) parse_gst(body);
     /* GSA / VTG / others: ignored by design — see §108 of software
      * requirements. */
 }

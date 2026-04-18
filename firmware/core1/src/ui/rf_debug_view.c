@@ -7,17 +7,20 @@
 
 #include "teseo_liv3fl.h"
 
-/* ── Layout (landscape 320x240) ──────────────────────────────────────── *
+/* ── Layout (landscape 320x240, lv_font_montserrat_14, ~14 px line) ─── *
  *
- *   y   0 ..  17  Title bar (Montserrat 14)
- *   y  18 ..  31  Fix status
- *   y  32 ..  45  Noise floor
- *   y  46 ..  59  CPU
- *   y  60 ..  73  ANF GPS
- *   y  74 ..  87  ANF GLN
- *   y  88 ..  89  separator (drawn as a thin label underline)
- *   y  90 .. 103  Sat table header
- *   y 104 .. 239  Sat rows (up to 8 rows × 14 px = 112 px used)
+ *   y   0 ..  13  title + view-of-used sat count
+ *   y  14 ..  27  fix status / sats / HDOP / accuracy σ
+ *   y  28 ..  41  UTC time + date
+ *   y  42 ..  55  Position (lat, lon)
+ *   y  56 ..  69  Altitude / speed / heading
+ *   y  70 ..  83  Noise floor + CPU
+ *   y  84 ..  97  ANF GPS
+ *   y  98 .. 111  ANF GLN
+ *   y 112 .. 125  NMEA throughput counters + I2C fail
+ *   y 126 .. 139  Sat table header
+ *   y 140 .. 223  6 sat rows × 14 px
+ *   y 224 .. 239  hint / status footer
  */
 
 #define COL_FG          lv_color_hex(0xE0E0E0)
@@ -27,32 +30,34 @@
 #define COL_OK          lv_color_hex(0x00D060)
 #define COL_DIM         lv_color_hex(0x808080)
 
-#define ROW_TITLE        0
-#define ROW_FIX         18
-#define ROW_NOISE       32
-#define ROW_CPU         46
-#define ROW_ANF_GPS     60
-#define ROW_ANF_GLN     74
-#define ROW_SAT_HDR     94
-#define ROW_SAT_FIRST  110
-#define ROW_SAT_STEP    14
-#define SAT_ROWS        9       /* 110 + 9*14 = 236 ≤ 239 */
-
-/* Running counter copies so we can detect "no data flowing" state. */
-static uint32_t s_seen_rf_count;
-static uint32_t s_seen_anf_count;
-static uint32_t s_seen_noise_count;
+#define ROW_TITLE         0
+#define ROW_FIX          14
+#define ROW_TIME         28
+#define ROW_POS          42
+#define ROW_MOTION       56
+#define ROW_RF_BASE      70
+#define ROW_ANF_GPS      84
+#define ROW_ANF_GLN      98
+#define ROW_COUNTERS    112
+#define ROW_SAT_HDR     126
+#define ROW_SAT_FIRST   140
+#define ROW_SAT_STEP     14
+#define SAT_ROWS          6       /* 140 + 6*14 = 224 */
+#define ROW_FOOTER      224
 
 /* Widget handles. */
 static lv_obj_t *s_title_lbl;
 static lv_obj_t *s_fix_lbl;
-static lv_obj_t *s_noise_lbl;
-static lv_obj_t *s_cpu_lbl;
+static lv_obj_t *s_time_lbl;
+static lv_obj_t *s_pos_lbl;
+static lv_obj_t *s_motion_lbl;
+static lv_obj_t *s_rf_lbl;
 static lv_obj_t *s_anf_gps_lbl;
 static lv_obj_t *s_anf_gln_lbl;
+static lv_obj_t *s_counters_lbl;
 static lv_obj_t *s_sat_hdr_lbl;
 static lv_obj_t *s_sat_lbl[SAT_ROWS];
-static lv_obj_t *s_hint_lbl;
+static lv_obj_t *s_footer_lbl;
 
 static lv_obj_t *mk_label(lv_obj_t *parent, int x, int y, lv_color_t color)
 {
@@ -68,26 +73,27 @@ void rf_debug_view_init(lv_obj_t *parent)
     lv_obj_set_style_bg_color(parent, COL_BG, 0);
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
-    s_title_lbl   = mk_label(parent,   4, ROW_TITLE,   COL_TITLE);
-    s_fix_lbl     = mk_label(parent,   4, ROW_FIX,     COL_FG);
-    s_noise_lbl   = mk_label(parent,   4, ROW_NOISE,   COL_FG);
-    s_cpu_lbl     = mk_label(parent,   4, ROW_CPU,     COL_FG);
-    s_anf_gps_lbl = mk_label(parent,   4, ROW_ANF_GPS, COL_FG);
-    s_anf_gln_lbl = mk_label(parent,   4, ROW_ANF_GLN, COL_FG);
-    s_sat_hdr_lbl = mk_label(parent,   4, ROW_SAT_HDR, COL_DIM);
+    s_title_lbl    = mk_label(parent,   4, ROW_TITLE,    COL_TITLE);
+    s_fix_lbl      = mk_label(parent,   4, ROW_FIX,      COL_FG);
+    s_time_lbl     = mk_label(parent,   4, ROW_TIME,     COL_FG);
+    s_pos_lbl      = mk_label(parent,   4, ROW_POS,      COL_FG);
+    s_motion_lbl   = mk_label(parent,   4, ROW_MOTION,   COL_FG);
+    s_rf_lbl       = mk_label(parent,   4, ROW_RF_BASE,  COL_FG);
+    s_anf_gps_lbl  = mk_label(parent,   4, ROW_ANF_GPS,  COL_FG);
+    s_anf_gln_lbl  = mk_label(parent,   4, ROW_ANF_GLN,  COL_FG);
+    s_counters_lbl = mk_label(parent,   4, ROW_COUNTERS, COL_DIM);
+    s_sat_hdr_lbl  = mk_label(parent,   4, ROW_SAT_HDR,  COL_DIM);
     for (int i = 0; i < SAT_ROWS; ++i) {
-        s_sat_lbl[i] = mk_label(parent, 4, ROW_SAT_FIRST + i * ROW_SAT_STEP,
-                                COL_FG);
+        s_sat_lbl[i] = mk_label(parent, 4,
+                                ROW_SAT_FIRST + i * ROW_SAT_STEP, COL_FG);
         lv_label_set_text(s_sat_lbl[i], "");
     }
-    /* Bottom-right hint for commissioning — hidden once data flows. */
-    s_hint_lbl = mk_label(parent, 4, 222, COL_WARN);
+    s_footer_lbl = mk_label(parent, 4, ROW_FOOTER, COL_WARN);
 
-    lv_label_set_text(s_title_lbl, "GNSS RF debug");
-    lv_label_set_text(s_sat_hdr_lbl, "PRN  CN0  Freq (Hz)  PhN");
+    lv_label_set_text(s_sat_hdr_lbl, "PRN  CN0  Freq(Hz)   PhN");
 }
 
-/* Format helpers — keep small, avoid float-heavy printf paths. */
+/* ── Formatting helpers ──────────────────────────────────────────────── */
 
 static const char *fix_quality_name(uint8_t q)
 {
@@ -95,44 +101,11 @@ static const char *fix_quality_name(uint8_t q)
         case 0: return "no-fix";
         case 1: return "GPS";
         case 2: return "DGPS";
-        case 4: return "RTK-fix";
-        case 5: return "RTK-flt";
+        case 4: return "RTK-F";
+        case 5: return "RTK-f";
         case 6: return "DR";
         default: return "?";
     }
-}
-
-static void render_fix(const teseo_state_t *st)
-{
-    char buf[64];
-    snprintf(buf, sizeof buf,
-             "%s   fix:%s  sats:%u  HDOP:%u.%u",
-             st->online ? "ONLINE" : "offline",
-             fix_quality_name(st->fix_quality),
-             (unsigned)st->num_sats,
-             (unsigned)(st->hdop_x10 / 10u),
-             (unsigned)(st->hdop_x10 % 10u));
-    lv_label_set_text(s_fix_lbl, buf);
-}
-
-static void render_noise(const teseo_rf_state_t *r)
-{
-    char buf[48];
-    snprintf(buf, sizeof buf,
-             "Noise  GPS:%-5ld  GLN:%-5ld",
-             (long)r->noise_gps, (long)r->noise_gln);
-    lv_label_set_text(s_noise_lbl, buf);
-}
-
-static void render_cpu(const teseo_rf_state_t *r)
-{
-    char buf[48];
-    snprintf(buf, sizeof buf,
-             "CPU   %u.%u%%  @ %u MHz",
-             (unsigned)(r->cpu_pct_x10 / 10u),
-             (unsigned)(r->cpu_pct_x10 % 10u),
-             (unsigned)r->cpu_mhz);
-    lv_label_set_text(s_cpu_lbl, buf);
 }
 
 static const char *anf_mode_name(uint8_t m)
@@ -145,33 +118,149 @@ static const char *anf_mode_name(uint8_t m)
     }
 }
 
-static void render_anf(lv_obj_t *lbl, const char *tag,
-                       const teseo_anf_path_t *a)
+static void render_title(const teseo_sat_view_t *v, const teseo_state_t *st)
 {
-    /* ovfs bit 12 (value 1000 in decimal per datasheet: ovfs text form
-     * "MRRR" where M = 1 means notch is removing a jammer). */
+    char buf[48];
+    snprintf(buf, sizeof buf,
+             "GNSS debug    view:%u used:%u",
+             (unsigned)v->count, (unsigned)st->num_sats);
+    lv_label_set_text(s_title_lbl, buf);
+}
+
+static void render_fix(const teseo_state_t *st)
+{
+    /* σ taken from $GPGST if populated; else show HDOP only. */
+    char buf[64];
+    if (st->gst_count > 0) {
+        snprintf(buf, sizeof buf,
+                 "%s %s  HDOP:%u.%u  sig:%u/%u/%um",
+                 st->online ? "ON" : "off",
+                 fix_quality_name(st->fix_quality),
+                 (unsigned)(st->hdop_x10 / 10u),
+                 (unsigned)(st->hdop_x10 % 10u),
+                 (unsigned)(st->gst_sigma_lat_m_x10 / 10u),
+                 (unsigned)(st->gst_sigma_lon_m_x10 / 10u),
+                 (unsigned)(st->gst_sigma_alt_m_x10 / 10u));
+    } else {
+        snprintf(buf, sizeof buf,
+                 "%s %s  HDOP:%u.%u",
+                 st->online ? "ON" : "off",
+                 fix_quality_name(st->fix_quality),
+                 (unsigned)(st->hdop_x10 / 10u),
+                 (unsigned)(st->hdop_x10 % 10u));
+    }
+    lv_label_set_text(s_fix_lbl, buf);
+}
+
+static void render_time(const teseo_state_t *st)
+{
+    char buf[48];
+    uint32_t t = st->utc_time;
+    uint32_t d = st->utc_date;
+    if (t == 0 && d == 0) {
+        lv_label_set_text(s_time_lbl, "UTC:  --:--:--   date: --/--/--");
+        return;
+    }
+    /* utc_time = hhmmss; utc_date = ddmmyy */
+    snprintf(buf, sizeof buf,
+             "UTC:  %02u:%02u:%02u   date: %02u/%02u/%02u",
+             (unsigned)((t / 10000u) % 100u),
+             (unsigned)((t / 100u)   % 100u),
+             (unsigned)( t           % 100u),
+             (unsigned)((d / 10000u) % 100u),
+             (unsigned)((d / 100u)   % 100u),
+             (unsigned)( d           % 100u));
+    lv_label_set_text(s_time_lbl, buf);
+}
+
+static void render_pos(const teseo_state_t *st)
+{
+    char buf[64];
+    if (!st->fix_valid || (st->lat_e7 == 0 && st->lon_e7 == 0)) {
+        lv_label_set_text(s_pos_lbl, "pos:  -- no fix --");
+        return;
+    }
+    /* integer ddd.ddddddd */
+    long lat_int   = st->lat_e7 / 10000000;
+    long lat_frac  = st->lat_e7 - lat_int * 10000000;
+    if (lat_frac < 0) lat_frac = -lat_frac;
+    long lon_int   = st->lon_e7 / 10000000;
+    long lon_frac  = st->lon_e7 - lon_int * 10000000;
+    if (lon_frac < 0) lon_frac = -lon_frac;
+    snprintf(buf, sizeof buf, "pos:  %ld.%07ld, %ld.%07ld",
+             lat_int, lat_frac, lon_int, lon_frac);
+    lv_label_set_text(s_pos_lbl, buf);
+}
+
+static void render_motion(const teseo_state_t *st)
+{
+    char buf[48];
+    snprintf(buf, sizeof buf,
+             "alt:%+dm  spd:%u.%ukm/h  hdg:%udeg",
+             (int)st->altitude_m,
+             (unsigned)(st->speed_kmh_x10 / 10u),
+             (unsigned)(st->speed_kmh_x10 % 10u),
+             (unsigned)(st->course_deg_x10 / 10u));
+    lv_label_set_text(s_motion_lbl, buf);
+}
+
+static void render_rf(const teseo_rf_state_t *r)
+{
+    char buf[64];
+    if (r->noise_count == 0 && r->cpu_count == 0) {
+        lv_label_set_text(s_rf_lbl, "RF:    -- not received --");
+        return;
+    }
+    snprintf(buf, sizeof buf,
+             "N G:%-5ld R:%-5ld  CPU:%u.%u%% @%uMHz",
+             (long)r->noise_gps, (long)r->noise_gln,
+             (unsigned)(r->cpu_pct_x10 / 10u),
+             (unsigned)(r->cpu_pct_x10 % 10u),
+             (unsigned)r->cpu_mhz);
+    lv_label_set_text(s_rf_lbl, buf);
+}
+
+static void render_anf(lv_obj_t *lbl, const char *tag,
+                       const teseo_anf_path_t *a, bool received)
+{
+    if (!received) {
+        char buf[32];
+        snprintf(buf, sizeof buf, "ANF %s  -- not received --", tag);
+        lv_label_set_text(lbl, buf);
+        return;
+    }
+    /* ovfs bit-12 set (value ≥ 1000) = jammer currently removed. */
     bool jammer = (a->ovfs >= 1000);
     char buf[64];
     snprintf(buf, sizeof buf,
-             "ANF %s  f=%7lu  %s %s %s",
-             tag,
-             (unsigned long)a->freq_hz,
+             "ANF %s f=%7lu  %s %s %s",
+             tag, (unsigned long)a->freq_hz,
              a->lock ? "LK" : "--",
              anf_mode_name(a->mode),
              jammer ? "JAM" : "   ");
     lv_label_set_text(lbl, buf);
 }
 
+static void render_counters(const teseo_state_t *st,
+                            const teseo_rf_state_t *r)
+{
+    char buf[64];
+    snprintf(buf, sizeof buf,
+             "NMEA:%lu RF:%lu ANF:%lu fail:%lu",
+             (unsigned long)st->sentence_count,
+             (unsigned long)r->rf_update_count,
+             (unsigned long)r->anf_count,
+             (unsigned long)st->i2c_fail_count);
+    lv_label_set_text(s_counters_lbl, buf);
+}
+
 static void render_sats(const teseo_rf_state_t *r)
 {
-    /* Show top-N by C/N0 — rf_sats already arrives in engine order which
-     * varies each cycle. Sort by descending cn0_dbhz in a local copy. */
+    /* Sort a local copy by descending C/N0 — engine order shuffles. */
     teseo_rf_sat_t s[32];
     uint8_t n = r->rf_sat_count;
     if (n > 32) n = 32;
     for (int i = 0; i < n; ++i) s[i] = r->rf_sats[i];
-
-    /* Insertion sort — n ≤ 32. */
     for (int i = 1; i < n; ++i) {
         teseo_rf_sat_t cur = s[i];
         int j = i - 1;
@@ -181,12 +270,11 @@ static void render_sats(const teseo_rf_state_t *r)
         }
         s[j + 1] = cur;
     }
-
     for (int i = 0; i < SAT_ROWS; ++i) {
         if (i < n) {
             char buf[48];
             snprintf(buf, sizeof buf,
-                     "%3u  %3u   %+8ld  %5d",
+                     "%3u  %3u  %+8ld  %5d",
                      (unsigned)s[i].prn,
                      (unsigned)s[i].cn0_dbhz,
                      (long)s[i].freq_hz,
@@ -201,42 +289,29 @@ static void render_sats(const teseo_rf_state_t *r)
 void rf_debug_view_tick(void)
 {
     const teseo_state_t    *st = teseo_get_state();
+    const teseo_sat_view_t *sv = teseo_get_sat_view();
     const teseo_rf_state_t *rf = teseo_get_rf_state();
 
+    render_title(sv, st);
     render_fix(st);
-
-    /* Only draw metrics that have been seen at least once — otherwise
-     * show "— not received —" rather than a misleading zero reading. */
-    if (rf->noise_count > 0) {
-        render_noise(rf);
-    } else {
-        lv_label_set_text(s_noise_lbl, "Noise  — not received —");
-    }
-    if (rf->cpu_count > 0) {
-        render_cpu(rf);
-    } else {
-        lv_label_set_text(s_cpu_lbl, "CPU    — not received —");
-    }
-    if (rf->anf_count > 0) {
-        render_anf(s_anf_gps_lbl, "GPS", &rf->anf_gps);
-        render_anf(s_anf_gln_lbl, "GLN", &rf->anf_gln);
-    } else {
-        lv_label_set_text(s_anf_gps_lbl, "ANF GPS — not received —");
-        lv_label_set_text(s_anf_gln_lbl, "ANF GLN — not received —");
-    }
+    render_time(st);
+    render_pos(st);
+    render_motion(st);
+    render_rf(rf);
+    render_anf(s_anf_gps_lbl, "GPS", &rf->anf_gps, rf->anf_count > 0);
+    render_anf(s_anf_gln_lbl, "GLN", &rf->anf_gln, rf->anf_count > 0);
+    render_counters(st, rf);
     render_sats(rf);
 
-    /* Commissioning hint: if no $PSTM* ever arrived, tell the user to
-     * run teseo_enable_rf_debug_messages(). */
+    /* Footer: commissioning hint when nothing has arrived from the RF
+     * sentence set; otherwise show a brief "all streams live" marker. */
     if (rf->noise_count == 0 && rf->anf_count == 0 &&
         rf->cpu_count == 0 && rf->rf_update_count == 0) {
-        lv_label_set_text(s_hint_lbl,
+        lv_label_set_text(s_footer_lbl,
                           "Run teseo_enable_rf_debug_messages(true)");
+    } else if (!st->online) {
+        lv_label_set_text(s_footer_lbl, "Teseo offline (I2C stall)");
     } else {
-        lv_label_set_text(s_hint_lbl, "");
+        lv_label_set_text(s_footer_lbl, "");
     }
-
-    s_seen_rf_count    = rf->rf_update_count;
-    s_seen_anf_count   = rf->anf_count;
-    s_seen_noise_count = rf->noise_count;
 }
