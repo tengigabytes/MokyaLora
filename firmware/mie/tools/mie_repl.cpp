@@ -330,6 +330,19 @@ int main(int argc, char** argv) {
             LOG("key: kc=0x%02X pressed=%d t=%u\n",
                 (unsigned)ev.keycode, (int)ev.pressed, t);
             ime.process_key(ev);
+
+            // PC terminals only report key-down via _getch / termios raw
+            // reads — there is no natural key-release event. Synthesize
+            // one here so MIE handlers that rely on the release edge
+            // (SYM1 short-press vs long-press) actually fire. 1 ms offset
+            // keeps now_ms monotonic across the pair. Long-press testing
+            // is not reachable from the PC terminal by design (the press
+            // is already "released" by the time tick() could see it); the
+            // full long-press path is intended for real hardware input.
+            mie::KeyEvent release = ev;
+            release.pressed = false;
+            release.now_ms  = t + 1;
+            ime.process_key(release);
         }
 
         // Drive timers (multi-tap timeout / SYM1 long-press).
