@@ -21,14 +21,49 @@ void ImeLogic::run_search() {
         return;
     }
 
-    // Tone-1 priority guard:
-    //   key_seq = [K, 0x22|0x23, 0x20]  (len 3)  — tone-modifier + first-tone
-    //   The greedy would otherwise match len=2 (tone 3/4) and shadow the
-    //   tone-1 candidates for K alone. Skip len=2 so [K] (len 1) runs first.
-    int skip_len = -1;
-    if (key_seq_len_ == 3 && (uint8_t)key_seq_[2] == 0x20) {
-        uint8_t pre = (uint8_t)key_seq_[1];
-        if (pre == 0x22 || pre == 0x23) skip_len = 2;
+    // Build a 0x20-stripped copy for dictionary lookup.
+    //
+    // gen_dict.py skips tone 1 from the encoded dict key (it occupies no
+    // byte because it's the implicit / unmarked tone). User input, by
+    // contrast, inserts 0x20 as the first-tone marker between syllables
+    // when the user hits SPACE. Stripping 0x20 bytes before searching
+    // lets multi-syllable words still match — e.g. 開始 (dict key
+    // \x2C\x25\x2D\x22) matches when the user types
+    // ㄎ ㄞ SPACE ㄕ ˇ (raw key_seq \x2C\x25\x20\x2D\x22).
+    //
+    // strip_to_orig[i] records the index in key_seq_ that each stripped
+    // byte came from, so tone-intent extraction and matched_prefix_keys_
+    // can still refer back to the original user input.
+    char stripped[kMaxKeySeq + 1];
+    int  strip_to_orig[kMaxKeySeq + 1];
+    int  stripped_len = 0;
+    for (int i = 0; i < key_seq_len_; ++i) {
+        if ((uint8_t)key_seq_[i] != 0x20) {
+            stripped[stripped_len]      = key_seq_[i];
+            strip_to_orig[stripped_len] = i;
+            ++stripped_len;
+        }
+    }
+    stripped[stripped_len] = '\0';
+
+    if (stripped_len == 0) {
+        // Only 0x20 bytes — nothing to search on.
+        rebuild_display_smart();
+        return;
+    }
+
+    // Tone-1 priority guard (single-syllable, "user changed their mind"):
+    //   original ends with 0x20 AND preceding stripped byte is a tone key
+    //   (ˇ/ˋ = 0x22/0x23). Skip the full-stripped match so the bare
+    //   phoneme search runs first with tone-1 intent.
+    int skip_slen = -1;
+    if ((uint8_t)key_seq_[key_seq_len_ - 1] == 0x20 &&
+        stripped_len >= 2 &&
+        ((uint8_t)stripped[stripped_len - 1] == 0x22 ||
+         (uint8_t)stripped[stripped_len - 1] == 0x23) &&
+        // The tone byte is immediately before the final 0x20 in orig.
+        strip_to_orig[stripped_len - 1] + 1 == key_seq_len_ - 1) {
+        skip_slen = stripped_len;
     }
 
     // Pick the active searcher for this mode.
@@ -46,16 +81,19 @@ void ImeLogic::run_search() {
 
     Candidate tmp[kMaxCandidates];
 
-    for (int len = key_seq_len_; len >= 1; --len) {
-        if (len == skip_len) continue;
+    for (int slen = stripped_len; slen >= 1; --slen) {
+        if (slen == skip_slen) continue;
 
-        char saved    = key_seq_[len];
-        key_seq_[len] = '\0';
-        int n         = searcher->search(key_seq_, tmp, kMaxCandidates);
-        key_seq_[len] = saved;
+        char saved      = stripped[slen];
+        stripped[slen]  = '\0';
+        int n           = searcher->search(stripped, tmp, kMaxCandidates);
+        stripped[slen]  = saved;
 
         if (n > 0) {
-            int intent = extract_tone_intent(key_seq_, key_seq_len_, len);
+            // Map the matched stripped-prefix length back to the original
+            // key_seq_ offset (one past the last orig byte consumed).
+            int orig_prefix_end = strip_to_orig[slen - 1] + 1;
+            int intent = extract_tone_intent(key_seq_, key_seq_len_, orig_prefix_end);
 
             auto tone_sort = [intent](const Candidate& a, const Candidate& b) {
                 int ta = tone_tier(a, intent), tb = tone_tier(b, intent);
@@ -64,9 +102,6 @@ void ImeLogic::run_search() {
             };
             if (n > 1) std::stable_sort(tmp, tmp + n, tone_sort);
 
-            // Strict tone filter: when intent != 0, keep only tier-0/1
-            // (exact-tone matches). Fall back to the full list if that
-            // produces nothing (v1 dicts with tone == 0).
             if (intent != 0) {
                 int keep = 0;
                 for (int i = 0; i < n; ++i)
@@ -77,7 +112,7 @@ void ImeLogic::run_search() {
 
             cand_count_ = n;
             std::memcpy(candidates_, tmp, (size_t)n * sizeof(Candidate));
-            matched_prefix_keys_ = len;
+            matched_prefix_keys_ = orig_prefix_end;
             break;
         }
     }

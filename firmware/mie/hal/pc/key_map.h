@@ -94,9 +94,13 @@ static constexpr KeyMapEntry kPcKeyMap[] = {
     { '/',           MOKYA_KEY_BACKSLASH },  // ㄡ ㄥ — alternate-2
 
     // ── Col 5 function keys ───────────────────────────────────────────────
+    // Note: PC Backspace maps to MOKYA_KEY_DEL (MIE's delete) so it behaves
+    // like a backspace in typical PC editing contexts. MOKYA_KEY_BACK is not
+    // bound to any PC key — BACK is for UI-level navigation (not MIE's scope)
+    // and the REPL uses ESC to quit.
     { KEY_F1,        MOKYA_KEY_FUNC },
     { KEY_F2,        MOKYA_KEY_SET  },
-    { KEY_BACKSPACE, MOKYA_KEY_BACK },
+    { KEY_BACKSPACE, MOKYA_KEY_DEL  },
     { KEY_DELETE,    MOKYA_KEY_DEL  },
 
     // ── Row 4 function bar ────────────────────────────────────────────────
