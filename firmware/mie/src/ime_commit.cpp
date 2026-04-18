@@ -19,6 +19,17 @@ void ImeLogic::commit_selected_candidate() {
     char word[kCandidateMaxBytes];
     std::strncpy(word, candidates_[sel].word, sizeof(word) - 1);
     word[sizeof(word) - 1] = '\0';
+
+    // SmartEn auto-capitalize after sentence-ending punctuation. The flag
+    // is set by did_commit() when the previous commit ended with ./?/!
+    // (ASCII or full-width), and intervening spaces preserve it. did_commit
+    // on this letter word will then clear the flag automatically because
+    // the letter does not end in sentence punctuation.
+    if (mode_ == InputMode::SmartEn && en_capitalize_next_ &&
+        word[0] >= 'a' && word[0] <= 'z') {
+        word[0] = (char)(word[0] - 'a' + 'A');
+    }
+
     // Each candidate can match a different prefix length (longer-match
     // entries come from a longer slen than shorter-match ones); use the
     // per-candidate count instead of the global matched_prefix_keys_.
