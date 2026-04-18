@@ -302,6 +302,71 @@ TEST(SmartEn, DigitAfterLetterCommitsLetterFirst) {
     EXPECT_STREQ(pending_str(ime), "1");
 }
 
+TEST(SmartZh, MultiSlenAccumulatesShorterMatchesWhenLongerReturnFew) {
+    // Regression: greedy used to break at the first hit length, so a
+    // 6-key input that matched only 2 long phrases left the user with
+    // just 2 candidates. The loop now accumulates candidates from
+    // longer-match slen down to shorter-match slen, each tagged with
+    // its own prefix-key count so commit_partial strips the right
+    // number of bytes per selection.
+    //
+    // Dict: 長詞 at 4-byte key, 短詞 at 2-byte key (prefix of 4).
+    // User types the full 4 bytes — both should appear in candidates,
+    // 長詞 first (longest match), 短詞 after.
+    std::vector<uint8_t> dat, val;
+    {
+        uint32_t v1 = (uint32_t)val.size();
+        push_u16(val, 1);
+        push_u16(val, 100); push_u8(val, 1); push_u8(val, 6);
+        push_str(val, "\xe9\x95\xb7\xe8\xa9\x9e");  // 長詞
+
+        uint32_t v2 = (uint32_t)val.size();
+        push_u16(val, 1);
+        push_u16(val, 200); push_u8(val, 1); push_u8(val, 6);
+        push_str(val, "\xe7\x9f\xad\xe8\xa9\x9e");  // 短詞
+
+        std::vector<uint8_t> ks;
+        uint32_t k1 = (uint32_t)ks.size();
+        push_u8(ks, 2); push_raw(ks, "\x21\x26", 2);
+        uint32_t k2 = (uint32_t)ks.size();
+        push_u8(ks, 4); push_raw(ks, "\x21\x26\x27\x31", 4);
+
+        uint32_t kc  = 2;
+        uint32_t kdo = 16 + kc * 8;
+        push_str(dat, "MIED");
+        push_u16(dat, 2); push_u16(dat, 0);
+        push_u32(dat, kc); push_u32(dat, kdo);
+        push_u32(dat, k1); push_u32(dat, v2);  // 短詞 at short key
+        push_u32(dat, k2); push_u32(dat, v1);  // 長詞 at long key
+        dat.insert(dat.end(), ks.begin(), ks.end());
+    }
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+
+    // Type the full 4-byte sequence.
+    press(ime, MOKYA_KEY_1);   // 0x21
+    press(ime, MOKYA_KEY_Q);   // 0x26
+    press(ime, MOKYA_KEY_E);   // 0x27
+    press(ime, MOKYA_KEY_C);   // 0x31
+
+    // Both candidates should be present; longer match first.
+    ASSERT_EQ(ime.candidate_count(), 2);
+    EXPECT_STREQ(ime.candidate(0).word, "\xe9\x95\xb7\xe8\xa9\x9e");  // 長詞
+    EXPECT_STREQ(ime.candidate(1).word, "\xe7\x9f\xad\xe8\xa9\x9e");  // 短詞
+
+    // Selecting the SHORTER-match candidate must strip only 2 bytes
+    // (short-key length), leaving the remaining 2 bytes as pending.
+    press(ime, MOKYA_KEY_RIGHT);    // select index 1 (短詞)
+    ASSERT_EQ(ime.selected(), 1);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "\xe7\x9f\xad\xe8\xa9\x9e");   // 短詞
+    // Pending should still have ㄍ(0x27), ㄏ(0x31) left as compound.
+    EXPECT_TRUE(ime.has_pending());
+    EXPECT_STREQ(pending_str(ime), "ㄍㄐ, ㄏㄒ");
+}
+
 TEST(SmartZh, PrefixScanDedupsAbbreviationEntries) {
     // Regression: gen_dict.py stores a Chinese phrase at many per-syllable
     // prefix combinations, so the same word appears under several dict

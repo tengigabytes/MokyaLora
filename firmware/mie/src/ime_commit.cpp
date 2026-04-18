@@ -19,7 +19,11 @@ void ImeLogic::commit_selected_candidate() {
     char word[kCandidateMaxBytes];
     std::strncpy(word, candidates_[sel].word, sizeof(word) - 1);
     word[sizeof(word) - 1] = '\0';
-    commit_partial(word, matched_prefix_keys_);
+    // Each candidate can match a different prefix length (longer-match
+    // entries come from a longer slen than shorter-match ones); use the
+    // per-candidate count instead of the global matched_prefix_keys_.
+    int prefix = candidates_prefix_keys_[sel];
+    commit_partial(word, prefix);
 }
 
 void ImeLogic::commit_partial(const char* utf8, int prefix_keys) {

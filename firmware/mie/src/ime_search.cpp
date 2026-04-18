@@ -81,39 +81,60 @@ void ImeLogic::run_search() {
 
     Candidate tmp[kMaxCandidates];
 
+    // Iterate from the longest prefix down. Candidates from longer
+    // matches are more constrained and rank first; shorter-match
+    // candidates fill the remainder so the user can commit at any
+    // sub-phrase boundary (6-key input might return "半票價" at slen=6
+    // and also "白天" at slen=2 for partial commit). Each candidate
+    // remembers its own prefix length for commit_selected_candidate.
     for (int slen = stripped_len; slen >= 1; --slen) {
+        if (cand_count_ >= kMaxCandidates) break;
         if (slen == skip_slen) continue;
 
         char saved      = stripped[slen];
         stripped[slen]  = '\0';
         int n           = searcher->search(stripped, tmp, kMaxCandidates);
         stripped[slen]  = saved;
+        if (n == 0) continue;
 
-        if (n > 0) {
-            // Map the matched stripped-prefix length back to the original
-            // key_seq_ offset (one past the last orig byte consumed).
-            int orig_prefix_end = strip_to_orig[slen - 1] + 1;
-            int intent = extract_tone_intent(key_seq_, key_seq_len_, orig_prefix_end);
+        int orig_prefix_end = strip_to_orig[slen - 1] + 1;
+        int intent = extract_tone_intent(key_seq_, key_seq_len_, orig_prefix_end);
 
-            auto tone_sort = [intent](const Candidate& a, const Candidate& b) {
-                int ta = tone_tier(a, intent), tb = tone_tier(b, intent);
-                if (ta != tb) return ta < tb;
-                return a.freq > b.freq;
-            };
-            if (n > 1) std::stable_sort(tmp, tmp + n, tone_sort);
+        auto tone_sort = [intent](const Candidate& a, const Candidate& b) {
+            int ta = tone_tier(a, intent), tb = tone_tier(b, intent);
+            if (ta != tb) return ta < tb;
+            return a.freq > b.freq;
+        };
+        if (n > 1) std::stable_sort(tmp, tmp + n, tone_sort);
 
-            if (intent != 0) {
-                int keep = 0;
-                for (int i = 0; i < n; ++i)
-                    if (tone_tier(tmp[i], intent) < 2)
-                        tmp[keep++] = tmp[i];
-                if (keep > 0) n = keep;
+        // Strict tone filter (only applies when user typed a tone marker).
+        if (intent != 0) {
+            int keep = 0;
+            for (int i = 0; i < n; ++i)
+                if (tone_tier(tmp[i], intent) < 2)
+                    tmp[keep++] = tmp[i];
+            if (keep > 0) n = keep;
+        }
+
+        // Record the longest matched prefix (first slen that hits) for
+        // display bold/normal split. Later shorter matches do not
+        // shrink this indicator.
+        if (matched_prefix_keys_ == 0) matched_prefix_keys_ = orig_prefix_end;
+
+        // Merge into candidates_, dedup by word string — the longest-
+        // match instance is kept because it was inserted first.
+        for (int i = 0; i < n && cand_count_ < kMaxCandidates; ++i) {
+            bool dup = false;
+            for (int j = 0; j < cand_count_; ++j) {
+                if (std::strcmp(candidates_[j].word, tmp[i].word) == 0) {
+                    dup = true;
+                    break;
+                }
             }
-
-            cand_count_ = n;
-            std::memcpy(candidates_, tmp, (size_t)n * sizeof(Candidate));
-            matched_prefix_keys_ = orig_prefix_end;
-            break;
+            if (dup) continue;
+            candidates_[cand_count_]             = tmp[i];
+            candidates_prefix_keys_[cand_count_] = (uint8_t)orig_prefix_end;
+            ++cand_count_;
         }
     }
 
