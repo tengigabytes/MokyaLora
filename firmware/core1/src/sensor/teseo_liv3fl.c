@@ -30,7 +30,12 @@
 #define NMEA_FILL_BYTE        0xFFu
 
 #define I2C_TIMEOUT_US        200000u
-#define DRAIN_BUF_SIZE        256u         /* one transaction per tick     */
+#define DRAIN_BUF_SIZE        1024u        /* one transaction per 100 ms tick.
+                                            * Sized for 10 Hz × GGA+RMC+GSV+GSA
+                                            * (~6 KB/s) with slack. Teseo pads
+                                            * unused bytes with 0xFF fill, so
+                                            * over-reading is free. 400 kHz I2C
+                                            * reads 1024 B in ~25 ms. */
 #define LINE_BUF_SIZE         96u          /* NMEA max 82 + CR/LF + slack  */
 #define FIELD_BUF_SIZE        16u
 #define CMD_BUF_SIZE          64u
@@ -250,16 +255,88 @@ static void parse_gsv(const char *type, const char *body)
     }
 }
 
+/* ── ST proprietary command-reply tracking ───────────────────────────── *
+ *
+ * Teseo command dialogue is synchronous: host sends a $PSTM... line,
+ * Teseo replies with $PSTMxxxOK / $PSTMxxxERROR (or a $PSTMSETPAR
+ * value-reply in the case of $PSTMGETPAR). We dispatch these through
+ * the normal NMEA accumulator and publish the outcome via volatiles
+ * so that send_await() below can block on them from the caller's
+ * context without a custom parser state machine.                     */
+
+typedef enum {
+    TESEO_RESP_NONE,
+    TESEO_RESP_SETPAR_OK,
+    TESEO_RESP_SETPAR_ERR,
+    TESEO_RESP_SAVEPAR_OK,
+    TESEO_RESP_SAVEPAR_ERR,
+} teseo_resp_t;
+
+static volatile teseo_resp_t s_last_resp;
+static volatile uint32_t     s_last_resp_count;
+
+/* GETPAR reply capture. Teseo replies to $PSTMGETPAR with a synthetic
+ * $PSTMSETPAR line carrying the current value, distinguishable from the
+ * SETPAR command echo by the absence of a trailing "mode" field. */
+static char              s_last_getpar_value[32];
+static volatile bool     s_last_getpar_valid;
+
+static void dispatch_pstm(const char *body)
+{
+    /* Matches run in decreasing length order so shorter prefixes don't
+     * shadow longer ones (e.g. "PSTMSETPARERROR" before "PSTMSETPAR"). */
+    if (memcmp(body, "PSTMSAVEPARERROR", 16) == 0) {
+        s_last_resp = TESEO_RESP_SAVEPAR_ERR;
+        s_last_resp_count++;
+    } else if (memcmp(body, "PSTMSETPARERROR", 15) == 0) {
+        s_last_resp = TESEO_RESP_SETPAR_ERR;
+        s_last_resp_count++;
+    } else if (memcmp(body, "PSTMSAVEPAROK", 13) == 0) {
+        s_last_resp = TESEO_RESP_SAVEPAR_OK;
+        s_last_resp_count++;
+    } else if (memcmp(body, "PSTMSETPAROK", 12) == 0) {
+        s_last_resp = TESEO_RESP_SETPAR_OK;
+        s_last_resp_count++;
+    } else if (memcmp(body, "PSTMSETPAR,", 11) == 0) {
+        /* GETPAR value-reply vs our own SETPAR command echo:
+         *   GETPAR reply: $PSTMSETPAR,<CB><ID>,<value>*<cs>   (2 fields)
+         *   Our echo    : $PSTMSETPAR,<CB><ID>,<value>[,<mode>]*<cs>
+         *                 — we always send without mode now, but Teseo
+         *                 still echoes what arrived. Distinguish by
+         *                 field count after the command name. */
+        char f_val[32], f_mode[4];
+        bool have_val  = nmea_field(body, 2, f_val,  sizeof f_val)  && f_val[0];
+        bool have_mode = nmea_field(body, 3, f_mode, sizeof f_mode) && f_mode[0];
+        if (have_val && !have_mode) {
+            size_t n = strlen(f_val);
+            if (n >= sizeof s_last_getpar_value) n = sizeof s_last_getpar_value - 1;
+            for (size_t i = 0; i < n; ++i) s_last_getpar_value[i] = f_val[i];
+            s_last_getpar_value[n] = 0;
+            s_last_getpar_valid = true;
+        }
+    }
+    /* Other $PSTM... (CPU, NOISE, NOTCHSTATUS, RF, GPSSUSPENDED, etc.)
+     * are silently dropped — we have no consumers for them yet. */
+}
+
 static void dispatch_line(void)
 {
     if (s_line_len < 8) return;
     if (s_line[0] != '$') return;
     if (!nmea_verify(s_line, s_line_len)) return;
 
-    /* Sentence type = 5 chars starting at s_line+1 (e.g. "GNGGA"). */
+    const char *body = s_line + 1;   /* skip leading '$' */
+
+    /* ST proprietary first (no talker prefix). */
+    if (memcmp(body, "PSTM", 4) == 0) {
+        dispatch_pstm(body);
+        return;
+    }
+
+    /* Standard NMEA: body layout is [talker:2][type:3],fields...
+     * (e.g. "GNGGA,..."). Need at least 5 chars of header. */
     if (s_line_len < 7) return;
-    const char *type = s_line + 1;
-    const char *body = s_line + 1;
+    const char *type = body;
 
     if (memcmp(type + 2, "GGA", 3) == 0)      parse_gga(body);
     else if (memcmp(type + 2, "RMC", 3) == 0) parse_rmc(body);
@@ -351,12 +428,39 @@ bool teseo_poll(void)
     return true;
 }
 
+/* Send `body`, drain I2C, block until the expected OK/ERR reply arrives
+ * or timeout elapses. Returns true only on OK match. */
+static bool send_await(const char *body,
+                       teseo_resp_t ok, teseo_resp_t err,
+                       uint32_t timeout_ms)
+{
+    s_last_resp = TESEO_RESP_NONE;
+    if (!send_nmea(body)) return false;
+
+    TickType_t start   = xTaskGetTickCount();
+    TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
+    for (;;) {
+        (void)teseo_poll();
+        teseo_resp_t r = s_last_resp;
+        if (r == ok)  return true;
+        if (r == err) return false;
+        if ((xTaskGetTickCount() - start) >= timeout) return false;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 bool teseo_set_fix_rate(gnss_rate_t rate)
 {
     if (rate == GNSS_RATE_OFF) {
         if (!send_nmea("PSTMGPSSUSPEND")) return false;
         s_fix_rate = GNSS_RATE_OFF;
         return true;
+    }
+
+    /* Wake the engine first if it was suspended. $PSTMGPSRESTART has no
+     * reply; it's a no-op if the engine is already running. */
+    if (s_fix_rate == GNSS_RATE_OFF) {
+        (void)send_nmea("PSTMGPSRESTART");
     }
 
     const char *body = NULL;
@@ -368,16 +472,53 @@ bool teseo_set_fix_rate(gnss_rate_t rate)
         default: return false;
     }
 
-    /* If the engine was suspended, wake it first. $PSTMGPSRESTART has no
-     * reply, so just fire-and-forget. */
-    if (s_fix_rate == GNSS_RATE_OFF) {
-        (void)send_nmea("PSTMGPSRESTART");
-    }
+    /* 1. Write new period to the Current configuration block (RAM).
+     *    Empirically CDB 303 changes in Current alone do NOT propagate
+     *    to the running engine — it caches the period at init and does
+     *    not re-read. Steps 2/3 are required to effect the change. */
+    if (!send_await(body, TESEO_RESP_SETPAR_OK, TESEO_RESP_SETPAR_ERR, 500))
+        return false;
 
-    if (!send_nmea(body)) return false;
+    /* 2. Persist Current to NVM so the post-SRR reload keeps our value.
+     *    SAVEPAR writes the entire config block, preserving bringup's
+     *    NMEA mask bits. NVM endurance is 10k cycles; runtime rate
+     *    changes happen at user cadence (≤ 100 over device lifetime),
+     *    so this is not a wear concern. */
+    if (!send_await("PSTMSAVEPAR",
+                    TESEO_RESP_SAVEPAR_OK, TESEO_RESP_SAVEPAR_ERR, 1500))
+        return false;
+
+    /* 3. Reboot Teseo so the engine reloads config and picks up the new
+     *    period. $PSTMSRR has no reply. NMEA stream drops out for ~1-2 s
+     *    during reboot; teseo_poll()'s fail_count threshold (50) spans
+     *    ~5 s so online=false will not latch spuriously. */
+    (void)send_nmea("PSTMSRR");
 
     s_fix_rate = rate;
     return true;
+}
+
+bool teseo_get_fix_rate_from_device(char *out, size_t out_size)
+{
+    if (!out || out_size == 0) return false;
+    s_last_getpar_valid = false;
+    if (!send_nmea("PSTMGETPAR,11303")) return false;
+
+    TickType_t start   = xTaskGetTickCount();
+    TickType_t timeout = pdMS_TO_TICKS(500);
+    while ((xTaskGetTickCount() - start) < timeout) {
+        (void)teseo_poll();
+        if (s_last_getpar_valid) {
+            size_t n = strlen(s_last_getpar_value);
+            if (n >= out_size) n = out_size - 1;
+            for (size_t i = 0; i < n; ++i) out[i] = s_last_getpar_value[i];
+            out[n] = 0;
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    out[0] = 0;
+    return false;
 }
 
 gnss_rate_t              teseo_get_fix_rate(void)  { return s_fix_rate; }
