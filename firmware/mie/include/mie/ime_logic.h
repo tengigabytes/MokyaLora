@@ -256,7 +256,10 @@ private:
     int  sym_picker_sel_  = 0;
 
     // SmartEn auto-capitalize after sentence-ending punctuation.
-    bool en_capitalize_next_ = false;
+    // Default-true so the very first SmartEn word after construction
+    // (or abort) is capitalised — treats "fresh ImeLogic" as a sentence
+    // start; did_commit() clears the flag once a letter word lands.
+    bool en_capitalize_next_ = true;
 };
 
 } // namespace mie
