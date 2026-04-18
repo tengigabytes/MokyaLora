@@ -172,6 +172,63 @@ TEST(SmartZh, MatchedPrefixBytesSplitsDisplay) {
     EXPECT_EQ(pending_style(ime), PendingStyle::PrefixBold);
 }
 
+TEST(SmartZh, MultiSyllableTone1MarkerIsTransparent) {
+    // Regression: user types ㄎ ㄞ SPACE ㄕ ˇ (intended: 開始).
+    // Raw key_seq = \x2C\x25\x20\x2D\x22 (5 bytes).
+    // gen_dict.py skips the tone-1 marker when encoding dict keys, so
+    // 開始 is stored at \x2C\x25\x2D\x22 (4 bytes). run_search must
+    // strip the 0x20 bytes from the search key so the multi-syllable
+    // match still succeeds while preserving the tone intent from the
+    // surrounding original key_seq_.
+    //
+    // Simulates a mini dict: 開 (tone 1) at \x2C\x25, 開始 (tone 3 —
+    // gen_dict uses the last-syllable tone for phrases) at
+    // \x2C\x25\x2D\x22.
+    std::vector<uint8_t> dat, val;
+    {
+        // Two keys: \x2C\x25 -> 開(freq 500, tone 1)
+        //           \x2C\x25\x2D\x22 -> 開始(freq 600, tone 3)
+        // val layout:
+        uint32_t v_off_kai = (uint32_t)val.size();
+        push_u16(val, 1);
+        push_u16(val, 500); push_u8(val, 1); push_u8(val, 3);
+        push_str(val, "\xe9\x96\x8b");                       // 開
+        uint32_t v_off_kaishi = (uint32_t)val.size();
+        push_u16(val, 1);
+        push_u16(val, 600); push_u8(val, 3); push_u8(val, 6);
+        push_str(val, "\xe9\x96\x8b\xe5\xa7\x8b");           // 開始
+
+        std::vector<uint8_t> keys_sec;
+        uint32_t k_off_kai    = (uint32_t)keys_sec.size();
+        push_u8(keys_sec, 2);  push_raw(keys_sec, "\x2C\x25", 2);
+        uint32_t k_off_kaishi = (uint32_t)keys_sec.size();
+        push_u8(keys_sec, 4);  push_raw(keys_sec, "\x2C\x25\x2D\x22", 4);
+
+        uint32_t kc  = 2;
+        uint32_t kdo = 16 + kc * 8;
+        push_str(dat, "MIED");
+        push_u16(dat, 2); push_u16(dat, 0);
+        push_u32(dat, kc); push_u32(dat, kdo);
+        push_u32(dat, k_off_kai);    push_u32(dat, v_off_kai);
+        push_u32(dat, k_off_kaishi); push_u32(dat, v_off_kaishi);
+        dat.insert(dat.end(), keys_sec.begin(), keys_sec.end());
+    }
+    TrieSearcher ts;
+    ASSERT_TRUE(ts.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    ImeLogic ime(ts);
+
+    press(ime, MOKYA_KEY_D);        // ㄎ  -> 0x2C
+    press(ime, MOKYA_KEY_9);        // ㄞ  -> 0x25
+    press(ime, MOKYA_KEY_SPACE);    // first-tone marker 0x20
+    press(ime, MOKYA_KEY_G);        // ㄕ  -> 0x2D
+    press(ime, MOKYA_KEY_3);        // ˇ   -> 0x22
+
+    ASSERT_GT(ime.candidate_count(), 0);
+    // Trailing ˇ → intent 34. 開始's tone=3 passes the filter; 開's
+    // tone=1 does not. So 開始 must be the top candidate.
+    EXPECT_STREQ(ime.candidate(0).word, "\xe9\x96\x8b\xe5\xa7\x8b");  // 開始
+}
+
 TEST(SmartZh, ToneTierSortPromotesMatchingTone) {
     // Key 0x21 has two candidates at tone 1 and tone 3. With tone-3 intent
     // (0x22 suffix), the tone-3 candidate should move to position 0.
