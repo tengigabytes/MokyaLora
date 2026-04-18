@@ -1,12 +1,8 @@
-// test_helpers.h — Shared helpers for mie::ImeLogic unit tests
 // SPDX-License-Identifier: MIT
+// test_helpers.h — Shared helpers for mie::ImeLogic v2 unit tests.
 //
-// Physical key references (row, col):
-//   (0,0) ㄅ/ㄉ/1/2   key_index=0  seq_byte=0x21
-//   (1,1) ㄍ/ㄐ/E/R    key_index=6  seq_byte=0x27
-//   (2,3) ㄨ/ㄜ/J/K    key_index=13 seq_byte=0x2E
-//   (4,0) MODE  (4,2) SPACE  (4,3) ，SYM  (4,4) 。.？
-//   (2,5) BACK  (5,4) OK
+// v2 API exercises a listener interface + process_key(ev) with a
+// monotonic timestamp + tick(now_ms) for multi-tap / long-press.
 
 #pragma once
 
@@ -20,48 +16,72 @@
 #include <tuple>
 #include <vector>
 
-// ── Key event helpers ─────────────────────────────────────────────────────
-//
-// Tests are written against physical (row, col) for historical readability.
-// Matrix-to-keycode translation is the same mapping that Core 1's
-// keymap_matrix.h will apply on real hardware (row*6 + col + 1 for 0x01..0x24),
-// so tests continue to exercise the IME through its semantic keycode API.
+// ── Mock listener ────────────────────────────────────────────────────────────
 
-static inline mokya_keycode_t kc_from_rc(uint8_t row, uint8_t col) {
-    return (mokya_keycode_t)(row * 6 + col + 1);
-}
+struct MockListener : public mie::IImeListener {
+    std::string             committed;
+    std::vector<mie::NavDir> cursor_moves;
+    int                     delete_before_count      = 0;
+    int                     composition_changed_count = 0;
 
-static inline mie::KeyEvent kev(uint8_t row, uint8_t col, bool pressed = true) {
-    mie::KeyEvent e;
-    e.keycode = kc_from_rc(row, col);
-    e.pressed = pressed;
-    return e;
-}
+    void on_commit(const char* utf8) override         { committed += utf8; }
+    void on_cursor_move(mie::NavDir d) override       { cursor_moves.push_back(d); }
+    void on_delete_before() override                  { ++delete_before_count; }
+    void on_composition_changed() override            { ++composition_changed_count; }
 
-// Keycode-native variant (for tests that want to reference MOKYA_KEY_* directly).
-static inline mie::KeyEvent kev_kc(mokya_keycode_t kc, bool pressed = true) {
+    void reset() {
+        committed.clear();
+        cursor_moves.clear();
+        delete_before_count = 0;
+        composition_changed_count = 0;
+    }
+};
+
+// ── Key event constructors ──────────────────────────────────────────────────
+
+static inline mie::KeyEvent kev(mokya_keycode_t kc, bool pressed = true, uint32_t now_ms = 0) {
     mie::KeyEvent e;
     e.keycode = kc;
     e.pressed = pressed;
+    e.now_ms  = now_ms;
     return e;
 }
 
-static const mie::KeyEvent kMODE  = kev_kc(MOKYA_KEY_MODE);
-static const mie::KeyEvent kSPACE = kev_kc(MOKYA_KEY_SPACE);
-static const mie::KeyEvent kOK    = kev_kc(MOKYA_KEY_OK);
-static const mie::KeyEvent kBACK  = kev_kc(MOKYA_KEY_BACK);
-static const mie::KeyEvent kSYM3  = kev_kc(MOKYA_KEY_SYM1);  // ，SYM
-static const mie::KeyEvent kSYM4  = kev_kc(MOKYA_KEY_SYM2);  // 。.？
+// "Press" helper: send a single key-down with the given timestamp. Returns
+// the process_key return value. For keys whose release behavior matters
+// (SYM1 long-press vs short-press), build key-up events explicitly.
+static inline bool press(mie::ImeLogic& ime, mokya_keycode_t kc, uint32_t now_ms = 0) {
+    return ime.process_key(kev(kc, true, now_ms));
+}
 
-// ── Binary buffer builders ────────────────────────────────────────────────
+// Physical matrix (row, col) → keycode using the canonical row*6+col+1 map.
+// Useful when readability wants "(0,0) = ㄅㄉ" over MOKYA_KEY_1.
+static inline mokya_keycode_t kc_rc(uint8_t row, uint8_t col) {
+    return (mokya_keycode_t)(row * 6 + col + 1);
+}
 
-// Entry descriptor for build_single: one word per key, v2 format.
+// Convenience accessors for PendingView snapshot.
+static inline const char* pending_str(const mie::ImeLogic& ime) {
+    return ime.pending_view().str;
+}
+static inline int pending_bytes(const mie::ImeLogic& ime) {
+    return ime.pending_view().byte_len;
+}
+static inline mie::PendingStyle pending_style(const mie::ImeLogic& ime) {
+    return ime.pending_view().style;
+}
+static inline int matched_prefix_bytes(const mie::ImeLogic& ime) {
+    return ime.pending_view().matched_prefix_bytes;
+}
+
+// ── Binary buffer builders (unchanged from v1) ──────────────────────────────
+
 struct TEntry {
     const char* key;
     size_t      klen;
     const char* word;
     uint16_t    freq;
-    uint8_t     tone = 1;  // Bopomofo tone 1-5; 0=unknown/English
+    uint8_t     tone = 1;
 };
 
 static inline void push_u8 (std::vector<uint8_t>& v, uint8_t  x) { v.push_back(x); }
@@ -79,7 +99,7 @@ static inline void push_str(std::vector<uint8_t>& v, const char* s) {
     while (*s) v.push_back((uint8_t)*s++);
 }
 
-// Build v2-format MIED buffers: one word per key entry.
+// Build v2-format MIED buffers with one word per key entry (1:1).
 // v2 per-word layout: freq:u16, tone:u8, word_len:u8, word_utf8
 static inline void build_single(const std::vector<TEntry>& entries,
                                  std::vector<uint8_t>& dat,
@@ -89,7 +109,7 @@ static inline void build_single(const std::vector<TEntry>& entries,
 
     for (const auto& e : entries) {
         val_off.push_back((uint32_t)val.size());
-        push_u16(val, 1);                        // word_count = 1
+        push_u16(val, 1);
         size_t wlen = strlen(e.word);
         push_u16(val, e.freq);
         push_u8 (val, e.tone);
@@ -106,7 +126,7 @@ static inline void build_single(const std::vector<TEntry>& entries,
     uint32_t kdo = 16 + kc * 8;
 
     push_str(dat, "MIED");
-    push_u16(dat, 2); push_u16(dat, 0);   // version = 2
+    push_u16(dat, 2); push_u16(dat, 0);
     push_u32(dat, kc); push_u32(dat, kdo);
     for (size_t i = 0; i < entries.size(); ++i) {
         push_u32(dat, key_off[i]);
@@ -115,13 +135,10 @@ static inline void build_single(const std::vector<TEntry>& entries,
     dat.insert(dat.end(), keys_sec.begin(), keys_sec.end());
 }
 
-// Build v1-format MIED buffers: two words for the same key 0x21.
-// Used by CandidateNav tests to exercise multi-candidate navigation.
-// v1 per-word layout: freq:u16, word_len:u8, word_utf8  (no tone byte)
+// Build v1-format MIED with two words sharing key 0x21. Used by candidate-nav tests.
 static inline void build_two_zh(std::vector<uint8_t>& dat, std::vector<uint8_t>& val) {
-    // Two words sharing key 0x21: 巴(freq=500) and 把(freq=400)
     val.clear();
-    push_u16(val, 2);               // word_count
+    push_u16(val, 2);
     push_u16(val, 500); push_u8(val, 3); push_str(val, "\xe5\xb7\xb4");  // 巴
     push_u16(val, 400); push_u8(val, 3); push_str(val, "\xe6\x8a\x8a");  // 把
 
@@ -132,14 +149,13 @@ static inline void build_two_zh(std::vector<uint8_t>& dat, std::vector<uint8_t>&
     uint32_t kc  = 1;
     uint32_t kdo = 16 + kc * 8;
     push_str(dat, "MIED");
-    push_u16(dat, 1); push_u16(dat, 0);   // version = 1
+    push_u16(dat, 1); push_u16(dat, 0);
     push_u32(dat, kc); push_u32(dat, kdo);
-    push_u32(dat, 0); push_u32(dat, 0);   // key_off=0, val_off=0
+    push_u32(dat, 0); push_u32(dat, 0);
     dat.insert(dat.end(), keys_sec.begin(), keys_sec.end());
 }
 
-// Build v2-format MIED buffers: ONE key → multiple words with explicit tones.
-// Used by ToneSort tests.
+// Build v2-format MIED with ONE key and MANY words; used for tone-sort tests.
 static inline void build_multi(
     const char* key, size_t klen,
     const std::vector<std::tuple<const char*, uint16_t, uint8_t>>& words,
@@ -165,9 +181,9 @@ static inline void build_multi(
     uint32_t kc  = 1;
     uint32_t kdo = 16 + kc * 8;
     push_str(dat, "MIED");
-    push_u16(dat, 2); push_u16(dat, 0);   // version = 2
+    push_u16(dat, 2); push_u16(dat, 0);
     push_u32(dat, kc); push_u32(dat, kdo);
-    push_u32(dat, 0);    // key_sec offset
+    push_u32(dat, 0);
     push_u32(dat, v_off);
     dat.insert(dat.end(), keys_sec.begin(), keys_sec.end());
 }

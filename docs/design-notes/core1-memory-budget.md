@@ -74,7 +74,8 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 | `chg` | `src/power/bq25622.c` | 512 | 2048 | tskIDLE+2 | 1 Hz charger poll + watchdog kick. |
 | `sens` | `src/sensor/sensor_task.c` | 512 | 2048 | tskIDLE+2 | Shared tick for LPS22HH / LIS2MDL / LSM6DSV16X. |
 | `gps` | `src/sensor/gps_task.c` | 512 | 2048 | tskIDLE+2 | Teseo-LIV3FL NMEA drain + parser. |
-| **App subtotal** |  | | **28,864 B (28.2 KB)** | | |
+| `ime` (M4) | `src/ime/ime_task.c` (pending) | 1024 | 4096 | tskIDLE+3 | Drain `key_event_t` queue → `ImeLogic::process_key`; 20 ms `tick()` for multi-tap / long-press; own the `ImeLogic` instance as a static (~3 KB, see §4). Single consumer of the KeyEvent queue (FA §4.4); the listener callbacks are re-entrancy-free. |
+| **App subtotal** |  | | **32,960 B (32.2 KB)** | | |
 
 ### 3.2 FreeRTOS internal tasks
 
@@ -97,18 +98,21 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 
 ### 3.4 Totals
 
-| | Bytes |
-|---|---:|
-| §3.1 App tasks | 28,864 |
-| §3.2 Kernel tasks | 4,096 |
-| §3.3 Queues / TCBs / overhead | ~1,420 |
-| **Estimated** | **~34.4 KB** |
-| `configTOTAL_HEAP_SIZE` | 49,152 |
-| **Reserve (target ≥ 20 %)** | **~14.7 KB (30 %)** ✓ |
+| | Bytes (current) | Bytes (post-M4 IME) |
+|---|---:|---:|
+| §3.1 App tasks | 28,864 | 32,960 |
+| §3.2 Kernel tasks | 4,096 | 4,096 |
+| §3.3 Queues / TCBs / overhead | ~1,420 | ~1,510 |
+| **Estimated** | **~34.4 KB** | **~38.6 KB** |
+| `configTOTAL_HEAP_SIZE` | 49,152 | 49,152 |
+| **Reserve (target ≥ 20 %)** | **~14.7 KB (30 %)** ✓ | **~10.5 KB (21 %)** ✓ |
 
-**Measured via SWD (2026-04-18, post-M3.4.5d)**:
+**Measured via SWD (2026-04-18, post-M3.4.5d, before IME task lands)**:
 `xFreeBytesRemaining = 15,008 B (14.65 KB, 30.5 %)`,
 `xMinimumEverFreeBytesRemaining = 15,008 B` — estimate matches reality.
+The post-M4 column is projected; re-measure after `ime` task creation
+and revisit the stack sizing if the IME state ends up larger than
+~3 KB or run_search's prefix-scan working set pushes over 4 KB stack.
 
 ---
 
@@ -123,6 +127,7 @@ Not exhaustive — just the ones large enough (≥ 256 B) to care about.
 | `s_sat_view` | same | ~200 B | Published 32-sat snapshot. |
 | `s_rf_state` | same | ~440 B | RF/signal diagnostics (noise, ANF, CPU, per-sat). Populated only after `teseo_enable_rf_debug_messages(true)` commissioning. |
 | `s_line` | same | 96 B | NMEA line accumulator. |
+| `ImeLogic` instance (M4) | `src/ime/ime_task.c` | ~3 KB | 50 × `Candidate` (~40 B) ≈ 2 KB + 256 B display + 64 B key_seq + ~200 B per-candidate prefix + state. Static to keep the `ime` task stack small. |
 | LVGL draw buffer | `src/display/lvgl_glue.c` | TBD | One partial buffer for ST7789VI; update when the allocation is promoted from `LV_MEM_SIZE` to explicit static. |
 
 Shared-SRAM IPC buffers (SPSC rings + GPS double-buffer) live in the

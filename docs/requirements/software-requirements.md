@@ -285,16 +285,18 @@ MIE is developed as a self-contained sub-library. See
 
 ### 5.1 Input Modes (cycled via MODE key)
 
-Five modes cycle in order: SmartZh → SmartEn → DirectUpper → DirectLower →
-DirectBopomofo → (back to SmartZh).
+Three modes cycle in order: SmartZh → SmartEn → Direct → (back to SmartZh).
 
 | # | `InputMode` enum | Trigger | Description |
 |---|-----------------|---------|-------------|
 | 0 | `SmartZh` | default | Bopomofo prefix prediction; SPACE appends first-tone marker `ˉ` |
-| 1 | `SmartEn` | MODE×1 | Half-keyboard letter-pair English prediction (en_dat.bin) |
-| 2 | `DirectUpper` | MODE×2 | Multi-tap uppercase letters / digits |
-| 3 | `DirectLower` | MODE×3 | Multi-tap lowercase letters |
-| 4 | `DirectBopomofo` | MODE×4 | Single Bopomofo phoneme cycling; single-char candidates only |
+| 1 | `SmartEn` | MODE×1 | English T9 prediction on rows 1–3; Direct multi-tap on the row 0 digit keys |
+| 2 | `Direct`  | MODE×2 | Full multi-tap on all 20 input keys (letter keys cycle a/s/A/S; digit keys cycle 1/2) — no dictionary |
+
+The v1 five-mode design (`DirectUpper`, `DirectLower`, `DirectBopomofo`)
+was retired in the v2 refactor: case-specific direct modes were merged
+into a single cycle and Bopomofo input is served exclusively by
+`SmartZh`.
 
 **Bopomofo disambiguation (SmartZh):** syllable position state machine
 (initial → medial → final → tone) constrains which of the two phonemes on an
@@ -307,13 +309,33 @@ matched prefix set a tone intent (1–5). Candidates are sorted into 4 tiers
 intent is non-zero (strict filter). Falls back to full frequency-sorted list
 when no tier-0/1 candidates exist (v1 dict compatibility).
 
-**English prediction (SmartEn):** each key press produces two candidate
-letters; all valid prefix combinations are searched against an English MIED
-dictionary; results are merged by frequency.
+**English prediction (SmartEn):** prefix scan over the English MIED
+dictionary (half-keyboard ambiguity already encoded at compile time);
+per-candidate de-dup across abbreviation entries; results ranked by
+frequency. Sentence-aware spacing auto-prepends a leading space before
+each word (unless at sentence start) and auto-trails after `, . ? !`
+punctuation, matching standard English typing UX. First word after a
+sentence-ending punctuation or a fresh session is auto-capitalised.
 
-**Direct modes:** no dictionary lookup; `DirectUpper` and `DirectLower` use
-multi-tap cycling; `DirectBopomofo` cycles the two phonemes on each key and
-produces single-character candidates.
+**Direct mode:** no dictionary lookup; 800 ms multi-tap timeout
+(configurable via `ImeLogic::kMultiTapTimeoutMs`); `OK` or a different
+key commits the pending slot; `DEL` cancels without committing. Used
+for passwords, rare characters, or literal alphanumeric content.
+
+### 5.1a Listener / time-injection contract
+
+MIE is platform-agnostic: the UI pushes `KeyEvent`s into
+`ImeLogic::process_key()` and periodic `ImeLogic::tick(now_ms)` calls,
+and MIE fires events back through a caller-supplied `IImeListener`
+(commit, cursor-move, delete-before-cursor, composition-changed). The
+`KeyEvent::now_ms` timestamp must come from a monotonic clock shared
+with the `tick` clock so multi-tap (800 ms) and long-press (500 ms)
+detection stay coherent across mixed producers (hardware keypad
+scanner, USB Control injection).
+
+See `docs/design-notes/mie-architecture.md §7` for the full API
+specification and key routing contract (BACK reserved for UI layer;
+DEL MIE-exclusive; DPAD candidates-vs-cursor split).
 
 ### 5.2 Smart Correction
 
