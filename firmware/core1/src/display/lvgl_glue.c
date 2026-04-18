@@ -34,6 +34,7 @@
 #include "lvgl_glue.h"
 #include "display.h"
 #include "keypad_view.h"
+#include "lm27965.h"
 
 #include "lvgl.h"
 
@@ -83,6 +84,11 @@ static void lvgl_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
+
+    /* Panel is up; bring backlight on. Duty code 0x16 ≈ 40 % — the boot
+     * default inherited from Rev A bringup. UI can change later via
+     * lm27965_set_tft_backlight(). */
+    (void)lm27965_init(0x16);
 
     lv_init();
     lv_tick_set_cb(lvgl_tick_get_ms);

@@ -1,26 +1,23 @@
 /* display.c — Core 1 ST7789VI display driver: PIO + DMA bus, panel init,
- * partial flush, TE polling, and LM27965 backlight bring-up.
+ * partial flush, TE polling.
  *
  * The PIO program (tft_8080.pio) drives nWR + D[7:0]; nCS, DCX, nRST, TE stay
  * on the SIO so they can change at command/data boundaries without spending
  * PIO bandwidth. A single DMA channel pushes pixel/parameter bytes into the
  * SM TX FIFO with DREQ paced by the PIO autopull.
  *
- * Backlight is provisional — the LM27965 setup mirrors the bringup Step 4
- * sequence (Bank A code 0x16, GP register 0x21 → ENA=1) and reuses the
- * shared bus-B I2C bring-up. A dedicated power / backlight subsystem will
- * replace this in a later milestone.
+ * Backlight is owned by firmware/core1/src/power/lm27965.c — callers
+ * invoke display_init() first (panel up, backlight still off) and then
+ * lm27965_init() to bring the backlight up cleanly.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "display.h"
 #include "st7789vi.h"
-#include "i2c_bus.h"
 
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
-#include "hardware/i2c.h"
 #include "hardware/pio.h"
 #include "pico/stdlib.h"
 
@@ -37,13 +34,6 @@
 /* ── Bus + PIO selection ─────────────────────────────────────────────────── */
 #define DISPLAY_PIO          pio1
 #define DISPLAY_PIO_CLKDIV   2.0f   /* 53 ns write cycle @ 150 MHz sys_clk */
-
-/* ── LM27965 backlight (provisional — M3.4.3 will move this to src/power) ── */
-#define LM27965_ADDR      0x36u
-#define LM27965_REG_GP    0x10u
-#define LM27965_REG_BANKA 0xA0u
-#define LM27965_BANKA_DUTY 0x16u   /* code 22 (~40%) — matches bringup firmware */
-#define LM27965_GP_TFT_ON  0x21u   /* ENA(bit0)=1, reserved bit5 stays 1 */
 
 /* ── Driver state ────────────────────────────────────────────────────────── */
 static uint  s_sm;
@@ -116,26 +106,6 @@ static dma_channel_config make_pixel_cfg(bool read_inc, bool ring_2b)
     return cfg;
 }
 
-/* ── Backlight (LM27965 on power bus = i2c0) ─────────────────────────────── */
-
-static void backlight_init(void)
-{
-    /* Power + sensor bus share the i2c1 peripheral (both GPIO pairs are
-     * I2C1-only on RP2350). i2c_bus_acquire() takes the mutex and muxes the
-     * POWER pair in. Until the LM27965 refactor (M3.4.3) this is the only
-     * power-bus consumer, so acquire always succeeds immediately. */
-    i2c_inst_t *bus = i2c_bus_acquire(MOKYA_I2C_POWER, portMAX_DELAY);
-
-    const uint8_t set_duty[2] = { LM27965_REG_BANKA, LM27965_BANKA_DUTY };
-    const uint8_t enable_a[2] = { LM27965_REG_GP,    LM27965_GP_TFT_ON  };
-
-    /* Order: duty first, GP second — matches bringup_tft.c and led_apply(). */
-    (void)i2c_write_timeout_us(bus, LM27965_ADDR, set_duty, 2, false, 50000);
-    (void)i2c_write_timeout_us(bus, LM27965_ADDR, enable_a, 2, false, 50000);
-
-    i2c_bus_release(MOKYA_I2C_POWER);
-}
-
 /* ── Public API ──────────────────────────────────────────────────────────── */
 
 bool display_init(void)
@@ -179,7 +149,9 @@ bool display_init(void)
 
     st7789_init(bus_send_cmd, bus_send_data);
 
-    backlight_init();
+    /* Backlight is owned by the LM27965 driver — lvgl_task calls
+     * lm27965_init() after this function returns. Panel is initialised
+     * fully before the backlight turns on, avoiding a flash of garbage. */
     return true;
 }
 
