@@ -151,57 +151,103 @@ int TrieSearcher::search(const char* key_utf8,
                          Candidate*  out,
                          int         max_results) const {
     if (!loaded_ || !key_utf8 || !out || max_results <= 0) return 0;
+    const size_t qlen = strlen(key_utf8);
+    if (qlen == 0) return 0;
 
-    // Binary search over the sorted index table.
-    int lo = 0, hi = static_cast<int>(key_count_) - 1, found = -1;
-    while (lo <= hi) {
+    // Prefix search: return candidates whose dict key is equal to or
+    // longer than (but starts with) `key_utf8`. The Chinese dict stores
+    // explicit per-syllable abbreviation entries, so an exact match at
+    // short keys is common; the English dict stores only full-word keys,
+    // so the prefix scan is what lets partial input ("aoo" → "application")
+    // surface candidates incrementally.
+    //
+    // Algorithm:
+    //   1. Binary search for the lowest index `lo` where key[lo] >= query.
+    //   2. Scan forward while key[i] starts with query, inserting each
+    //      word into a size-capped top-N buffer sorted by freq descending.
+    //   3. Entries are lex-sorted, so the first key whose prefix diverges
+    //      terminates the scan.
+    int lo = 0, hi = static_cast<int>(key_count_);
+    while (lo < hi) {
         const int mid = lo + (hi - lo) / 2;
-        const int cmp = compare_key(static_cast<uint32_t>(mid), key_utf8);
-        if (cmp == 0) { found = mid; break; }
-        else if (cmp < 0) lo = mid + 1;
-        else              hi = mid - 1;
+        if (compare_key(static_cast<uint32_t>(mid), key_utf8) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
     }
-    if (found < 0) return 0;
 
-    // Decode the ValueRecord in dict_values.bin.
-    uint32_t vo = get_val_off(static_cast<uint32_t>(found));
-    if (vo + 2u > val_size_) return 0;
+    const bool     has_tone  = (version_ == 2);
+    const uint32_t hdr_bytes = has_tone ? 4u : 3u;   // per-word header size
 
-    uint16_t word_count = 0;
-    memcpy(&word_count, val_ + vo, 2);
-    vo += 2;
+    int collected = 0;
+    for (int i = lo; i < static_cast<int>(key_count_); ++i) {
+        // Read this entry's key length + bytes.
+        const uint32_t entry_off = kHeaderSize + static_cast<uint32_t>(i) * kEntrySize;
+        uint32_t ko = 0;
+        memcpy(&ko, dat_ + entry_off, 4);
+        const uint32_t kpos_len = keys_data_off_ + ko;
+        if (kpos_len + 1 > dat_size_) break;
+        const uint8_t  klen = dat_[kpos_len];
+        const uint32_t kpos = kpos_len + 1;
+        if (kpos + klen > dat_size_) break;
+        const uint8_t* kbuf = dat_ + kpos;
 
-    // v2 adds a tone byte between freq and word_len:
-    //   v1: [freq:u16][word_len:u8][word_utf8...]
-    //   v2: [freq:u16][tone:u8][word_len:u8][word_utf8...]
-    const bool has_tone = (version_ == 2);
-    const uint32_t hdr_bytes = has_tone ? 4u : 3u;  // per-word header size
+        // Prefix check. Keys sort lex, so once a key fails the prefix test
+        // every later key also fails.
+        if (static_cast<size_t>(klen) < qlen) break;
+        if (memcmp(kbuf, key_utf8, qlen) != 0)  break;
 
-    int n = 0;
-    for (int i = 0; i < static_cast<int>(word_count) && n < max_results; ++i) {
-        if (vo + hdr_bytes > val_size_) break;
+        // Decode ValueRecord for this entry and merge words into the top-N.
+        uint32_t vo = get_val_off(static_cast<uint32_t>(i));
+        if (vo + 2u > val_size_) continue;
+        uint16_t word_count = 0;
+        memcpy(&word_count, val_ + vo, 2);
+        vo += 2;
 
-        uint16_t freq = 0;
-        memcpy(&freq, val_ + vo, 2);
-        const uint8_t tone = has_tone ? val_[vo + 2] : 0;
-        const uint8_t wlen = val_[vo + (has_tone ? 3u : 2u)];
-        vo += hdr_bytes;
+        for (int w = 0; w < static_cast<int>(word_count); ++w) {
+            if (vo + hdr_bytes > val_size_) break;
 
-        if (vo + wlen > val_size_) break;
+            uint16_t freq = 0;
+            memcpy(&freq, val_ + vo, 2);
+            const uint8_t tone = has_tone ? val_[vo + 2] : 0;
+            const uint8_t wlen = val_[vo + (has_tone ? 3u : 2u)];
+            vo += hdr_bytes;
 
-        if (wlen == 0 || wlen >= static_cast<uint8_t>(kCandidateMaxBytes)) {
-            vo += wlen;  // skip oversized or zero-length entries
-            continue;
+            if (vo + wlen > val_size_) break;
+            if (wlen == 0 || wlen >= static_cast<uint8_t>(kCandidateMaxBytes)) {
+                vo += wlen;
+                continue;
+            }
+
+            // Insert (word, freq) into out[] keeping freq-descending order.
+            // Ties preserve insertion (lex-key) order because the shift
+            // condition uses strict <.
+            if (collected < max_results) {
+                int pos = collected;
+                while (pos > 0 && out[pos - 1].freq < freq) {
+                    out[pos] = out[pos - 1];
+                    --pos;
+                }
+                memcpy(out[pos].word, val_ + vo, wlen);
+                out[pos].word[wlen] = '\0';
+                out[pos].freq = freq;
+                out[pos].tone = tone;
+                ++collected;
+            } else if (freq > out[collected - 1].freq) {
+                int pos = collected - 1;
+                while (pos > 0 && out[pos - 1].freq < freq) {
+                    out[pos] = out[pos - 1];
+                    --pos;
+                }
+                memcpy(out[pos].word, val_ + vo, wlen);
+                out[pos].word[wlen] = '\0';
+                out[pos].freq = freq;
+                out[pos].tone = tone;
+            }
+            vo += wlen;
         }
-
-        memcpy(out[n].word, val_ + vo, wlen);
-        out[n].word[wlen] = '\0';
-        out[n].freq       = freq;
-        out[n].tone       = tone;
-        vo += wlen;
-        ++n;
     }
-    return n;
+    return collected;
 }
 
 } // namespace mie
