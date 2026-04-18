@@ -119,6 +119,11 @@ void ImeLogic::multitap_press(mokya_keycode_t kc, int slot_count,
 
 void ImeLogic::multitap_commit() {
     if (multitap_.keycode == MOKYA_KEY_NONE) return;
+
+    // Capture the committed key before resetting state so we can apply
+    // post-commit formatting (trailing space for SmartEn punctuation).
+    mokya_keycode_t committed_kc = multitap_.keycode;
+
     // The current display_ contents are the label being committed.
     if (display_len_ > 0) {
         // Copy out before did_commit / on_commit so side effects on state
@@ -132,6 +137,14 @@ void ImeLogic::multitap_commit() {
     display_clear();
     pending_style_        = PendingStyle::None;
     matched_prefix_bytes_ = 0;
+
+    // English sentence convention: SmartEn sentence-punctuation (SYM2
+    // cycles . ? !) auto-appends a trailing space. Direct-mode letter
+    // multi-tap and SmartEn digit multi-tap are literal-content input
+    // (passwords, numbers) and keep no trailing space.
+    if (committed_kc == MOKYA_KEY_SYM2 && mode_ == InputMode::SmartEn) {
+        emit_commit(" ");
+    }
 }
 
 // ── SYM1 — short-press single char / long-press opens picker ────────────────
@@ -156,9 +169,14 @@ bool ImeLogic::handle_sym1(bool pressed, uint32_t now_ms) {
         return true;
     }
 
-    // Short-press: commit any multi-tap pending, then emit ，/, for current mode.
+    // Short-press: commit any multi-tap pending, then emit ，/, for current
+    // mode. SmartEn appends a trailing space so the punctuation follows
+    // the English sentence convention ("Apple, World.").
     if (multitap_.keycode != MOKYA_KEY_NONE) multitap_commit();
-    const char* s = (mode_ == InputMode::SmartZh) ? kSym1ZhShort : kSym1EnShort;
+    const char* s;
+    if (mode_ == InputMode::SmartZh)       s = kSym1ZhShort;   // 「，」
+    else if (mode_ == InputMode::SmartEn)  s = ", ";           // ASCII + space
+    else                                   s = kSym1EnShort;   // Direct: ","
     emit_commit(s);
     notify_changed();
     return true;

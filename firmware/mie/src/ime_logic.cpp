@@ -52,16 +52,13 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
         return handle_dpad(kc);
 
     // OK — commit selected candidate, or commit multi-tap pending, or let
-    // the UI handle it as Enter/confirm. SmartEn auto-appends a space
-    // after a candidate commit, mirroring SPACE behaviour so OK-driven
-    // word input keeps the same "word + space" cadence.
+    // the UI handle it as Enter/confirm. OK does NOT auto-append a
+    // trailing space in SmartEn: the English-sentence convention is
+    // that the next word carries its own leading space (handled in
+    // commit_selected_candidate), so punctuation can follow a word
+    // immediately without creating "Apple ," artifacts.
     if (kc == MOKYA_KEY_OK) {
-        if (has_candidates()) {
-            commit_selected_candidate();
-            if (mode_ == InputMode::SmartEn) emit_commit(" ");
-            notify_changed();
-            return true;
-        }
+        if (has_candidates()) { commit_selected_candidate(); notify_changed(); return true; }
         if (multitap_.keycode != MOKYA_KEY_NONE) { multitap_commit(); notify_changed(); return true; }
         return false;
     }
@@ -132,7 +129,8 @@ void ImeLogic::abort() {
     sym1_                 = {};
     sym_picker_open_      = false;
     sym_picker_sel_       = 0;
-    en_capitalize_next_   = true;   // treat abort as a new sentence start
+    en_capitalize_next_        = true;   // treat abort as new sentence start
+    en_last_ended_with_space_  = true;
 
     if (had_state) notify_changed();
 }

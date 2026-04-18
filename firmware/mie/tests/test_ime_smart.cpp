@@ -456,10 +456,10 @@ TEST(SmartEn, PrefixScanFindsLongerWords) {
     EXPECT_STREQ(ime.candidate(0).word, "application");
 }
 
-TEST(SmartEn, AutoCapitalizeFirstWordFromFreshContext) {
-    // Default en_capitalize_next_ starts true so the first SmartEn word
-    // after construction caps automatically — matches the UX of starting
-    // to type in an empty text field.
+TEST(SmartEn, FirstWordNoPrependCapitalized) {
+    // Fresh ImeLogic: en_last_ended_with_space_ defaults true (treated as
+    // sentence start), so the first SmartEn word commit does NOT prepend
+    // a space. en_capitalize_next_ defaults true, so it IS capitalised.
     std::vector<uint8_t> dat, val;
     build_single({ { "\x2B\x2A\x2A\x2F\x27", 5, "apple", 100, 0 } }, dat, val);
     TrieSearcher en;
@@ -475,10 +475,14 @@ TEST(SmartEn, AutoCapitalizeFirstWordFromFreshContext) {
     press(ime, MOKYA_KEY_L);
     press(ime, MOKYA_KEY_E);
     press(ime, MOKYA_KEY_OK);
-    EXPECT_NE(L.committed.find("Apple "), std::string::npos);   // cap + auto-space
+    EXPECT_EQ(L.committed, "Apple");    // cap, no leading, no trailing
 }
 
-TEST(SmartEn, OKAutoAppendsSpace) {
+TEST(SmartEn, SecondWordPrependsLeadingSpace) {
+    // Second-and-later word commits auto-prepend a leading space in
+    // SmartEn (English sentence separator). The previous letter word
+    // did not end with a space, so the new word's commit stream emits
+    // " " then the word.
     std::vector<uint8_t> dat, val;
     build_single({ { "\x2B\x2A\x2A\x2F\x27", 5, "apple", 100, 0 } }, dat, val);
     TrieSearcher en;
@@ -488,26 +492,42 @@ TEST(SmartEn, OKAutoAppendsSpace) {
     MockListener L; ime.set_listener(&L);
 
     press(ime, MOKYA_KEY_MODE);
-    press(ime, MOKYA_KEY_A);
-    press(ime, MOKYA_KEY_O);
-    press(ime, MOKYA_KEY_O);
-    press(ime, MOKYA_KEY_L);
-    press(ime, MOKYA_KEY_E);
-    press(ime, MOKYA_KEY_OK);
-    // Commit stream ends with a space, matching SPACE-commit cadence.
-    ASSERT_GT(L.committed.size(), 0U);
-    EXPECT_EQ(L.committed.back(), ' ');
+    press(ime, MOKYA_KEY_A); press(ime, MOKYA_KEY_O); press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L); press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);           // "Apple"
+    press(ime, MOKYA_KEY_A); press(ime, MOKYA_KEY_O); press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L); press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);           // " apple" (leading space + lowercase)
+    EXPECT_EQ(L.committed, "Apple apple");
+}
+
+TEST(SmartEn, PunctuationTrailingSpace) {
+    // SmartEn SYM1 short-press emits "," plus trailing space; SYM2
+    // multi-tap commit emits the punctuation plus trailing space.
+    // Chinese / Direct modes do NOT get the trailing space.
+    std::vector<uint8_t> dat, val;
+    TrieSearcher zh; TrieSearcher en;
+    (void)dat; (void)val;
+    ImeLogic ime(zh, &en);
+    MockListener L; ime.set_listener(&L);
+
+    press(ime, MOKYA_KEY_MODE);         // SmartEn
+    ime.process_key(kev(MOKYA_KEY_SYM1, true, 0));
+    ime.process_key(kev(MOKYA_KEY_SYM1, false, 50));
+    EXPECT_EQ(L.committed, ", ");       // , + trailing space
+
+    L.reset();
+    ime.process_key(kev(MOKYA_KEY_SYM2, true, 100));
+    ime.process_key(kev(MOKYA_KEY_SYM2, false, 101));
+    ASSERT_TRUE(ime.tick(1000));        // timeout → multitap_commit
+    EXPECT_EQ(L.committed, ". ");       // . + trailing space
 }
 
 TEST(SmartEn, AutoCapitalizeAfterPeriod) {
-    // Regression: en_capitalize_next_ was set by did_commit() but never
-    // consumed — commit_selected_candidate now uppercases the first
-    // letter of a SmartEn word commit when the flag is raised by a
-    // preceding ./?/! punctuation.
-    //
-    // Mini dict: "apple" stored at its T9 key (5 bytes).
+    // End-to-end: a SmartEn "." commit (via SYM2 multi-tap timeout)
+    // emits ". ", and the NEXT word commit capitalizes without any
+    // explicit leading prepend (flag=true from trailing space).
     std::vector<uint8_t> dat, val;
-    // apple T9: a → 0x2B, p → 0x2A, p → 0x2A, l → 0x2F, e → 0x27.
     build_single({ { "\x2B\x2A\x2A\x2F\x27", 5, "apple", 100, 0 } }, dat, val);
     TrieSearcher en;
     ASSERT_TRUE(en.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
@@ -515,30 +535,27 @@ TEST(SmartEn, AutoCapitalizeAfterPeriod) {
     ImeLogic ime(zh, &en);
     MockListener L; ime.set_listener(&L);
 
-    press(ime, MOKYA_KEY_MODE);   // SmartZh → SmartEn
+    press(ime, MOKYA_KEY_MODE);
 
-    // Commit a period directly (short press SYM2 and timeout would emit
-    // ".", but simpler: call into emit via a raw sequence). The SYM2
-    // multi-tap path is covered in test_ime_direct; here we just need
-    // a period commit to raise the flag.
-    //
-    // Press SYM2 once + tick past 800 ms → commits ".".
-    ime.process_key(kev(MOKYA_KEY_SYM2, true, 0));
-    ime.process_key(kev(MOKYA_KEY_SYM2, false, 1));
-    ASSERT_TRUE(ime.tick(900));     // multi-tap timeout
-    ASSERT_EQ(L.committed, ".");
+    // First word: "Apple" (cap, no trailing).
+    press(ime, MOKYA_KEY_A); press(ime, MOKYA_KEY_O); press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L); press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);
+    ASSERT_EQ(L.committed, "Apple");
 
-    // Now type "apple" and commit. First letter should be uppercase.
-    press(ime, MOKYA_KEY_A, 1000);  // a
-    press(ime, MOKYA_KEY_O, 1001);  // p (primary letter on O)
-    press(ime, MOKYA_KEY_O, 1002);  // p
-    press(ime, MOKYA_KEY_L, 1003);  // l
-    press(ime, MOKYA_KEY_E, 1004);  // e
-    ASSERT_GT(ime.candidate_count(), 0);
-    press(ime, MOKYA_KEY_OK, 1005);
+    // Period via SYM2 multi-tap + timeout → ". "
+    ime.process_key(kev(MOKYA_KEY_SYM2, true, 100));
+    ime.process_key(kev(MOKYA_KEY_SYM2, false, 101));
+    ASSERT_TRUE(ime.tick(1000));
+    EXPECT_EQ(L.committed, "Apple. ");
 
-    // The committed letter word should be capitalized.
-    EXPECT_NE(L.committed.find("Apple"), std::string::npos);
+    // Second word: capitalised (flag from "."), no leading space (flag
+    // from trailing space after ".").
+    press(ime, MOKYA_KEY_A, 1100); press(ime, MOKYA_KEY_O, 1110);
+    press(ime, MOKYA_KEY_O, 1120); press(ime, MOKYA_KEY_L, 1130);
+    press(ime, MOKYA_KEY_E, 1140);
+    press(ime, MOKYA_KEY_OK, 1150);
+    EXPECT_EQ(L.committed, "Apple. Apple");
 }
 
 TEST(SmartEn, TABAdvancesPage) {

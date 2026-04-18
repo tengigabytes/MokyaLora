@@ -161,14 +161,16 @@ TEST(Sym1, ShortPressZhEmitsFullWidthComma) {
     EXPECT_EQ(L.committed, "\xef\xbc\x8c");  // ，
 }
 
-TEST(Sym1, ShortPressEnEmitsAsciiComma) {
+TEST(Sym1, ShortPressEnEmitsAsciiCommaWithTrailingSpace) {
+    // SmartEn punctuation follows English sentence convention: ',' is
+    // immediately followed by a space so the next word joins cleanly.
     TrieSearcher ts;
     ImeLogic ime(ts);
     MockListener L; ime.set_listener(&L);
     press(ime, MOKYA_KEY_MODE);  // SmartEn
     ime.process_key(kev(MOKYA_KEY_SYM1, true, 100));
     ime.process_key(kev(MOKYA_KEY_SYM1, false, 150));
-    EXPECT_EQ(L.committed, ",");
+    EXPECT_EQ(L.committed, ", ");
 }
 
 TEST(Sym1, LongPressTickOpensPicker) {

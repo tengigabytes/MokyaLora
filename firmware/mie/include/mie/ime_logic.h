@@ -260,6 +260,16 @@ private:
     // (or abort) is capitalised — treats "fresh ImeLogic" as a sentence
     // start; did_commit() clears the flag once a letter word lands.
     bool en_capitalize_next_ = true;
+
+    // SmartEn space-aware spacing: true when the last commit output
+    // ended with a space-like character (ASCII space, U+3000). Used by
+    // commit_selected_candidate to auto-prepend a leading space before
+    // a word commit unless the text already ends with one (English
+    // sentence convention: "Hello World, Apple." — space before each
+    // new word, no space before punctuation, trailing space after
+    // , . ? !). Default-true so the very first word after construction
+    // does NOT prepend (sentence-start).
+    bool en_last_ended_with_space_ = true;
 };
 
 } // namespace mie

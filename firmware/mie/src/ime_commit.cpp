@@ -30,6 +30,15 @@ void ImeLogic::commit_selected_candidate() {
         word[0] = (char)(word[0] - 'a' + 'A');
     }
 
+    // SmartEn leading-space: English sentence convention requires a
+    // space separator between words. If the text already ends with a
+    // space (explicit SPACE, punctuation's auto-trail, or a fresh
+    // sentence start), no prepend; otherwise emit a standalone space
+    // commit first so the UI inserts it at the cursor before the word.
+    if (mode_ == InputMode::SmartEn && !en_last_ended_with_space_) {
+        emit_commit(" ");
+    }
+
     // Each candidate can match a different prefix length (longer-match
     // entries come from a longer slen than shorter-match ones); use the
     // per-candidate count instead of the global matched_prefix_keys_.
@@ -75,17 +84,36 @@ void ImeLogic::did_commit(const char* utf8) {
     if (!utf8 || !utf8[0]) return;
     const int len = (int)std::strlen(utf8);
 
+    // Track "last commit ended with a space-like char" for SmartEn
+    // auto-prepend logic. Checked before the early-return for a pure-
+    // space commit so both single-space and word-plus-trailing-space
+    // commits update the flag correctly.
+    bool ends_with_space =
+        (utf8[len - 1] == ' ') ||
+        (len >= 3 &&
+         std::memcmp(utf8 + len - 3, "\xe3\x80\x80", 3) == 0);   // U+3000
+    en_last_ended_with_space_ = ends_with_space;
+
     // Spaces don't change capitalization state.
     if (len == 1 && utf8[0] == ' ')                          return;
     if (len == 3 && std::memcmp(utf8, "\xe3\x80\x80", 3) == 0) return;  // U+3000
 
     // Sentence-ending punctuation → capitalize the next SmartEn word.
-    const char* e = utf8 + len;
-    bool ends_sentence =
-        (e[-1] == '.' || e[-1] == '?' || e[-1] == '!') ||
-        (len >= 3 && (std::memcmp(e - 3, "\xe3\x80\x82", 3) == 0 ||  // 。
-                      std::memcmp(e - 3, "\xef\xbc\x9f", 3) == 0 ||  // ？
-                      std::memcmp(e - 3, "\xef\xbc\x81", 3) == 0));   // ！
+    // Look for the punctuation at the last non-space position (so
+    // "., " or ". " both trigger capitalisation).
+    int end_pos = len - 1;
+    while (end_pos > 0 && utf8[end_pos] == ' ') --end_pos;
+    bool ends_sentence = false;
+    if (end_pos >= 0) {
+        char c = utf8[end_pos];
+        if (c == '.' || c == '?' || c == '!') ends_sentence = true;
+        if (!ends_sentence && end_pos >= 2 &&
+            (std::memcmp(utf8 + end_pos - 2, "\xe3\x80\x82", 3) == 0 ||  // 。
+             std::memcmp(utf8 + end_pos - 2, "\xef\xbc\x9f", 3) == 0 ||  // ？
+             std::memcmp(utf8 + end_pos - 2, "\xef\xbc\x81", 3) == 0)) { // ！
+            ends_sentence = true;
+        }
+    }
     en_capitalize_next_ = ends_sentence;
 }
 
