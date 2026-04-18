@@ -302,6 +302,38 @@ TEST(SmartEn, DigitAfterLetterCommitsLetterFirst) {
     EXPECT_STREQ(pending_str(ime), "1");
 }
 
+TEST(SmartEn, PrefixScanFindsLongerWords) {
+    // Regression: EN dict stores only full-word keys (no abbreviation
+    // entries). TrieSearcher::search must scan forward and include
+    // candidates from keys that START WITH the query, so partial input
+    // can surface longer words.
+    //
+    // Dict: "application" stored at its full T9 key (11 bytes). User
+    // types only the first 3 bytes — the word should still be reachable.
+    std::vector<uint8_t> dat, val;
+    // application T9 key: a-p-p-l-i-c-a-t-i-o-n
+    //   a → key A (slot 10) = 0x2B
+    //   p → key O (slot 9)  = 0x2A
+    //   l → key L (slot 14) = 0x2F
+    //   i → key U (slot 8)  = 0x29
+    //   c → key C (slot 16) = 0x31
+    //   t → key T (slot 7)  = 0x28
+    //   n → key B (slot 17) = 0x32
+    build_single({ { "\x2B\x2A\x2A\x2F\x29\x31\x2B\x28\x29\x2A\x32", 11,
+                     "application", 7420, 0 } }, dat, val);
+    TrieSearcher en;
+    ASSERT_TRUE(en.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    TrieSearcher zh;
+    ImeLogic ime(zh, &en);
+
+    press(ime, MOKYA_KEY_MODE);   // SmartZh → SmartEn
+    press(ime, MOKYA_KEY_A);      // "a"
+    press(ime, MOKYA_KEY_O);      // "p" (primary letter on key O)
+    press(ime, MOKYA_KEY_O);      // "p"
+    ASSERT_GT(ime.candidate_count(), 0);
+    EXPECT_STREQ(ime.candidate(0).word, "application");
+}
+
 TEST(SmartEn, TABAdvancesPage) {
     // Use a letter key (Q = slot 5 → byte 0x26) for dict lookup; row-0
     // digit keys don't hit the dict in SmartEn.
