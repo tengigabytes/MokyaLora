@@ -456,6 +456,48 @@ TEST(SmartEn, PrefixScanFindsLongerWords) {
     EXPECT_STREQ(ime.candidate(0).word, "application");
 }
 
+TEST(SmartEn, AutoCapitalizeAfterPeriod) {
+    // Regression: en_capitalize_next_ was set by did_commit() but never
+    // consumed — commit_selected_candidate now uppercases the first
+    // letter of a SmartEn word commit when the flag is raised by a
+    // preceding ./?/! punctuation.
+    //
+    // Mini dict: "apple" stored at its T9 key (5 bytes).
+    std::vector<uint8_t> dat, val;
+    // apple T9: a → 0x2B, p → 0x2A, p → 0x2A, l → 0x2F, e → 0x27.
+    build_single({ { "\x2B\x2A\x2A\x2F\x27", 5, "apple", 100, 0 } }, dat, val);
+    TrieSearcher en;
+    ASSERT_TRUE(en.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    TrieSearcher zh;
+    ImeLogic ime(zh, &en);
+    MockListener L; ime.set_listener(&L);
+
+    press(ime, MOKYA_KEY_MODE);   // SmartZh → SmartEn
+
+    // Commit a period directly (short press SYM2 and timeout would emit
+    // ".", but simpler: call into emit via a raw sequence). The SYM2
+    // multi-tap path is covered in test_ime_direct; here we just need
+    // a period commit to raise the flag.
+    //
+    // Press SYM2 once + tick past 800 ms → commits ".".
+    ime.process_key(kev(MOKYA_KEY_SYM2, true, 0));
+    ime.process_key(kev(MOKYA_KEY_SYM2, false, 1));
+    ASSERT_TRUE(ime.tick(900));     // multi-tap timeout
+    ASSERT_EQ(L.committed, ".");
+
+    // Now type "apple" and commit. First letter should be uppercase.
+    press(ime, MOKYA_KEY_A, 1000);  // a
+    press(ime, MOKYA_KEY_O, 1001);  // p (primary letter on O)
+    press(ime, MOKYA_KEY_O, 1002);  // p
+    press(ime, MOKYA_KEY_L, 1003);  // l
+    press(ime, MOKYA_KEY_E, 1004);  // e
+    ASSERT_GT(ime.candidate_count(), 0);
+    press(ime, MOKYA_KEY_OK, 1005);
+
+    // The committed letter word should be capitalized.
+    EXPECT_NE(L.committed.find("Apple"), std::string::npos);
+}
+
 TEST(SmartEn, TABAdvancesPage) {
     // Use a letter key (Q = slot 5 → byte 0x26) for dict lookup; row-0
     // digit keys don't hit the dict in SmartEn.
