@@ -456,6 +456,49 @@ TEST(SmartEn, PrefixScanFindsLongerWords) {
     EXPECT_STREQ(ime.candidate(0).word, "application");
 }
 
+TEST(SmartEn, AutoCapitalizeFirstWordFromFreshContext) {
+    // Default en_capitalize_next_ starts true so the first SmartEn word
+    // after construction caps automatically — matches the UX of starting
+    // to type in an empty text field.
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x2B\x2A\x2A\x2F\x27", 5, "apple", 100, 0 } }, dat, val);
+    TrieSearcher en;
+    ASSERT_TRUE(en.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    TrieSearcher zh;
+    ImeLogic ime(zh, &en);
+    MockListener L; ime.set_listener(&L);
+
+    press(ime, MOKYA_KEY_MODE);   // SmartZh → SmartEn
+    press(ime, MOKYA_KEY_A);
+    press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L);
+    press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_NE(L.committed.find("Apple "), std::string::npos);   // cap + auto-space
+}
+
+TEST(SmartEn, OKAutoAppendsSpace) {
+    std::vector<uint8_t> dat, val;
+    build_single({ { "\x2B\x2A\x2A\x2F\x27", 5, "apple", 100, 0 } }, dat, val);
+    TrieSearcher en;
+    ASSERT_TRUE(en.load_from_memory(dat.data(), dat.size(), val.data(), val.size()));
+    TrieSearcher zh;
+    ImeLogic ime(zh, &en);
+    MockListener L; ime.set_listener(&L);
+
+    press(ime, MOKYA_KEY_MODE);
+    press(ime, MOKYA_KEY_A);
+    press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_O);
+    press(ime, MOKYA_KEY_L);
+    press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_OK);
+    // Commit stream ends with a space, matching SPACE-commit cadence.
+    ASSERT_GT(L.committed.size(), 0U);
+    EXPECT_EQ(L.committed.back(), ' ');
+}
+
 TEST(SmartEn, AutoCapitalizeAfterPeriod) {
     // Regression: en_capitalize_next_ was set by did_commit() but never
     // consumed — commit_selected_candidate now uppercases the first
