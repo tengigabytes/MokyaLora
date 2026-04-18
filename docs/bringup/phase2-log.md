@@ -802,7 +802,7 @@ Raw protobuf burst profiler (`scripts/bench_raw_serial2.py`): sends `want_config
 
 ## Milestone 3 — Core 1 HAL drivers + LVGL UI runtime
 
-**Status:** 🚧 In progress (M3.1 ✅, M3.2 ✅, M3.3 ✅, M3.4 next)
+**Status:** 🚧 In progress (M3.1 ✅, M3.2 ✅, M3.3 ✅, M3.4.1/.2 ✅, M3.4.3+ next)
 **Goal:** Bring up Core 1's user-facing hardware (display, keypad, sensors, power) as FreeRTOS-task driven HAL modules under `firmware/core1/src/`, and stand up LVGL v9.2.2 as the rendering runtime. Keypad driver is written from day-1 against the multi-producer `KeyEvent` queue with `key_source_t` flag (G2 from DEC-2), so M9 USB Control injection only adds a producer — never refactors the queue.
 
 ### M3 sub-milestones
@@ -970,6 +970,87 @@ confirmed on the panel.
 - `firmware/core1/src/display/lvgl_glue.c` — removed benchmark, calls
   `keypad_view_init()` + `keypad_view_tick()` each lv_timer iteration
 - `firmware/core1/m1_bridge/CMakeLists.txt` — new `UI_DIR` + `keypad_view.c`
+
+#### M3.4.1 — Shared I2C bus module ✅ (2026-04-18)
+
+**Discovery:** both power (GPIO 6/7) and sensor+GNSS (GPIO 34/35) pin pairs
+route to the `i2c1` SDK peripheral only. RP2350's I2C pinmux follows a
+strict mod-4 rule (see `docs/design-notes/mcu-gpio-allocation.md` §I2C Bus
+Allocation) — `GPIO mod 4 == 2/3` has no I2C0 alternative. The two buses
+therefore cannot run as separate SDK peripherals as the earlier plan
+assumed; the original `commit c18cf8a` "power=i2c0, sensor+GNSS=i2c1" was
+based on incorrect docs.
+
+**Resolution:** time-mux a single `i2c1` peripheral between the two pin
+pairs. `firmware/core1/src/i2c/i2c_bus.c` owns the peripheral, a FreeRTOS
+mutex, and the FUNCSEL swap (~200 ns per switch vs 90 µs/byte at 100 kHz
+— negligible). Drivers call `i2c_bus_acquire(id, timeout)` to take the
+mutex + remux, `i2c_bus_release()` when done. Cold-boot regression
+verified: backlight lights after a power-cycle (initial bug was traced
+to GPIO 6/7 muxed to the wrong peripheral).
+
+**Rev B action** logged as Issue #15 in `rev-a-bringup-log.md`: reroute
+sensor + GNSS bus to a mod-4 = 0/1 pair (candidate GPIO 32/33 → `i2c0`)
+so the two peripherals can run concurrently. Also avoids any temptation
+to merge both rails into one bus (power = 1.8 V pull-up, sensor = 3.3 V —
+different voltage domains, cannot share without a level shifter).
+
+Docs updated across `CLAUDE.md`, `mcu-gpio-allocation.md`,
+`firmware-architecture.md`, `power-architecture.md`,
+`hardware-requirements.md`, and this file.
+
+#### M3.4.2 — BQ25622 charger driver ✅ (2026-04-18)
+
+First production driver on top of the shared I2C module. Datasheet
+SLUSEG2D §8.5/§8.6 is followed end-to-end:
+
+- **Field packing from bit-step constants** (no magic numbers): VREG 10 mV,
+  ICHG 80 mA, IINDPM 20 mA per §8.6.2.1/2/3.
+- **16-bit registers via 3-byte multi-write** (§8.5.1.7) so both halves of
+  VREG/ICHG/IINDPM land atomically from the chip's perspective.
+- **ADC block read as a single 12-byte burst** from REG0x28 (repeated
+  start, no STOP between pointer-set and block-read).
+- **Read-modify-write on CTRL1** preserves non-owned bits (`EN_AUTO_IBATDIS`
+  etc. stay at POR default while we only change `WATCHDOG` / `WD_RST` /
+  `EN_CHG`).
+
+Production settings:
+- VREG = 4100 mV (BL-4C, 100 mV below max for cycle life)
+- ICHG = 480 mA (~0.5C)
+- IINDPM = 500 mA (Step 20 value)
+- **WATCHDOG = 50 s + 1 Hz kick** (shortest window, fastest fault detection)
+- ADC = 12-bit continuous, all six channels
+
+**Watchdog expiry recovery:** `charger_task` checks `WD_STAT` each cycle;
+if set, the task re-runs `hw_init()` in place so the configured
+VREG/ICHG/IINDPM/WATCHDOG/ADC_CTRL are re-applied. `wd_expired_count`
+exposes the event counter via the public `bq25622_state_t` snapshot.
+
+**Verification (battery + USB, charging disabled by HW nCE):**
+- VBUS 5006 mV · VBAT 4065 mV · VSYS 4123 mV · VPMID 4986 mV
+- VSYS − VBAT = 58 mV, matching datasheet §8.3.4.1 NVDC spec
+  (VSYS = VBAT + 50 mV typ when charging disabled). This specific
+  relationship is the strongest evidence the field decode / register
+  writes / ADC pipeline are all correct end-to-end — it is very hard to
+  produce this exact 58 mV offset by coincidence.
+- CHG_STAT = NoCHG (correct — nCE HW-disables the charger path)
+- All fault bits clear, `wd_expired_count=0`, `i2c_fail_count=0`
+
+**API:**
+- `bq25622_start_task(priority)` — creates 1 Hz `charger_task` (stack
+  512 words = 2 KB, fits the 32 KB heap with ~3 KB free post-boot)
+- `bq25622_get_state()` → pointer to the globally-updated snapshot
+- `bq25622_set_charge_enabled(bool)`
+- `bq25622_set_watchdog(window)` — OFF / 50 s / 100 s / 200 s, kicks
+  WD_RST in the same write to prevent old-timer expiry mid-transition
+
+**Files added:**
+- `firmware/core1/src/power/bq25622.{h,c}`
+
+**Files changed:**
+- `firmware/core1/m1_bridge/CMakeLists.txt` — `POWER_DIR` + source
+- `firmware/core1/m1_bridge/src/main_core1_bridge.c` — `bq25622_start_task()`
+  alongside other task creates
 
 ---
 

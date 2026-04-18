@@ -230,7 +230,7 @@ signal "buffer A is stable".
 queue control blocks, and `pvPortMalloc` allocations come out of this
 one pool. Check `xFreeBytesRemaining` via SWD after boot.
 
-Current post-boot allocation (M3.3 Phase A):
+Current post-boot allocation (M3.4.2):
 
 | Consumer              | Bytes  |
 |-----------------------|--------|
@@ -238,11 +238,13 @@ Current post-boot allocation (M3.3 Phase A):
 | `bridge_task` stack      | 4096 |
 | `lvgl_task` stack        | 12288 |
 | `keypad_scan_task` stack | 2048 |
+| `charger_task` stack (BQ25622) | 2048 |
 | `KeyEvent` queue (16 × 2 B + ctrl) | ~112 |
+| `i2c_bus` mutex          | ~80 |
 | Idle task stack          | 2048 |
 | Timer service task stack | 2048 |
 | TCBs + queues            | ~1.5 KB |
-| **Free**                 | ~5 KB |
+| **Free**                 | ~3 KB |
 
 **Rule.** Add a new task → drop an existing task's stack high-water
 margin, or raise `configTOTAL_HEAP_SIZE` in `FreeRTOSConfig.h`. Do

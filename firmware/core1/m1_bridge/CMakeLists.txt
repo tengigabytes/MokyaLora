@@ -89,6 +89,9 @@ set(SHARED_IPC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../shared/ipc)
 # ── Shared I2C bus module (M3.4.1) ───────────────────────────────────────────
 set(I2C_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/i2c)
 
+# ── Power drivers (M3.4.2 onwards) ───────────────────────────────────────────
+set(POWER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/power)
+
 # ── Display driver (M3) ──────────────────────────────────────────────────────
 set(DISPLAY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/display)
 
@@ -110,6 +113,7 @@ add_executable(core1_bridge
     src/usb_descriptors.c
     ${SHARED_IPC_DIR}/ipc_ringbuf.c
     ${I2C_DIR}/i2c_bus.c
+    ${POWER_DIR}/bq25622.c
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
@@ -134,6 +138,7 @@ target_include_directories(core1_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${SHARED_IPC_DIR}
     ${I2C_DIR}
+    ${POWER_DIR}
     ${DISPLAY_DIR}
     ${KEYPAD_DIR}
     ${UI_DIR}

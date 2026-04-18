@@ -72,6 +72,7 @@
 #include "ipc_ringbuf.h"
 
 #include "i2c_bus.h"
+#include "bq25622.h"
 #include "display.h"
 #include "lvgl_glue.h"
 #include "keypad_scan.h"
@@ -474,7 +475,12 @@ int main(void)
      * for the loop with 6-byte local raw buffer and no nested calls. */
     BaseType_t rc_kp = xTaskCreate(keypad_scan_task, "kpad", 512, NULL,
                 tskIDLE_PRIORITY + 2, NULL);
-    (void)rc_usb; (void)rc_brg; (void)rc_dsp; (void)rc_kp;
+
+    /* Charger (BQ25622) 1 Hz poll task — hw init runs inside the task so
+     * first I2C traffic is post-scheduler, after i2c_bus mutex is usable. */
+    bool rc_chg = bq25622_start_task(tskIDLE_PRIORITY + 2);
+
+    (void)rc_usb; (void)rc_brg; (void)rc_dsp; (void)rc_kp; (void)rc_chg;
 
     vTaskStartScheduler();
 
