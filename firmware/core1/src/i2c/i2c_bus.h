@@ -1,6 +1,6 @@
 /* i2c_bus.h — Core 1 shared I2C bus module.
  *
- * Two physical buses on MokyaLora Rev A:
+ * Two physical buses on MokyaLora Rev A (both 1.8 V pull-up):
  *   POWER  = GPIO 6/7   — BQ25622, BQ27441, LM27965
  *   SENSOR = GPIO 34/35 — LSM6DSV16X, LIS2MDL, LPS22HH, Teseo-LIV3FL
  *
@@ -30,8 +30,8 @@
 #include "portmacro.h"
 
 typedef enum {
-    MOKYA_I2C_POWER  = 0,   /* GPIO 6/7   — power bus   (1.8 V pull-up rail) */
-    MOKYA_I2C_SENSOR = 1,   /* GPIO 34/35 — sensor+GNSS (3.3 V pull-up rail) */
+    MOKYA_I2C_POWER  = 0,   /* GPIO 6/7   — power bus   */
+    MOKYA_I2C_SENSOR = 1,   /* GPIO 34/35 — sensor+GNSS */
 } mokya_i2c_id_t;
 
 /* Boot-time setup: i2c1 peripheral init + baud fix, pull-ups on both pairs,

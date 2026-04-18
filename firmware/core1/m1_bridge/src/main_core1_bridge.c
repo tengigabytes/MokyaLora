@@ -73,6 +73,7 @@
 
 #include "i2c_bus.h"
 #include "bq25622.h"
+#include "sensor_task.h"
 #include "display.h"
 #include "lvgl_glue.h"
 #include "keypad_scan.h"
@@ -480,7 +481,12 @@ int main(void)
      * first I2C traffic is post-scheduler, after i2c_bus mutex is usable. */
     bool rc_chg = bq25622_start_task(tskIDLE_PRIORITY + 2);
 
+    /* Sensor bus poll task (M3.4.5). Init + 1 Hz baro poll today; LIS2MDL
+     * and LSM6DSV16X slot into the same tick in M3.4.5b / .5c. */
+    bool rc_sns = sensor_task_start(tskIDLE_PRIORITY + 2);
+
     (void)rc_usb; (void)rc_brg; (void)rc_dsp; (void)rc_kp; (void)rc_chg;
+    (void)rc_sns;
 
     vTaskStartScheduler();
 

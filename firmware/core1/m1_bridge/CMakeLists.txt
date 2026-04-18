@@ -92,6 +92,9 @@ set(I2C_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/i2c)
 # ── Power drivers (M3.4.2 onwards) ───────────────────────────────────────────
 set(POWER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/power)
 
+# ── Sensor drivers (M3.4.5 onwards) ──────────────────────────────────────────
+set(SENSOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/sensor)
+
 # ── Display driver (M3) ──────────────────────────────────────────────────────
 set(DISPLAY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/display)
 
@@ -116,6 +119,8 @@ add_executable(core1_bridge
     ${POWER_DIR}/bq25622.c
     ${POWER_DIR}/bq27441.c
     ${POWER_DIR}/lm27965.c
+    ${SENSOR_DIR}/sensor_task.c
+    ${SENSOR_DIR}/lps22hh.c
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
@@ -141,6 +146,7 @@ target_include_directories(core1_bridge PRIVATE
     ${SHARED_IPC_DIR}
     ${I2C_DIR}
     ${POWER_DIR}
+    ${SENSOR_DIR}
     ${DISPLAY_DIR}
     ${KEYPAD_DIR}
     ${UI_DIR}

@@ -17,7 +17,7 @@
 #define PIN_SENSOR_SDA   34u
 #define PIN_SENSOR_SCL   35u
 
-#define I2C_DEFAULT_BAUD  100000u   /* 100 kHz — all power/sensor devices */
+#define I2C_DEFAULT_BAUD  400000u   /* 400 kHz — matches bringup FW */
 
 /* ── Core 1 baudrate fix ─────────────────────────────────────────────────── *
  *
@@ -33,20 +33,37 @@
  *   For 100 kHz @ 150 MHz: period=1500, lcnt=899, hcnt=593                    */
 #define CORE1_CLK_PERI_HZ  150000000u
 
+/* Replicates the SDK's `i2c_set_baudrate` but with the hard-coded Core 1
+ * clk_peri of 150 MHz. Sets BOTH standard-speed AND fast-speed timing
+ * registers, plus sda_hold, mirroring the SDK so any code path that
+ * consults either register set sees a valid value. Speed mode is chosen
+ * per baudrate (STANDARD ≤100 kHz, else FAST). */
 static void i2c_set_baudrate_core1(i2c_inst_t *i2c, uint baudrate)
 {
-    uint period = CORE1_CLK_PERI_HZ / baudrate;
-    uint lcnt = period * 3u / 5u - 1u;
-    uint hcnt = period - lcnt - 8u;
-    if (hcnt < 8u) hcnt = 8u;
-    if (lcnt < 1u) lcnt = 1u;
+    uint freq_in = CORE1_CLK_PERI_HZ;
+    uint period = (freq_in + baudrate / 2u) / baudrate;
+    uint lcnt = period * 3u / 5u;
+    uint hcnt = period - lcnt;
+    uint sda_tx_hold_count =
+        (baudrate < 1000000u) ? ((freq_in * 3u) / 10000000u + 1u)
+                              : ((freq_in * 3u) / 25000000u + 1u);
+
     i2c->hw->enable = 0;
     hw_write_masked(&i2c->hw->con,
-                    I2C_IC_CON_SPEED_VALUE_STANDARD << I2C_IC_CON_SPEED_LSB,
+                    (baudrate <= 100000u
+                        ? I2C_IC_CON_SPEED_VALUE_STANDARD
+                        : I2C_IC_CON_SPEED_VALUE_FAST)
+                        << I2C_IC_CON_SPEED_LSB,
                     I2C_IC_CON_SPEED_BITS);
+    i2c->hw->fs_scl_hcnt = hcnt;
+    i2c->hw->fs_scl_lcnt = lcnt;
+    i2c->hw->fs_spklen = (lcnt < 16u) ? 1u : lcnt / 16u;
+    /* Duplicate into SS timing too so either speed path is sane. */
     i2c->hw->ss_scl_hcnt = hcnt;
     i2c->hw->ss_scl_lcnt = lcnt;
-    i2c->hw->fs_spklen = lcnt < 16u ? 1u : lcnt / 16u;
+    hw_write_masked(&i2c->hw->sda_hold,
+                    sda_tx_hold_count << I2C_IC_SDA_HOLD_IC_SDA_TX_HOLD_LSB,
+                    I2C_IC_SDA_HOLD_IC_SDA_TX_HOLD_BITS);
     i2c->hw->enable = 1;
 }
 
@@ -92,6 +109,11 @@ static void switch_pinmux(mokya_i2c_id_t id)
         gpio_set_function(PIN_SENSOR_SDA, GPIO_FUNC_I2C);
         gpio_set_function(PIN_SENSOR_SCL, GPIO_FUNC_I2C);
     }
+    /* Changing SDA/SCL pads under i2c1's feet drops the peripheral into an
+     * unrecoverable state. Full re-init after every pin change, matching
+     * the bringup firmware's per-entry i2c_init pattern. */
+    i2c_init(i2c1, I2C_DEFAULT_BAUD);
+    i2c_set_baudrate_core1(i2c1, I2C_DEFAULT_BAUD);
     s_active = id;
 }
 
