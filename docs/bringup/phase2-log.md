@@ -1356,6 +1356,38 @@ against 48 KB, not 32.
   shipped contract (always-on NMEA mask, runtime-adjustable ODR,
   caller-owned rate policy).
 
+#### M3.4.5d follow-up — Core 1 memory budget hygiene ✅ (2026-04-18)
+
+Reactive heap bumps across M3.4.1 through M3.4.5d (32 KB → 48 KB via
+multiple "HardFault at `vTaskStartScheduler`" sessions) kept wasting
+debug time. Converted to an upfront budget.
+
+**Doc:** `docs/design-notes/core1-memory-budget.md` — lists every task,
+stack depth, kernel object, reserve target (≥ 20 %). Required reading /
+editing when adding any new task or queue.
+
+**Enforcement in `main_core1_bridge.c`:**
+- `TASK_START_OR_PANIC` macro wraps every `xTaskCreate` and every
+  `*_task_start` helper. No more `(void)rc_xxx` silent casts — a
+  failure prints `core1: <name> task_start failed` on USB CDC.
+- After all tasks created, checks `xPortGetFreeHeapSize() ≥ 20 %` of
+  `configTOTAL_HEAP_SIZE`; panics with used / total figures if below.
+  Catches drift before the next IDLE-task allocation blows up inside
+  scheduler startup.
+
+**Validation (2026-04-18):**
+- Build + flash clean; IPSR = PendSV (normal), meshtastic `--info`
+  passes.
+- SWD read of heap_4 free-list: `xFreeBytesRemaining = 15,008 B`
+  (14.65 KB / 30.5 %). Matches the estimate in core1-memory-budget.md
+  §3.4 to within 1 % — budget table is trustworthy.
+
+**Files changed:**
+- `docs/design-notes/core1-memory-budget.md` — new.
+- `firmware/core1/m1_bridge/src/main_core1_bridge.c` — macro + heap
+  reserve assert.
+- `CLAUDE.md` — pointer to the new doc.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
