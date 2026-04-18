@@ -1,109 +1,197 @@
-// ime_direct.cpp — Direct Mode, symbol key handler.
 // SPDX-License-Identifier: MIT
+// ime_direct.cpp — Direct mode handler, multi-tap state machine,
+//                  SYM1 (short/long-press) and SYM2 (multi-tap) handlers.
 
 #include "ime_internal.h"
 #include <cstring>
 
 namespace mie {
 
-// ── Symbol key handler (MOKYA_KEY_SYM1 / MOKYA_KEY_SYM2) ──────────────────
+// ── Punctuation cycle tables ────────────────────────────────────────────────
 
-void ImeLogic::commit_sym_pending() {
-    if (sym_pending_.keycode == MOKYA_KEY_NONE) return;
-    const char* s = sym_label(sym_pending_.keycode, sym_pending_.sym_idx);
-    sym_pending_ = { MOKYA_KEY_NONE, 0 };
-    input_len_ = 0; input_buf_[0] = '\0';
-    if (s) { did_commit(s); if (commit_cb_) commit_cb_(s, commit_ctx_); }
-}
+// SYM1 short-press single character.
+static const char kSym1ZhShort[] = "\xef\xbc\x8c";  // ，
+static const char kSym1EnShort[] = ",";
 
-bool ImeLogic::process_sym_key(mokya_keycode_t kc) {
-    // In Smart modes: if there's pending key input, commit the first merged
-    // candidate (partial commit; keeps remaining keys after matched prefix).
-    if ((mode_ == InputMode::SmartZh || mode_ == InputMode::SmartEn) && key_seq_len_ > 0) {
-        if (merged_count_ > 0)
-            do_commit_partial(merged_[0].cand->word, merged_[0].lang, matched_prefix_len_);
-        else
-            do_commit_partial(input_buf_, 2, key_seq_len_);
-    }
+// SYM2 multi-tap cycle: 。/？/！ in ZH, ./?/! in EN.
+static const char* const kSym2ZhCycle[] = {
+    "\xe3\x80\x82",  // 。
+    "\xef\xbc\x9f",  // ？
+    "\xef\xbc\x81",  // ！
+    nullptr,
+};
+static const char* const kSym2EnCycle[] = { ".", "?", "!", nullptr };
 
-    if (sym_pending_.keycode == kc) {
-        int count = sym_label_count(kc);
-        if (count > 0) {
-            sym_pending_.sym_idx = (sym_pending_.sym_idx + 1) % count;
-            const char* s = sym_label(kc, sym_pending_.sym_idx);
-            set_display(s ? s : "");
-        }
-    } else {
-        commit_sym_pending();
-        sym_pending_ = { kc, 0 };
-        const char* s = sym_label(kc, 0);
-        set_display(s ? s : "");
-    }
-    return true;
-}
+// ── Direct mode handler ─────────────────────────────────────────────────────
 
-// ── Direct Mode ───────────────────────────────────────────────────────────
-
-bool ImeLogic::process_direct(const KeyEvent& ev) {
+bool ImeLogic::handle_direct(const KeyEvent& ev) {
     const mokya_keycode_t kc = ev.keycode;
 
-    // BACK / DEL: cancel current pending character.
-    if (kc == MOKYA_KEY_BACK || kc == MOKYA_KEY_DEL) {
-        direct_ = { MOKYA_KEY_NONE, 0 };
-        input_len_ = 0; input_buf_[0] = '\0';
-        zh_cand_count_ = 0; en_cand_count_ = 0; merged_count_ = 0; merged_sel_ = 0;
+    // SPACE — commit multi-tap pending (if any), then insert half-width space.
+    if (kc == MOKYA_KEY_SPACE) {
+        if (multitap_.keycode != MOKYA_KEY_NONE) multitap_commit();
+        emit_commit(" ");
+        notify_changed();
         return true;
     }
 
-    // SPACE / OK: confirm pending character.
-    if (kc == MOKYA_KEY_SPACE || kc == MOKYA_KEY_OK) {
-        if (direct_.keycode != MOKYA_KEY_NONE) {
-            const char* lbl = direct_mode_slot_label(direct_.keycode, direct_.label_idx);
-            direct_ = { MOKYA_KEY_NONE, 0 };
-            input_len_ = 0; input_buf_[0] = '\0';
-            zh_cand_count_ = 0; en_cand_count_ = 0; merged_count_ = 0; merged_sel_ = 0;
-            if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
-        }
+    // TAB — commit pending, then insert a tab.
+    if (kc == MOKYA_KEY_TAB) {
+        if (multitap_.keycode != MOKYA_KEY_NONE) multitap_commit();
+        emit_commit("\t");
+        notify_changed();
         return true;
     }
 
-    // Dictionary-input keys: mode-restricted slot cycling.
+    // Dictionary-input key → multi-tap cycling.
     int slot = keycode_to_input_slot(kc);
     if (slot >= 0) {
-        int count = direct_mode_slot_count(kc);
-        if (count == 0) return false;
-
-        if (direct_.keycode == kc) {
-            direct_.label_idx = (direct_.label_idx + 1) % count;
-        } else {
-            if (direct_.keycode != MOKYA_KEY_NONE) {
-                const char* lbl = direct_mode_slot_label(direct_.keycode, direct_.label_idx);
-                if (lbl && commit_cb_) commit_cb_(lbl, commit_ctx_);
-            }
-            direct_ = { kc, 0 };
+        const KeyEntry& e = kKeyTable[slot];
+        int slots = e.digit_slots[0] ? count_slots(e.digit_slots)
+                                     : count_slots(e.letter_slots);
+        if (slots == 0) {
+            // BACKSLASH has no letter/digit slots in Direct — NOP.
+            return false;
         }
-        const char* lbl = direct_mode_slot_label(direct_.keycode, direct_.label_idx);
-        set_display(lbl ? lbl : "");
-
-        // DirectBopomofo: show single-character ZH candidates for current phoneme.
-        if (mode_ == InputMode::DirectBopomofo) {
-            zh_cand_count_ = 0; en_cand_count_ = 0;
-            merged_count_  = 0; merged_sel_    = 0;
-            if (zh_searcher_.is_loaded()) {
-                char kb[2] = { (char)(slot + 0x21), '\0' };
-                Candidate tmp[kMaxCandidates];
-                int n = zh_searcher_.search(kb, tmp, kMaxCandidates);
-                for (int i = 0; i < n && zh_cand_count_ < kMaxCandidates; ++i)
-                    if (utf8_char_count(tmp[i].word) == 1)
-                        zh_candidates_[zh_cand_count_++] = tmp[i];
-            }
-            build_merged();
-        }
-
+        multitap_press(kc, slots, /*inverted=*/true, ev.now_ms);
         return true;
     }
 
     return false;
+}
+
+// ── Multi-tap state machine ─────────────────────────────────────────────────
+
+namespace {
+
+// Retrieve the idx-th cycling label for the multi-tap target keycode.
+// Handles input keys (kKeyTable entries) and SYM2 (kSym2*Cycle). Returns
+// nullptr on out-of-range.
+static const char* multitap_label(const ImeLogic* self,
+                                  mokya_keycode_t kc, int idx, InputMode mode) {
+    (void)self;
+    if (kc == MOKYA_KEY_SYM2) {
+        const char* const* arr = (mode == InputMode::SmartZh) ? kSym2ZhCycle
+                                                              : kSym2EnCycle;
+        int n = 0; while (arr[n]) ++n;
+        return (idx >= 0 && idx < n) ? arr[idx] : nullptr;
+    }
+    const KeyEntry* e = find_key_entry(kc);
+    if (!e) return nullptr;
+    if (e->digit_slots[0]) {
+        return (idx >= 0 && idx < 2) ? e->digit_slots[idx] : nullptr;
+    }
+    return (idx >= 0 && idx < 4) ? e->letter_slots[idx] : nullptr;
+}
+
+} // namespace
+
+void ImeLogic::multitap_press(mokya_keycode_t kc, int slot_count,
+                              bool inverted, uint32_t now_ms) {
+    if (multitap_.keycode == kc) {
+        // Same key — cycle within the timeout window.
+        multitap_.slot_idx = (uint8_t)((multitap_.slot_idx + 1) % slot_count);
+    } else {
+        // Different key — commit prior pending first.
+        if (multitap_.keycode != MOKYA_KEY_NONE) multitap_commit();
+        multitap_.keycode    = kc;
+        multitap_.slot_idx   = 0;
+        multitap_.slot_count = (uint8_t)slot_count;
+        multitap_.inverted   = inverted;
+    }
+    multitap_.last_ms = now_ms;
+
+    // Skip nullptr slots (e.g. L has {"l",nullptr,"L",nullptr}) — bump
+    // through them so the user sees a valid label.
+    int safety = multitap_.slot_count;
+    while (safety-- > 0 &&
+           multitap_label(this, kc, multitap_.slot_idx, mode_) == nullptr) {
+        multitap_.slot_idx = (uint8_t)((multitap_.slot_idx + 1) % slot_count);
+    }
+
+    const char* lbl = multitap_label(this, kc, multitap_.slot_idx, mode_);
+    display_set(lbl ? lbl : "");
+    pending_style_        = inverted ? PendingStyle::Inverted : PendingStyle::PrefixBold;
+    matched_prefix_bytes_ = 0;
+
+    notify_changed();
+}
+
+void ImeLogic::multitap_commit() {
+    if (multitap_.keycode == MOKYA_KEY_NONE) return;
+    // The current display_ contents are the label being committed.
+    if (display_len_ > 0) {
+        // Copy out before did_commit / on_commit so side effects on state
+        // cannot invalidate the string we pass out.
+        char label[kMaxDisplayBytes + 1];
+        std::memcpy(label, display_, (size_t)display_len_ + 1);
+        did_commit(label);
+        if (listener_) listener_->on_commit(label);
+    }
+    multitap_             = {};
+    display_clear();
+    pending_style_        = PendingStyle::None;
+    matched_prefix_bytes_ = 0;
+}
+
+// ── SYM1 — short-press single char / long-press opens picker ────────────────
+
+bool ImeLogic::handle_sym1(bool pressed, uint32_t now_ms) {
+    if (pressed) {
+        if (!sym1_.down) {
+            sym1_.down          = true;
+            sym1_.long_fired    = false;
+            sym1_.pressed_at_ms = now_ms;
+        }
+        return false;   // Visible state change waits for tick / release.
+    }
+
+    // Released.
+    if (!sym1_.down) return false;
+    sym1_.down = false;
+
+    if (sym1_.long_fired) {
+        // Long-press already opened the picker in tick(); nothing else here.
+        sym1_.long_fired = false;
+        return true;
+    }
+
+    // Short-press: commit any multi-tap pending, then emit ，/, for current mode.
+    if (multitap_.keycode != MOKYA_KEY_NONE) multitap_commit();
+    const char* s = (mode_ == InputMode::SmartZh) ? kSym1ZhShort : kSym1EnShort;
+    emit_commit(s);
+    notify_changed();
+    return true;
+}
+
+// ── SYM2 — multi-tap punctuation cycling ────────────────────────────────────
+
+bool ImeLogic::handle_sym2(uint32_t now_ms) {
+    const char* const* cycle = (mode_ == InputMode::SmartZh) ? kSym2ZhCycle
+                                                             : kSym2EnCycle;
+    int slots = 0; while (cycle[slots]) ++slots;
+    if (slots == 0) return false;
+
+    // Commit any non-SYM2 multi-tap first.
+    if (multitap_.keycode != MOKYA_KEY_NONE && multitap_.keycode != MOKYA_KEY_SYM2)
+        multitap_commit();
+
+    if (multitap_.keycode == MOKYA_KEY_SYM2) {
+        multitap_.slot_idx = (uint8_t)((multitap_.slot_idx + 1) % slots);
+    } else {
+        multitap_.keycode    = MOKYA_KEY_SYM2;
+        multitap_.slot_idx   = 0;
+        multitap_.slot_count = (uint8_t)slots;
+        multitap_.inverted   = true;
+    }
+    multitap_.last_ms = now_ms;
+
+    display_set(cycle[multitap_.slot_idx]);
+    pending_style_        = PendingStyle::Inverted;
+    matched_prefix_bytes_ = 0;
+
+    notify_changed();
+    return true;
 }
 
 } // namespace mie
