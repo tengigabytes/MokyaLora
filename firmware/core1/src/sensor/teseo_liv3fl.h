@@ -72,6 +72,62 @@ typedef struct {
     teseo_sat_info_t sats[32];    /* pooled across GP / GL / GA / BD      */
 } teseo_sat_view_t;
 
+/* ── RF / signal-quality diagnostics ─────────────────────────────────── *
+ *
+ * Populated by $PSTMRF, $PSTMNOISE, $PSTMNOTCHSTATUS, $PSTMCPU sentences
+ * if the host has enabled them in CDB 231/232 (NMEA-over-I2C message mask).
+ * Call teseo_enable_rf_debug_messages(true) once to switch them on (NVM
+ * write + SRR — user-initiated, not every boot). Without enabling, every
+ * counter below stays at 0 and the driver quietly ignores the lines.   */
+
+typedef struct {
+    uint8_t  prn;                 /* satellite PRN                        */
+    uint8_t  cn0_dbhz;            /* carrier-to-noise ratio, dB-Hz        */
+    int16_t  phase_noise;         /* raw signed (no documented units)     */
+    int32_t  freq_hz;             /* tracking frequency (Hz, signed)      */
+} teseo_rf_sat_t;
+
+typedef struct {
+    uint32_t freq_hz;             /* $PSTMNOTCHSTATUS kfreq_now_Hz_*     */
+    uint32_t power;               /* BPF internal power estimate          */
+    uint16_t ovfs;                /* bit 12 (0x1000) = jammer removed;
+                                   * bits 0-2 = internal overflow flags   */
+    uint8_t  lock;                /* 0 = unlocked, 1 = locked             */
+    uint8_t  mode;                /* 0=disabled 1=always 2=auto           */
+} teseo_anf_path_t;
+
+typedef struct {
+    /* $PSTMNOISE */
+    int32_t            noise_gps;
+    int32_t            noise_gln;
+    uint32_t           noise_count;
+
+    /* $PSTMNOTCHSTATUS — GPS and GLONASS ANF path (L1 / L1OF) */
+    teseo_anf_path_t   anf_gps;
+    teseo_anf_path_t   anf_gln;
+    uint32_t           anf_count;
+
+    /* $PSTMCPU — engine CPU load */
+    uint16_t           cpu_pct_x10;     /* % × 10                         */
+    uint16_t           cpu_mhz;
+    uint32_t           cpu_count;
+
+    /* $PSTMRF — per-satellite signal detail, accumulated across
+     * MessgIndex 1..MessgAmount (up to 3 sats per sentence). */
+    uint8_t            rf_sat_count;
+    uint32_t           rf_update_count;
+    teseo_rf_sat_t     rf_sats[32];
+} teseo_rf_state_t;
+
+const teseo_rf_state_t      *teseo_get_rf_state(void);
+
+/* Enable/disable $PSTMRF + $PSTMNOISE + $PSTMNOTCHSTATUS + $PSTMCPU +
+ * $GPGST on the I2C NMEA output by writing CDB 231 (mask = 0x408000A8)
+ * with mode=1 (OR) or mode=2 (AND-NOT), followed by $PSTMSAVEPAR +
+ * $PSTMSRR so the engine reloads. Blocks ~2 s including the reboot.
+ * Must be called from a FreeRTOS task context (uses vTaskDelay). */
+bool                         teseo_enable_rf_debug_messages(bool on);
+
 /* Initialise driver state + send $PSTMGPSRESTART to guarantee the engine
  * is running (no-op if already running). Caller must hold no mutex. */
 bool                         teseo_init(void);

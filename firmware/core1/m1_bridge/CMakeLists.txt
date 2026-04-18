@@ -131,6 +131,7 @@ add_executable(core1_bridge
     ${KEYPAD_DIR}/keypad_scan.c
     ${KEYPAD_DIR}/key_event.c
     ${UI_DIR}/keypad_view.c
+    ${UI_DIR}/rf_debug_view.c
 )
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.
