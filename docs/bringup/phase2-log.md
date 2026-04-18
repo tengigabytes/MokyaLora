@@ -1186,6 +1186,62 @@ and lifts the default baud to 400 kHz matching the bringup firmware.
 - `firmware/core1/m1_bridge/src/main_core1_bridge.c` —
   `sensor_task_start()` at scheduler launch.
 
+#### M3.4.5b — LIS2MDL magnetometer driver ✅ (2026-04-18)
+
+Second sensor-bus driver, slotted into `sensor_task` at 10 Hz (one poll
+per master tick) to match the device's lowest ODR. Same shape as LPS22HH.
+
+**Production config** (DS12144 Rev 6 §5.3/§8.5-§8.7):
+- ODR = 10 Hz, MD = continuous, LP = 0 (high-resolution), COMP_TEMP_EN = 1
+- OFF_CANC = 1, LPF = 1 (ODR/4), BDU = 1
+- Address = 0x1E (§6.1.1 Table 20)
+
+**State struct** reports `mag_raw[3]`, `mag_ut_x10[3]`, `temperature_cx10`,
+`online`, `i2c_fail_count`. Decoder uses `raw × 3 / 2` for µT×10 (1.5
+mgauss/LSB). Temperature follows ST HAL convention: zero point = 25 °C
+so `cx10 = 250 + (raw × 5) / 4`. Datasheet doesn't document this offset
+explicitly — confirmed via ST's official `lis2mdl_from_lsb_to_celsius`
+(`raw/8 + 25`).
+
+**I²C auto-increment wrap — `TEMP_OUT` must be a separate transaction.**
+Initial implementation did a single 8-byte burst from `0x68` covering
+X/Y/Z + TEMP. Mag values looked correct but temperature reported 11 °C
+at 25 °C ambient. Debug patch added a parallel 2-byte read of `0x6E`:
+direct read returned +28 (≈28 °C, matches), burst bytes 6-7 returned
+the same value as OUTX_L/H. Conclusion: LIS2MDL's address auto-increment
+wraps at the end of the mag OUT block (`0x6D → 0x68`) instead of
+crossing into `TEMP_OUT`, even with `SUB[7]` set. Driver now reads mag
+(0x68, 6 bytes) and temp (0x6E, 2 bytes) as two back-to-back
+transactions on a single bus acquire. Datasheet §6.1.1 doesn't document
+this wrap — discovered empirically.
+
+**Soft-reset.** Datasheet doesn't guarantee `SOFT_RST` is self-clearing
+(app-note §5.3 skips reset entirely), so driver writes `CFG_REG_A = 0x20`
+then waits a fixed 10 ms instead of polling.
+
+**Temperature zero-point.** ST's official HAL `lis2mdl_from_lsb_to_celsius`
+is `raw/8 + 25`; datasheet Table 3 only lists sensitivity. Driver matches
+ST HAL: `cx10 = 250 + (raw × 5) / 4`.
+
+**Validation (2026-04-18):**
+- SWD read `s_state` at `0x20053580`: `online=1`, `fail_count=0`,
+  `mag_ut_x10 ≈ (-16.6, -34.0, +147.6) µT`, scale check
+  `raw × 3/2 == mag_ut_x10` on all three axes, values vary when the
+  board is moved.
+- `temperature_cx10 = 283` → **28.3 °C** at 25 °C ambient (PCB self-heating
+  accounts for the few-°C offset; consistent with bringup LPS22HH temp
+  of 31.9 °C on the same bus).
+- `python -m meshtastic --port COM16 --info` returns normal node info
+  (bridge + sensor_task coexist cleanly).
+
+**Files added:**
+- `firmware/core1/src/sensor/lis2mdl.{h,c}`
+
+**Files changed:**
+- `firmware/core1/src/sensor/sensor_task.c` — init LIS2MDL, poll every
+  master tick (`LIS2MDL_PERIOD_TICKS = 1`).
+- `firmware/core1/m1_bridge/CMakeLists.txt` — add `lis2mdl.c`.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
