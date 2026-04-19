@@ -137,6 +137,15 @@ static void __no_inline_not_in_flash_func(psram_init_run)(
      * board #2 but not #1 — stay conservative in production firmware.
      * COOLDOWN=2 satisfies APS6404L tCPH ≥ 18 ns.
      *
+     * MAX_SELECT=1 (P2-15): required for APS6404L DRAM refresh. Inheriting
+     * M0's MAX_SELECT=0 lets QMI hold CS asserted indefinitely across
+     * back-to-back M1 accesses, starving PSRAM's self-refresh (datasheet
+     * tCEM=8µs standard grade). MAX_SELECT=1 triggers CS deassertion
+     * every 64 sys_clk (~427ns) + ≤316 cycle burst = 3.8µs total,
+     * comfortably under tCEM. Validated full 8 MB cached round-trip:
+     * 0 / 2,097,152 errors × 2 passes. Without the fix: 46.81% cached /
+     * 93.75% uncached err. See docs/bringup/phase2-log.md §P2-15.
+     *
      * rfmt: cmd=Q/8b, addr=Q, dummy=Q/28 bits (7 quad clocks), data=Q.
      * APS6404L 0xEB QPI datasheet says 6 wait cycles, but empirically
      * requires 7 — likely because the mode byte slot (occupied in SPI
@@ -144,10 +153,12 @@ static void __no_inline_not_in_flash_func(psram_init_run)(
      * mode byte.
      */
     qmi_hw->m[1].timing = (qmi_hw->m[0].timing &
-                            ~(QMI_M1_TIMING_COOLDOWN_BITS |
-                              QMI_M1_TIMING_RXDELAY_BITS  |
+                            ~(QMI_M1_TIMING_COOLDOWN_BITS    |
+                              QMI_M1_TIMING_MAX_SELECT_BITS  |
+                              QMI_M1_TIMING_RXDELAY_BITS     |
                               QMI_M1_TIMING_CLKDIV_BITS))
                          | (2u << QMI_M1_TIMING_COOLDOWN_LSB)
+                         | (1u << QMI_M1_TIMING_MAX_SELECT_LSB)
                          | (0u << QMI_M1_TIMING_RXDELAY_LSB)
                          | (2u << QMI_M1_TIMING_CLKDIV_LSB);
 
