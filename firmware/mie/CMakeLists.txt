@@ -14,8 +14,10 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-# Phase A refactor (dev-mie-v2-listener): mie_c_api.cpp is temporarily
-# excluded until Phase D rewrites it against the listener API.
+# src/mie_c_api.cpp is excluded until Phase D rewrites it against the
+# v2 listener API (set_listener / pending_view / candidate accessors).
+# Core 1 uses C++ ImeLogic directly via <mie/ime_logic.h>, so the C API
+# is only needed by external bindings (Android JNI, Windows TSF).
 add_library(mie STATIC
     src/mie_init.cpp
     src/trie_searcher.cpp
@@ -178,8 +180,33 @@ if(NOT CMAKE_CROSSCOMPILING)
             add_custom_target(mie_font_data DEPENDS mie_font_data_sm)
         endif()
 
+        # MDBL blob: packs the four sm .bin sections into a single
+        # flash-resident image. Consumed by Core 1 at boot (copy to PSRAM
+        # → mie_dict_open_memory). Flashed as an independent partition
+        # by scripts/build_and_flash.sh at MIE_DICT_PARTITION_ADDR.
+        set(MIE_DICT_BLOB "${CMAKE_BINARY_DIR}/dict.blob")
+        add_custom_command(
+            OUTPUT  "${MIE_DICT_BLOB}"
+            COMMAND ${Python3_EXECUTABLE}
+                    "${MIE_TOOLS_DIR}/pack_dict_blob.py"
+                    --zh-dat "${MIE_DATA_DIR}/dict_dat.bin"
+                    --zh-val "${MIE_DATA_DIR}/dict_values.bin"
+                    --en-dat "${MIE_DATA_DIR}/en_dat.bin"
+                    --en-val "${MIE_DATA_DIR}/en_values.bin"
+                    --out    "${MIE_DICT_BLOB}"
+            DEPENDS "${MIE_TOOLS_DIR}/pack_dict_blob.py"
+                    "${MIE_DATA_DIR}/dict_dat.bin"
+                    "${MIE_DATA_DIR}/dict_values.bin"
+                    "${MIE_DATA_DIR}/en_dat.bin"
+                    "${MIE_DATA_DIR}/en_values.bin"
+            COMMENT "Packing MDBL dictionary blob for Core 1"
+            VERBATIM)
+        add_custom_target(mie_dict_blob
+            DEPENDS "${MIE_DICT_BLOB}")
+        add_dependencies(mie_dict_blob mie_dict_data_sm)
+
         add_custom_target(mie_data_sm
-            DEPENDS mie_dict_data_sm mie_font_data_sm
+            DEPENDS mie_dict_data_sm mie_font_data_sm mie_dict_blob
             COMMENT "Build small MIE data assets (embedded RP2350 variant)")
 
         # ── Large variant ─────────────────────────────────────────────────

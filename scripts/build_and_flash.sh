@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # Build and flash dual-image firmware (Core 0 Meshtastic + Core 1 bridge)
-# to RP2350B via J-Link SWD.
+# plus the MIE dictionary blob to RP2350B via J-Link SWD.
+#
+# Flash layout (W25Q128JW, 16 MB):
+#   0x10000000  Core 0 Meshtastic image   (2 MB slot)
+#   0x10200000  Core 1 bridge image       (2 MB slot)
+#   0x10400000  MIE dictionary (MDBL blob, 8 MB reserved, ~5 MB used)
+#   0x10C00000  LittleFS / free           (4 MB)
 #
 # Run from project root:
-#   bash scripts/build_and_flash.sh          # build + flash both
-#   bash scripts/build_and_flash.sh --core1  # build + flash Core 1 only
+#   bash scripts/build_and_flash.sh          # build + flash everything
+#   bash scripts/build_and_flash.sh --core1  # build + flash Core 1 + dict
+#   bash scripts/build_and_flash.sh --dict   # flash dict blob only
 #
 # Requires: PlatformIO, VS Build Tools 2019, ARM GCC, Ninja, Pico SDK,
 #           J-Link Ultra connected via SWD.
@@ -14,14 +21,18 @@ cd "$(dirname "$0")/.."
 
 JLINK="C:/Program Files/SEGGER/JLink_V932/JLink.exe"
 CORE1_BIN="build/core1_bridge/core1_bridge.bin"
+DICT_BLOB="build/mie-host/dict.blob"
+DICT_ADDR="0x10400000"
 CORE1_ONLY=false
+DICT_ONLY=false
 
-if [ "$1" = "--core1" ]; then
-    CORE1_ONLY=true
-fi
+case "$1" in
+    --core1) CORE1_ONLY=true ;;
+    --dict)  DICT_ONLY=true ;;
+esac
 
 # ── Core 0: PlatformIO build ────────────────────────────────────────────
-if [ "$CORE1_ONLY" = false ]; then
+if [ "$CORE1_ONLY" = false ] && [ "$DICT_ONLY" = false ]; then
     echo "=== Building Core 0 (Meshtastic via PlatformIO) ==="
     python -m platformio run -e rp2350b-mokya \
         -d firmware/core0/meshtastic 2>&1
@@ -34,30 +45,46 @@ if [ "$CORE1_ONLY" = false ]; then
 fi
 
 # ── Core 1: CMake/Ninja build ───────────────────────────────────────────
+if [ "$DICT_ONLY" = false ]; then
+    echo ""
+    echo "=== Building Core 1 (m1_bridge via CMake) ==="
+    cmake --build build/core1_bridge 2>&1
+    if [ ! -f "$CORE1_BIN" ]; then
+        echo "ERROR: $CORE1_BIN not found — CMake build failed"
+        exit 1
+    fi
+    echo "OK: $CORE1_BIN"
+fi
+
+# ── Dict blob: CMake/MSBuild via mie-host ───────────────────────────────
 echo ""
-echo "=== Building Core 1 (m1_bridge via CMake) ==="
-cmake --build build/core1_bridge 2>&1
-if [ ! -f "$CORE1_BIN" ]; then
-    echo "ERROR: $CORE1_BIN not found — CMake build failed"
+echo "=== Building MIE dict blob (mie-host/mie_dict_blob) ==="
+cmake --build build/mie-host --config Debug --target mie_dict_blob 2>&1
+if [ ! -f "$DICT_BLOB" ]; then
+    echo "ERROR: $DICT_BLOB not found — blob packaging failed"
     exit 1
 fi
-echo "OK: $CORE1_BIN"
+echo "OK: $DICT_BLOB ($(stat -c%s "$DICT_BLOB" 2>/dev/null || wc -c < "$DICT_BLOB") bytes)"
 
 # ── Flash via J-Link ────────────────────────────────────────────────────
 echo ""
 echo "=== Flashing via J-Link ==="
 
 JLINK_SCRIPT="/tmp/jlink_flash_dual.jlink"
-CORE1_BIN_WIN="$(cygpath -w "$(pwd)/$CORE1_BIN")"
+DICT_BLOB_WIN="$(cygpath -w "$(pwd)/$DICT_BLOB")"
 
 {
     echo "connect"
     echo "r"
-    if [ "$CORE1_ONLY" = false ]; then
+    if [ "$CORE1_ONLY" = false ] && [ "$DICT_ONLY" = false ]; then
         CORE0_ELF_WIN="$(cygpath -w "$(pwd)/$CORE0_ELF")"
         printf 'loadfile "%s"\n' "$CORE0_ELF_WIN"
     fi
-    printf 'loadbin "%s" 0x10200000\n' "$CORE1_BIN_WIN"
+    if [ "$DICT_ONLY" = false ]; then
+        CORE1_BIN_WIN="$(cygpath -w "$(pwd)/$CORE1_BIN")"
+        printf 'loadbin "%s" 0x10200000\n' "$CORE1_BIN_WIN"
+    fi
+    printf 'loadbin "%s" %s\n' "$DICT_BLOB_WIN" "$DICT_ADDR"
     echo "r"
     echo "g"
     echo "qc"
