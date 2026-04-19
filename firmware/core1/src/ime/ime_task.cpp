@@ -1,10 +1,15 @@
 /* ime_task.cpp -- see ime_task.h for contract.
  *
- * Single consumer of the KeyEvent queue (firmware-architecture.md §4.4);
- * listener callbacks therefore run on this task's thread and cannot
+ * Single consumer of the KeyEvent queue (firmware-architecture.md §4.4).
+ * Listener callbacks therefore run on this task's thread and cannot
  * re-enter ImeLogic (contract documented in ime_logic.h). The shared
  * snapshot state is protected by a FreeRTOS mutex that the LVGL view
  * reader briefly takes while rendering.
+ *
+ * Text + cursor model mirrors mie_repl.cpp. The listener inserts
+ * committed text at the cursor, deletes one codepoint before the
+ * cursor on DEL-past-pending, and moves the cursor on DPAD presses
+ * that ImeLogic flagged as cursor-moves (no pending / no candidates).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -16,6 +21,8 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
+
+#include "hardware/xip_cache.h"
 
 #include <mie/ime_logic.h>
 #include <mie/trie_searcher.h>
@@ -29,66 +36,141 @@ namespace {
 mie::TrieSearcher g_zh_searcher;
 mie::TrieSearcher g_en_searcher;
 
-/* ImeLogic constructor takes refs to TrieSearcher, so we placement-new
- * into aligned storage once searchers are loaded. */
 alignas(mie::ImeLogic) uint8_t g_ime_storage[sizeof(mie::ImeLogic)];
 mie::ImeLogic *g_ime = nullptr;
 
 SemaphoreHandle_t g_snapshot_mutex = nullptr;
 
-/* Commit buffer: appended on each on_commit(). When full, the front
- * half is discarded to keep recent commits visible — the LVGL view is
- * a scratchpad, not a persistent transcript. */
-constexpr size_t kCommitCapacity = 1024;
-char   g_commit_buf[kCommitCapacity + 1] = {0};
-size_t g_commit_len = 0;
+/* Text buffer — the committed string the listener builds up. Bounded
+ * at ~2 KB; when the front half is full and more commits arrive, the
+ * oldest half is dropped to keep the tail visible. That's a scratchpad
+ * sized for the REPL-style visual test, not a transcript store. */
+constexpr size_t kTextCapacity = 2048;
+char   g_text[kTextCapacity + 1] = {0};
+int    g_text_len = 0;
+int    g_cursor   = 0;
+
+/* ── UTF-8 helpers ────────────────────────────────────────────────── *
+ * prev_boundary: given a valid byte offset in a well-formed UTF-8
+ * buffer, return the start byte of the codepoint immediately before.
+ * next_boundary: return the start byte of the codepoint at-or-after.
+ * Both stay within [0, g_text_len].                                   */
+
+inline int prev_boundary(int pos) {
+    if (pos <= 0) return 0;
+    --pos;
+    while (pos > 0 && ((unsigned char)g_text[pos] & 0xC0) == 0x80) --pos;
+    return pos;
+}
+
+inline int next_boundary(int pos) {
+    if (pos >= g_text_len) return g_text_len;
+    ++pos;
+    while (pos < g_text_len && ((unsigned char)g_text[pos] & 0xC0) == 0x80) ++pos;
+    return pos;
+}
+
+/* Extract up to 2 codepoints immediately before g_cursor into `out`.
+ * Used to keep ImeLogic's SmartEn auto-space / auto-capitalize state
+ * in sync with the REPL-style text buffer. */
+void extract_ctx(char out[16]) {
+    out[0] = '\0';
+    if (g_cursor <= 0) return;
+    int end   = g_cursor;
+    int start = end;
+    for (int cp = 0; cp < 2 && start > 0; ++cp) start = prev_boundary(start);
+    int n = end - start;
+    if (n < 0) n = 0;
+    if (n > 15) n = 15;
+    std::memcpy(out, g_text + start, (size_t)n);
+    out[n] = '\0';
+}
+
+/* Compact the front half of the buffer so `need` more bytes fit.
+ * Preserves cursor/text_len invariants. Called only while holding
+ * g_snapshot_mutex. */
+bool make_room_for(size_t need) {
+    if ((size_t)g_text_len + need <= kTextCapacity) return true;
+    int keep = (int)(kTextCapacity / 2);
+    if (g_text_len > keep) {
+        int drop = g_text_len - keep;
+        std::memmove(g_text, g_text + drop, (size_t)keep);
+        g_text_len = keep;
+        g_cursor  -= drop;
+        if (g_cursor < 0) g_cursor = 0;
+        /* Normalise cursor to a codepoint boundary after the shift. */
+        while (g_cursor > 0 && ((unsigned char)g_text[g_cursor] & 0xC0) == 0x80) --g_cursor;
+        g_text[g_text_len] = '\0';
+    }
+    return (size_t)g_text_len + need <= kTextCapacity;
+}
+
+void insert_at_cursor(const char *s, size_t n) {
+    if (n == 0) return;
+    if (!make_room_for(n)) {
+        /* Even after drop-half, caller exceeds capacity — truncate. */
+        n = kTextCapacity - (size_t)g_text_len;
+        if (n == 0) return;
+    }
+    std::memmove(g_text + g_cursor + n, g_text + g_cursor,
+                 (size_t)(g_text_len - g_cursor));
+    std::memcpy(g_text + g_cursor, s, n);
+    g_text_len += (int)n;
+    g_cursor   += (int)n;
+    g_text[g_text_len] = '\0';
+}
+
+void delete_before_cursor() {
+    if (g_cursor <= 0) return;
+    int prev = prev_boundary(g_cursor);
+    int drop = g_cursor - prev;
+    std::memmove(g_text + prev, g_text + g_cursor,
+                 (size_t)(g_text_len - g_cursor));
+    g_text_len -= drop;
+    g_cursor    = prev;
+    g_text[g_text_len] = '\0';
+}
 
 /* ── Listener adapter ─────────────────────────────────────────────── */
 
+/* Listener callbacks all run on the ime_task thread, from within
+ * ImeLogic::process_key(). ime_task holds g_snapshot_mutex across the
+ * entire process_key()/tick() call (see ime_task_fn), so the callbacks
+ * don't need to re-take the mutex and can't deadlock against it. The
+ * outer-scope lock also protects readers against torn reads of
+ * candidates_[] while ImeLogic is rebuilding the pool. */
 class IMEListener : public mie::IImeListener {
 public:
+    mie::ImeLogic *ime = nullptr;       /* back-pointer for sync_text_context */
+
     void on_commit(const char *utf8) override {
-        if (!utf8) return;
-        size_t add = std::strlen(utf8);
-        if (add == 0) return;
+        if (!utf8 || !*utf8) return;
+        insert_at_cursor(utf8, std::strlen(utf8));
+    }
 
-        /* Take the mutex; callers of the view API are already holding
-         * it briefly while rendering, and the ime task is the only
-         * writer. Use xSemaphoreTake with a short timeout so a stuck
-         * LVGL pass doesn't wedge the IME. */
-        if (xSemaphoreTake(g_snapshot_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-            return;   /* dropping a commit is visible (no text shown);
-                       * better than deadlocking the IME task. */
+    void on_cursor_move(mie::NavDir d) override {
+        switch (d) {
+            case mie::NavDir::Left:  g_cursor = prev_boundary(g_cursor); break;
+            case mie::NavDir::Right: g_cursor = next_boundary(g_cursor); break;
+            case mie::NavDir::Up:                                        break;
+            case mie::NavDir::Down:                                      break;
         }
+        char ctx[16] = {0};
+        extract_ctx(ctx);
+        if (ime) ime->set_text_context(ctx);
+    }
 
-        if (g_commit_len + add >= kCommitCapacity) {
-            /* Keep the last half to preserve recent context. */
-            size_t keep = kCommitCapacity / 2;
-            if (g_commit_len > keep) {
-                std::memmove(g_commit_buf,
-                             g_commit_buf + (g_commit_len - keep),
-                             keep);
-                g_commit_len = keep;
-            }
-            /* If add > keep slot, truncate the new fragment. */
-            if (add + g_commit_len >= kCommitCapacity) {
-                add = kCommitCapacity - g_commit_len - 1;
-            }
-        }
-        std::memcpy(g_commit_buf + g_commit_len, utf8, add);
-        g_commit_len += add;
-        g_commit_buf[g_commit_len] = '\0';
-
-        xSemaphoreGive(g_snapshot_mutex);
-        __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
+    void on_delete_before() override {
+        delete_before_cursor();
+        char ctx[16] = {0};
+        extract_ctx(ctx);
+        if (ime) ime->set_text_context(ctx);
     }
 
     void on_composition_changed() override {
-        __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
+        /* Nothing to do — the outer-scope mutation loop bumps the
+         * dirty counter once per process_key/tick cycle. */
     }
-
-    /* on_cursor_move / on_delete_before: leave the defaults (no-op)
-     * until M5 text-area widget wires a textarea cursor. */
 };
 
 IMEListener g_listener;
@@ -104,17 +186,29 @@ static inline uint32_t now_ms(void) {
 void ime_task_fn(void *) {
     for (;;) {
         key_event_t ev{};
-        if (key_event_pop(&ev, pdMS_TO_TICKS(kTickMs))) {
+        bool got_ev = key_event_pop(&ev, pdMS_TO_TICKS(kTickMs));
+
+        /* Hold the snapshot mutex across the full process_key()/tick()
+         * call so LVGL readers never observe candidates_[] mid-rebuild.
+         * Listener callbacks (on_commit, on_cursor_move, on_delete_before)
+         * execute within this critical section without re-taking the
+         * mutex — they mutate the text buffer and call set_text_context
+         * on the same thread. */
+        xSemaphoreTake(g_snapshot_mutex, portMAX_DELAY);
+        if (got_ev) {
             mie::KeyEvent mev;
             mev.keycode = (mokya_keycode_t)ev.keycode;
             mev.pressed = ev.pressed != 0;
             mev.now_ms  = now_ms();
-            /* process_key drives the listener when state changes. */
+
             g_ime->process_key(mev);
         }
-        /* Tick regardless — advances multi-tap auto-commit and SYM1
-         * long-press timers. Cheap no-op when no timers pending. */
         g_ime->tick(now_ms());
+        xSemaphoreGive(g_snapshot_mutex);
+
+        if (got_ev) {
+            __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
+        }
     }
 }
 
@@ -142,21 +236,23 @@ bool ime_task_start(const mie_dict_pointers_t *dict, UBaseType_t priority) {
     if (have_en) {
         if (!g_en_searcher.load_from_memory(dict->en_dat, dict->en_dat_size,
                                             dict->en_val, dict->en_val_size)) {
-            /* EN is optional — log-style failure would go through the
-             * listener once that's wired; for now silently continue
-             * with ZH-only so the user can still type Chinese. */
             have_en = false;
         }
     }
 
     mie::TrieSearcher *en = have_en ? &g_en_searcher : nullptr;
     g_ime = new (g_ime_storage) mie::ImeLogic(g_zh_searcher, en);
+    g_listener.ime = g_ime;
     g_ime->set_listener(&g_listener);
 
     g_snapshot_mutex = xSemaphoreCreateMutex();
     if (!g_snapshot_mutex) return false;
 
-    return xTaskCreate(ime_task_fn, "ime", 1024, nullptr, priority, nullptr)
+    /* 2048 words = 8 KB. run_search() puts Candidate tmp[50] on stack
+     * (50×36 = 1800 B) plus ~260 B of strip tables and callee frames —
+     * 1024 words was right at the cliff and produced visible candidate
+     * corruption on some prefix searches. */
+    return xTaskCreate(ime_task_fn, "ime", 2048, nullptr, priority, nullptr)
            == pdPASS;
 }
 
@@ -181,6 +277,12 @@ const char *ime_view_pending(int *byte_len, int *matched_prefix, int *style) {
     if (matched_prefix) *matched_prefix = pv.matched_prefix_bytes;
     if (style)          *style = (int)pv.style;
     return pv.str ? pv.str : "";
+}
+
+const char *ime_view_text(int *byte_len, int *cursor_bytes) {
+    if (byte_len)     *byte_len = g_text_len;
+    if (cursor_bytes) *cursor_bytes = g_cursor;
+    return g_text;
 }
 
 const char *ime_view_mode_indicator(void) {
@@ -208,16 +310,23 @@ int ime_view_page_count(void) {
     return g_ime ? g_ime->page_count() : 0;
 }
 
-const char *ime_view_commit_text(int *byte_len) {
-    if (byte_len) *byte_len = (int)g_commit_len;
-    return g_commit_buf;
+int ime_view_candidate_count(void) {
+    return g_ime ? g_ime->candidate_count() : 0;
 }
 
-void ime_view_clear_commit(void) {
-    if (!g_snapshot_mutex) return;
+const char *ime_view_candidate(int idx) {
+    if (!g_ime || idx < 0 || idx >= g_ime->candidate_count()) return "";
+    return g_ime->candidate(idx).word;
+}
+
+int ime_view_selected(void) {
+    return g_ime ? g_ime->selected() : 0;
+}
+
+void ime_view_set_selected(int idx) {
+    if (!g_ime || !g_snapshot_mutex) return;
     xSemaphoreTake(g_snapshot_mutex, portMAX_DELAY);
-    g_commit_len = 0;
-    g_commit_buf[0] = '\0';
+    g_ime->set_selected(idx);
     xSemaphoreGive(g_snapshot_mutex);
     __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
 }

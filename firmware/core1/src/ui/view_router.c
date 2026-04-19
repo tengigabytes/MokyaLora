@@ -6,6 +6,7 @@
 #include "keypad_view.h"
 #include "rf_debug_view.h"
 #include "font_test_view.h"
+#include "ime_view.h"
 #include "mie/keycode.h"
 
 /* ── View table ──────────────────────────────────────────────────────── *
@@ -25,7 +26,7 @@ typedef struct {
     view_refresh_fn   refresh;
 } view_entry_t;
 
-#define VIEW_COUNT  3
+#define VIEW_COUNT  4
 static view_entry_t s_views[VIEW_COUNT];
 static int          s_active;
 
@@ -73,13 +74,21 @@ void view_router_init(lv_obj_t *screen)
     s_views[2].refresh = NULL;
     font_test_view_init(s_views[2].panel);
 
-    activate(0);   /* keypad_view visible at boot; FUNC cycles to rf / font_test */
+    s_views[3].name    = "ime";
+    s_views[3].panel   = make_panel(screen);
+    s_views[3].apply   = ime_view_apply;
+    s_views[3].refresh = ime_view_refresh;
+    ime_view_init(s_views[3].panel);
+
+    activate(0);   /* keypad_view visible at boot; FUNC cycles keypad → rf → font_test → ime */
 }
 
 void view_router_tick(void)
 {
+    /* Drain the view-observer mirror queue (see key_event.c). The IME
+     * task owns the primary queue; popping it here would race. */
     key_event_t ev;
-    while (key_event_pop(&ev, 0)) {
+    while (key_event_view_pop(&ev, 0)) {
         /* FUNC press edge cycles views. Release is intentionally
          * forwarded to the active view so it can clear its "pressed"
          * highlight for FUNC if the user held it. */
