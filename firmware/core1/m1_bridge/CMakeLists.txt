@@ -110,6 +110,14 @@ set(PSRAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/psram)
 # ── IME module (M4 Step 3+) ──────────────────────────────────────────────────
 set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
 
+# ── MIE library sources (compiled directly into core1_bridge) ────────────────
+# Building MIE as an independent static library would require replicating the
+# Pico SDK cross-compile toolchain state. Compiling straight into the Core 1
+# executable avoids that and keeps the source-of-truth headers under
+# firmware/mie/include. The C API (src/mie_c_api.cpp) is intentionally NOT
+# compiled here — Core 1 uses C++ ImeLogic directly.
+set(MIE_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/src)
+
 # ── MIEF font blob (Phase F — Traditional Chinese rendering) ─────────────────
 # Embeds firmware/mie/data/mie_unifont_sm_16.bin into Core 1 .rodata via
 # .incbin. gen_font.py is invoked automatically whenever the charlist,
@@ -168,6 +176,16 @@ add_executable(core1_bridge
     ${UI_DIR}/view_router.c
     ${PSRAM_DIR}/psram.c
     ${IME_DIR}/mie_dict_loader.c
+    ${IME_DIR}/ime_task.cpp
+    ${MIE_SRC_DIR}/mie_init.cpp
+    ${MIE_SRC_DIR}/trie_searcher.cpp
+    ${MIE_SRC_DIR}/ime_logic.cpp
+    ${MIE_SRC_DIR}/ime_keys.cpp
+    ${MIE_SRC_DIR}/ime_search.cpp
+    ${MIE_SRC_DIR}/ime_display.cpp
+    ${MIE_SRC_DIR}/ime_commit.cpp
+    ${MIE_SRC_DIR}/ime_smart.cpp
+    ${MIE_SRC_DIR}/ime_direct.cpp
 )
 
 # mie_font_blob.S uses .incbin to pull in the MIEF binary. Pass the

@@ -82,8 +82,9 @@
 #include "key_event.h"
 #include "psram.h"
 #include "mie_dict_loader.h"
+#include "ime_task.h"
 
-/* Dict pointers stay file-scope for the future ime_task to pick up. */
+/* Dict pointers stay file-scope; ime_task_start takes a pointer to it. */
 static mie_dict_pointers_t s_mie_dict = {0};
 
 /* ── Doorbell IPC notification (M2) ─────────────────────────────────────── *
@@ -524,6 +525,16 @@ int main(void)
      * cadence is 100 ms, faster than the 1/10 Hz sensor tick, and the
      * line-accumulator parser carries state between ticks. */
     TASK_START_OR_PANIC(gps_task_start(tskIDLE_PRIORITY + 2), "gps");
+
+    /* IME task (M4). Consumes the KeyEvent queue, drives mie::ImeLogic,
+     * and exposes composition / candidate / commit state for the LVGL
+     * view via the ime_view_* getter API. Priority +3 one notch above
+     * the other app tasks so keystrokes get processed before the next
+     * LVGL frame. If the dict copy-at-boot failed the pointers are
+     * zeroed and ime_task_start returns false → panic, which is the
+     * right behaviour (IME unusable means nothing to do). */
+    TASK_START_OR_PANIC(ime_task_start(&s_mie_dict, tskIDLE_PRIORITY + 3),
+                        "ime");
 
     #undef TASK_START_OR_PANIC
 
