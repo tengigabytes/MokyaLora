@@ -80,6 +80,11 @@
 #include "lvgl_glue.h"
 #include "keypad_scan.h"
 #include "key_event.h"
+#include "psram.h"
+#include "mie_dict_loader.h"
+
+/* Dict pointers stay file-scope for the future ime_task to pick up. */
+static mie_dict_pointers_t s_mie_dict = {0};
 
 /* ── Doorbell IPC notification (M2) ─────────────────────────────────────── *
  * We use raw SIO register writes instead of pico_multicore API to avoid
@@ -439,9 +444,19 @@ int main(void)
 
     __atomic_store_n(&g_ipc_shared.c1_ready, 1u, __ATOMIC_RELEASE);
 
-    /* Bring up both I2C buses before any driver starts. display_init()'s
-     * backlight setup and future power/sensor drivers all depend on this. */
-    i2c_bus_init_all();
+    /* PSRAM (APS6404L, 8 MB at 0x11000000). Done before any driver so
+     * allocations that want PSRAM can succeed from task-start. Core 0
+     * does not initialise PSRAM (Arduino-Pico's psram.cpp is gated on
+     * RP2350_PSRAM_CS which we do not define), so Core 1 owns it. The
+     * read-ID result lands in g_psram_read_id[] for SWD inspection;
+     * failure here is logged but non-fatal (IME will panic later when
+     * it tries to copy the dict blob). */
+    (void)psram_init();
+
+    /* Copy the MDBL dict blob from flash partition (0x10400000) to
+     * PSRAM. Status in g_mie_dict_load_status; on failure s_mie_dict
+     * is zeroed and the future ime_task will refuse to start. */
+    (void)mie_dict_load_to_psram(&s_mie_dict);
 
     /* 7. Register doorbell ISR but do NOT enable yet — enabling before the
      *    FreeRTOS scheduler starts causes a HardFault because portYIELD_FROM_ISR

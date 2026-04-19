@@ -21,7 +21,7 @@ cd "$(dirname "$0")/.."
 
 JLINK="C:/Program Files/SEGGER/JLink_V932/JLink.exe"
 CORE1_BIN="build/core1_bridge/core1_bridge.bin"
-DICT_BLOB="build/mie-host/dict.blob"
+DICT_BLOB="build/mie-host/dict.bin"
 DICT_ADDR="0x10400000"
 CORE1_ONLY=false
 DICT_ONLY=false
