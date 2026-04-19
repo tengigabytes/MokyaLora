@@ -776,8 +776,14 @@ builds the `mie_gui` target using the MSVC/Ninja toolchain.
       `now_ms` from the FreeRTOS tick clock).
 - [ ] Boot loader: copy DAT + values from Flash to PSRAM; measure
       prefix-scan latency against realistic corpora.
-- [ ] Display: render `font_glyphs.bin` via LVGL custom font driver
-      on NHD 2.4″.
+- [x] Display: render MIEF font via LVGL custom font driver on
+      NHD 2.4″ ST7789VI. `firmware/core1/src/display/mie_font.{c,h}`
+      implements `lv_font_t` callbacks (binary-search index + 1 bpp →
+      A8 unpack). `.incbin` embeds `mie_unifont_sm_16.bin` (~831 KB,
+      19 K glyphs) into `.rodata`; CMake auto-regens the blob when
+      charlist / source OTF / script change. Phase F validated with
+      `font_test_view` (Traditional CJK, Bopomofo, Latin-1). ASCII-only
+      restriction on LVGL labels is lifted.
 - [ ] UI: integrate candidate bar widget with
       `ImeLogic::candidate()`; implement `IImeListener` to drive
       LVGL textarea + candidate panel.

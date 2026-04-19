@@ -10,6 +10,7 @@
  * Views today:
  *   0. keypad_view (M3.3 Phase C — physical keypad grid)
  *   1. rf_debug_view (M3.4.5d Part C — Teseo-LIV3FL telemetry)
+ *   2. font_test_view (M3.6 — MIEF Traditional Chinese smoke test)
  *
  * Adding a new view: create `<name>_view_init(panel)`, `<name>_view_apply(ev)`,
  * `<name>_view_refresh(void)` matching the signatures below, then add a
