@@ -1516,6 +1516,76 @@ editing when adding any new task or queue.
   reserve assert.
 - `CLAUDE.md` — pointer to the new doc.
 
+#### M3.6 — MIEF font driver + Traditional Chinese LVGL rendering ✅ (2026-04-19)
+
+LVGL labels can now render Traditional Chinese, Bopomofo, Latin-1
+Supplement, and CJK punctuation from the MIEF v1 font blob compiled
+against GNU Unifont 17.0.04.
+
+**Deliverables:**
+- `firmware/core1/src/display/mie_font.{c,h}` — `lv_font_t` adapter
+  that parses the MIEF header, binary-searches the codepoint index,
+  and unpacks 1 bpp MSB-first bitmaps to A8 into the `lv_draw_buf_t`
+  LVGL hands to `get_glyph_bitmap_cb`. Zero runtime heap. Two
+  public views share the same blob:
+  `mie_font_unifont_sm_16()` (16 px native, 1:1) and
+  `mie_font_unifont_sm_32()` (32 px via 2× nearest-neighbor — each
+  source bit fills a 2×2 A8 block at draw time, so the 32 px variant
+  costs no extra flash and ~4× per-glyph unpack work). The `lv_font_t`
+  dsc holds a `mief_view_t { blob*, scale }` so a single callback
+  body serves both scales.
+- `firmware/core1/src/display/mie_font_blob.S` — `.incbin` stub that
+  embeds `mie_unifont_sm_16.bin` into `.rodata` with
+  `_mie_unifont_sm_16_{start,end,size}` symbols. Path passed via
+  `MIEF_BLOB_PATH` per-source compile definition.
+- `firmware/mie/tools/gen_font.py` — Latin-1 Supplement
+  (0x00A0..0x00FF) added to `MANDATORY_RANGES` so `°C × ÷ ± ©` etc
+  always ship regardless of charlist content. Also:
+  `fontTools` import case fix (previously lowercase), `cp950`
+  console-encoding fix (removed `©` from license notice so Windows
+  default console doesn't raise `UnicodeEncodeError`).
+- `firmware/core1/m1_bridge/CMakeLists.txt` — `add_custom_command`
+  regenerates the MIEF blob whenever `gen_font.py`, `charlist.txt`,
+  or the source OTF changes; `MIEF_BLOB_PATH` propagated to the
+  `.incbin` assembler via `set_source_files_properties`. Note:
+  `--no-subset` is used because fontTools' OS/2 unicode-range
+  writer rejects Unifont's bit-123 range as
+  `expected 0 <= int <= 122`.
+- `firmware/core1/src/ui/font_test_view.{c,h}` — a third view (panel
+  index 2). Renders the opening two paragraphs of 《桃花源記》
+  (陶淵明) with the 32 px title at the top and the 16 px body
+  wrap-laid-out underneath (4 px `text_line_space` — Unifont glyphs
+  fill most of the 16 px cell so line_space=0 bleeds adjacent rows
+  together). Mixed-scale rendering confirms both font views can be
+  active on the same screen without interfering. FUNC cycles
+  keypad → rf_debug → font_test.
+
+**Footprint:**
+- MIEF blob: 851 061 bytes (831 KB), 19 320 glyphs.
+- Core 1 `.bin`: 440 KB → 1.29 MB (~65 % of the 2 MB flash window).
+- No RAM cost at runtime — glyphs are binary-searched and unpacked
+  directly from flash-resident bytes; the only per-call allocation
+  is the LVGL-owned draw buffer (already sized for A8 glyphs).
+
+**Verification.** `build_and_flash.sh --core1`, visual inspection of
+all seven `font_test_view` rows. Latin-1 row rendered as tofu on the
+first pass (root cause: `MANDATORY_RANGES` omitted 0x00A0..0x00FF);
+fixed and re-flashed successfully on the second pass.
+
+**Follow-ups not in M3.6 scope:**
+- Full font variant (all CODEPOINT_RANGES) — deferred until a real
+  user flow demands it; the charlist-subset already covers all MoE
+  dict coverage + mandatory Unicode ranges.
+- RLE encoding path (`mie_font.c` currently rejects `flags & 0x01`).
+  No user demand; uncompressed random-access lookup is simpler and
+  already fits the flash budget.
+- `lv_font_t::fallback` chain — the `mie_font` is a superset of
+  what Montserrat 14 covers for ASCII, so there's no fallback need
+  for now. Revisit if we ever ship an emoji or symbol-extension
+  font alongside.
+- Boot-time MIEF header corruption check surfaced via SWD
+  breadcrumb — deferred to when a second font blob gets added.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

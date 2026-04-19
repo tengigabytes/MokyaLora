@@ -59,9 +59,9 @@ import sys
 from pathlib import Path
 
 try:
-    from fonttools.ttLib import TTFont
-    from fonttools.subset import Subsetter
-    from fonttools.subset import Options as SubOptions
+    from fontTools.ttLib import TTFont
+    from fontTools.subset import Subsetter
+    from fontTools.subset import Options as SubOptions
     from PIL import ImageFont, Image, ImageDraw
 except ImportError as exc:
     print(f"ERROR: missing dependency — {exc}\n"
@@ -94,6 +94,7 @@ CODEPOINT_RANGES = [
 # These cover UI chrome, Bopomofo, and CJK punctuation regardless of charlist.
 MANDATORY_RANGES = [
     (0x0020, 0x007F),   # ASCII printable
+    (0x00A0, 0x00FF),   # Latin-1 Supplement (° ± × ÷ © etc.)
     (0x2000, 0x206F),   # General Punctuation (— … etc.)
     (0x3000, 0x303F),   # CJK Symbols & Punctuation
     (0x3100, 0x312F),   # Bopomofo
@@ -349,7 +350,7 @@ def main():
           f"({len(mief)/1024:.1f} KB)")
     print()
     print("License notice:")
-    print("  GNU Unifont © Roman Czyborra, Paul Hardy, Qianqian Fang et al.")
+    print("  GNU Unifont (c) Roman Czyborra, Paul Hardy, Qianqian Fang et al.")
     print("  SIL Open Font License 1.1 + GNU GPL v2+ with font exception.")
     print("  https://unifoundry.com/unifont/")
 

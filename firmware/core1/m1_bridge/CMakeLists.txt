@@ -104,6 +104,30 @@ set(KEYPAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/keypad)
 # ── UI diagnostic views (M3.3 Phase C) ───────────────────────────────────────
 set(UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui)
 
+# ── MIEF font blob (Phase F — Traditional Chinese rendering) ─────────────────
+# Embeds firmware/mie/data/mie_unifont_sm_16.bin into Core 1 .rodata via
+# .incbin. gen_font.py is invoked automatically whenever the charlist,
+# source OTF, or the generator script itself changes.
+set(MIE_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/../../mie)
+set(MIEF_BLOB ${MIE_DIR}/data/mie_unifont_sm_16.bin)
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+add_custom_command(
+    OUTPUT  ${MIEF_BLOB}
+    COMMAND ${Python3_EXECUTABLE} ${MIE_DIR}/tools/gen_font.py
+            --unifont  ${MIE_DIR}/data_sources/unifont-17.0.04.otf
+            --charlist ${MIE_DIR}/data/charlist.txt
+            --out      ${MIEF_BLOB}
+            --no-subset
+    DEPENDS ${MIE_DIR}/tools/gen_font.py
+            ${MIE_DIR}/data/charlist.txt
+            ${MIE_DIR}/data_sources/unifont-17.0.04.otf
+    COMMENT "Compiling MIEF font blob -> ${MIEF_BLOB}"
+    VERBATIM
+)
+add_custom_target(mie_font_data DEPENDS ${MIEF_BLOB})
+
 # ── Executable ───────────────────────────────────────────────────────────────
 # core1_reset.S MUST be the first source so its .vectors input section lands
 # at offset 0 of the final .text output (i.e. flash 0x10200000). The SDK
@@ -128,12 +152,24 @@ add_executable(core1_bridge
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
+    ${DISPLAY_DIR}/mie_font.c
+    ${DISPLAY_DIR}/mie_font_blob.S
     ${KEYPAD_DIR}/keypad_scan.c
     ${KEYPAD_DIR}/key_event.c
     ${UI_DIR}/keypad_view.c
     ${UI_DIR}/rf_debug_view.c
+    ${UI_DIR}/font_test_view.c
     ${UI_DIR}/view_router.c
 )
+
+# mie_font_blob.S uses .incbin to pull in the MIEF binary. Pass the
+# absolute path via a preprocessor define and add a build-time dep so
+# the blob is regenerated when charlist.txt changes.
+file(TO_CMAKE_PATH "${MIEF_BLOB}" MIEF_BLOB_CPATH)
+set_source_files_properties(${DISPLAY_DIR}/mie_font_blob.S PROPERTIES
+    COMPILE_DEFINITIONS "MIEF_BLOB_PATH=\"${MIEF_BLOB_CPATH}\""
+    OBJECT_DEPENDS      "${MIEF_BLOB}")
+add_dependencies(core1_bridge mie_font_data)
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.
 pico_generate_pio_header(core1_bridge
