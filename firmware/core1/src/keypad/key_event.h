@@ -82,8 +82,19 @@ key_event_result_t key_event_push_hw(mokya_keycode_t keycode, bool pressed);
 key_event_result_t key_event_push_inject(mokya_keycode_t keycode, bool pressed);
 
 /* Consumer drain — waits up to `timeout_ticks` for an event to arrive.
- * Returns true if *out was populated. */
+ * Returns true if *out was populated.
+ *
+ * Primary consumer is the IME task. Every successful push_* call also
+ * fans the event out into an independent "view" queue so the LVGL view
+ * router can observe keystrokes (FUNC for panel switch, keypad_view
+ * cell highlight) without competing with the IME task for the main
+ * queue. Drain the view queue via key_event_view_pop(). */
 bool key_event_pop(key_event_t *out, uint32_t timeout_ticks);
+
+/* View-side observer drain. Non-blocking drops are acceptable — the
+ * view queue is a mirror for UI highlight/navigation, not a control
+ * path. Safe to poll from the LVGL task. */
+bool key_event_view_pop(key_event_t *out, uint32_t timeout_ticks);
 
 /* Snapshot of the HW-pressed bitmap — primarily for SWD diagnosis and
  * for future arbiter logic that wants to batch-check multiple keycodes.

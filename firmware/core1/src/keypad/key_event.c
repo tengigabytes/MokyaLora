@@ -24,8 +24,10 @@ volatile uint8_t  g_key_event_log[KEY_EVENT_LOG_DEPTH];
 volatile uint32_t g_key_event_log_idx;
 
 #define KEY_EVENT_QUEUE_DEPTH  16u
+#define KEY_EVENT_VIEW_QUEUE_DEPTH  16u
 
 static QueueHandle_t s_queue;
+static QueueHandle_t s_view_queue;
 
 /* Bitmap indexed by keycode (1..0x3F). Bit 0 is unused (MOKYA_KEY_NONE).
  * Updated only from keypad_scan_task; read from any task context.
@@ -56,6 +58,10 @@ void key_event_init(void)
      * via KEY_EVENT_ERR_NOT_READY. Creation failure is surfaced by
      * leaving s_queue NULL; the bridge still boots so other Core 1
      * services remain SWD-observable for post-mortem. */
+    s_view_queue = xQueueCreate(KEY_EVENT_VIEW_QUEUE_DEPTH, sizeof(key_event_t));
+    /* s_view_queue feeds the LVGL view router and keypad_view highlight.
+     * Non-fatal if NULL: IME still functions; the view just won't see
+     * events. */
 }
 
 static void hw_pressed_set(mokya_keycode_t keycode, bool pressed)
@@ -97,6 +103,11 @@ static key_event_result_t push_locked(key_event_t ev)
     if (xQueueSend(s_queue, &ev, 0) != pdPASS) {
         g_key_event_dropped++;
         return KEY_EVENT_ERR_QUEUE_FULL;
+    }
+    /* Fan out to the view-side observer queue. Best-effort: if full,
+     * drop silently — the IME (main queue) stays authoritative. */
+    if (s_view_queue != NULL) {
+        (void)xQueueSend(s_view_queue, &ev, 0);
     }
     /* Mirror the enqueued event into the SWD-readable ring. Ordering:
      * log first, then bump idx — readers inspecting the ring will see
@@ -158,4 +169,12 @@ bool key_event_pop(key_event_t *out, uint32_t timeout_ticks)
         return false;
     }
     return xQueueReceive(s_queue, out, (TickType_t)timeout_ticks) == pdTRUE;
+}
+
+bool key_event_view_pop(key_event_t *out, uint32_t timeout_ticks)
+{
+    if (s_view_queue == NULL || out == NULL) {
+        return false;
+    }
+    return xQueueReceive(s_view_queue, out, (TickType_t)timeout_ticks) == pdTRUE;
 }
