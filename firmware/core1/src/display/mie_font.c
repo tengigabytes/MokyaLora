@@ -6,9 +6,15 @@
 #include <stdint.h>
 #include <string.h>
 
-/* Linker-defined symbols from mie_font_blob.S (.incbin of the MIEF file). */
-extern const uint8_t _mie_unifont_sm_16_start[];
-extern const uint8_t _mie_unifont_sm_16_end[];
+#include "mie_font_partition.h"
+
+/* MIEF blob is a standalone flash partition — no longer .incbin'd into
+ * the Core 1 image. Font driver reads directly from XIP (cached M0
+ * flash alias). See mie_font_partition.h for flash map. The blob's
+ * own header carries num_glyphs, which gives us a bounded size for
+ * parsing; we don't need a separate _end symbol. */
+#define MIE_FONT_BLOB_BASE  ((const uint8_t *)MIE_FONT_PARTITION_ADDR)
+#define MIE_FONT_BLOB_MAX   ((uint32_t)MIE_FONT_PARTITION_SIZE)
 
 /* MIEF v1 layout (little-endian):
  *   Header (12 B):
@@ -212,8 +218,7 @@ static bool mie_font_ensure_ready(void)
 {
     if (s_fonts_bound) return true;
     if (!s_blob.ready) {
-        uint32_t blob_size = (uint32_t)(_mie_unifont_sm_16_end - _mie_unifont_sm_16_start);
-        if (!mie_font_parse_blob(_mie_unifont_sm_16_start, blob_size)) return false;
+        if (!mie_font_parse_blob(MIE_FONT_BLOB_BASE, MIE_FONT_BLOB_MAX)) return false;
     }
     mie_font_bind(&s_font_1x, &s_view_1x);
     mie_font_bind(&s_font_2x, &s_view_2x);

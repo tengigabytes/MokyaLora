@@ -79,8 +79,8 @@ link time; no run-time allocator ever crosses the boundary.
 │  ┌─────────────────────────────────────────────────────────────────┐    │
 │  │  0x10000000 │ Core 0 firmware     │ 2 MB │ GPL-3.0 ELF          │    │
 │  │  0x10200000 │ Core 1 firmware     │ 2 MB │ Apache-2.0 BIN       │    │
-│  │  0x10400000 │ OTA / recovery      │ 4 MB │ reserved (M6)        │    │
-│  │  0x10800000 │ Assets (dict,font)  │ 4 MB │ gen_*.py output      │    │
+│  │  0x10400000 │ MIE dict (MDBL)     │ 6 MB │ gen_dict.py → PSRAM  │    │
+│  │  0x10A00000 │ MIE font (MIEF)     │ 2 MB │ gen_font.py, XIP     │    │
 │  │  0x10C00000 │ LittleFS            │ 4 MB │ settings + msg DB    │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 │                                                                         │
@@ -95,7 +95,7 @@ link time; no run-time allocator ever crosses the boundary.
 │                                                                         │
 │  APS6404L QSPI PSRAM (8 MB)  — XIP via QMI, Core 1 only                 │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │  0x11000000 │ MIE dictionary      │ 4 MB │ DAT + values + font  │    │
+│  │  0x11000000 │ MIE dictionary      │ 4 MB │ DAT + values (XIP)   │    │
 │  │  0x11400000 │ Application heap    │ 4 MB │ msg history, node $  │    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -107,8 +107,8 @@ link time; no run-time allocator ever crosses the boundary.
 |----------------|-------|--------------------------------------------|---------------|---------------------------|
 | `0x10000000`   | 2 MB  | Core 0 firmware (Meshtastic ELF)           | Core 0 ELF    | J-Link flash or OTA       |
 | `0x10200000`   | 2 MB  | Core 1 firmware (raw `.bin`, no IMAGE_DEF) | Core 1 BIN    | J-Link flash or OTA       |
-| `0x10400000`   | 4 MB  | OTA buffer / factory recovery image        | reserved (M6) | OTA flow writes           |
-| `0x10800000`   | 4 MB  | Assets: dict, font, language pack, icons   | gen_*.py      | gen script + flasher      |
+| `0x10400000`   | 6 MB  | MIE dict (MDBL blob, ~5 MB used)           | gen_dict.py   | gen + flasher, read-only  |
+| `0x10A00000`   | 2 MB  | MIE font (MIEF blob, ~250 KB-1 MB used)    | gen_font.py   | gen + flasher, read-only  |
 | `0x10C00000`   | 4 MB  | LittleFS — user config, message DB, NodeDB | Core 0        | at runtime (flash-safe)   |
 
 Notes:
@@ -119,9 +119,15 @@ Notes:
   so Core 0 is the sole flash writer. This keeps the P2-11 flash-write safety discipline
   single-core: only Core 0 needs to coordinate the "park Core 1 + disable IRQ + XIP off"
   dance (see `flash_safety_wrap.c`).
-- Assets region (dict, font) is read-only XIP from Core 1's perspective — `gen_dict.py` and
-  `gen_font.py` produce the `.bin` images, which are flashed once alongside firmware. Core 1
-  copies DAT + values into PSRAM at boot; font glyphs stay XIP.
+- Assets are two independent partitions so dict and font can be flashed + grown independently.
+  **Dict** (`gen_dict.py` → MDBL blob): Core 1 copies the DAT + values sections into PSRAM
+  at boot via `mie_dict_load_to_psram` and hands PSRAM pointers to `mie_dict_open_memory`.
+  **Font** (`gen_font.py` → MIEF blob): Core 1's font driver (`mie_font.c`) reads glyphs
+  directly from flash XIP — no PSRAM copy — so the font occupies no SRAM/PSRAM beyond the
+  16-byte `s_blob` descriptor.
+- OTA / factory-recovery partition is deferred to M6. Until then, `0x10400000 - 0x10C00000`
+  is owned by the asset partitions; the OTA flow will carve its own region in the LittleFS
+  quadrant or shrink the dict reservation once compression lands.
 
 ### 2.2 SRAM Partition (520 KB on-chip)
 
