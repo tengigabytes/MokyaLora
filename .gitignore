@@ -57,5 +57,8 @@ firmware/tools/gen_voice_pcm.py
 # Local datasheet cache (Claude Code debug reference only — not tracked)
 docs/datasheet/
 
+# Scratch / exploratory images (local-only, not part of the repo)
+docs/pics/
+
 # Temporary debug scripts
 .tmp_*.ps1
