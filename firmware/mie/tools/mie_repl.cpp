@@ -6,26 +6,24 @@
 // a local buffer, moves a cursor on DPAD moves when no candidates are
 // showing, and deletes before cursor on DEL when pending is empty.
 //
-// Usage:
-//   ./mie_repl [--dat dict_dat.bin]   [--val dict_values.bin]
-//              [--en-dat en_dat.bin]  [--en-val en_values.bin]
+// Layout mirrors the physical PCB grouping (see keymap_matrix.h):
 //
-// Controls:
-//   Input keys    — append (Smart) / multi-tap cycle (Direct / row-0 in
-//                   SmartEn / SYM2)
-//   MODE  (`)     — cycle 中 → EN → ABC
-//   ，SYM ([)     — short press: ， / , ; long press (500 ms): open picker
-//   。.？ ([])    — multi-tap: 。 ？ ！ (ZH) / . ? ! (EN)
-//   ←/→           — Smart + candidates: select; otherwise: move text cursor
-//   ↑/↓           — Smart + candidates: page; otherwise: move cursor (no-op here)
-//   SPACE         — idle: insert space; SmartZh + pending: 1st-tone; others: commit
-//   OK  (Enter)   — commit selected candidate / confirm multi-tap
-//   DEL           — pending: delete last; empty: delete char before cursor
-//   BS (BACK)     — exit REPL (the router contract: BACK is not consumed by MIE)
-//   ESC           — exit REPL
+//   [FUNC]            [ UP   ]                     [SET ] [VOL+]
+//   [BACK]  [LEFT ][ OK   ][RIGHT]                 [DEL ] [VOL-]
+//                     [DOWN  ]
 //
-// Multi-tap / long-press timing is driven by the main loop's tick() call
-// using std::chrono::steady_clock as the monotonic ms source.
+//   [ㄅㄉ ][ˇˋ  ][ㄓˊ ][˙ㄚ ][ㄞㄢㄦ]      Row 0 (1 3 5 7 9)
+//   [ㄆㄊ ][ㄍㄐ ][ㄔㄗ ][ㄧㄛ][ㄟㄣ  ]      Row 1 (q e t u o)
+//   [ㄇㄋ ][ㄎㄑ ][ㄕㄘ ][ㄨㄜ][ㄠㄤ  ]      Row 2 (a d g j l)
+//   [ㄈㄌ ][ㄏㄒ ][ㄖㄙ ][ㄩㄝ][ㄡㄥ  ]      Row 3 (z c b m \)
+//   [MODE][TAB  ][SPACE][，  ][。？   ]      Row 4 (` Tab Space [ ])
+//
+// Two integrated display rows:
+//   文字 │  committed-left  [pending]  ▍  committed-right
+//   候選 │  1.今  2.金  3.巾 ...                        [1/3]
+//
+// Pressed keys flash ~180 ms (reverse video) so the user can see which
+// hardware key each PC press corresponds to.
 
 #include "../hal/pc/hal_pc_stdin.h"
 #include "../hal/pc/key_map.h"
@@ -55,42 +53,58 @@ static void log_close() { if (g_log) { fputs("[mie_repl] log closed\n", g_log); 
 
 struct KeyLabel {
     mokya_keycode_t keycode;
-    const char*     pc_hint;
     const char*     label_zh;       // SmartZh
-    const char*     label_en;       // SmartEn (nullptr → use label_zh)
-    const char*     label_direct;   // Direct  (nullptr → use label_en / label_zh)
+    const char*     label_en;       // SmartEn (nullptr → fall back to label_zh)
+    const char*     label_direct;   // Direct  (nullptr → fall back to label_en / label_zh)
 };
 
 // clang-format off
 static const KeyLabel kLabels[] = {
-    // Row 0
-    {MOKYA_KEY_1, "1",   "ㄅㄉ",  "1/2",  "1/2" }, {MOKYA_KEY_3, "3",  "ˇˋ",    "3/4",  "3/4" },
-    {MOKYA_KEY_5, "5",   "ㄓˊ",  "5/6",  "5/6" }, {MOKYA_KEY_7, "7",  "˙ㄚ",   "7/8",  "7/8" },
-    {MOKYA_KEY_9, "9/-", "ㄞㄢㄦ","9/0", "9/0" }, {MOKYA_KEY_FUNC, "F1", "FUNC", nullptr, nullptr},
+    // Row 0 — digits / tone / 注音
+    {MOKYA_KEY_1, "ㄅㄉ",    "1/2",  "1/2" },
+    {MOKYA_KEY_3, "ˇˋ",     "3/4",  "3/4" },
+    {MOKYA_KEY_5, "ㄓˊ",    "5/6",  "5/6" },
+    {MOKYA_KEY_7, "˙ㄚ",    "7/8",  "7/8" },
+    {MOKYA_KEY_9, "ㄞㄢㄦ", "9/0",  "9/0" },
     // Row 1
-    {MOKYA_KEY_Q, "q", "ㄆㄊ","Q/W","q/w"}, {MOKYA_KEY_E, "e", "ㄍㄐ","E/R","e/r"},
-    {MOKYA_KEY_T, "t", "ㄔㄗ","T/Y","t/y"}, {MOKYA_KEY_U, "u", "ㄧㄛ","U/I","u/i"},
-    {MOKYA_KEY_O, "o", "ㄟㄣ","O/P","o/p"}, {MOKYA_KEY_SET, "F2","SET",nullptr,nullptr},
+    {MOKYA_KEY_Q, "ㄆㄊ", "Q/W", "q/w"},
+    {MOKYA_KEY_E, "ㄍㄐ", "E/R", "e/r"},
+    {MOKYA_KEY_T, "ㄔㄗ", "T/Y", "t/y"},
+    {MOKYA_KEY_U, "ㄧㄛ", "U/I", "u/i"},
+    {MOKYA_KEY_O, "ㄟㄣ", "O/P", "o/p"},
     // Row 2
-    {MOKYA_KEY_A, "a",   "ㄇㄋ","A/S","a/s"}, {MOKYA_KEY_D, "d", "ㄎㄑ","D/F","d/f"},
-    {MOKYA_KEY_G, "g",   "ㄕㄘ","G/H","g/h"}, {MOKYA_KEY_J, "j", "ㄨㄜ","J/K","j/k"},
-    {MOKYA_KEY_L, "l/;", "ㄠㄤ","L",  "l"   }, {MOKYA_KEY_BACK,"BS","BACK",nullptr,nullptr},
+    {MOKYA_KEY_A, "ㄇㄋ", "A/S", "a/s"},
+    {MOKYA_KEY_D, "ㄎㄑ", "D/F", "d/f"},
+    {MOKYA_KEY_G, "ㄕㄘ", "G/H", "g/h"},
+    {MOKYA_KEY_J, "ㄨㄜ", "J/K", "j/k"},
+    {MOKYA_KEY_L, "ㄠㄤ", "L",   "l"  },
     // Row 3
-    {MOKYA_KEY_Z,"z",     "ㄈㄌ","Z/X","z/x"}, {MOKYA_KEY_C,"c", "ㄏㄒ","C/V","c/v"},
-    {MOKYA_KEY_B,"b",     "ㄖㄙ","B/N","b/n"}, {MOKYA_KEY_M,"m/,","ㄩㄝ","M",  "m"   },
-    {MOKYA_KEY_BACKSLASH,"\\/.","ㄡㄥ","—", "—"}, {MOKYA_KEY_DEL,"Del","DEL",nullptr,nullptr},
-    // Row 4
-    {MOKYA_KEY_MODE,"`",    "MODE",nullptr,nullptr}, {MOKYA_KEY_TAB,"Tab","TAB",nullptr,nullptr},
-    {MOKYA_KEY_SPACE,"Spc", "SPACE",nullptr,nullptr},
-    {MOKYA_KEY_SYM1,"[",    "，SYM",nullptr,nullptr}, {MOKYA_KEY_SYM2,"]","。？",nullptr,nullptr},
-    {MOKYA_KEY_VOL_UP,"=",  "VOL+",nullptr,nullptr},
-    // Row 5
-    {MOKYA_KEY_UP,  "\xe2\x86\x91","UP",  nullptr,nullptr},
-    {MOKYA_KEY_DOWN,"\xe2\x86\x93","DOWN",nullptr,nullptr},
-    {MOKYA_KEY_LEFT,"\xe2\x86\x90","LEFT",nullptr,nullptr},
-    {MOKYA_KEY_RIGHT,"\xe2\x86\x92","RIGHT",nullptr,nullptr},
-    {MOKYA_KEY_OK,  "\xe2\x8f\x8e","OK",  nullptr,nullptr},
-    {MOKYA_KEY_VOL_DOWN,"_","VOL-",nullptr,nullptr},
+    {MOKYA_KEY_Z,         "ㄈㄌ", "Z/X", "z/x"},
+    {MOKYA_KEY_C,         "ㄏㄒ", "C/V", "c/v"},
+    {MOKYA_KEY_B,         "ㄖㄙ", "B/N", "b/n"},
+    {MOKYA_KEY_M,         "ㄩㄝ", "M",   "m"  },
+    {MOKYA_KEY_BACKSLASH, "ㄡㄥ", "\\",  "\\" },
+    // Row 4 — function bar
+    {MOKYA_KEY_MODE,  "MODE",  nullptr, nullptr},
+    {MOKYA_KEY_TAB,   "TAB",   nullptr, nullptr},
+    {MOKYA_KEY_SPACE, "SPACE", nullptr, nullptr},
+    {MOKYA_KEY_SYM1,  "，",    nullptr, nullptr},
+    {MOKYA_KEY_SYM2,  "。？",  nullptr, nullptr},
+    // Navigation & edit cluster
+    {MOKYA_KEY_FUNC, "FUNC", nullptr, nullptr},
+    {MOKYA_KEY_BACK, "BACK", nullptr, nullptr},
+    {MOKYA_KEY_SET,  "SET",  nullptr, nullptr},
+    {MOKYA_KEY_DEL,  "DEL",  nullptr, nullptr},
+    // DPAD uses ASCII labels — the Unicode arrows (U+2190..U+2193) have
+    // East-Asian-Width "Ambiguous", so different terminals render them at
+    // different widths and the cells would drift.
+    {MOKYA_KEY_UP,       "UP",   nullptr, nullptr},
+    {MOKYA_KEY_DOWN,     "DN",   nullptr, nullptr},
+    {MOKYA_KEY_LEFT,     "LT",   nullptr, nullptr},
+    {MOKYA_KEY_RIGHT,    "RT",   nullptr, nullptr},
+    {MOKYA_KEY_OK,       "OK",   nullptr, nullptr},
+    {MOKYA_KEY_VOL_UP,   "VOL+", nullptr, nullptr},
+    {MOKYA_KEY_VOL_DOWN, "VOL-", nullptr, nullptr},
 };
 // clang-format on
 
@@ -99,6 +113,12 @@ static const KeyLabel kLabels[] = {
 static std::string g_text;
 static int         g_cursor = 0;   // byte offset into g_text
 static bool        g_dirty  = true;
+
+// ── Key-press highlight state (press flash ≈ 180 ms) ────────────────────────
+
+static constexpr uint32_t kHiliteMs = 180;
+static mokya_keycode_t g_hi_kc    = MOKYA_KEY_NONE;
+static uint32_t        g_hi_until = 0;
 
 static void cursor_move_left() {
     if (g_cursor <= 0) return;
@@ -154,33 +174,62 @@ struct ReplListener : public mie::IImeListener {
 
     void on_composition_changed() override { g_dirty = true; }
 
-    // Feed MIE the last two codepoints immediately before the cursor so
-    // its SmartEn leading-space / cap-next flags match the real text
-    // state after external edits. Walks two UTF-8 codepoints back from
-    // the cursor (enough to see ". ", ", ", 「。」, …).
     void sync_text_context() {
         if (!ime) return;
-        if (g_cursor <= 0 || g_text.empty()) {
-            ime->set_text_context("");
-            return;
-        }
+        if (g_cursor <= 0 || g_text.empty()) { ime->set_text_context(""); return; }
         int end   = g_cursor;
         int start = end;
         for (int cp = 0; cp < 2 && start > 0; ++cp) {
             --start;
-            while (start > 0 &&
-                   ((unsigned char)g_text[start] & 0xC0) == 0x80) {
-                --start;
-            }
+            while (start > 0 && ((unsigned char)g_text[start] & 0xC0) == 0x80) --start;
         }
         std::string suffix = g_text.substr((size_t)start, (size_t)(end - start));
         ime->set_text_context(suffix.c_str());
     }
 };
 
-// ── Rendering ───────────────────────────────────────────────────────────────
+// ── UTF-8 visual width + column-tracking printer ────────────────────────────
 
-static void clear_screen() { std::fputs("\033[2J\033[H", stdout); }
+static int vw(const char* s) {
+    int w = 0;
+    const unsigned char* p = (const unsigned char*)s;
+    while (*p) {
+        if (*p < 0x80)              { w += 1; p += 1; continue; }
+        if ((*p & 0xE0) == 0xC0)    { w += 1; p += 2; continue; }   // 2-byte → narrow
+        if ((*p & 0xF0) == 0xE0)    { w += 2; p += 3; continue; }   // 3-byte → wide (CJK etc.)
+        w += 2; p += 4;                                             // 4-byte → wide
+    }
+    return w;
+}
+
+// Low-level terminal helpers. \033[K clears from cursor to EOL so when a
+// frame's content is shorter than the previous frame's, leftover characters
+// are erased without a screen-clearing flash.
+static void cursor_home() { std::fputs("\033[H", stdout); }
+static void erase_eol()   { std::fputs("\033[K", stdout); }
+
+// Track visual column so we can pad cells to fixed positions despite variable
+// CJK widths. ANSI escapes are emitted directly and do not count.
+static int g_col = 0;
+static void put_raw(const char* s) { fputs(s, stdout); g_col += vw(s); }
+static void put_ansi(const char* s){ fputs(s, stdout); }              // zero-width
+static void pad_to(int target)     { while (g_col < target) { putchar(' '); ++g_col; } }
+static void nl()                   { erase_eol(); putchar('\n'); g_col = 0; }
+
+// Print a `[label  ]` cell at visual column `at`, content padded to width
+// `content_w`. When `hi` is true the whole bracketed cell is reverse-video.
+static void cell(int at, const char* label, int content_w, bool hi) {
+    pad_to(at);
+    if (hi) put_ansi("\033[7m");
+    putchar('['); ++g_col;
+    int lw = vw(label);
+    fputs(label, stdout); g_col += lw;
+    for (int i = lw; i < content_w; ++i) { putchar(' '); ++g_col; }
+    putchar(']'); ++g_col;
+    if (hi) put_ansi("\033[27m");
+}
+
+// ── Label lookup ────────────────────────────────────────────────────────────
 
 static const char* pick_label(const KeyLabel& k, mie::InputMode m) {
     switch (m) {
@@ -192,97 +241,206 @@ static const char* pick_label(const KeyLabel& k, mie::InputMode m) {
     }
 }
 
-static void render(const mie::ImeLogic& ime) {
-    clear_screen();
+static const char* label_for(mokya_keycode_t kc, mie::InputMode m) {
+    for (const auto& k : kLabels) if (k.keycode == kc) return pick_label(k, m);
+    return "?";
+}
 
-    const char* top = "\xe2\x94\x8c\xe2\x94\x80 MokyaLora REPL \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90";
-    const char* mid = "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4";
-    const char* bot = "\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98";
+static bool hi(mokya_keycode_t kc) { return kc == g_hi_kc; }
 
-    std::puts(top);
-    for (int row = 0; row < 6; ++row) {
-        std::fputs("\xe2\x94\x82 ", stdout);
-        for (int col = 0; col < 6; ++col) {
-            mokya_keycode_t target = (mokya_keycode_t)(row * 6 + col + 1);
-            const char* pc = "?"; const char* lb = "?";
-            for (const auto& k : kLabels) {
-                if (k.keycode == target) { pc = k.pc_hint; lb = pick_label(k, ime.mode()); break; }
-            }
-            std::printf("[%3s:%-5s]", pc, lb);
+// ── Rendering ───────────────────────────────────────────────────────────────
+
+// Move cursor home + line-erase helpers. We clear individual lines with
+// \033[K as we go and clear any leftover rows below with \033[J at the end
+// of render() — that avoids the full-screen blank flash that \033[2J causes
+// every frame. (Definitions also appear before nl() above via the header of
+// this TU; the duplicate removal happened there so keep this as a comment
+// anchor only.)
+
+// Column grid for the nav cluster. 8 vis cols per cell (content 6 + brackets).
+//   col  0   : FUNC / BACK                                       (left column)
+//   col 12   : LEFT                                              (DPAD west)
+//   col 20   : UP / OK / DOWN                                    (DPAD centre)
+//   col 28   : RIGHT                                             (DPAD east)
+//   col 36   : SET / DEL                                         (edit column)
+//   col 44   : VOL+ / VOL-                                       (volume column)
+static void render_nav(mie::InputMode mode) {
+    g_col = 0;
+    // Row A — UP row.
+    cell( 0, label_for(MOKYA_KEY_FUNC,   mode), 6, hi(MOKYA_KEY_FUNC));
+    cell(20, label_for(MOKYA_KEY_UP,     mode), 6, hi(MOKYA_KEY_UP));
+    cell(36, label_for(MOKYA_KEY_SET,    mode), 6, hi(MOKYA_KEY_SET));
+    cell(44, label_for(MOKYA_KEY_VOL_UP, mode), 6, hi(MOKYA_KEY_VOL_UP));
+    nl();
+    // Row B — OK row (full horizontal DPAD).
+    cell( 0, label_for(MOKYA_KEY_BACK,     mode), 6, hi(MOKYA_KEY_BACK));
+    cell(12, label_for(MOKYA_KEY_LEFT,     mode), 6, hi(MOKYA_KEY_LEFT));
+    cell(20, label_for(MOKYA_KEY_OK,       mode), 6, hi(MOKYA_KEY_OK));
+    cell(28, label_for(MOKYA_KEY_RIGHT,    mode), 6, hi(MOKYA_KEY_RIGHT));
+    cell(36, label_for(MOKYA_KEY_DEL,      mode), 6, hi(MOKYA_KEY_DEL));
+    cell(44, label_for(MOKYA_KEY_VOL_DOWN, mode), 6, hi(MOKYA_KEY_VOL_DOWN));
+    nl();
+    // Row C — DOWN row.
+    cell(20, label_for(MOKYA_KEY_DOWN, mode), 6, hi(MOKYA_KEY_DOWN));
+    nl();
+}
+
+static void render_grid(mie::InputMode mode) {
+    static const mokya_keycode_t kGrid[5][5] = {
+        {MOKYA_KEY_1,    MOKYA_KEY_3,   MOKYA_KEY_5,     MOKYA_KEY_7,    MOKYA_KEY_9        },
+        {MOKYA_KEY_Q,    MOKYA_KEY_E,   MOKYA_KEY_T,     MOKYA_KEY_U,    MOKYA_KEY_O        },
+        {MOKYA_KEY_A,    MOKYA_KEY_D,   MOKYA_KEY_G,     MOKYA_KEY_J,    MOKYA_KEY_L        },
+        {MOKYA_KEY_Z,    MOKYA_KEY_C,   MOKYA_KEY_B,     MOKYA_KEY_M,    MOKYA_KEY_BACKSLASH},
+        {MOKYA_KEY_MODE, MOKYA_KEY_TAB, MOKYA_KEY_SPACE, MOKYA_KEY_SYM1, MOKYA_KEY_SYM2     },
+    };
+    for (int r = 0; r < 5; ++r) {
+        g_col = 0;
+        for (int c = 0; c < 5; ++c) {
+            cell(c * 8, label_for(kGrid[r][c], mode), 6, hi(kGrid[r][c]));
         }
-        std::puts(" \xe2\x94\x82");
+        nl();
     }
-    std::puts(mid);
+}
 
-    // Pending composition with style hint.
+// Draws one integrated text line: left-committed + styled pending + cursor
+// block + right-committed.  Cursor is an inverse-video space so it's visible
+// even at end-of-line.
+static void render_text_line(const mie::ImeLogic& ime) {
     mie::PendingView pv = ime.pending_view();
-    char input_display[512] = {};
-    if (pv.byte_len == 0) {
-        std::snprintf(input_display, sizeof(input_display),
-                      "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)");  // (按下鍵入)
-    } else if (pv.style == mie::PendingStyle::Inverted) {
-        // Reverse video for whole pending.
-        std::snprintf(input_display, sizeof(input_display), "\033[7m%s\033[27m", pv.str);
-    } else if (pv.style == mie::PendingStyle::PrefixBold &&
-               pv.matched_prefix_bytes > 0 && pv.matched_prefix_bytes < pv.byte_len) {
-        std::snprintf(input_display, sizeof(input_display),
-                      "\033[1m%.*s\033[22m%s",
-                      pv.matched_prefix_bytes, pv.str,
-                      pv.str + pv.matched_prefix_bytes);
-    } else if (pv.style == mie::PendingStyle::PrefixBold) {
-        // Whole string is matched — all bold.
-        std::snprintf(input_display, sizeof(input_display), "\033[1m%s\033[22m", pv.str);
-    } else {
-        std::snprintf(input_display, sizeof(input_display), "%s", pv.str);
-    }
-    std::printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-60s \xe2\x94\x82\n",
-                ime.mode_indicator(), input_display);
 
-    // Candidate list (current page only).
+    put_ansi("\033[1m");
+    put_raw(" \xe6\x96\x87\xe5\xad\x97 ");   // "文字"
+    put_ansi("\033[22m");
+    put_raw("\xe2\x94\x82 ");                // "│ "
+
+    // Left committed.
+    put_raw(std::string(g_text, 0, (size_t)g_cursor).c_str());
+
+    // Pending, styled.
+    if (pv.byte_len > 0 && pv.str) {
+        if (pv.style == mie::PendingStyle::Inverted) {
+            put_ansi("\033[7m");
+            put_raw(pv.str);
+            put_ansi("\033[27m");
+        } else if (pv.style == mie::PendingStyle::PrefixBold) {
+            int mp = pv.matched_prefix_bytes;
+            put_ansi("\033[4m");              // underline entire pending
+            if (mp > 0 && mp <= pv.byte_len) {
+                put_ansi("\033[1m");
+                std::string prefix(pv.str, (size_t)mp);
+                put_raw(prefix.c_str());
+                put_ansi("\033[22m");
+                put_raw(pv.str + mp);
+            } else {
+                put_raw(pv.str);
+            }
+            put_ansi("\033[24m");
+        } else {
+            put_raw(pv.str);
+        }
+    }
+
+    // Cursor block (reverse-video single space).
+    put_ansi("\033[7m");
+    put_raw(" ");
+    put_ansi("\033[27m");
+
+    // Right committed.
+    put_raw(std::string(g_text, (size_t)g_cursor).c_str());
+    nl();
+}
+
+static void render_cand_line(const mie::ImeLogic& ime) {
+    put_ansi("\033[1m");
+    put_raw(" \xe5\x80\x99\xe9\x81\xb8 ");   // "候選"
+    put_ansi("\033[22m");
+    put_raw("\xe2\x94\x82 ");                // "│ "
+
     int cc = ime.candidate_count();
-    if (cc > 0) {
-        int pg       = ime.page();
-        int pg_total = ime.page_count();
-        int pg_count = ime.page_cand_count();
-        int sel_in_page = ime.page_sel();
-        char cand_buf[512] = {}; int pos = 0;
-        for (int i = 0; i < pg_count && pos < 460; ++i) {
-            bool sel = (i == sel_in_page);
-            int n = std::snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
-                                  "%s%s ", sel ? ">" : " ",
-                                  ime.page_cand(i).word);
-            if (n > 0) pos += n;
-        }
-        if (pg_total > 1) {
-            int n = std::snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
-                                  " [%d/%d]", pg + 1, pg_total);
-            if (n > 0) pos += n;
-        }
-        const char* tag = (ime.mode() == mie::InputMode::SmartZh) ? "[\xe4\xb8\xad\xe6\x96\x87]"
-                         : "[English]";
-        std::printf("\xe2\x94\x82 %s %-56s \xe2\x94\x82\n", tag, cand_buf);
-    } else {
-        std::printf("\xe2\x94\x82 %-60s \xe2\x94\x82\n", "");
+    if (cc == 0) {
+        put_ansi("\033[2m");
+        put_raw("(\xe6\x8c\x89\xe9\x8d\xb5\xe9\x96\x8b\xe5\xa7\x8b\xe8\xbc\xb8\xe5\x85\xa5)"); // "(按鍵開始輸入)"
+        put_ansi("\033[22m");
+        nl();
+        return;
     }
 
-    // Committed text with cursor shown as '|'.
-    {
-        std::string disp;
-        disp.reserve(g_text.size() + 3);
-        disp.append(g_text, 0, (size_t)g_cursor);
-        disp += '|';
-        disp.append(g_text, (size_t)g_cursor);
-        std::printf("\xe2\x94\x82 \xe5\xb7\xb2\xe7\xa2\xba\xe8\xaa\x8d: %-50s \xe2\x94\x82\n",
-                    disp.c_str());
+    int sel      = ime.page_sel();
+    int pg       = ime.page();
+    int pg_total = ime.page_count();
+    int pg_count = ime.page_cand_count();
+    for (int i = 0; i < pg_count; ++i) {
+        if (i > 0) put_raw("  ");
+        bool is_sel = (i == sel);
+        if (is_sel) { put_ansi("\033[7m"); put_raw(" "); }
+        put_raw(ime.page_cand(i).word);
+        if (is_sel) { put_raw(" "); put_ansi("\033[27m"); }
     }
+    if (pg_total > 1) {
+        put_raw("   ");
+        put_ansi("\033[2m");
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "[%d/%d]", pg + 1, pg_total);
+        put_raw(buf);
+        put_ansi("\033[22m");
+    }
+    nl();
+}
 
-    std::puts(bot);
-    std::puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  `=MODE  |  "
-              "\xe2\x86\x90\xe2\x86\x92=\xe5\x80\x99\xe9\x81\xb8/\xe6\xb8\xb8\xe6\xa8\x99  |  "
-              "\xe2\x86\x91\xe2\x86\x93=\xe7\xbf\xbb\xe9\xa0\x81  |  "
-              "[=\xef\xbc\x8c/, (\xe9\x95\xb7\xe6\x8c\x89 picker)  |  "
-              "]=\xe3\x80\x82\xef\xbc\x9f/.?!  |  "
-              "BS/Del=\xe5\x88\xaa\xe5\xad\x97  |  Spc=\xe7\xa9\xba\xe6\xa0\xbc/\xe4\xb8\x80\xe8\x81\xb2");
+static void render_header(const mie::ImeLogic& ime) {
+    g_col = 0;
+    put_ansi("\033[1m");
+    put_raw(" MokyaLora MIE REPL");
+    put_ansi("\033[22m");
+    pad_to(34);
+    put_raw("mode: ");
+    put_ansi("\033[7m");
+    put_raw(" ");
+    put_raw(ime.mode_indicator());
+    put_raw(" ");
+    put_ansi("\033[27m");
+    nl();
+}
+
+static void rule(int cols) {
+    g_col = 0;
+    for (int i = 0; i < cols; ++i) put_raw("\xe2\x94\x80");   // "─"
+    nl();
+}
+
+// Helper for fixed-text lines: write, clear-to-EOL so leftover chars from an
+// older, longer frame are erased, then newline.
+static void helpline(const char* s) { std::fputs(s, stdout); erase_eol(); std::fputc('\n', stdout); }
+
+// Static bottom help panel — PC keys → hardware keys.
+static void render_help() {
+    put_ansi("\033[2m");
+    helpline("");
+    helpline(" PC \xe9\x8d\xb5\xe7\x9b\xa4\xe7\xb0\xa1\xe5\xaf\xab\xef\xbc\x9a");   // "PC 鍵盤簡寫："
+    helpline("   1 3 5 7 9 / q e t u o / a d g j l / z c b m \\   ="
+             "   \xe4\xb8\xbb\xe9\x8d\xb5");                                         // "主鍵"
+    helpline("   2 4 6 8 0 / w r y i p / s f h k   / x v n , . /  ="
+             "   \xe6\xac\xa1\xe9\x8d\xb5\xef\xbc\x88\xe5\x90\x8c\xe6\xa8\xa1\xe7\xb3\x8a\xe5\x8d\x8a\xe9\x8d\xb5\xef\xbc\x89"); // 次鍵（同模糊半鍵）
+    helpline("   `  = MODE       Tab = TAB        Space = SPACE       = / _ = VOL+/-");
+    helpline("   [  = \xef\xbc\x8cSYM   ]  = \xe3\x80\x82\xef\xbc\x9f   F1 = FUNC   F2 = SET");
+    helpline("   Enter = OK       Backspace/Del = DEL     \xe2\x86\x91\xe2\x86\x93\xe2\x86\x90\xe2\x86\x92 = DPAD");
+    helpline("   Esc = \xe9\x9b\xa2\xe9\x96\x8b REPL");
+    put_ansi("\033[22m");
+}
+
+static void render(const mie::ImeLogic& ime) {
+    cursor_home();
+    render_header(ime);
+    rule(56);
+    render_nav(ime.mode());
+    helpline("");
+    render_grid(ime.mode());
+    rule(56);
+    render_text_line(ime);
+    render_cand_line(ime);
+    rule(56);
+    render_help();
+    std::fputs("\033[J", stdout);   // erase anything below the last frame row
     std::fflush(stdout);
 }
 
@@ -302,7 +460,17 @@ int main(int argc, char** argv) {
 
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
+    // Enable ANSI escape processing on legacy Windows terminals (cmd.exe).
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut != INVALID_HANDLE_VALUE) {
+        DWORD mode = 0;
+        if (GetConsoleMode(hOut, &mode)) {
+            SetConsoleMode(hOut, mode | 0x0004 /* ENABLE_VIRTUAL_TERMINAL_PROCESSING */);
+        }
+    }
 #endif
+    std::fputs("\033[2J\033[H\033[?25l", stdout);   // one-time clear + hide cursor
+    std::fflush(stdout);
 
     const char* zh_dat = find_arg(argc, argv, "--dat");
     const char* zh_val = find_arg(argc, argv, "--val");
@@ -331,7 +499,7 @@ int main(int argc, char** argv) {
 
     mie::ImeLogic ime(zh_searcher, en_loaded ? &en_searcher : nullptr);
     ReplListener listener;
-    listener.ime = &ime;       // enable set_text_context sync after edits
+    listener.ime = &ime;
     ime.set_listener(&listener);
     LOG("main: ime + listener wired\n");
 
@@ -350,31 +518,33 @@ int main(int argc, char** argv) {
         uint32_t t = now_ms();
         mie::KeyEvent ev;
         if (hal.poll(ev, t)) {
-            // ESC → quit.
-            if (ev.keycode == MOKYA_KEY_NONE) break;
-            // BACK is reserved for UI layer; use it to exit the REPL.
-            if (ev.keycode == MOKYA_KEY_BACK) break;
+            if (ev.keycode == MOKYA_KEY_NONE) break;   // ESC → quit
+            if (ev.keycode == MOKYA_KEY_BACK) break;   // BACK is UI-layer, unreachable on PC
 
-            LOG("key: kc=0x%02X pressed=%d t=%u\n",
-                (unsigned)ev.keycode, (int)ev.pressed, t);
+            // Light up the matching hardware cell for a short window.
+            g_hi_kc    = ev.keycode;
+            g_hi_until = t + kHiliteMs;
+            g_dirty    = true;
+
+            LOG("key: kc=0x%02X pressed=%d t=%u\n", (unsigned)ev.keycode, (int)ev.pressed, t);
             ime.process_key(ev);
 
-            // PC terminals only report key-down via _getch / termios raw
-            // reads — there is no natural key-release event. Synthesize
-            // one here so MIE handlers that rely on the release edge
-            // (SYM1 short-press vs long-press) actually fire. 1 ms offset
-            // keeps now_ms monotonic across the pair. Long-press testing
-            // is not reachable from the PC terminal by design (the press
-            // is already "released" by the time tick() could see it); the
-            // full long-press path is intended for real hardware input.
+            // PC stdin emits only key-down; synthesize a release so SYM1 short-
+            // press and similar release-edge handlers fire. 1 ms offset keeps
+            // the monotonic timestamp strictly increasing across the pair.
             mie::KeyEvent release = ev;
             release.pressed = false;
             release.now_ms  = t + 1;
             ime.process_key(release);
         }
 
-        // Drive timers (multi-tap timeout / SYM1 long-press).
         ime.tick(now_ms());
+
+        // Expire key highlight.
+        if (g_hi_kc != MOKYA_KEY_NONE && now_ms() >= g_hi_until) {
+            g_hi_kc = MOKYA_KEY_NONE;
+            g_dirty = true;
+        }
 
         if (g_dirty) {
             render(ime);
@@ -388,6 +558,9 @@ int main(int argc, char** argv) {
         select(0, nullptr, nullptr, nullptr, &tv);
 #endif
     }
+
+    std::fputs("\033[?25h\n", stdout);   // restore cursor
+    std::fflush(stdout);
 
     LOG("main: exit\n");
     log_close();
