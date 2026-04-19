@@ -79,8 +79,7 @@ if(NOT CMAKE_CROSSCOMPILING)
         set(MIE_TOOLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools")
 
         set(MIE_DATA_SOURCES_DIR "" CACHE PATH
-            "Directory containing downloaded data sources (tsi.csv, en_words.txt, unifont.otf). "
-            "Run target mie_fetch_data to populate.")
+            "Directory containing downloaded data sources (tsi.csv, en_words.txt, unifont.otf). Run target mie_fetch_data to populate.")
         set(MIE_UNIFONT_OTF "" CACHE FILEPATH
             "Path to GNU Unifont .otf/.ttf file (required for font data targets)")
         set(MIE_MOE_CSV "" CACHE FILEPATH
@@ -100,10 +99,20 @@ if(NOT CMAKE_CROSSCOMPILING)
         # mie_dict_data_sm: Chinese + English (max 3000 words) + charlist
         # mie_font_data_sm: charlist-subset font (depends on mie_dict_data_sm)
         if(MIE_DATA_SOURCES_DIR)
+            # sm variant dictionary knobs — tuned 2026-04-19 to fit the
+            # ~5 MB PSRAM slot while keeping the most-used ZH vocabulary
+            # (freq>=5 covers 112k / 160k libchewing entries; per-key=5 prunes
+            # long-tail homophones; abbr<=2 keeps fast-typing for 2-syllable
+            # phrases). ZH total ~4.7 MB, EN total ~80 KB. See
+            # project_mie_dict_compression.md memory for future format-level
+            # compression that would shrink this further.
             set(_sm_dict_args
                 --libchewing  "${MIE_DATA_SOURCES_DIR}/tsi.csv"
                 --en-wordlist "${MIE_DATA_SOURCES_DIR}/google-10000-english-no-swears.txt"
                 --en-max-words 3000
+                --zh-min-freq 5
+                --zh-max-abbr-syls 2
+                --zh-max-per-key 5
                 --emit-charlist "${MIE_DATA_DIR}/charlist.txt"
                 --output-dir "${MIE_DATA_DIR}")
             set(_sm_dict_depends
@@ -122,7 +131,9 @@ if(NOT CMAKE_CROSSCOMPILING)
                         "${MIE_DATA_DIR}/en_values.bin"
                         "${MIE_DATA_DIR}/dict_meta.json"
                         "${MIE_DATA_DIR}/charlist.txt"
-                COMMAND ${Python3_EXECUTABLE} ${_sm_dict_args}
+                COMMAND ${Python3_EXECUTABLE}
+                        "${MIE_TOOLS_DIR}/gen_dict.py"
+                        ${_sm_dict_args}
                 DEPENDS ${_sm_dict_depends}
                 COMMENT "Generating small MIE dictionary + charlist"
                 VERBATIM)
@@ -147,6 +158,7 @@ if(NOT CMAKE_CROSSCOMPILING)
                         --unifont  "${MIE_UNIFONT_OTF}"
                         --charlist "${MIE_DATA_DIR}/charlist.txt"
                         --out      "${MIE_DATA_DIR}/mie_unifont_sm_16.bin"
+                        --no-subset
                 DEPENDS "${MIE_TOOLS_DIR}/gen_font.py"
                         "${MIE_UNIFONT_OTF}"
                         "${MIE_DATA_DIR}/charlist.txt"
@@ -188,7 +200,9 @@ if(NOT CMAKE_CROSSCOMPILING)
             endif()
 
             add_custom_target(mie_dict_data_lg
-                COMMAND ${Python3_EXECUTABLE} ${_lg_dict_args}
+                COMMAND ${Python3_EXECUTABLE}
+                        "${MIE_TOOLS_DIR}/gen_dict.py"
+                        ${_lg_dict_args}
                 DEPENDS ${_lg_dict_depends}
                 COMMENT "Generating large MIE dictionary (full English word list)"
                 VERBATIM)

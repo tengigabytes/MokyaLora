@@ -325,25 +325,27 @@ def abbreviated_keyseqs(reading: str, full_keyseq: bytes) -> list:
 # ── libchewing tsi.csv loader ─────────────────────────────────────────────
 
 def load_libchewing(path: str,
-                    min_freq_for_abbr: int = 0,
+                    min_freq: int = 0,
                     max_abbr_syls: int = 4) -> list:
     """
     Parse libchewing tsi.csv (comma-separated: word, freq, reading).
 
-    tsi.csv column order: word, freq (0 or 1), reading
-    freq is a binary flag: 1 = common word, 0 = rare character.
-    Common words (freq=1) sort above rare characters (freq=0) in the candidate list.
+    tsi.csv column order: word, freq, reading
+    freq is a numeric usage count (not a binary flag); typical distribution
+    covers 0, 1, 2..10, ..., up to several thousand for very common words.
+    Higher-freq words sort above lower-freq entries in the candidate list.
 
-    min_freq_for_abbr: only generate abbreviated variants when freq >= this value
-                       (0 = no filter).
-    max_abbr_syls:     only generate abbreviated variants for words with at most this
-                       many syllables (0 = no limit).
+    min_freq:      drop both base entries AND abbreviation variants whose
+                   freq < this value (0 = no filter, keep all).
+    max_abbr_syls: only generate abbreviated variants for words with at most
+                   this many syllables (0 = no limit; default 4).
 
-    Returns list of (keyseq: bytes, word: str, freq: int).
-    Lines starting with '#' are treated as comments.
+    Returns list of (keyseq, word, freq, tone).  Lines starting with '#' are
+    treated as comments.
     """
     entries = []
     skipped = 0
+    dropped_freq = 0
     with open(path, newline='', encoding='utf-8', errors='strict') as f:
         reader = csv.reader(f)
         for lineno, row in enumerate(reader, 1):
@@ -352,12 +354,15 @@ def load_libchewing(path: str,
             if len(row) < 3:
                 continue
             word    = row[0].strip()
-            # tsi.csv columns: word, freq (binary 0/1), reading
             reading = row[2].strip()
             try:
                 freq = int(row[1].strip())
             except (ValueError, IndexError):
                 freq = 0
+
+            if min_freq > 0 and freq < min_freq:
+                dropped_freq += 1
+                continue
 
             phonemes = parse_reading(reading)
             keyseq   = phonemes_to_keyseq(phonemes)
@@ -365,15 +370,15 @@ def load_libchewing(path: str,
                 tone = reading_to_tone(reading)
                 entries.append((keyseq, word, freq, tone))
                 n_syls = len(parse_reading_syllables(reading))
-                emit_abbr = (
-                    (min_freq_for_abbr == 0 or freq >= min_freq_for_abbr) and
-                    (max_abbr_syls == 0 or n_syls <= max_abbr_syls)
-                )
-                if emit_abbr:
+                if max_abbr_syls == 0 or n_syls <= max_abbr_syls:
                     for abbr in abbreviated_keyseqs(reading, keyseq):
                         entries.append((abbr, word, freq, tone))
             else:
                 skipped += 1
+
+    if dropped_freq:
+        print(f"  libchewing: {dropped_freq:,} entries dropped (freq < {min_freq})",
+              file=sys.stderr)
 
     if skipped:
         print(f"  libchewing: {skipped:,} entries skipped (unmappable phonemes)",
@@ -383,21 +388,22 @@ def load_libchewing(path: str,
 # ── MoE CSV loader ────────────────────────────────────────────────────────
 
 def load_moe_csv(path: str,
-                 min_freq_for_abbr: int = 0,
+                 min_freq: int = 0,
                  max_abbr_syls: int = 4) -> list:
     """
     Parse MoE dictionary CSV (UTF-8 with BOM).
     Expected columns: 注音 / 詞語 / 頻率
 
-    min_freq_for_abbr: only generate abbreviated variants when freq >= this value
-                       (0 = no filter).
-    max_abbr_syls:     only generate abbreviated variants for words with at most this
-                       many syllables (0 = no limit).
+    min_freq:      drop both base entries AND abbreviation variants whose
+                   freq < this value (0 = no filter, keep all).
+    max_abbr_syls: only generate abbreviated variants for words with at most
+                   this many syllables (0 = no limit; default 4).
 
-    Returns list of (keyseq: bytes, word: str, freq: int).
+    Returns list of (keyseq, word, freq, tone).
     """
     entries = []
     skipped = 0
+    dropped_freq = 0
     with open(path, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -411,21 +417,25 @@ def load_moe_csv(path: str,
             if not reading or not word:
                 continue
 
+            if min_freq > 0 and freq < min_freq:
+                dropped_freq += 1
+                continue
+
             phonemes = parse_reading(reading)
             keyseq   = phonemes_to_keyseq(phonemes)
             if keyseq:
                 tone = reading_to_tone(reading)
                 entries.append((keyseq, word, freq, tone))
                 n_syls = len(parse_reading_syllables(reading))
-                emit_abbr = (
-                    (min_freq_for_abbr == 0 or freq >= min_freq_for_abbr) and
-                    (max_abbr_syls == 0 or n_syls <= max_abbr_syls)
-                )
-                if emit_abbr:
+                if max_abbr_syls == 0 or n_syls <= max_abbr_syls:
                     for abbr in abbreviated_keyseqs(reading, keyseq):
                         entries.append((abbr, word, freq, tone))
             else:
                 skipped += 1
+
+    if dropped_freq:
+        print(f"  MoE CSV: {dropped_freq:,} entries dropped (freq < {min_freq})",
+              file=sys.stderr)
 
     if skipped:
         print(f"  MoE CSV: {skipped:,} entries skipped (unmappable phonemes)",
@@ -606,13 +616,18 @@ def parse_args():
     p.add_argument('--moe-csv',        metavar='CSV',
                    help='MoE word list CSV path (注音/詞語/頻率 columns, UTF-8 BOM)')
     p.add_argument('--zh-min-freq',     metavar='N', type=int, default=0,
-                   help='Only generate abbreviated ZH variants for words with freq >= N '
-                        '(0 = no filter, default).  libchewing freq is binary 0/1; '
-                        'MoE freq is a numeric count.')
+                   help='Drop Chinese entries (both base and abbreviated) whose freq < N '
+                        '(0 = no filter, default).  libchewing freq is a numeric usage '
+                        'count; MoE freq likewise.  Raise this to shrink the dict under '
+                        'a fixed PSRAM budget while keeping the most-used words.')
     p.add_argument('--zh-max-abbr-syls', metavar='N', type=int, default=4,
                    help='Only generate abbreviated ZH variants for words with <= N '
                         'syllables (0 = no limit; default: 4).  Words longer than N '
                         'syllables are stored under their full key sequence only.')
+    p.add_argument('--zh-max-per-key',  metavar='N', type=int, default=0,
+                   help='Collision pruning: keep only the top-N Chinese words per key '
+                        'sequence (sorted by freq descending).  0 = no limit (default).  '
+                        'Use to bound dict_values.bin when many homophones share a key.')
     p.add_argument('--en-wordlist',    metavar='TXT',
                    help='English word list — one word per line, optional space or TAB '
                         'frequency.  Supports hermitdave/FrequencyWords (space-separated) '
@@ -651,14 +666,16 @@ def main():
     if args.libchewing or args.moe_csv:
         abbr_syls_label = str(args.zh_max_abbr_syls) if args.zh_max_abbr_syls else '無限制'
         freq_label      = f'>= {args.zh_min_freq}' if args.zh_min_freq else '不限'
-        print(f'ZH abbrev filter: 音節上限={abbr_syls_label}  最低頻率={freq_label}')
+        per_key_label   = str(args.zh_max_per_key) if args.zh_max_per_key else '無限制'
+        print(f'ZH filter: 音節上限={abbr_syls_label}  最低頻率={freq_label}  '
+              f'每鍵上限={per_key_label}')
 
     zh_entries: list = []
 
     if args.libchewing:
         print(f'Loading libchewing  {args.libchewing} ...')
         loaded = load_libchewing(args.libchewing,
-                                 min_freq_for_abbr=args.zh_min_freq,
+                                 min_freq=args.zh_min_freq,
                                  max_abbr_syls=args.zh_max_abbr_syls)
         zh_entries.extend(loaded)
         print(f'  {len(loaded):,} entries')
@@ -666,21 +683,31 @@ def main():
     if args.moe_csv:
         print(f'Loading MoE CSV     {args.moe_csv} ...')
         loaded = load_moe_csv(args.moe_csv,
-                              min_freq_for_abbr=args.zh_min_freq,
+                              min_freq=args.zh_min_freq,
                               max_abbr_syls=args.zh_max_abbr_syls)
         zh_entries.extend(loaded)
         print(f'  {len(loaded):,} entries')
+
+    # PSRAM budget for the Chinese dict (plan: docs/design-notes/mie-architecture.md).
+    # Printed purely as a guideline; exceeding it does not fail the build.
+    ZH_BUDGET_BYTES = 3 * 1024 * 1024
 
     zh_stats = None
     zh_key_to_words = None
     if zh_entries:
         print(f'Building Chinese MIED  ({len(zh_entries):,} total entries) ...')
-        dat, val, zh_stats, zh_key_to_words = build_mied(zh_entries)
+        dat, val, zh_stats, zh_key_to_words = build_mied(
+            zh_entries, max_per_key=args.zh_max_per_key)
         (output_dir / 'dict_dat.bin').write_bytes(dat)
         (output_dir / 'dict_values.bin').write_bytes(val)
+        total_zh  = zh_stats['dat_bytes'] + zh_stats['val_bytes']
+        budget_mb = total_zh / (1024 * 1024)
+        budget_ok = '[OK]' if total_zh <= ZH_BUDGET_BYTES else '[OVER BUDGET]'
         print(f'  dict_dat.bin    : {zh_stats["dat_bytes"]:>9,} bytes  '
               f'({zh_stats["key_count"]:,} unique key sequences)')
         print(f'  dict_values.bin : {zh_stats["val_bytes"]:>9,} bytes')
+        print(f'  ZH total        : {total_zh:>9,} bytes  '
+              f'({budget_mb:.2f} MB / 3.00 MB budget)  {budget_ok}')
 
     # ── Charlist emit (small font variant) ────────────────────────────────
     if args.emit_charlist and zh_key_to_words:
@@ -716,7 +743,7 @@ def main():
         (output_dir / 'en_values.bin').write_bytes(val)
         total_en  = en_stats['dat_bytes'] + en_stats['val_bytes']
         budget_mb = total_en / (1024 * 1024)
-        budget_ok = '\u2713 OK' if total_en < 1024 * 1024 else '\u26a0 OVER BUDGET'
+        budget_ok = '[OK]' if total_en < 1024 * 1024 else '[OVER BUDGET]'
         print(f'  en_dat.bin      : {en_stats["dat_bytes"]:>9,} bytes  '
               f'({en_stats["key_count"]:,} unique key sequences)')
         pruned_note = (f', {en_stats["pruned_count"]:,} pruned'
@@ -739,15 +766,18 @@ def main():
             'en_max_words':  args.en_max_words  if args.en_max_words  else None,
             'en_min_freq':   args.en_min_freq   if args.en_min_freq   else None,
             'en_max_per_key': args.en_max_per_key if args.en_max_per_key else None,
+            'zh_min_freq':      args.zh_min_freq      if args.zh_min_freq      else None,
+            'zh_max_abbr_syls': args.zh_max_abbr_syls if args.zh_max_abbr_syls else None,
+            'zh_max_per_key':   args.zh_max_per_key   if args.zh_max_per_key   else None,
         },
         'charlist_path':  args.emit_charlist,
         'chinese': zh_stats,
         'english': en_stats,
         'built_at': datetime.now(timezone.utc).isoformat(),
         'license_notices': [
-            'libchewing-data: © LibChewing contributors, LGPL-2.1 '
+            'libchewing-data: (c) LibChewing contributors, LGPL-2.1 '
             '(https://github.com/chewing/libchewing-data)',
-            'MoE dictionary: © Republic of China Ministry of Education, '
+            'MoE dictionary: (c) Republic of China Ministry of Education, '
             'public domain for educational use '
             '(https://dict.revised.moe.edu.tw/)',
             'English wordlist: credit per source file; see --en-wordlist provenance.',
