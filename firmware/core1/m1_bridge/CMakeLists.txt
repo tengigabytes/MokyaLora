@@ -119,9 +119,12 @@ set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
 set(MIE_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/src)
 
 # ── MIEF font blob (Phase F — Traditional Chinese rendering) ─────────────────
-# Embeds firmware/mie/data/mie_unifont_sm_16.bin into Core 1 .rodata via
-# .incbin. gen_font.py is invoked automatically whenever the charlist,
-# source OTF, or the generator script itself changes.
+# Produces firmware/mie/data/mie_unifont_sm_16.bin, flashed as an
+# independent partition at 0x10A00000 by scripts/build_and_flash.sh.
+# Font glyphs stay XIP — Core 1's driver reads from the flash XIP
+# address rather than copying to PSRAM (see mie_font_partition.h).
+# gen_font.py is invoked automatically whenever the charlist, source
+# OTF, or the generator script itself changes.
 set(MIE_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/../../mie)
 set(MIEF_BLOB ${MIE_DIR}/data/mie_unifont_sm_16.bin)
 
@@ -167,12 +170,12 @@ add_executable(core1_bridge
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
     ${DISPLAY_DIR}/mie_font.c
-    ${DISPLAY_DIR}/mie_font_blob.S
     ${KEYPAD_DIR}/keypad_scan.c
     ${KEYPAD_DIR}/key_event.c
     ${UI_DIR}/keypad_view.c
     ${UI_DIR}/rf_debug_view.c
     ${UI_DIR}/font_test_view.c
+    ${UI_DIR}/ime_view.c
     ${UI_DIR}/view_router.c
     ${PSRAM_DIR}/psram.c
     ${IME_DIR}/mie_dict_loader.c
@@ -188,13 +191,9 @@ add_executable(core1_bridge
     ${MIE_SRC_DIR}/ime_direct.cpp
 )
 
-# mie_font_blob.S uses .incbin to pull in the MIEF binary. Pass the
-# absolute path via a preprocessor define and add a build-time dep so
-# the blob is regenerated when charlist.txt changes.
-file(TO_CMAKE_PATH "${MIEF_BLOB}" MIEF_BLOB_CPATH)
-set_source_files_properties(${DISPLAY_DIR}/mie_font_blob.S PROPERTIES
-    COMPILE_DEFINITIONS "MIEF_BLOB_PATH=\"${MIEF_BLOB_CPATH}\""
-    OBJECT_DEPENDS      "${MIEF_BLOB}")
+# Font .bin is a flashable partition, not embedded in Core 1 image.
+# Build-time dep so the blob is regenerated when charlist.txt changes
+# — scripts/build_and_flash.sh then loadbin's it to 0x10A00000.
 add_dependencies(core1_bridge mie_font_data)
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.

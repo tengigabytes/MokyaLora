@@ -84,21 +84,32 @@ DEFAULT_OUT     = Path(__file__).parent.parent / "data" / "mie_unifont_16.bin"
 CODEPOINT_RANGES = [
     (0x0020, 0x007F),   # ASCII (printable)
     (0x00A0, 0x00FF),   # Latin-1 Supplement (×÷ etc.)
+    (0x02B0, 0x02FF),   # Spacing Modifier Letters (Bopomofo tone marks
+                        # ˊˇˋ˙ at 0x02CA/02C7/02CB/02D9 live here — NOT
+                        # in the Bopomofo block 0x3100-312F)
     (0x2000, 0x206F),   # General Punctuation (— … ↵ etc.)
     (0x3000, 0x303F),   # CJK Symbols & Punctuation (。、「」)
-    (0x3100, 0x312F),   # Bopomofo (ㄅ–ㄩ + tone marks ˊˇˋ˙)
+    (0x3100, 0x312F),   # Bopomofo letters (ㄅ–ㄩ — tone marks live at
+                        # 0x02B0-02FF, see above)
     (0x4E00, 0x9FFF),   # CJK Unified Ideographs (common traditional Chinese)
 ]
 
 # Mandatory ranges always included in the small (embedded) font variant.
-# These cover UI chrome, Bopomofo, and CJK punctuation regardless of charlist.
+# These cover UI chrome, Bopomofo (letters + tones), and the full CJK
+# Unified Ideographs block regardless of charlist — Core 1 flash has
+# ~1.3 MB headroom (FLASH=2 MB, code+font currently 750 KB), so shipping
+# full CJK coverage keeps rare-char display working when the charlist
+# subset would otherwise drop them (e.g. 髣髴 U+9AE3/9AF4 needed by
+# font_test_view.c 桃花源記 sample).
 MANDATORY_RANGES = [
     (0x0020, 0x007F),   # ASCII printable
     (0x00A0, 0x00FF),   # Latin-1 Supplement (° ± × ÷ © etc.)
+    (0x02B0, 0x02FF),   # Spacing Modifier Letters (Bopomofo tones ˊˇˋ˙)
     (0x2000, 0x206F),   # General Punctuation (— … etc.)
     (0x3000, 0x303F),   # CJK Symbols & Punctuation
-    (0x3100, 0x312F),   # Bopomofo
+    (0x3100, 0x312F),   # Bopomofo letters
     (0x31A0, 0x31BF),   # Bopomofo Extended
+    (0x4E00, 0x9FFF),   # CJK Unified Ideographs — full block (~21k chars)
     (0xFF00, 0xFFEF),   # Halfwidth/Fullwidth Forms
 ]
 

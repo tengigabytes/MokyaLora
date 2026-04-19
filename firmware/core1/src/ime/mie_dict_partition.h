@@ -9,7 +9,8 @@
  * Flash map (W25Q128JW, 16 MB):
  *   0x10000000  Core 0 Meshtastic image  (2 MB slot)
  *   0x10200000  Core 1 bridge image      (2 MB slot)
- *   0x10400000  MIE dict blob (this)     (8 MB reserved)
+ *   0x10400000  MIE dict blob (this)     (6 MB reserved)
+ *   0x10A00000  MIE font blob (MIEF)     (2 MB reserved)
  *   0x10C00000  LittleFS / free          (4 MB)
  *
  * SPDX-License-Identifier: MIT
@@ -26,10 +27,10 @@ extern "C" {
  * DICT_ADDR in scripts/build_and_flash.sh. */
 #define MIE_DICT_PARTITION_ADDR  0x10400000u
 
-/* Reserved partition size. Current blob is ~5 MB; 8 MB leaves room for
- * a larger variant (full ranges, English expansion) without touching
- * the flash map. */
-#define MIE_DICT_PARTITION_SIZE  (8u * 1024u * 1024u)
+/* Reserved partition size. Current blob is ~5 MB; 6 MB leaves headroom
+ * for English expansion without encroaching on the font partition at
+ * 0x10A00000 (see mie_font_partition.h). */
+#define MIE_DICT_PARTITION_SIZE  (6u * 1024u * 1024u)
 
 /* MDBL header layout (little-endian). See pack_dict_blob.py. */
 #define MIE_MDBL_MAGIC           0x4C42444Du  /* "MDBL" as u32 LE */
