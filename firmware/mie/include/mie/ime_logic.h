@@ -180,6 +180,13 @@ public:
     const Candidate& candidate(int i)  const { return candidates_[i]; }
     int              selected()        const { return selected_; }
 
+    /// Set the selected candidate index by global position (0..cand_count-1).
+    /// Clamps out-of-range values, no-ops if the pool is empty, and fires
+    /// on_composition_changed when the index actually moves. Intended for UIs
+    /// that want to override the engine's page-sized Up/Down behaviour with
+    /// their own row-based navigation (see firmware/core1/src/ui/ime_view.c).
+    void             set_selected(int idx);
+
     // Pagination (page size is kPageSize).
     int page()            const { return cand_count_ ? selected_ / kPageSize : 0; }
     int page_count()      const { return (cand_count_ + kPageSize - 1) / kPageSize; }
