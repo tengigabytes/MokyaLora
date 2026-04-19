@@ -6,16 +6,37 @@
 
 #include <string.h>
 
+#include "hardware/xip_cache.h"
+
 #include "mie_dict_partition.h"
 #include "psram.h"
 
-/* Per-section PSRAM destinations (cached base). Chosen so each section
- * starts on a 1 MB boundary — arbitrary, just keeps the layout easy to
- * eyeball in SWD and leaves headroom if individual sections grow. */
-#define PSRAM_ZH_DAT_ADDR   (MOKYA_PSRAM_CACHED_BASE + 0x00000000u)  /* 0x11000000 */
-#define PSRAM_ZH_VAL_ADDR   (MOKYA_PSRAM_CACHED_BASE + 0x00200000u)  /* 0x11200000 */
-#define PSRAM_EN_DAT_ADDR   (MOKYA_PSRAM_CACHED_BASE + 0x00500000u)  /* 0x11500000 */
-#define PSRAM_EN_VAL_ADDR   (MOKYA_PSRAM_CACHED_BASE + 0x00510000u)  /* 0x11510000 */
+/* Per-section PSRAM destinations — offsets from the PSRAM base. Each
+ * section starts on a (arbitrary) 1 MB boundary so the layout is easy
+ * to eyeball in SWD and grown sections don't collide.
+ *
+ * IMPORTANT (see psram.c §§comment at ctrl.WRITABLE_M1): writes go to
+ * the UNCACHED alias (0x15xxxxxx), reads go through the CACHED alias
+ * (0x11xxxxxx). Writing via the cached alias only populates the XIP
+ * cache without write-through to PSRAM; once the cache evicts those
+ * lines (any subsequent multi-MB traffic does so), subsequent reads
+ * pick up garbage from PSRAM and search results come back with stray
+ * 0x06 prefixes / embedded NULs in Candidate.word.
+ *
+ * P2-15 update: uncached reads also trigger ~47% word errors on
+ * tight-loop CPU reads (trie prefix scan, glyph lookup), because
+ * back-to-back single-beat accesses don't give APS6404L enough CS-HIGH
+ * time for DRAM refresh even with MAX_SELECT=1. Cached burst reads
+ * (32-byte line fill + CPU work between) pass 0%. Reads MUST go
+ * through the CACHED alias — this was the original intent per the
+ * comment above but the macro had regressed to uncached. */
+#define PSRAM_ZH_DAT_OFF    0x00000000u
+#define PSRAM_ZH_VAL_OFF    0x00200000u
+#define PSRAM_EN_DAT_OFF    0x00500000u
+#define PSRAM_EN_VAL_OFF    0x00510000u
+
+#define PSRAM_WRITE_ADDR(off) (MOKYA_PSRAM_UNCACHED_BASE + (off))
+#define PSRAM_READ_ADDR(off)  (MOKYA_PSRAM_CACHED_BASE   + (off))
 
 #define PSRAM_ZH_DAT_BUDGET 0x00200000u  /*  2 MB */
 #define PSRAM_ZH_VAL_BUDGET 0x00300000u  /*  3 MB */
@@ -70,30 +91,60 @@ bool mie_dict_load_to_psram(mie_dict_pointers_t *out)
         return false;
     }
 
-    /* Copy each section to its fixed PSRAM address. Using memcpy from
-     * flash XIP to cached PSRAM; XIP_CTRL_WRITABLE_M1 was set by
-     * psram_init so writes pass through. */
+    /* Copy each section to the UNCACHED PSRAM alias so writes land on
+     * real PSRAM. Consumers get the CACHED alias so their reads go
+     * through the XIP cache. */
     if (hdr->zh_dat_size)
-        memcpy((void *)PSRAM_ZH_DAT_ADDR,
+        memcpy((void *)PSRAM_WRITE_ADDR(PSRAM_ZH_DAT_OFF),
                blob_base + hdr->zh_dat_off, hdr->zh_dat_size);
     if (hdr->zh_val_size)
-        memcpy((void *)PSRAM_ZH_VAL_ADDR,
+        memcpy((void *)PSRAM_WRITE_ADDR(PSRAM_ZH_VAL_OFF),
                blob_base + hdr->zh_val_off, hdr->zh_val_size);
     if (hdr->en_dat_size)
-        memcpy((void *)PSRAM_EN_DAT_ADDR,
+        memcpy((void *)PSRAM_WRITE_ADDR(PSRAM_EN_DAT_OFF),
                blob_base + hdr->en_dat_off, hdr->en_dat_size);
     if (hdr->en_val_size)
-        memcpy((void *)PSRAM_EN_VAL_ADDR,
+        memcpy((void *)PSRAM_WRITE_ADDR(PSRAM_EN_VAL_OFF),
                blob_base + hdr->en_val_off, hdr->en_val_size);
 
+    /* Invalidate the XIP cache lines that cover the dict we just wrote
+     * to PSRAM. We must invalidate by address range rather than the
+     * cheaper `xip_cache_invalidate_all()` — empirically the set/way
+     * variant leaves stale lines on RP2350 (reads through the cached
+     * alias still return pre-load bytes until explicit address-range
+     * invalidation, which is how this bug manifested: Candidate.word
+     * came back with a byte like 0x55 at positions where PSRAM held
+     * 0x25, because the cache was seeded with uninitialised PSRAM
+     * content during the pre-load bring-up). `xip_cache_invalidate_range`
+     * takes an offset from XIP_BASE (0x10000000), so PSRAM sections
+     * live at 0x01000000 + PSRAM_*_OFF.                                  */
+    #define PSRAM_XIP_OFFSET   0x01000000u    /* 0x11000000 - 0x10000000  */
+    #define CACHE_LINE_ALIGN(sz) (((sz) + 7u) & ~7u)
+    if (hdr->zh_dat_size)
+        xip_cache_invalidate_range(PSRAM_XIP_OFFSET + PSRAM_ZH_DAT_OFF,
+                                   CACHE_LINE_ALIGN(hdr->zh_dat_size));
+    if (hdr->zh_val_size)
+        xip_cache_invalidate_range(PSRAM_XIP_OFFSET + PSRAM_ZH_VAL_OFF,
+                                   CACHE_LINE_ALIGN(hdr->zh_val_size));
+    if (hdr->en_dat_size)
+        xip_cache_invalidate_range(PSRAM_XIP_OFFSET + PSRAM_EN_DAT_OFF,
+                                   CACHE_LINE_ALIGN(hdr->en_dat_size));
+    if (hdr->en_val_size)
+        xip_cache_invalidate_range(PSRAM_XIP_OFFSET + PSRAM_EN_VAL_OFF,
+                                   CACHE_LINE_ALIGN(hdr->en_val_size));
+    #undef PSRAM_XIP_OFFSET
+    #undef CACHE_LINE_ALIGN
+
+    *(volatile uint32_t *)0x2007FCE0u = 0x494E5631u;  /* 'INV1' — done */
+
     if (out) {
-        out->zh_dat      = (const uint8_t *)PSRAM_ZH_DAT_ADDR;
+        out->zh_dat      = (const uint8_t *)PSRAM_READ_ADDR(PSRAM_ZH_DAT_OFF);
         out->zh_dat_size = hdr->zh_dat_size;
-        out->zh_val      = (const uint8_t *)PSRAM_ZH_VAL_ADDR;
+        out->zh_val      = (const uint8_t *)PSRAM_READ_ADDR(PSRAM_ZH_VAL_OFF);
         out->zh_val_size = hdr->zh_val_size;
-        out->en_dat      = (const uint8_t *)PSRAM_EN_DAT_ADDR;
+        out->en_dat      = (const uint8_t *)PSRAM_READ_ADDR(PSRAM_EN_DAT_OFF);
         out->en_dat_size = hdr->en_dat_size;
-        out->en_val      = (const uint8_t *)PSRAM_EN_VAL_ADDR;
+        out->en_val      = (const uint8_t *)PSRAM_READ_ADDR(PSRAM_EN_VAL_OFF);
         out->en_val_size = hdr->en_val_size;
     }
 
