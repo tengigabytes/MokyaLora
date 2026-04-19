@@ -45,13 +45,13 @@ For build/flash scripts, shell commands, and source layout see
 
 | Address | Device         | Bus  | Result | Notes |
 |---------|----------------|------|--------|-------|
-| 0x6B    | BQ25622        | I2C1 | ✅ PASS | After TP101 fix (Issue 2) |
-| 0x55    | BQ27441        | I2C1 | ⚠️ CONDITIONAL | Cold boot NACK — see Issue 9 (BIE) + Issue 10 (latchup). Workaround: boot without battery → charge_on → insert battery |
-| 0x6A    | LSM6DSV16X     | I2C0 | ✅ PASS | |
-| 0x1E    | LIS2MDL        | I2C0 | ✅ PASS | After R54/R55 jumper fix (Issue 3) |
-| 0x5D    | LPS22HH        | I2C0 | ✅ PASS | Address is **0x5D** (SA0 = 3.3 V); design docs incorrectly stated 0x5C — see Issue 4 |
-| 0x3A    | Teseo-LIV3FL   | I2C0 | ✅ PASS | |
-| 0x36    | LM27965        | I2C1 | ✅ PASS | |
+| 0x6B    | BQ25622        | I2C0 | ✅ PASS | After TP101 fix (Issue 2) |
+| 0x55    | BQ27441        | I2C0 | ⚠️ CONDITIONAL | Cold boot NACK — see Issue 9 (BIE) + Issue 10 (latchup). Workaround: boot without battery → charge_on → insert battery |
+| 0x6A    | LSM6DSV16X     | I2C1 | ✅ PASS | |
+| 0x1E    | LIS2MDL        | I2C1 | ✅ PASS | After R54/R55 jumper fix (Issue 3) |
+| 0x5D    | LPS22HH        | I2C1 | ✅ PASS | Address is **0x5D** (SA0 = 3.3 V); design docs incorrectly stated 0x5C — see Issue 4 |
+| 0x3A    | Teseo-LIV3FL   | I2C1 | ✅ PASS | |
+| 0x36    | LM27965        | I2C0 | ✅ PASS | |
 
 #### Sensor Live Readings
 
@@ -1151,6 +1151,176 @@ MIE dictionary lookup is inherently random-access (~600 bytes/query, <0.4 ms via
 - `firmware/tools/bringup/i2c_custom_scan.c` — Registered `psram_dma_diag` and `psram_fps` serial commands
 - `bringup_run.ps1` — Added timeout entries for `psram_dma_diag` (30 s), `psram_rd_diag` (15 s), `psram_fps` (120 s)
 
+### Step 26 — Sleep / Dormant Mode & Dark Current (Planned)
+
+**Goal:** Validate both WFI (light sleep) and DORMANT (deep sleep) modes. Measure quiescent current at each stage. Verify all wakeup sources.
+
+#### Phase 1 — Peripheral Shutdown & WFI
+
+1. Shut down all peripherals in sequence, measuring system current after each step:
+   - TFT: send `SLPIN` (0x10) + backlight off (LM27965 ENA=0)
+   - SX1262: `SetStandby(RC)` then `SetSleep(coldStart=0, rtcTimeout=0)` — opcode 0x84, ~160 nA
+   - Teseo-LIV3FL: send `$PSTMLOWPOWERONOFF` via I2C to enter low-power mode. This also **disables the GNSS LNA (BGA123N6)**, eliminating ~5 mA LNA drain. Verify wakeup method (same command to toggle back, or POR required).
+   - BGA123N6 GNSS LNA: disabled automatically by Teseo `$PSTMLOWPOWERONOFF` — no separate GPIO control needed
+   - Sensors: LSM6DSV16X → power-down (CTRL1/CTRL2 = 0x00); LPS22HH → power-down (CTRL_REG1 = 0x00); LIS2MDL → idle
+   - Audio: **Rev B removes mic + speaker** — skip for Rev B onwards. Rev A: NAU8315 SD_MODE pin → LOW (shutdown); IM69D130 → stop PDM CLK
+   - LED driver (LM27965): all banks off, minimum current
+   - Charger (BQ25622): disable watchdog timer, reduce ADC scan rate
+   - Motor PWM: off (duty = 0, slice disabled)
+2. Enter `__wfi()` — CPU clock-gates, peripherals retain state.
+3. **Wakeup sources (WFI):** any enabled interrupt (USB, GPIO, timer).
+4. Measure total system current at: (a) all peripherals on idle, (b) each peripheral off in sequence, (c) WFI.
+
+#### Phase 2 — DORMANT Mode
+
+1. After Phase 1 peripheral shutdown, switch system clock to XOSC or ROSC.
+2. Configure GPIO wake sources:
+   - **GPIO 33 (PWR_BTN):** edge-triggered (falling edge = button press)
+   - **GPIO 29 (LORA_DIO1):** rising edge (SX1262 RX interrupt while in sleep-with-warm-start)
+   - **Keypad:** drive one column LOW, configure corresponding row as wake GPIO (subset wake — e.g., OK key only)
+3. Enter DORMANT via RP2350 POWMAN API (exact SDK function TBD — verify `pico/sleep.h` or `hardware/powman.h` availability in Pico SDK 2.x).
+4. On wake: re-init clocks → re-init peripherals → report wake source and elapsed time.
+5. Measure dormant current — target < 10 µA system-wide (per power-architecture.md Rail A spec).
+
+#### Power Tree Low-Power Audit
+
+Review each rail and load for low-power mode capability:
+
+| Component | Rail | Active Current | Low-Power Mode | Software Control | Notes |
+|-----------|------|---------------|----------------|-----------------|-------|
+| RP2350B | 1.8 V | ~25 mA | DORMANT: ~20 µA (POWMAN) | POWMAN API | Verify with scope |
+| W25Q128JW Flash | 1.8 V | ~15 mA (read) | Deep Power Down: 1 µA | Opcode 0xB9 | Must exit DPD before XIP resumes |
+| APS6404L PSRAM | 1.8 V | ~4 mA (standby) | Half-sleep: 40 µA | CE# HIGH (GPIO 0) | Already idle when CS deasserted |
+| SX1262 | 1.8 V | ~4.5 mA (Rx) | Sleep cold: 160 nA | SetSleep (0x84) | DIO1 wake still functional |
+| Teseo-LIV3FL | 1.8 V + 3.3 V | ~26 mA (tracking) | Low-power: TBD µA | `$PSTMLOWPOWERONOFF` | Also disables LNA; verify I2C transport and wakeup |
+| BGA123N6 LNA | 1.8 V | ~5 mA | Off (via Teseo LP) | Teseo `$PSTMLOWPOWERONOFF` | LNA power gated by Teseo low-power mode |
+| LSM6DSV16X IMU | 1.8 V | ~0.5 mA (120 Hz) | Power-down: 3 µA | CTRL1 = 0x00 | |
+| LIS2MDL Mag | 1.8 V | ~0.2 mA | Idle: 2 µA | — | Idle on POR |
+| LPS22HH Baro | 3.3 V | ~12 µA (one-shot) | Power-down: 1 µA | CTRL_REG1 = 0x00 | |
+| NHD LCD Panel | 1.8 V + 3.3 V | ~10 mA | SLPIN: < 50 µA | 0x10 command | Backlight is separate |
+| LM27965 LED | 1.8 V | ~1 mA | All off: < 1 µA | GP reg = 0x20 | |
+| NAU8315 Amp | VSYS | ~3.2 mA (idle) | SD_MODE LOW: 0.1 µA | GPIO (not connected Rev A?) | **Rev B: removed from BOM** |
+| IM69D130 Mic | 1.8 V | ~1 mA (PDM active) | CLK stop: < 5 µA | Stop PIO CLK | **Rev B: removed from BOM** |
+| TPS62840 Buck | — | Iq = 60 nA | Always-on | — | Ultra-low Iq by design |
+| TPS7A2033 LDO | — | Iq = 12 µA | Always-on (EN tied) | None | **Rev B: consider EN GPIO** |
+| BQ25622 Charger | — | ~1 mA | HIZ mode: ~10 µA | REG00 EN_HIZ | |
+| BQ27441 Gauge | — | ~0.1 mA | Sleep mode: ~1 µA | Automatic | |
+
+**Key findings (pre-test):**
+- **GNSS LNA controlled by Teseo** — `$PSTMLOWPOWERONOFF` disables both Teseo and LNA, eliminating ~31 mA (26 mA Teseo + 5 mA LNA). No dedicated EN GPIO needed.
+- **3.3 V LDO always-on** wastes ~12 µA Iq even when no 3.3 V loads are active. Rev B could gate via GPIO.
+- **NAU8315 + IM69D130 removed in Rev B** — eliminates ~4.2 mA idle drain and associated GPIO/PIO.
+- **Rev B adds NAND Flash** — power consumption TBD; need to verify standby current and whether CE# deassert is sufficient for low-power.
+- Best-case dormant estimate (all peripherals off, GNSS LP): **< 50 µA** (need to verify Teseo LP mode residual current).
+
+#### Bringup Menu Items (to implement)
+
+- Power > "Sleep test" — Phase 1 (peripheral shutdown + WFI), display current measurement prompts on serial
+- Power > "Dormant test" — Phase 2 (DORMANT mode entry, GPIO wake), requires POWMAN API investigation
+
+#### Open Questions
+
+- [ ] RP2350 DORMANT API: verify which Pico SDK 2.x header provides `sleep_goto_dormant_until_pin()` or equivalent POWMAN function.
+- [ ] Keypad wake in DORMANT: can a single matrix key (e.g., PWR_BTN at GPIO 33) generate a DORMANT wake event? GPIO 33 is a dedicated SIO pin, not part of the keypad matrix — confirm it is directly wired to a physical button.
+- [ ] NAU8315 SD_MODE pin: is it routed to a GPIO or tied to VDD? (Rev A only — **removed from Rev B BOM**).
+- [ ] Teseo-LIV3FL `$PSTMLOWPOWERONOFF`: confirm this command works over I2C transport (not just UART). Verify residual current in low-power mode and wakeup procedure (toggle command again? hardware reset?).
+- [ ] Rev B NAND Flash: determine part number, interface (SPI/QSPI/parallel), standby current, and power-down mode for inclusion in power audit.
+
+---
+
+### Step 27 — LoRa Antenna VNA S11 & TX Power (Planned)
+
+**Goal:** (A) Measure LoRa antenna return loss with nanoVNA. (B) Verify TX output power with CW mode.
+
+#### Part A — Antenna S11 (passive, board unpowered)
+
+**Equipment:** NanoVNA, U.FL-to-SMA pigtail or probe clip.
+
+1. **Power off** the board completely.
+2. Move the U.FL jumper on the LoRa RF path to disconnect the SX1262 / PE4259 side and expose the antenna feed.
+3. Connect NanoVNA port 1 to the antenna-side U.FL connector.
+4. Calibrate nanoVNA (SOL at connector end).
+5. Sweep **800–1000 MHz**, observe S11 magnitude and Smith chart.
+
+| Parameter | Target | Note |
+|-----------|--------|------|
+| S11 @ 920 MHz | < -10 dB | Acceptable match |
+| S11 @ 920 MHz | < -15 dB | Good match |
+| Bandwidth (S11 < -10 dB) | > 20 MHz | Covers TW 920–925 MHz ISM band |
+
+**Notes:**
+- RF shield lid (Wurth 3600213120S) should be removed for antenna access.
+- If S11 is poor, PCB tuning stub may be required (see rf-matching.md §1.4).
+- This is a 1-port passive measurement — no firmware involved.
+
+#### Part B — TX Output Power (active, CW mode)
+
+**Equipment:** Spectrum analyser or RF power meter, coaxial cable + attenuator.
+
+1. **Power on** the board. Reconnect U.FL jumper to normal position.
+2. Run `lora_cw` — CW carrier at 920.125 MHz, +22 dBm. Connect measurement equipment to antenna port or conducted test fixture.
+3. Run `lora_txpow` — sweeps CW power: -9, 0, 5, 10, 14, 17, 20, 22 dBm (5 s/step).
+4. Record measured power at each level. Compare vs. SetTxParams setting.
+
+| Setting | Expected (conducted) | Note |
+|---------|---------------------|------|
+| +22 dBm | ~+21.4 dBm | PE4259 insertion loss ~0.6 dB |
+| +17 dBm | ~+16.4 dBm | |
+| 0 dBm | ~-0.6 dBm | |
+
+**Firmware commands (already implemented):**
+- `lora_cw` — continuous CW at 920.125 MHz, +22 dBm; BACK to stop
+- `lora_txpow` — power level sweep with 5 s per step
+
+---
+
+### Step 28 — GNSS Antenna VNA S11 (Planned)
+
+**Goal:** Measure GNSS antenna (Kyocera AVX M830120) return loss with nanoVNA. Physical test only — no firmware action required. Same method as Step 27 Part A.
+
+#### RF Chain
+
+```
+M830120 Chip Antenna ──► SAW (B39162B4327P810) ──► LNA (BGA123N6) ──► Teseo-LIV3FL RF_IN
+```
+
+#### Test Setup — Antenna S11 (passive, board unpowered)
+
+**Equipment:** NanoVNA (must support 1.5 GHz — verify nanoVNA model range), U.FL pigtail.
+
+1. **Power off** the board completely.
+2. Move the U.FL jumper on the GNSS RF path to disconnect the SAW/LNA side and expose the antenna feed.
+3. Connect nanoVNA port 1 to the antenna-side U.FL connector.
+4. Calibrate nanoVNA (SOL at connector end).
+5. Sweep **1500–1650 MHz** (L1 band centred at 1575.42 MHz).
+
+| Parameter | Target | Note |
+|-----------|--------|------|
+| S11 @ 1575.42 MHz | < -10 dB | Acceptable match |
+| Bandwidth (S11 < -10 dB) | > 10 MHz | Covers L1 C/A code bandwidth |
+
+> **NanoVNA range check:** Original nanoVNA tops out at ~900 MHz. NanoVNA-H (V2) covers up to 3 GHz. Confirm your model supports 1575 MHz before testing.
+
+#### SAW / LNA Chain Measurement (deferred)
+
+Measuring S11/S21 through the SAW filter and LNA is significantly more complex and deferred to Rev B:
+- **SAW (B39162B4327P810):** passive 2-port — needs S21 with matched termination on both ports. No convenient test points on Rev A.
+- **LNA (BGA123N6):** active device, requires DC bias (1.8 V) + low input power (<-30 dBm). Needs 2-port VNA with bias tee.
+- **Rev B action:** add U.FL test points between SAW output and LNA input, and between LNA output and Teseo RF_IN.
+
+#### Relevance to Issue 11
+
+Issue 11 reported 0 satellites after >10 min outdoor cold start. Possible RF causes:
+1. **Antenna ground clearance insufficient** → poor S11 — **this test will confirm/eliminate**
+2. SAW → LNA impedance mismatch → signal loss (requires S21, deferred)
+3. BOM discrepancy: design docs listed BGA725L6, actual part is BGA123N6 — verify part characteristics match L1 band
+
+#### Open Items
+
+- [ ] Confirm nanoVNA model supports 1575 MHz (need NanoVNA-H V2 or equivalent)
+- [ ] Identify U.FL jumper location on GNSS RF path (verify Rev A PCB has one)
+- [ ] Verify BGA123N6 datasheet confirms L1 band (1575 MHz) operation — BGA725L6 was originally specified
+
 ---
 
 ### Step 26 — PSRAM 75 MHz Validation on Board #2
@@ -1248,6 +1418,7 @@ Error signature unchanged — `XY`→`YY` byte-0 nibble duplication. Mod-8 histo
 | 12 | 2026-04-06 | Meshtastic / SPI1 | SX1262 radio init fails (Error 4, NO_INTERFACE) under Meshtastic firmware | `rpipico2` board defaults `PIN_WIRE1_SDA=26, PIN_WIRE1_SCL=27`; Meshtastic `Wire1.begin()` reconfigures GPIO 26/27 funcsel from SPI to I2C before `SPI1.begin()` runs | `MESHTASTIC_EXCLUDE_I2C=1` disables all Wire init on Core 0 (I2C peripherals are Core 1's domain). Initial workaround was `I2C_SDA1=6, I2C_SCL1=7` redirect | No HW change needed; firmware-only fix. Document SPI1/Wire1 pin conflict in variant README |
 | 13 | 2026-04-06 | PSRAM / USB CDC serial | `psram` and `psram_full` commands return empty output in `bringup_test_all.ps1` when run after 12+ prior commands; pass 100% in isolation or via `bringup_run.ps1` | USB CDC serial timing: after many sequential commands, trailing CDC packet bytes from previous responses pollute or delay the next command's buffer. PSRAM tests (which involve QSPI bus reconfiguration) may have longer response latency that exceeds the script's read window | Under investigation. Firmware confirmed working — issue is host-side script timing only. Workaround: skip memory group (`-Skip memory`) for 16/16 PASS, or run memory group separately (`-Group memory`) for 4/4 PASS | No HW change needed; script-side fix required |
 | 14 | 2026-04-07 | U3 (APS6404L PSRAM) / DMA | DMA **reads** from PSRAM produce ~25% word errors. DMA writes and CPU access are 100% reliable. Corrupted words have byte 0 high nibble replaced by low nibble (`XY`→`YY`). Safe burst threshold is speed-dependent: ≤ 4 words at 37.5 MHz, ≤ 2 words at 75 MHz (board #2, verified 2026-04-11) | Not yet isolated. Observed pattern suggests QMI read-data latch timing error on specific word positions within each 8-word XIP cache-line burst triggered by the DMA bus master. CPU reads use a different internal path and are unaffected. Needs further investigation before assigning a definitive cause | Workaround: CPU volatile read or DMA burst ≤ 2 words. DMA writes to PSRAM are safe. Diagnostic command: `psram_dma_diag` (see Step 25) | No HW change needed. For display framebuffer: DMA write + CPU read. Consider Raspberry Pi forum inquiry or errata check for authoritative explanation |
+| 15 | 2026-04-18 | I2C bus pinmux | Power bus (GPIO 6/7) and Sensor+GNSS bus (GPIO 34/35) both route to `i2c1` only. RP2350 I2C pinmux follows mod-4: `GPIO mod 4 == 2/3` → I2C1 SDA/SCL with no I2C0 alternative. Two buses cannot run concurrently on separate SDK peripherals as originally intended | Design-time oversight: docs assumed RP2350B offered flexible I2C pinmux on both pairs; silicon datasheet table shows mod-4 rule is absolute | Firmware time-muxes the single `i2c1` peripheral between the two pin pairs via a FreeRTOS mutex (`firmware/core1/src/i2c/i2c_bus.c`, M3.4.1) | Reroute Sensor+GNSS bus to a mod-4 = 0/1 pair (candidate: GPIO 32/33 → `i2c0`) so power bus stays on `i2c1` and sensor bus moves to `i2c0`. Removes mutex/mux dance and enables true concurrent access. Also avoids any future temptation to merge both rails onto one bus (Power bus uses 1.8 V pull-up, Sensor bus 3.3 V — incompatible without level shifter) |
 
 ---
 

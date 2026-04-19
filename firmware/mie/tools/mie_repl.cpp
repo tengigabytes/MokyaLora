@@ -1,36 +1,39 @@
-// mie_repl.cpp — MokyaInput Engine interactive REPL (PC host only)
 // SPDX-License-Identifier: MIT
+// mie_repl.cpp — MokyaInput Engine interactive REPL (PC host only).
 //
-// Renders a virtual MokyaLora half-keyboard in the terminal and passes key
-// events through ImeLogic → TrieSearcher, displaying candidates in real time.
+// Renders a virtual MokyaLora half-keyboard in the terminal and drives
+// ImeLogic via its listener API. The listener inserts committed text into
+// a local buffer, moves a cursor on DPAD moves when no candidates are
+// showing, and deletes before cursor on DEL when pending is empty.
 //
 // Usage:
-//   ./mie_repl [--dat dict_dat.bin] [--val dict_values.bin]
-//              [--en-dat en_dat.bin] [--en-val en_values.bin]
+//   ./mie_repl [--dat dict_dat.bin]   [--val dict_values.bin]
+//              [--en-dat en_dat.bin]  [--en-val en_values.bin]
 //
-// Without dictionary arguments the REPL runs but shows no candidates.
+// Controls:
+//   Input keys    — append (Smart) / multi-tap cycle (Direct / row-0 in
+//                   SmartEn / SYM2)
+//   MODE  (`)     — cycle 中 → EN → ABC
+//   ，SYM ([)     — short press: ， / , ; long press (500 ms): open picker
+//   。.？ ([])    — multi-tap: 。 ？ ！ (ZH) / . ? ! (EN)
+//   ←/→           — Smart + candidates: select; otherwise: move text cursor
+//   ↑/↓           — Smart + candidates: page; otherwise: move cursor (no-op here)
+//   SPACE         — idle: insert space; SmartZh + pending: 1st-tone; others: commit
+//   OK  (Enter)   — commit selected candidate / confirm multi-tap
+//   DEL           — pending: delete last; empty: delete char before cursor
+//   BS (BACK)     — exit REPL (the router contract: BACK is not consumed by MIE)
+//   ESC           — exit REPL
 //
-// Controls (PC keys shown in the virtual keyboard grid):
-//   Input keys  — append to key sequence (SmartZh/SmartEn) / cycle label (Direct)
-//   BACK (BS)   — backspace (Smart modes) / cancel pending (Direct)
-//                 When no IME input pending: delete character before cursor
-//   DEL         — When no IME input pending: delete character at cursor
-//   MODE  (`)   — cycle 中→EN→ABC→abc→ㄅ, clear input
-//   ，SYM ([)   — cycle Chinese/English comma/punctuation group
-//   。.？ (])   — cycle Chinese/English period/punctuation group
-//   ←/→         — navigate candidates (IME active) / move cursor in committed text
-//   SPACE / OK  — commit (SmartZh: SPACE = first-tone marker)
-//   ESC         — quit
-//
-// Phoneme key aliases (SmartZh / DirectBopomofo):
-//   m or ,  → (3,3) ㄩ/ㄝ        \  or . or /  → (3,4) ㄡ/ㄥ
-//   l or ;  → (2,4) ㄠ/ㄤ        9, 0  or  -   → (0,4) ㄞ/ㄢ/ㄦ
+// Multi-tap / long-press timing is driven by the main loop's tick() call
+// using std::chrono::steady_clock as the monotonic ms source.
 
 #include "../hal/pc/hal_pc_stdin.h"
 #include "../hal/pc/key_map.h"
 #include <mie/ime_logic.h>
+#include <mie/keycode.h>
 #include <mie/trie_searcher.h>
 
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -41,265 +44,257 @@
 #  include <sys/select.h>
 #endif
 
-// ── Simple file logger (writes to mie_repl.log beside the executable) ────────
-// Helps diagnose crashes: if the program crashes the log shows the last entry.
+// ── Simple file logger (writes to mie_repl.log) ─────────────────────────────
 
 static FILE* g_log = nullptr;
+static void log_open()  { g_log = fopen("mie_repl.log", "w"); if (g_log) { fputs("[mie_repl] log opened\n", g_log); fflush(g_log); } }
+static void log_close() { if (g_log) { fputs("[mie_repl] log closed\n", g_log); fclose(g_log); g_log = nullptr; } }
+#define LOG(fmt, ...) do { if (g_log) { fprintf(g_log, fmt, ##__VA_ARGS__); fflush(g_log); } } while (0)
 
-static void log_open() {
-    g_log = fopen("mie_repl.log", "w");
-    if (g_log) { fputs("[mie_repl] log opened\n", g_log); fflush(g_log); }
-}
+// ── Keyboard label table (3 modes) ──────────────────────────────────────────
 
-static void log_close() {
-    if (g_log) { fputs("[mie_repl] log closed\n", g_log); fclose(g_log); g_log = nullptr; }
-}
-
-// LOG(fmt, ...) — only active when g_log is open; always flushes so the last
-// entry is visible even if the process crashes immediately after.
-#define LOG(fmt, ...) \
-    do { if (g_log) { fprintf(g_log, fmt, ##__VA_ARGS__); fflush(g_log); } } while(0)
-
-
-// label_zh:    shown in SmartZh / DirectBopomofo mode.
-// label_en:    shown in SmartEn / DirectUpper mode (nullptr = same as label_zh).
-// label_lower: shown in DirectLower mode (nullptr = same as label_en).
 struct KeyLabel {
-    uint8_t row; uint8_t col;
-    const char* pc_hint;
-    const char* label_zh;
-    const char* label_en;
-    const char* label_lower;
+    mokya_keycode_t keycode;
+    const char*     pc_hint;
+    const char*     label_zh;       // SmartZh
+    const char*     label_en;       // SmartEn (nullptr → use label_zh)
+    const char*     label_direct;   // Direct  (nullptr → use label_en / label_zh)
 };
 
 // clang-format off
 static const KeyLabel kLabels[] = {
-    // Row 0: tone/digit keys — digits in all direct modes
-    {0,0,"1",   "ㄅㄉ", "1/2","1/2" },{0,1,"3",  "ˇˋ",  "3/4","3/4" },{0,2,"5",  "ㄓˊ","5/6","5/6" },
-    {0,3,"7",   "˙ㄚ",  "7/8","7/8" },{0,4,"9/-","ㄞㄢㄦ","9/0","9/0" },{0,5,"F1","FUNC",nullptr,nullptr},
-    // Row 1: ㄆㄊ=QW  ㄍㄐ=ER  ㄔㄗ=TY  ㄧㄛ=UI  ㄟㄣ=OP
-    {1,0,"q",   "ㄆㄊ","Q/W","q/w"},{1,1,"e",  "ㄍㄐ","E/R","e/r"},{1,2,"t",  "ㄔㄗ","T/Y","t/y"},
-    {1,3,"u",   "ㄧㄛ","U/I","u/i"},{1,4,"o",  "ㄟㄣ","O/P","o/p"},{1,5,"F2", "SET", nullptr,nullptr},
-    // Row 2: ㄇㄋ=AS  ㄎㄑ=DF  ㄕㄘ=GH  ㄨㄜ=JK  ㄠㄤ=L/;
-    {2,0,"a",   "ㄇㄋ","A/S","a/s"},{2,1,"d",  "ㄎㄑ","D/F","d/f"},{2,2,"g",  "ㄕㄘ","G/H","g/h"},
-    {2,3,"j",   "ㄨㄜ","J/K","j/k"},{2,4,"l/;","ㄠㄤ","L",  "l"  },{2,5,"BS","BACK",nullptr,nullptr},
-    // Row 3: ㄈㄌ=ZX  ㄏㄒ=CV  ㄖㄙ=BN  ㄩㄝ=M/,  ㄡㄥ=\.//
-    {3,0,"z",   "ㄈㄌ","Z/X","z/x"},{3,1,"c",  "ㄏㄒ","C/V","c/v"},{3,2,"b",  "ㄖㄙ","B/N","b/n"},
-    {3,3,"m/,", "ㄩㄝ","M",  "m"  },{3,4,"\\/.","ㄡㄥ","—", "—"  },{3,5,"Del","DEL",nullptr,nullptr},
-    // Rows 4-5: same in all modes
-    {4,0,"`",   "MODE",nullptr,nullptr},{4,1,"Tab","TAB",nullptr,nullptr},{4,2,"Spc","SPACE",nullptr,nullptr},
-    {4,3,"[",   "，SYM",nullptr,nullptr},{4,4,"]","。？",nullptr,nullptr},{4,5,"=","VOL+",nullptr,nullptr},
-    {5,0,"\xe2\x86\x91","UP",  nullptr,nullptr},{5,1,"\xe2\x86\x93","DOWN", nullptr,nullptr},
-    {5,2,"\xe2\x86\x90","LEFT",nullptr,nullptr},{5,3,"\xe2\x86\x92","RIGHT",nullptr,nullptr},
-    {5,4,"\xe2\x8f\x8e","OK",  nullptr,nullptr},{5,5,"_","VOL-",nullptr,nullptr},
+    // Row 0
+    {MOKYA_KEY_1, "1",   "ㄅㄉ",  "1/2",  "1/2" }, {MOKYA_KEY_3, "3",  "ˇˋ",    "3/4",  "3/4" },
+    {MOKYA_KEY_5, "5",   "ㄓˊ",  "5/6",  "5/6" }, {MOKYA_KEY_7, "7",  "˙ㄚ",   "7/8",  "7/8" },
+    {MOKYA_KEY_9, "9/-", "ㄞㄢㄦ","9/0", "9/0" }, {MOKYA_KEY_FUNC, "F1", "FUNC", nullptr, nullptr},
+    // Row 1
+    {MOKYA_KEY_Q, "q", "ㄆㄊ","Q/W","q/w"}, {MOKYA_KEY_E, "e", "ㄍㄐ","E/R","e/r"},
+    {MOKYA_KEY_T, "t", "ㄔㄗ","T/Y","t/y"}, {MOKYA_KEY_U, "u", "ㄧㄛ","U/I","u/i"},
+    {MOKYA_KEY_O, "o", "ㄟㄣ","O/P","o/p"}, {MOKYA_KEY_SET, "F2","SET",nullptr,nullptr},
+    // Row 2
+    {MOKYA_KEY_A, "a",   "ㄇㄋ","A/S","a/s"}, {MOKYA_KEY_D, "d", "ㄎㄑ","D/F","d/f"},
+    {MOKYA_KEY_G, "g",   "ㄕㄘ","G/H","g/h"}, {MOKYA_KEY_J, "j", "ㄨㄜ","J/K","j/k"},
+    {MOKYA_KEY_L, "l/;", "ㄠㄤ","L",  "l"   }, {MOKYA_KEY_BACK,"BS","BACK",nullptr,nullptr},
+    // Row 3
+    {MOKYA_KEY_Z,"z",     "ㄈㄌ","Z/X","z/x"}, {MOKYA_KEY_C,"c", "ㄏㄒ","C/V","c/v"},
+    {MOKYA_KEY_B,"b",     "ㄖㄙ","B/N","b/n"}, {MOKYA_KEY_M,"m/,","ㄩㄝ","M",  "m"   },
+    {MOKYA_KEY_BACKSLASH,"\\/.","ㄡㄥ","—", "—"}, {MOKYA_KEY_DEL,"Del","DEL",nullptr,nullptr},
+    // Row 4
+    {MOKYA_KEY_MODE,"`",    "MODE",nullptr,nullptr}, {MOKYA_KEY_TAB,"Tab","TAB",nullptr,nullptr},
+    {MOKYA_KEY_SPACE,"Spc", "SPACE",nullptr,nullptr},
+    {MOKYA_KEY_SYM1,"[",    "，SYM",nullptr,nullptr}, {MOKYA_KEY_SYM2,"]","。？",nullptr,nullptr},
+    {MOKYA_KEY_VOL_UP,"=",  "VOL+",nullptr,nullptr},
+    // Row 5
+    {MOKYA_KEY_UP,  "\xe2\x86\x91","UP",  nullptr,nullptr},
+    {MOKYA_KEY_DOWN,"\xe2\x86\x93","DOWN",nullptr,nullptr},
+    {MOKYA_KEY_LEFT,"\xe2\x86\x90","LEFT",nullptr,nullptr},
+    {MOKYA_KEY_RIGHT,"\xe2\x86\x92","RIGHT",nullptr,nullptr},
+    {MOKYA_KEY_OK,  "\xe2\x8f\x8e","OK",  nullptr,nullptr},
+    {MOKYA_KEY_VOL_DOWN,"_","VOL-",nullptr,nullptr},
 };
 // clang-format on
 
+// ── Committed text buffer ───────────────────────────────────────────────────
 
-// ── Committed output buffer & cursor ─────────────────────────────────────
+static std::string g_text;
+static int         g_cursor = 0;   // byte offset into g_text
+static bool        g_dirty  = true;
 
-static std::string g_committed;
-static int         g_cursor = 0;  // byte offset into g_committed
-
-static void on_commit(const char* utf8, void* /*ctx*/) {
-    if (utf8 && *utf8) {
-        int len = (int)strlen(utf8);
-        g_committed.insert((size_t)g_cursor, utf8, (size_t)len);
-        g_cursor += len;
-    }
-}
-
-// UTF-8 helpers for cursor movement.
-// Move cursor left by one codepoint (skip over continuation bytes 0x80-0xBF).
 static void cursor_move_left() {
     if (g_cursor <= 0) return;
     --g_cursor;
-    while (g_cursor > 0 && ((unsigned char)g_committed[g_cursor] & 0xC0) == 0x80)
-        --g_cursor;
+    while (g_cursor > 0 && ((unsigned char)g_text[g_cursor] & 0xC0) == 0x80) --g_cursor;
 }
-
-// Move cursor right by one codepoint.
 static void cursor_move_right() {
-    int n = (int)g_committed.size();
+    int n = (int)g_text.size();
     if (g_cursor >= n) return;
     ++g_cursor;
-    while (g_cursor < n && ((unsigned char)g_committed[g_cursor] & 0xC0) == 0x80)
-        ++g_cursor;
+    while (g_cursor < n && ((unsigned char)g_text[g_cursor] & 0xC0) == 0x80) ++g_cursor;
 }
-
-// Delete codepoint before the cursor (backspace).
-static void cursor_backspace() {
+static void cursor_delete_before() {
     if (g_cursor <= 0) return;
     int end = g_cursor;
     cursor_move_left();
-    g_committed.erase((size_t)g_cursor, (size_t)(end - g_cursor));
+    g_text.erase((size_t)g_cursor, (size_t)(end - g_cursor));
 }
 
-// Delete codepoint at the cursor (forward delete).
-static void cursor_delete() {
-    int n = (int)g_committed.size();
-    if (g_cursor >= n) return;
-    int start = g_cursor;
-    int pos = start + 1;
-    while (pos < n && ((unsigned char)g_committed[pos] & 0xC0) == 0x80) ++pos;
-    g_committed.erase((size_t)start, (size_t)(pos - start));
+// ── Listener — wire MIE events into the local text buffer ──────────────────
+
+struct ReplListener : public mie::IImeListener {
+    mie::ImeLogic* ime = nullptr;   // back-pointer for context sync
+
+    void on_commit(const char* utf8) override {
+        if (!utf8 || !*utf8) return;
+        int len = (int)std::strlen(utf8);
+        g_text.insert((size_t)g_cursor, utf8, (size_t)len);
+        g_cursor += len;
+        g_dirty = true;
+        LOG("listener: commit \"%s\" (cursor -> %d)\n", utf8, g_cursor);
+    }
+
+    void on_cursor_move(mie::NavDir d) override {
+        switch (d) {
+            case mie::NavDir::Left:  cursor_move_left();  break;
+            case mie::NavDir::Right: cursor_move_right(); break;
+            case mie::NavDir::Up:
+            case mie::NavDir::Down:
+                break;   // single-line REPL: nothing to do
+        }
+        sync_text_context();
+        g_dirty = true;
+        LOG("listener: cursor_move dir=%d -> %d\n", (int)d, g_cursor);
+    }
+
+    void on_delete_before() override {
+        cursor_delete_before();
+        sync_text_context();
+        g_dirty = true;
+        LOG("listener: delete_before -> cursor %d, len %zu\n", g_cursor, g_text.size());
+    }
+
+    void on_composition_changed() override { g_dirty = true; }
+
+    // Feed MIE the last two codepoints immediately before the cursor so
+    // its SmartEn leading-space / cap-next flags match the real text
+    // state after external edits. Walks two UTF-8 codepoints back from
+    // the cursor (enough to see ". ", ", ", 「。」, …).
+    void sync_text_context() {
+        if (!ime) return;
+        if (g_cursor <= 0 || g_text.empty()) {
+            ime->set_text_context("");
+            return;
+        }
+        int end   = g_cursor;
+        int start = end;
+        for (int cp = 0; cp < 2 && start > 0; ++cp) {
+            --start;
+            while (start > 0 &&
+                   ((unsigned char)g_text[start] & 0xC0) == 0x80) {
+                --start;
+            }
+        }
+        std::string suffix = g_text.substr((size_t)start, (size_t)(end - start));
+        ime->set_text_context(suffix.c_str());
+    }
+};
+
+// ── Rendering ───────────────────────────────────────────────────────────────
+
+static void clear_screen() { std::fputs("\033[2J\033[H", stdout); }
+
+static const char* pick_label(const KeyLabel& k, mie::InputMode m) {
+    switch (m) {
+        case mie::InputMode::SmartEn: return k.label_en ? k.label_en : k.label_zh;
+        case mie::InputMode::Direct:
+            return k.label_direct ? k.label_direct :
+                   (k.label_en    ? k.label_en    : k.label_zh);
+        default: return k.label_zh;
+    }
 }
-
-// ── Rendering ────────────────────────────────────────────────────────────
-
-static void clear_screen() { fputs("\033[2J\033[H", stdout); }
-
-// (circle number labels removed; candidates now separated by spaces)
 
 static void render(const mie::ImeLogic& ime) {
-    LOG("render: mode=%d zh=%d en=%d merged=%d mc_sel=%d prefix=%d input_bytes=%d\n",
-        (int)ime.mode(), ime.zh_candidate_count(), ime.en_candidate_count(),
-        ime.merged_candidate_count(), ime.candidate_index(),
-        ime.matched_prefix_len(), ime.input_bytes());
     clear_screen();
 
-    // ── Keyboard grid ──────────────────────────────────────────────────────
-    puts("\xe2\x94\x8c\xe2\x94\x80 MokyaLora REPL \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90");
+    const char* top = "\xe2\x94\x8c\xe2\x94\x80 MokyaLora REPL \xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x90";
+    const char* mid = "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4";
+    const char* bot = "\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98";
+
+    std::puts(top);
     for (int row = 0; row < 6; ++row) {
-        fputs("\xe2\x94\x82 ", stdout);
+        std::fputs("\xe2\x94\x82 ", stdout);
         for (int col = 0; col < 6; ++col) {
+            mokya_keycode_t target = (mokya_keycode_t)(row * 6 + col + 1);
             const char* pc = "?"; const char* lb = "?";
             for (const auto& k : kLabels) {
-                if (k.row == row && k.col == col) {
-                    pc = k.pc_hint;
-                    switch (ime.mode()) {
-                        case mie::InputMode::SmartEn:
-                        case mie::InputMode::DirectUpper:
-                            lb = k.label_en ? k.label_en : k.label_zh;
-                            break;
-                        case mie::InputMode::DirectLower:
-                            if (k.label_lower)      lb = k.label_lower;
-                            else if (k.label_en)    lb = k.label_en;
-                            else                    lb = k.label_zh;
-                            break;
-                        default:
-                            lb = k.label_zh;
-                            break;
-                    }
-                    break;
-                }
+                if (k.keycode == target) { pc = k.pc_hint; lb = pick_label(k, ime.mode()); break; }
             }
-            printf("[%3s:%-5s]", pc, lb);
+            std::printf("[%3s:%-5s]", pc, lb);
         }
-        puts(" \xe2\x94\x82");
+        std::puts(" \xe2\x94\x82");
     }
-    puts("\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\xa4");
+    std::puts(mid);
 
-    // ── Mode & input: compound display with [matched]remaining split ───────
-    // SmartZh shows "[ㄅㄉ][ㄍㄐ]" compound format; others use primary phoneme/letter.
-    char input_display[400] = {};
-    if (ime.input_bytes() == 0 && ime.compound_input_bytes() == 0) {
-        // (按下鍵入)
-        snprintf(input_display, sizeof(input_display), "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)");
+    // Pending composition with style hint.
+    mie::PendingView pv = ime.pending_view();
+    char input_display[512] = {};
+    if (pv.byte_len == 0) {
+        std::snprintf(input_display, sizeof(input_display),
+                      "(\xe6\x8c\x89\xe4\xb8\x8b\xe9\x8d\xb5\xe5\x85\xa5)");  // (按下鍵入)
+    } else if (pv.style == mie::PendingStyle::Inverted) {
+        // Reverse video for whole pending.
+        std::snprintf(input_display, sizeof(input_display), "\033[7m%s\033[27m", pv.str);
+    } else if (pv.style == mie::PendingStyle::PrefixBold &&
+               pv.matched_prefix_bytes > 0 && pv.matched_prefix_bytes < pv.byte_len) {
+        std::snprintf(input_display, sizeof(input_display),
+                      "\033[1m%.*s\033[22m%s",
+                      pv.matched_prefix_bytes, pv.str,
+                      pv.str + pv.matched_prefix_bytes);
+    } else if (pv.style == mie::PendingStyle::PrefixBold) {
+        // Whole string is matched — all bold.
+        std::snprintf(input_display, sizeof(input_display), "\033[1m%s\033[22m", pv.str);
     } else {
-        int split = ime.matched_prefix_compound_bytes();
-        const char* s = ime.compound_input_str();
-        int total = ime.compound_input_bytes();
-        if (split > 0 && split < total) {
-            snprintf(input_display, sizeof(input_display), "{%.*s}%s",
-                     split, s, s + split);
-        } else if (split > 0) {
-            snprintf(input_display, sizeof(input_display), "{%s}", s);
-        } else {
-            snprintf(input_display, sizeof(input_display), "%s", s);
-        }
+        std::snprintf(input_display, sizeof(input_display), "%s", pv.str);
     }
-    printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-40s \xe2\x94\x82\n",
-           ime.mode_indicator(), input_display);
+    std::printf("\xe2\x94\x82 \xe6\xa8\xa1\xe5\xbc\x8f: %s  \xe8\xbc\xb8\xe5\x85\xa5: %-60s \xe2\x94\x82\n",
+                ime.mode_indicator(), input_display);
 
-    // ── Candidates — paged merged list ───────────────────────────────────
-    // Shows kCandPageSize candidates per page. Tab advances to the next page.
-    // LEFT/RIGHT/UP/DOWN navigate globally; page indicator shown when >1 page.
-    if (ime.mode() == mie::InputMode::SmartZh ||
-        ime.mode() == mie::InputMode::SmartEn ||
-        ime.mode() == mie::InputMode::DirectBopomofo) {
-        int mc = ime.merged_candidate_count();
-
-        if (mc > 0) {
-            // Show only candidates on the current page.
-            int page     = ime.cand_page();
-            int pg_total = ime.cand_page_count();
-            int pg_count = ime.page_cand_count();  // candidates on this page (≤5)
-            int sel_in_page = ime.page_sel();       // highlight within page
-            LOG("render: mc=%d page=%d/%d pg_count=%d sel=%d\n",
-                mc, page+1, pg_total, pg_count, sel_in_page);
-            char cand_buf[512] = {}; int pos = 0;
-            for (int i = 0; i < pg_count && pos < 460; ++i) {
-                bool sel = (i == sel_in_page);
-                int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
-                                 "%s%s ",
-                                 sel ? ">" : " ",
-                                 ime.page_cand(i).word);
-                if (n > 0) pos += n;
-            }
-            // Page indicator appended if more than one page exists.
-            if (pg_total > 1) {
-                int n = snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
-                                 " [%d/%d]", page + 1, pg_total);
-                if (n > 0) pos += n;
-            }
-            // Label: 中文 for SmartZh, English for SmartEn, ㄅ for DirectBopomofo
-            const char* lbl = (ime.mode() == mie::InputMode::SmartZh)
-                              ? "[\xe4\xb8\xad\xe6\x96\x87]"  // [中文]
-                              : (ime.mode() == mie::InputMode::SmartEn)
-                              ? "[English]"
-                              : "[\xe3\x84\x85]";             // [ㄅ]
-            printf("\xe2\x94\x82 %s %-46s \xe2\x94\x82\n", lbl, cand_buf);
-        } else if (ime.mode() != mie::InputMode::DirectBopomofo && ime.input_bytes() > 0) {
-            printf("\xe2\x94\x82   (\xe7\x84\xa1\xe5\x80\x99\xe9\x81\xb8\xe5\xad\x97) %-46s \xe2\x94\x82\n", "");  // (無候選字)
-        } else {
-            printf("\xe2\x94\x82   %-56s \xe2\x94\x82\n", "");
+    // Candidate list (current page only).
+    int cc = ime.candidate_count();
+    if (cc > 0) {
+        int pg       = ime.page();
+        int pg_total = ime.page_count();
+        int pg_count = ime.page_cand_count();
+        int sel_in_page = ime.page_sel();
+        char cand_buf[512] = {}; int pos = 0;
+        for (int i = 0; i < pg_count && pos < 460; ++i) {
+            bool sel = (i == sel_in_page);
+            int n = std::snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
+                                  "%s%s ", sel ? ">" : " ",
+                                  ime.page_cand(i).word);
+            if (n > 0) pos += n;
         }
+        if (pg_total > 1) {
+            int n = std::snprintf(cand_buf + pos, (int)sizeof(cand_buf) - pos,
+                                  " [%d/%d]", pg + 1, pg_total);
+            if (n > 0) pos += n;
+        }
+        const char* tag = (ime.mode() == mie::InputMode::SmartZh) ? "[\xe4\xb8\xad\xe6\x96\x87]"
+                         : "[English]";
+        std::printf("\xe2\x94\x82 %s %-56s \xe2\x94\x82\n", tag, cand_buf);
     } else {
-        // DirectUpper / DirectLower: show pending label.
-        printf("\xe2\x94\x82 \xe7\x9b\xb4\xe6\x8e\xa5\xe8\xbc\xb8\xe5\x85\xa5: %-48s \xe2\x94\x82\n",  // 直接輸入:
-               ime.input_bytes() > 0 ? ime.input_str() : "");
+        std::printf("\xe2\x94\x82 %-60s \xe2\x94\x82\n", "");
     }
 
-    // ── Committed output (with cursor position shown as |) ───────────────
+    // Committed text with cursor shown as '|'.
     {
         std::string disp;
-        disp.reserve(g_committed.size() + 3);
-        disp.append(g_committed, 0, (size_t)g_cursor);
+        disp.reserve(g_text.size() + 3);
+        disp.append(g_text, 0, (size_t)g_cursor);
         disp += '|';
-        disp.append(g_committed, (size_t)g_cursor);
-        printf("\xe2\x94\x82 \xe5\xb7\xb2\xe7\xa2\xba\xe8\xaa\x8d: %-50s \xe2\x94\x82\n",   // 已確認:
-               disp.c_str());
+        disp.append(g_text, (size_t)g_cursor);
+        std::printf("\xe2\x94\x82 \xe5\xb7\xb2\xe7\xa2\xba\xe8\xaa\x8d: %-50s \xe2\x94\x82\n",
+                    disp.c_str());
     }
 
-    puts("\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x80\xe2\x94\x98");
-    // ESC離開 | `=MODE(中→EN→ABC→abc→ㄅ) | ←→=候選/游標 | Tab=下頁 | BS/Del=刪除
-    // Spc=一聲/提交 | ↩=確認 | [/]=，SYM/。？ | ,.;-/ = 注音快捷鍵
-    // Note: string split at \x92 boundaries to avoid hex-escape-out-of-range warnings.
-    puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  `=MODE("
-         "\xe4\xb8\xad\xe2\x86\x92" "EN"
-         "\xe2\x86\x92" "ABC"
-         "\xe2\x86\x92" "abc"
-         "\xe2\x86\x92\xe3\x84\x85)  |  \xe2\x86\x90\xe2\x86\x92="
-         "\xe5\x80\x99\xe9\x81\xb8/\xe6\xb8\xb8\xe6\xa8\x99  |  "
-         "Tab=\xe4\xb8\x8b\xe9\xa0\x81  |  "   // Tab=下頁
-         "BS/Del=\xe5\x88\xaa\xe9\x99\xa4  |  "
-         "Spc=\xe4\xb8\x80\xe8\x81\xb2/\xe6\x8f\x90\xe4\xba\xa4  |  "  // Spc=一聲/提交
-         "\xe2\x8f\x8e=\xe7\xa2\xba\xe8\xaa\x8d  |  "
-         "[=\xef\xbc\x8c\xe7\xac\xa6  ]=\xe3\x80\x82\xef\xbc\x9f  |  "  // [=，符 ]=。？
-         ",.=\xe3\x84\xa9\xe3\x84\x9d  ;=\xe3\x84\xa0\xe3\x84\xa4  -=\xe3\x84\xa6");  // ,.=ㄩㄝ ;=ㄠㄤ -=ㄦ
-    fflush(stdout);
+    std::puts(bot);
+    std::puts("  ESC \xe9\x9b\xa2\xe9\x96\x8b  |  `=MODE  |  "
+              "\xe2\x86\x90\xe2\x86\x92=\xe5\x80\x99\xe9\x81\xb8/\xe6\xb8\xb8\xe6\xa8\x99  |  "
+              "\xe2\x86\x91\xe2\x86\x93=\xe7\xbf\xbb\xe9\xa0\x81  |  "
+              "[=\xef\xbc\x8c/, (\xe9\x95\xb7\xe6\x8c\x89 picker)  |  "
+              "]=\xe3\x80\x82\xef\xbc\x9f/.?!  |  "
+              "BS/Del=\xe5\x88\xaa\xe5\xad\x97  |  Spc=\xe7\xa9\xba\xe6\xa0\xbc/\xe4\xb8\x80\xe8\x81\xb2");
+    std::fflush(stdout);
 }
 
-// ── Argument parsing ─────────────────────────────────────────────────────
+// ── Arg parse ───────────────────────────────────────────────────────────────
 
 static const char* find_arg(int argc, char** argv, const char* flag) {
     for (int i = 1; i + 1 < argc; ++i)
-        if (strcmp(argv[i], flag) == 0) return argv[i + 1];
+        if (std::strcmp(argv[i], flag) == 0) return argv[i + 1];
     return nullptr;
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────
+// ── Main ────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
     log_open();
@@ -307,7 +302,6 @@ int main(int argc, char** argv) {
 
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
-    LOG("main: SetConsoleOutputCP(CP_UTF8) done\n");
 #endif
 
     const char* zh_dat = find_arg(argc, argv, "--dat");
@@ -318,82 +312,81 @@ int main(int argc, char** argv) {
     mie::TrieSearcher zh_searcher;
     if (zh_dat && zh_val) {
         if (zh_searcher.load_from_file(zh_dat, zh_val))
-            printf("\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe5\x85\xb8: %u keys  (v%u%s)\n",
-                   zh_searcher.key_count(),
-                   zh_searcher.dict_version(),
-                   zh_searcher.dict_version() < 2 ? "  WARNING: v1 dict has no tone data — rebuild with gen_dict.py" : "");
+            std::printf("\xe4\xb8\xad\xe6\x96\x87\xe5\xad\x97\xe5\x85\xb8: %u keys (v%u)\n",
+                        zh_searcher.key_count(), zh_searcher.dict_version());
         else
-            fprintf(stderr, "WARNING: failed to load Chinese dict '%s'/'%s'\n", zh_dat, zh_val);
+            std::fprintf(stderr, "WARNING: failed to load Chinese dict '%s'/'%s'\n", zh_dat, zh_val);
     }
 
     mie::TrieSearcher en_searcher;
     bool en_loaded = false;
     if (en_dat && en_val) {
         if (en_searcher.load_from_file(en_dat, en_val)) {
-            printf("English dict: %u keys\n", en_searcher.key_count());
+            std::printf("English dict: %u keys\n", en_searcher.key_count());
             en_loaded = true;
         } else {
-            fprintf(stderr, "WARNING: failed to load English dict '%s'/'%s'\n", en_dat, en_val);
+            std::fprintf(stderr, "WARNING: failed to load English dict '%s'/'%s'\n", en_dat, en_val);
         }
     }
 
     mie::ImeLogic ime(zh_searcher, en_loaded ? &en_searcher : nullptr);
-    ime.set_commit_callback(on_commit, nullptr);
-    LOG("main: ImeLogic created\n");
+    ReplListener listener;
+    listener.ime = &ime;       // enable set_text_context sync after edits
+    ime.set_listener(&listener);
+    LOG("main: ime + listener wired\n");
 
     mie::pc::HalPcStdin hal;
-    mie::KeyEvent ev;
-    LOG("main: HalPcStdin created, entering render\n");
+    auto t0 = std::chrono::steady_clock::now();
+    auto now_ms = [&]() -> uint32_t {
+        auto d = std::chrono::steady_clock::now() - t0;
+        return (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+    };
 
     render(ime);
-    LOG("main: initial render done, entering event loop\n");
+    g_dirty = false;
+    LOG("main: entering event loop\n");
 
-    while (true) {
-        if (!hal.poll(ev)) {
+    for (;;) {
+        uint32_t t = now_ms();
+        mie::KeyEvent ev;
+        if (hal.poll(ev, t)) {
+            // ESC → quit.
+            if (ev.keycode == MOKYA_KEY_NONE) break;
+            // BACK is reserved for UI layer; use it to exit the REPL.
+            if (ev.keycode == MOKYA_KEY_BACK) break;
+
+            LOG("key: kc=0x%02X pressed=%d t=%u\n",
+                (unsigned)ev.keycode, (int)ev.pressed, t);
+            ime.process_key(ev);
+
+            // PC terminals only report key-down via _getch / termios raw
+            // reads — there is no natural key-release event. Synthesize
+            // one here so MIE handlers that rely on the release edge
+            // (SYM1 short-press vs long-press) actually fire. 1 ms offset
+            // keeps now_ms monotonic across the pair. Long-press testing
+            // is not reachable from the PC terminal by design (the press
+            // is already "released" by the time tick() could see it); the
+            // full long-press path is intended for real hardware input.
+            mie::KeyEvent release = ev;
+            release.pressed = false;
+            release.now_ms  = t + 1;
+            ime.process_key(release);
+        }
+
+        // Drive timers (multi-tap timeout / SYM1 long-press).
+        ime.tick(now_ms());
+
+        if (g_dirty) {
+            render(ime);
+            g_dirty = false;
+        }
+
 #ifdef _WIN32
-            Sleep(10);
+        Sleep(10);
 #else
-            struct timeval tv = { 0, 10000 };
-            select(0, nullptr, nullptr, nullptr, &tv);
+        struct timeval tv = {0, 10000};
+        select(0, nullptr, nullptr, nullptr, &tv);
 #endif
-            continue;
-        }
-
-        // ESC to quit (HalPcStdin maps ESC to row=0xFF signal)
-        if (ev.row == 0xFF) break;
-
-        LOG("key: row=%u col=%u\n", (unsigned)ev.row, (unsigned)ev.col);
-
-        // When no IME input is pending, intercept navigation/edit keys for the
-        // committed text cursor instead of passing them to ImeLogic.
-        bool cursor_handled = false;
-        if (ime.input_bytes() == 0) {
-            if (ev.row == 5 && ev.col == 2) {  // LEFT → cursor left
-                cursor_move_left();
-                cursor_handled = true;
-            } else if (ev.row == 5 && ev.col == 3) {  // RIGHT → cursor right
-                cursor_move_right();
-                cursor_handled = true;
-            } else if (ev.row == 2 && ev.col == 5) {  // BACK → delete before cursor
-                cursor_backspace();
-                cursor_handled = true;
-            } else if (ev.row == 3 && ev.col == 5) {  // DEL → delete at cursor
-                cursor_delete();
-                cursor_handled = true;
-            }
-        }
-
-        bool refresh;
-        if (cursor_handled) {
-            refresh = true;  // always re-render on cursor edit
-        } else {
-            refresh = ime.process_key(ev);
-        }
-
-        LOG("key: process_key -> refresh=%d zh=%d en=%d merged=%d\n",
-            refresh, ime.zh_candidate_count(), ime.en_candidate_count(),
-            ime.merged_candidate_count());
-        if (refresh) render(ime);
     }
 
     LOG("main: exit\n");

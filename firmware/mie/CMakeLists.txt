@@ -14,6 +14,8 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
+# Phase A refactor (dev-mie-v2-listener): mie_c_api.cpp is temporarily
+# excluded until Phase D rewrites it against the listener API.
 add_library(mie STATIC
     src/mie_init.cpp
     src/trie_searcher.cpp
@@ -24,16 +26,14 @@ add_library(mie STATIC
     src/ime_commit.cpp
     src/ime_smart.cpp
     src/ime_direct.cpp
-    src/mie_c_api.cpp
 )
 
 target_include_directories(mie PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Host-only targets (REPL tool + unit tests)
+# Host-only targets: REPL + unit tests.
 if(NOT CMAKE_CROSSCOMPILING)
-    # Interactive REPL — virtual half-keyboard + IME output
     add_executable(mie_repl
         tools/mie_repl.cpp
         hal/pc/hal_pc_stdin.cpp
@@ -44,7 +44,6 @@ if(NOT CMAKE_CROSSCOMPILING)
         ${CMAKE_CURRENT_SOURCE_DIR}/hal
     )
 
-    # Unit tests
     enable_testing()
     add_subdirectory(tests)
 endif()

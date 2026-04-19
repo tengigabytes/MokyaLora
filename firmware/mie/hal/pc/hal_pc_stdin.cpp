@@ -1,10 +1,9 @@
-// hal_pc_stdin.cpp — PC stdin IHalPort implementation
 // SPDX-License-Identifier: MIT
+// hal_pc_stdin.cpp — PC stdin key-event source (raw-mode terminal reader).
 //
 // Platform support:
-//   POSIX (Linux, macOS): uses termios to set raw mode + select() for non-blocking read
-//   Windows:              uses SetConsoleMode to disable ENABLE_LINE_INPUT / ENABLE_ECHO_INPUT
-//                         and _kbhit() / _getch() for non-blocking read
+//   POSIX (Linux, macOS) — termios + select()
+//   Windows              — SetConsoleMode + _kbhit() / _getch()
 
 #include "hal_pc_stdin.h"
 #include "key_map.h"
@@ -18,12 +17,10 @@
 #  include <unistd.h>
 #endif
 
-#include <cstdio>
-
 namespace mie {
 namespace pc {
 
-// ── Platform raw-mode helpers ─────────────────────────────────────────────
+// ── Platform raw-mode helpers ───────────────────────────────────────────────
 
 #ifdef _WIN32
 
@@ -33,8 +30,7 @@ void HalPcStdin::set_raw_mode(bool enable) {
     HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
     if (enable) {
         GetConsoleMode(h, &s_orig_console_mode);
-        SetConsoleMode(h, s_orig_console_mode
-                          & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT));
+        SetConsoleMode(h, s_orig_console_mode & ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT));
     } else {
         SetConsoleMode(h, s_orig_console_mode);
     }
@@ -43,7 +39,7 @@ void HalPcStdin::set_raw_mode(bool enable) {
 int HalPcStdin::read_pc_key() {
     if (!_kbhit()) return -1;
     int ch = _getch();
-    // Arrow keys and F-keys on Windows arrive as two-byte sequences: 0x00 or 0xE0 prefix.
+    // Windows arrow / F-keys come as two-byte sequences (0x00 or 0xE0 prefix).
     if (ch == 0x00 || ch == 0xE0) {
         int ext = _getch();
         switch (ext) {
@@ -55,7 +51,7 @@ int HalPcStdin::read_pc_key() {
             case 60: return KEY_F2;
             case 83: return KEY_DELETE;
         }
-        return -1;  // unknown extended key
+        return -1;
     }
     return ch;
 }
@@ -78,26 +74,24 @@ void HalPcStdin::set_raw_mode(bool enable) {
 }
 
 int HalPcStdin::read_pc_key() {
-    // Non-blocking check via select
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(STDIN_FILENO, &fds);
     struct timeval tv = {0, 0};
-    if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) <= 0)
-        return -1;
+    if (select(STDIN_FILENO + 1, &fds, nullptr, nullptr, &tv) <= 0) return -1;
 
     unsigned char buf[4] = {};
     ssize_t n = read(STDIN_FILENO, buf, sizeof(buf));
     if (n <= 0) return -1;
 
-    // Escape sequences for arrow keys and F-keys (xterm / VT100)
+    // xterm / VT100 escape sequences for arrow keys.
     if (n >= 3 && buf[0] == 0x1B && buf[1] == '[') {
         switch (buf[2]) {
             case 'A': return KEY_UP;
             case 'B': return KEY_DOWN;
             case 'D': return KEY_LEFT;
             case 'C': return KEY_RIGHT;
-            case '3': return KEY_DELETE;  // ^[[3~ (may have trailing ~)
+            case '3': return KEY_DELETE;
         }
     }
     if (n >= 3 && buf[0] == 0x1B && buf[1] == 'O') {
@@ -106,13 +100,12 @@ int HalPcStdin::read_pc_key() {
             case 'Q': return KEY_F2;
         }
     }
-    // Single-byte key
     return static_cast<int>(buf[0]);
 }
 
 #endif // _WIN32
 
-// ── HalPcStdin public interface ───────────────────────────────────────────
+// ── HalPcStdin ──────────────────────────────────────────────────────────────
 
 HalPcStdin::HalPcStdin() : raw_mode_active_(false) {
     set_raw_mode(true);
@@ -120,28 +113,26 @@ HalPcStdin::HalPcStdin() : raw_mode_active_(false) {
 }
 
 HalPcStdin::~HalPcStdin() {
-    if (raw_mode_active_) {
-        set_raw_mode(false);
-    }
+    if (raw_mode_active_) set_raw_mode(false);
 }
 
-bool HalPcStdin::poll(KeyEvent& out) {
+bool HalPcStdin::poll(KeyEvent& out, uint32_t now_ms) {
     int pc_key = read_pc_key();
     if (pc_key < 0) return false;
 
-    // ESC signals quit: caller checks ev.row == 0xFF.
+    // ESC → caller-signal to quit.
     if (pc_key == KEY_ESCAPE) {
-        out = KeyEvent{0xFF, 0xFF, false};
+        out = KeyEvent{MOKYA_KEY_NONE, false, now_ms};
         return true;
     }
 
     for (const KeyMapEntry* e = kPcKeyMap; e->pc_key != -1; ++e) {
         if (e->pc_key == pc_key) {
-            out = KeyEvent{e->row, e->col, true};
+            out = KeyEvent{e->keycode, true, now_ms};
             return true;
         }
     }
-    return false;  // key not in map (e.g. unmapped PC key)
+    return false;   // unmapped
 }
 
 } // namespace pc

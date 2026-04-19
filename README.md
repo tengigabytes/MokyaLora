@@ -37,9 +37,9 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 | 20–21 | Menu consolidation + code modularisation | ✅ PASS (21 source files, ~8580 lines) |
 | 23 | LoRa standalone TX/RX | ✅ PASS (6 bug fixes, AES-128-CTR TX) |
 | 24 | Core 1 TFT output + menu wrap-around | ✅ PASS |
-| 25 | PSRAM DMA error investigation | ⚠️ CONDITIONAL (RP2350 silicon issue; CPU read workaround) |
+| 25 | PSRAM DMA error investigation | ⚠️ CONDITIONAL (DMA burst read errors observed, root cause unconfirmed; CPU read workaround) |
 
-**Open issues:** Issue 10 (BQ27441 cold-boot latchup), Issue 11 (GNSS 0 satellites), Issue 14 (PSRAM DMA read — silicon-level, no production impact).
+**Open issues:** Issue 10 (BQ27441 cold-boot latchup), Issue 11 (GNSS 0 satellites), Issue 14 (PSRAM DMA burst read errors — root cause unconfirmed, no production impact).
 
 ### Firmware
 
@@ -77,9 +77,9 @@ MokyaLora/
 ├── docs/
 │   ├── assets/                         # Documentation images (block diagrams, etc.)
 │   ├── requirements/                   # Requirements specifications
-│   │   ├── system-requirements.md      # System-level spec, BOM highlights, mandatory HW rules
+│   │   ├── system-requirements.md      # System-level spec, operating modes, mandatory HW rules
 │   │   ├── hardware-requirements.md    # Full BOM, power tree, GPIO map, keypad matrix, design rules
-│   │   └── software-requirements.md   # SW architecture, memory map, drivers, power states, UI/UX, IME
+│   │   └── software-requirements.md   # SRS (WHAT): driver needs, power states, UI/UX, IME requirements
 │   ├── design-notes/                   # Design decision records
 │   │   ├── power-architecture.md       # Power tree, rail definitions, charger/gauge configuration
 │   │   ├── rf-matching.md              # LoRa / GNSS RF frontend, TCXO coupling, antenna rules

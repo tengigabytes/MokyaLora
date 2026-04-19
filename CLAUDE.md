@@ -15,9 +15,9 @@ The project is currently in the **hardware design phase**. Firmware does not yet
 MokyaLora/
 ├── docs/
 │   ├── requirements/           # System requirements documents
-│   │   ├── system-requirements.md   — system specs, BOM highlights, mandatory hw rules
+│   │   ├── system-requirements.md   — system specs, operating modes, mandatory hw rules
 │   │   ├── hardware-requirements.md — full BOM, power tree, GPIO map, keypad matrix
-│   │   └── software-requirements.md — SW architecture, memory map, drivers, power states, UI/UX, IME
+│   │   └── software-requirements.md — SRS (WHAT): driver needs, power states, UI/UX, IME requirements
 │   ├── design-notes/           # Design decision records
 │   │   ├── power-architecture.md    — power tree, rail definitions, charger config
 │   │   ├── rf-matching.md           — LoRa / GNSS RF frontend, TCXO coupling, antenna rules
@@ -75,29 +75,31 @@ MokyaLora/
 
 ## Architecture
 
-### Hardware (Rev 5.2)
-- **MCU:** RP2350B (QFN-80, dual-core Cortex-M33, 1.8 V logic)
-- **Memory:** 16 MB Flash (W25Q128JW) + 8 MB PSRAM (APS6404L) via QSPI
-- **Display:** 2.4″ IPS LCD 240×320, 8-bit parallel 8080 (Newhaven NHD-2.4-240320AF)
-- **Input:** 36-key 6×6 matrix with SDM03U40 Schottky diodes (NKRO), PIO+DMA scan
-- **LoRa:** SX1262 (SPI1) + ECS-TXO-20CSMV4 TCXO 32 MHz
-- **GNSS:** ST Teseo-LIV3FL (I2C0, 0x3A) + BGA725L6 LNA + B39162B4327P810 SAW
-- **Audio:** IM69D130 PDM mic (PIO) + NAU8315 3.2 W Class-D amp (PIO) + CMS-131304 speaker
-- **Sensors:** LSM6DSV16X IMU (0x6A), LIS2MDL mag (0x1E), LPS22HH baro (0x5D) — all on sensor bus (GPIO 34/35, `i2c1`)
-- **Power:** BQ25622RYKR charger, BQ27441DRZR fuel gauge, TPS62840 1.8 V buck, TPS7A2033 3.3 V LDO
-- **Battery:** Nokia BL-4C (~890 mAh)
+Hardware spec, BOM, GPIO map, and mandatory HW rules live in
+`docs/requirements/system-requirements.md` and
+`docs/requirements/hardware-requirements.md`. Firmware implementation detail
+(memory map, IPC byte layout, build system, boot sequence) lives in
+`docs/design-notes/firmware-architecture.md`. This file is a working cheat
+sheet, not authoritative.
 
-### Dual-Core Software Architecture (Planned)
-- **Core 0:** Meshtastic protocol stack, LoRa radio
-- **Core 1:** FreeRTOS + LVGL, Input Method Engine (IME), UI rendering, power management
-- **Framework:** Arduino-Pico + FreeRTOS + LVGL
+### Dual-Core Software (high-level)
+- **Core 0:** Meshtastic LoRa modem (GPL-3.0, PlatformIO).
+- **Core 1:** FreeRTOS + LVGL + MIE UI (Apache-2.0, CMake/Ninja).
+- IPC: three SPSC rings + GPS double-buffer in 24 KB shared SRAM. See
+  `firmware/shared/ipc/ipc_protocol.h` and firmware-architecture.md §5.
 
-### I2C Bus Layout
+### I2C Bus Layout (day-to-day reference; SYS §7 / hw-requirements is authoritative)
 
-> **RP2350 SDK peripheral note:** Both buses map to `i2c1` in the Pico SDK — GPIO 6/7 and GPIO 34/35 are both I2C1 pin options. They cannot be active simultaneously; switch by reinitialising `i2c1` with different GPIO pairs.
+> **Shared peripheral (Rev A).** On RP2350 both pin pairs land on `i2c1` only —
+> GPIO mod-4 = 2/3 (which covers 6/7 and 34/35) has no I2C0 pinmux alternative.
+> Rev A firmware therefore time-multiplexes `i2c1` between the two pin pairs
+> via a FreeRTOS mutex — see `firmware/core1/src/i2c/i2c_bus.c`. Drivers MUST
+> go through `i2c_bus_acquire` / `i2c_bus_release`; never call `i2c_init` or
+> pass a raw `i2c_inst_t*` directly. Rev B plans to reroute the sensor bus to
+> a mod-4 = 0/1 pair (e.g. GPIO 32/33) to restore two independent peripherals.
 
-- **Sensor bus** (`i2c1`, GPIO 34/35): IMU 0x6A, Mag 0x1E, Baro 0x5D, GPS 0x3A
-- **Power bus** (`i2c1`, GPIO 6/7): Charger BQ25622RYKR 0x6B, Fuel Gauge BQ27441DRZR 0x55, LED Driver LM27965 0x36
+- **Sensor + GNSS bus** (GPIO 34/35, `i2c1`): IMU 0x6A, Mag 0x1E, Baro 0x5D, GPS 0x3A
+- **Power bus** (GPIO 6/7, `i2c1`): Charger BQ25622 0x6B, Fuel Gauge BQ27441 0x55, LED Driver LM27965 0x36
 
 ## License Boundary Rules (CRITICAL)
 
@@ -110,25 +112,20 @@ MokyaLora/
 
 The sole crossing point between Core 0 (GPL-3.0) and Core 1 (Apache-2.0) is
 `firmware/shared/ipc/ipc_protocol.h` (MIT — compatible with both licenses).
-Never add a Meshtastic #include to core1/ or mie/.
-
-## Key Design Constraints
-
-- All GPIO are **1.8 V** — use SSM3K56ACT (low-Vth) to switch LEDs and motor.
-- LSM6DSV16X SA0 must be tied to GND → address 0x6A (default 0x6B conflicts with BQ25620).
-- TCXO to SX1262 XTA: **220 Ω series + 10 pF shunt** required.
-- Speaker (CMS-131304, 0.7 W) must be software-limited; NAU8315 is 3.2 W — cap at −3 dB.
-- Anti-brick: QSPI Flash CS test point is mandatory.
-- SWD (SWCLK/SWDIO/GND) must be exposed on PCB.
+Never add a Meshtastic #include to core1/ or mie/. Full rationale and binary
+distribution rules in firmware-architecture.md §1 and §11.
 
 ## Working with This Repo
 
-- `docs/requirements/system-requirements.md` — system-level overview, BOM highlights, mandatory HW rules.
+- `docs/requirements/system-requirements.md` — system-level overview, operating modes, mandatory HW rules.
 - `docs/requirements/hardware-requirements.md` — full BOM, power tree, keypad matrix, all mandatory design rules.
-- `docs/requirements/software-requirements.md` — SW architecture, memory map, driver class specs, power states, UI/UX, IME.
+- `docs/requirements/software-requirements.md` — SRS (WHAT): driver class needs, power states, UI/UX, IME requirements.
+- `docs/design-notes/firmware-architecture.md` — implementation (HOW): memory map, IPC byte layout, build system, boot sequence.
+- `docs/design-notes/core1-driver-development.md` — required reading before adding any Core 1 peripheral driver (board header, GPIO rules, FreeRTOS pitfalls, debug playbook).
+- `docs/design-notes/core1-memory-budget.md` — heap / stack / static-buffer ledger. Any new Core 1 task or queue MUST update this file in the same commit, and `main_core1_bridge.c` panics on task-start failure (no `(void)rc_xxx`).
 - `docs/design-notes/mcu-gpio-allocation.md` contains the full GPIO table — keep in sync with the KiCad schematic.
 - Production files in `hardware/production/` are **generated by KiCad** — do not edit manually.
-- Firmware placeholder lives in `firmware/`; no compiled code exists yet.
+- Firmware is actively developed in `firmware/` — dual-core architecture with Core 0 (PlatformIO) and Core 1 (CMake/Ninja).
 - `firmware/core0/meshtastic/` is a git submodule — run `git submodule update --init --recursive` after cloning.
 - `firmware/core1/freertos-kernel/` is a git submodule (FreeRTOS-Kernel V11.3.0, MIT). It contains a nested submodule `portable/ThirdParty/Community-Supported-Ports` which provides the `RP2350_ARM_NTZ` Cortex-M33 port. Init with `git submodule update --init --recursive firmware/core1/freertos-kernel`.
 - To make Meshtastic changes: work inside `firmware/core0/meshtastic/`, commit there, then push to `tengigabytes/firmware` on branch `feat/rp2350b-mokya`.
@@ -136,18 +133,25 @@ Never add a Meshtastic #include to core1/ or mie/.
 
 ## Current Development Phase
 
-**Phase 1 — MIE on PC** (active, pre-hardware, no RP2350 needed):
-- Goal: build and test MokyaInput Engine on PC entirely independent of hardware.
-- Entry point: `firmware/mie/` (standalone CMake project, no Pico SDK dependency).
-- Reference: `docs/requirements/software-requirements.md` §5.7 Roadmap.
+**Phase 1 — MIE on PC** ✅ complete — 120 GoogleTest cases pass, C API ready at `firmware/mie/`.
 
-**Phase 2** (future): Core 0 / Core 1 firmware development starts after Rev A PCB arrives.
+**Rev A hardware bring-up** ✅ complete — Steps 1–26, logged in `docs/bringup/rev-a-bringup-log.md`.
+
+**Phase 2 — RP2350B firmware productization** (active, on Rev A board):
+- Goal: turn bring-up architecture into dual-core production firmware — Core 0 Meshtastic LoRa modem, Core 1 FreeRTOS + LVGL + MIE UI, shared-SRAM SPSC ring IPC.
+- Tracked by milestone (M1.0, M1.0b, M1.1, ...) in `docs/bringup/phase2-log.md`.
+- Plan: `~/.claude/plans/groovy-petting-alpaca.md`.
+- Current status: **M1 ✅ + M2 ✅ complete (2026-04-13).** M1 delivered IPC byte bridge (staged-delivery, taskYIELD + TX accumulation, Config IPC definition). M2 delivered doorbell-driven IPC (SIO doorbell + `xTaskNotifyFromISR`, Part A), graceful reboot via `RebootNotifier` + `tud_disconnect()` (Part B, fixes P2-10), and flash write safety via linker `--wrap` + Core 1 parking (fixes P2-11). **P2-13 fix (XIP cache was disabled since boot) eliminated the 16× throughput gap.** CLI `--info`: 15.0 s → 5.9 s → 4.5 s (parity with stock Pico2); burst rate 2.5× faster than stock. IPC handshake v2 deferred to M5. **IMPORTANT: always use `python -m meshtastic` (v2.7.8), never bare `meshtastic` command.** **M3.1/M3.2 ✅ display + LVGL, M3.3 ✅ keypad (Phase A PIO+DMA scan, Phase B 20 ms debounce + keymap→KeyEvent queue, Phase C LVGL consumer + landscape 320×240 view mirroring physical PCB). M3.4.1 ✅ shared I2C bus module (time-muxed `i2c1` between GPIO 6/7 and GPIO 34/35 — both pairs are I2C1-only on RP2350; Rev B will reroute sensor bus to free `i2c0`). M3.4.2 ✅ BQ25622 charger driver (datasheet-accurate, VREG/ICHG/IINDPM configurable, WATCHDOG 50 s + 1 Hz kick, auto re-init on WD expiry, TS/TDIE ADC, HIZ + BATFET ship/shutdown APIs). M3.4.3 ✅ LM27965 3-bank LED driver (TFT BL / keypad BL / red + green indicators / all-off; GP cache for partial updates). M3.4.4 ✅ BQ27441 fuel gauge stub. M3.4.5a ✅ LPS22HH barometer + sensor-bus I2C baudrate fix (P2-14). M3.4.5b ✅ LIS2MDL magnetometer driver (mag X/Y/Z in µT×10 + internal temp, with mag/temp split read due to auto-increment wrap quirk at 0x6D → 0x68). M3.4.5c ✅ LSM6DSV16X 6-axis IMU driver (accel ±2 g, gyro ±250 dps, internal temp; single 14-byte burst from OUT_TEMP_L covers T+G+A under BDU; 30 Hz HP ODR polled at 10 Hz). M3.4.5d ✅ Teseo-LIV3FL GNSS driver — streaming NMEA parser (GGA+RMC+GSV) on its own `gps_task` (100 ms drain, 1 KB burst, 48 KB heap), parsed fix state + 32-sat pooled view, runtime `teseo_set_fix_rate(OFF/1/2/5/10Hz)` API via `$PSTMSETPAR,1303` + `$PSTMSAVEPAR` + `$PSTMSRR` sequence (tested 1/2 Hz match request exactly, 5/10 Hz clamp to Teseo's ~3 Hz ceiling for 4-constellation config), `send_await` helper + reply dispatch (`$PSTMSETPAROK/ERROR`, `$PSTMSAVEPAROK/ERROR`) reusable for future ST commands. Not called automatically on boot so NVM wear is non-issue. Not in scope: `IpcGpsBuf` writer (Core 0 consumer M5). Part C ✅ RF diagnostics: `teseo_rf_state_t` snapshot (noise floor / ANF status / CPU / per-sat C/N0), parsers for `$PSTMRF/NOISE/NOTCHSTATUS/CPU`, `teseo_enable_rf_debug_messages()` commission API (CDB 231 mask 0x408000A8, SETPAR+SAVEPAR+SRR once, NVM persists), LVGL `rf_debug_view` selectable via `MOKYA_BOOT_VIEW_RF_DEBUG=1`. Next: M3.5 or IpcGpsBuf wiring.**
+
+### Known Phase 2 constraints
+
+- **Core 0 Meshtastic must build with single-core FreeRTOS** (`-DconfigNUMBER_OF_CORES=1`). Arduino-Pico 5.4.4's `rp2350_base` enables FreeRTOS **SMP** via `-D__FREERTOS=1`, and the RP2350 SMP port launches Core 1's passive-idle task from `xPortStartScheduler`, which HardFaults in `vStartFirstTask` before any user code runs. MokyaLora gives Core 1 to a separate Apache-2.0 image at `0x10200000`, so Core 0's FreeRTOS must stay single-core. Switching to `configNUMBER_OF_CORES=1` requires five idempotent framework patches applied by `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/patch_arduinopico.py` (SerialUSB.h extern guard, freertos-main.cpp + freertos-lwip.cpp SMP call-site guards, portmacro.h missing extern decl, port.c `static` removal). Full rationale in `docs/bringup/phase2-log.md` Issue P2-2.
 
 ## Build & Flash Rules
 
 - Always verify a build compiles successfully before moving on to additional changes.
 - If a build fails, fix it immediately — do not layer more changes on top of a broken build.
-- **Auto-flash:** After each bringup firmware change, always build **and flash** (`bash scripts/build_and_flash_bringup.sh`) — do not stop at compile-only. The user expects the board to be running the latest code immediately.
+- **Auto-flash:** After each firmware change, always build **and flash** (`bash scripts/build_and_flash.sh`) — do not stop at compile-only. The user expects the board to be running the latest code immediately. Use `--core1` flag when only Core 1 changed.
 - After adding new features, check memory usage: flash size constraints are common on embedded targets.
 
 ## Build Commands
@@ -168,22 +172,26 @@ ctest --test-dir build/mie-host
 # Windows:  build\mie-host\Debug\mie_repl.exe
 # Linux:    ./build/mie-host/mie_repl
 
-# Full firmware build (requires Pico SDK + ARM toolchain)
-export PICO_SDK_PATH=/path/to/pico-sdk
-cmake -S firmware -B build/firmware \
-  -DCMAKE_TOOLCHAIN_FILE=$PICO_SDK_PATH/cmake/preload/toolchains/pico_arm_gcc.cmake
-cmake --build build/firmware
+# Dual-image firmware — build + flash via J-Link (from project root)
+# Builds Core 0 (PlatformIO) + Core 1 (CMake/Ninja), flashes both via J-Link SWD.
+bash scripts/build_and_flash.sh
 
-# Bringup firmware — build only (from project root)
-bash scripts/build_bringup.sh
+# Core 1 only — build + flash (skip Core 0 PlatformIO rebuild)
+bash scripts/build_and_flash.sh --core1
 
-# Bringup firmware — build + flash via J-Link (from project root)
-bash scripts/build_and_flash_bringup.sh
+# Core 0 only — PlatformIO build (from project root)
+python -m platformio run -e rp2350b-mokya -d firmware/core0/meshtastic
 
-# Run bringup commands over serial (PowerShell, from project root)
-.\scripts\bringup_run.ps1 <command>              # run one command (e.g. psram_diag)
-.\scripts\bringup_run.ps1 -Flash <command>       # build + flash + run command
-.\scripts\bringup_run.ps1 scan_a scan_b lora     # run multiple commands in sequence
+# Core 1 only — CMake build (from project root, requires prior cmake configure)
+cmake --build build/core1_bridge
+
+# Core 1 cmake configure (one-time, from project root)
+# Requires: VS Build Tools 2019, ARM GCC, Ninja, Pico SDK at C:\pico-sdk
+PICO_SDK_PATH=/c/pico-sdk cmake -S firmware/core1/m1_bridge \
+    -B build/core1_bridge -G Ninja
+
+# Legacy bringup firmware (Steps 1–26, no longer active)
+# bash scripts/build_and_flash_bringup.sh
 
 # Data generation tools
 python firmware/mie/tools/gen_font.py   # produces font_glyphs.bin + font_index.bin
@@ -193,8 +201,7 @@ python firmware/mie/tools/gen_dict.py   # produces dict_dat.bin + dict_values.bi
 ## Hardware Debug Toolchain
 
 A J-Link Ultra V6 is connected to the RP2350B target via SWD. Claude Code can
-autonomously build, flash, run bringup commands, and perform SWD debug — no
-manual intervention required.
+autonomously build, flash, and perform SWD debug — no manual intervention required.
 
 ### Toolchain Paths
 
@@ -204,41 +211,45 @@ manual intervention required.
 | J-Link GDB Server | `C:/Program Files/SEGGER/JLink_V932/JLinkGDBServerCL.exe` |
 | ARM GDB | `C:/Program Files/Arm/GNU Toolchain mingw-w64-x86_64-arm-none-eabi/bin/arm-none-eabi-gdb.exe` |
 | Pico SDK | `C:/pico-sdk` |
-| Bringup ELF | `build/firmware/tools/bringup/i2c_custom_scan.elf` |
+| PlatformIO | `python -m platformio` (v6.1.19) |
+| Core 0 ELF | `firmware/core0/meshtastic/.pio/build/rp2350b-mokya/firmware*.elf` |
+| Core 1 BIN | `build/core1_bridge/core1_bridge.bin` (flash @ `0x10200000`) |
 | Serial port | Auto-detected by VID `0x2E8A` (Raspberry Pi), 115200 baud, USB CDC. Helper: `scripts/_mokya-port.ps1` (`Resolve-MokyaPort`). Override via `-PortName COMxx`. |
 
 ### Automated Workflows
 
-**Build → Flash → Run bringup command (end-to-end):**
+**Build + Flash dual-image (primary workflow):**
 
 ```sh
-# 1. Build
-bash scripts/build_bringup.sh
+# Build Core 0 (PlatformIO) + Core 1 (CMake) and flash both via J-Link
+bash scripts/build_and_flash.sh
 
-# 2. Flash via J-Link Commander
+# Core 1 only (faster — skips PlatformIO rebuild)
+bash scripts/build_and_flash.sh --core1
+```
+
+**Regression test after flash (wait ~3 s for USB CDC re-enumeration):**
+
+```sh
+python -m meshtastic --port COMxx --info
+```
+
+**Manual J-Link dual flash (if script not available):**
+
+```sh
 JLINK="C:/Program Files/SEGGER/JLink_V932/JLink.exe"
-ELF_WIN=$(cygpath -w "$(pwd)/build/firmware/tools/bringup/i2c_custom_scan.elf")
-printf 'connect\nr\nloadfile "%s"\nr\ng\nqc\n' "$ELF_WIN" > /tmp/jlink_flash.jlink
+# Core 0 ELF at default 0x10000000, Core 1 BIN at 0x10200000
+cat > /tmp/jlink_flash_dual.jlink <<EOF
+connect
+r
+loadfile "$(cygpath -w firmware/core0/meshtastic/.pio/build/rp2350b-mokya/firmware*.elf)"
+loadbin "$(cygpath -w build/core1_bridge/core1_bridge.bin)" 0x10200000
+r
+g
+qc
+EOF
 "$JLINK" -device RP2350_M33_0 -if SWD -speed 4000 -autoconnect 1 \
-    -CommanderScript "$(cygpath -w /tmp/jlink_flash.jlink)"
-
-# 3. Run bringup command via serial (wait 3 s for USB CDC re-enumerate)
-#    Inline one-off approach — for routine use, prefer scripts/bringup_run.ps1
-#    which auto-detects the port via VID 0x2E8A.
-powershell.exe -NoProfile -File - <<'PS1'
-. "$PWD/scripts/_mokya-port.ps1"
-$port = Resolve-MokyaPort ''
-$serial = New-Object System.IO.Ports.SerialPort $port, 115200
-$serial.DtrEnable = $true; $serial.RtsEnable = $true; $serial.ReadTimeout = 300
-$serial.Open(); Start-Sleep -Milliseconds 2500
-try { $serial.ReadExisting() | Out-Null } catch {}
-$serial.Write([byte[]]@(0x0D), 0, 1); Start-Sleep -Milliseconds 500
-try { $serial.ReadExisting() | Out-Null } catch {}
-$bytes = [System.Text.Encoding]::ASCII.GetBytes("COMMAND_HERE`r")
-$serial.Write($bytes, 0, $bytes.Length); Start-Sleep -Milliseconds 3000
-try { Write-Output ($serial.ReadExisting()) } catch {}
-$serial.Close()
-PS1
+    -CommanderScript "$(cygpath -w /tmp/jlink_flash_dual.jlink)"
 ```
 
 **SWD debug (halt, registers, memory read):**
@@ -276,17 +287,13 @@ EOF
 
 ## IPC Protocol
 
-Transport: `firmware/shared/ipc/ipc_protocol.h` — the **only** cross-core shared header.
+`firmware/shared/ipc/ipc_protocol.h` is the **only** cross-core shared header.
+Transport is three SPSC rings + GPS double-buffer in 24 KB shared SRAM, with
+HW FIFO doorbell. **NEVER** add a Meshtastic `#include` to `core1/`, `mie/`,
+or `shared/ipc/`.
 
-Pattern: `IpcMsgHeader` (4 bytes) + payload struct, written to shared SRAM buffer.
-Sender pushes buffer offset into RP2350 HW FIFO as doorbell.
-
-Key message types:
-- `IPC_MSG_RX_TEXT`, `IPC_MSG_NODE_UPDATE`, `IPC_MSG_DEVICE_STATUS`, `IPC_MSG_TX_ACK` — Core 0 → Core 1
-- `IPC_CMD_SEND_TEXT`, `IPC_CMD_SET_CHANNEL`, `IPC_CMD_POWER_STATE` — Core 1 → Core 0
-- `IPC_MSG_LOG_LINE` — bidirectional debug log
-
-**NEVER** add a Meshtastic `#include` to `core1/`, `mie/`, or `shared/ipc/`.
+Full byte map, message catalogue, and end-to-end flows: see
+`docs/design-notes/firmware-architecture.md` §5.
 
 ## Driver Development Rules
 
@@ -297,6 +304,13 @@ When writing drivers or bringup firmware, **never assume** any of the following 
 - Any device-specific detail not already confirmed in the codebase or bringup log
 
 If uncertain, stop and ask. The user will provide the correct information or point to the relevant datasheet section.
+
+**Core 1 drivers:** Before writing a new peripheral driver under `firmware/core1/`, read
+[`docs/design-notes/core1-driver-development.md`](docs/design-notes/core1-driver-development.md).
+It captures the RP2350B board-header requirement, GPIO rules, FreeRTOS heap / priority
+pitfalls, the I2C / SysTick workarounds Core 1 needs, and a top-down debug playbook
+derived from M1–M3.3 incidents. Skipping it tends to reproduce bugs we have already
+solved once.
 
 ## J-Link Device Names (RP2350)
 

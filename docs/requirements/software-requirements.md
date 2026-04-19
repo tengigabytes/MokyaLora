@@ -3,280 +3,145 @@
 **Project:** MokyaLora (Project MS-RP2350 — Meshtastic Feature Phone)
 **Version:** v5.2
 
+This document specifies **what** the firmware must do — user-visible behaviour,
+performance targets, interoperability guarantees. It deliberately avoids
+implementation detail.
+
+For **how** the firmware is built (memory map, IPC byte layout, build system,
+boot sequence, cross-image non-interference), see
+[`docs/design-notes/firmware-architecture.md`](../design-notes/firmware-architecture.md)
+(hereafter **FA**), which is the single source of truth for implementation.
+
+For hardware specs (BOM, GPIO map, power tree), see
+[`docs/requirements/system-requirements.md`](system-requirements.md) and
+[`docs/requirements/hardware-requirements.md`](hardware-requirements.md).
+
 ---
 
-## 1. Software Architecture & Resource Planning
+## 1. Software Architecture Overview
 
-### 1.1 Dual-Core AMP Architecture
+MokyaLora runs as **two independent AMP images** on the RP2350B dual-core MCU:
 
-| Core   | Role              | Responsibilities                                                                     |
-|--------|-------------------|--------------------------------------------------------------------------------------|
-| Core 0 | Modem Worker      | Meshtastic protocol stack, LoRa radio                                                |
-| Core 1 | UI Host & IME     | FreeRTOS + LVGL, Input Method Engine (IME), UI rendering, power management, all I2C drivers |
+| Core   | Role              | Responsibilities                                                                        |
+|--------|-------------------|-----------------------------------------------------------------------------------------|
+| Core 0 | Modem Worker      | Meshtastic protocol stack, LoRa radio, GNSS polling (via shared buffer)                 |
+| Core 1 | UI Host & IME     | FreeRTOS + LVGL, Input Method Engine, UI rendering, power management, all I2C drivers   |
 
-**Frameworks:**
-- **Core 0:** Arduino-Pico (Meshtastic base) — cooperative `OSThread` scheduler (`concurrency::Scheduler`)
-- **Core 1:** FreeRTOS + LVGL — preemptive task scheduler
+Licence boundary: Core 0 is **GPL-3.0** (Meshtastic), Core 1 is **Apache-2.0**,
+and the only shared compile-time surface is `firmware/shared/ipc/ipc_protocol.h`
+(**MIT**, POD types only, no C++, no pointers). Implementation details and the
+rationale for why this keeps the two licences separable are in FA §1 and §11.
 
-**GPS bridge:** Core 1 reads Teseo-LIV3FL (I2C0, 0x3A) and forwards NMEA position data to Core 0
-via the IPC ring buffer. Meshtastic's `PositionModule` on Core 0 consumes GPS data from IPC,
-not directly from I2C. Core 0 never accesses any I2C bus.
+### 1.1 Stability Requirements
 
-### 1.2 Flash Memory Map (16 MB — W25Q128JW)
+- **Watchdog:** the UI path must feed a hardware watchdog. If the UI deadlocks
+  for more than **8 s**, the system must reset.
+- **Safe Mode:** if the watchdog fires more than **3 times within 10 s of boot**,
+  the firmware must enter a minimal safe mode — USB Serial only, radio and UI
+  disabled — until manually reset.
 
-| Address Range        | Size | Contents                                                                              |
-|----------------------|------|---------------------------------------------------------------------------------------|
-| `0x0000_0000`        | 2 MB | Core 0 firmware (Meshtastic base)                                                    |
-| `0x0020_0000`        | 2 MB | Core 1 firmware (UI app & IME logic)                                                 |
-| `0x0040_0000`        | 4 MB | OTA buffer / factory recovery image                                                   |
-| `0x0080_0000`        | 4 MB | Assets: language packs (Trie tree), 16×16 bitmap fonts, offline maps, icons          |
-| `0x00C0_0000`        | 4 MB | LittleFS — user settings, message DB, node DB                                        |
+Implementation: FA §9.4 (Watchdog Discipline & Safe Mode).
 
-### 1.3 PSRAM Allocation (8 MB — APS6404L)
+### 1.2 Inter-Core Communication — Functional Requirements
 
-| Region          | Core   | Size            | Contents                                                              |
-|-----------------|--------|-----------------|-----------------------------------------------------------------------|
-| IME Runtime     | Core 1 | 4 MB            | Language index, DAT trie, dictionary — loaded from Flash at boot      |
-| Application Heap| Core 1 | 4 MB            | Message history, node cache, application data                         |
-| Core 0 reserve  | Core 0 | 0 MB (reserved) | Available for StoreAndForward cache or large NodeDB; not required for normal operation |
+The firmware must support the following cross-core interactions. The transport
+(ring buffer layout, message IDs, payload structs, doorbell mechanism) is
+defined normatively by `firmware/shared/ipc/ipc_protocol.h` and documented in
+FA §5.
 
-**Display framebuffer lives in SRAM, not PSRAM.** LVGL partial render buffer (~10 KB) in SRAM
-achieves 60–80 FPS via DMA → PIO → LCD. PSRAM reads are too slow for display (12.8 FPS max
-due to QMI per-word transaction overhead) and have a known DMA burst read silicon issue
-(see bringup log Issue 14 / Step 25). PSRAM is used exclusively for IME dictionary data
-(CPU random-access binary search, <0.4 ms/query) and application heap.
+**Core 0 → Core 1 notifications:** received text, node updates, device status
+(battery, LoRa RSSI/SNR, GPS fix), TX ACK / failure, channel configuration
+changes, CLI byte stream, config value replies, reboot-imminent notice.
 
-**Core 0 SRAM:** Meshtastic fits within RP2350B's 520 KB internal SRAM (~160–180 KB used for
-code, stack, NodeDB, packet queues). PSRAM is not required for Core 0 under normal operation.
-Both cores can access PSRAM via the shared QMI/QSPI bus if required in future.
+**Core 1 → Core 0 commands:** send text, set channel, set TX power, request
+status, set node alias, change power state, reboot, factory reset, get/set/commit
+config.
 
-### 1.4 Stability Mechanisms
+**GPS data path:** Core 1 owns the Teseo-LIV3FL on the sensor I2C bus, parses
+NMEA, and writes sentences into a shared-SRAM double-buffer. Core 0 reads the
+buffer; Core 0 must not touch any I2C bus.
 
-- **Hardware Watchdog (WDT):** Core 1 UI task feeds the watchdog. If UI deadlocks for > 8 s, the system resets.
-- **Safe Mode:** if WDT reset occurs more than 3 times within 10 s of boot, enter safe mode — USB Serial only, radio and UI disabled.
+**Boot handshake:** Core 0 must initialise IPC structures before signalling
+Core 1 to begin UI init. Core 1 must not access IPC state before receiving this
+signal.
 
-### 1.5 Inter-Core Communication (IPC)
-
-#### License Boundary and Isolation Model
-
-The dual-core partition maps directly to a dual-license boundary:
-
-| Domain | Firmware | License |
-|--------|----------|---------|
-| Core 0 | Meshtastic base + `IPCPhoneAPI` adapter | GPL-3.0 |
-| Core 1 | FreeRTOS UI, HAL drivers, MIE | Apache-2.0 |
-| `firmware/shared/ipc/` | IPC protocol header only | MIT — zero GPL dependency |
-
-The IPC boundary must operate as a **communication protocol** (analogous to a UART or network
-socket), not as a C/C++ library link. Core 1 must have no compile-time or link-time dependency
-on any Meshtastic header or object. This prevents GPL-3.0 from propagating to Core 1.
-
-**Hard rules for `firmware/shared/ipc/ipc_protocol.h`:**
-
-- Include only `<stdint.h>` and `<stddef.h>` — no Meshtastic headers, no project headers.
-- No C++ classes, templates, or namespaces.
-- **No pointers in any struct field** — Core 1 must never dereference Core 0 heap memory, and vice versa.
-- All structs must be Plain Old Data (POD) with fixed-size fields only.
-- Payload is always a fixed-size `uint8_t payload[IPC_MAX_PAYLOAD]` byte array; the sender
-  serialises application data into it, the receiver deserialises. No Meshtastic objects cross
-  the boundary.
-- Message/command IDs are plain `#define` constants or `typedef enum` with an explicit `uint8_t` base.
-
-**Canonical POD frame — the only IPC data structure:**
-
-```c
-/* firmware/shared/ipc/ipc_protocol.h */
-#include <stdint.h>
-#define IPC_MAX_PAYLOAD 256
-
-typedef struct {
-    uint8_t  msg_id;              /* IPC_MSG_* or IPC_CMD_* constant */
-    uint8_t  reserved;
-    uint16_t length;              /* valid bytes in payload[]; <= IPC_MAX_PAYLOAD */
-    uint8_t  payload[IPC_MAX_PAYLOAD];
-} ipc_frame_t;                    /* sizeof == 260 bytes, no padding surprises */
-```
-
-**Prohibited patterns:**
-
-```c
-/* PROHIBITED — exposes Meshtastic internal type across the boundary */
-#include "mesh/MeshPacket.h"
-typedef struct { MeshPacket *pkt; } ipc_frame_t;
-
-/* PROHIBITED — C++ linkage; Core 1 build must not link to Core 0 objects */
-class IPCFrame { ... };
-
-/* PROHIBITED — direct cross-core symbol reference */
-extern NodeDB g_nodeDB;   /* Core 1 must not reference any Core 0 symbol */
-```
-
-#### Bus and Peripheral Ownership
-
-| Bus / Peripheral          | Owner  | Devices / Notes                                            |
-|---------------------------|--------|------------------------------------------------------------|
-| Sensor bus (`i2c1`, GPIO 34/35) | Core 1 | LSM6DSV16X, LIS2MDL, LPS22HH, Teseo-LIV3FL         |
-| Power bus (`i2c1`, GPIO 6/7)   | Core 1 | BQ25622, BQ27441, LM27965 (same peripheral, different GPIOs) |
-| SPI1 (GPIO 24–27)         | Core 0 | SX1262 LoRa transceiver                                    |
-| PIO — keypad scan         | Core 1 | 6×6 matrix, GPIO 36–47                                     |
-| PIO — audio               | Core 1 | IM69D130 PDM (GPIO 4/5), NAU8315 I2S (GPIO 30–32)         |
-| PWM — motor               | Core 1 | MTR_PWM GPIO 9                                             |
-
-Core 0 exclusively owns SPI1 and LoRa-related GPIOs. All I2C buses are owned by Core 1.
-No register or memory of any Core 0-owned peripheral may be accessed by Core 1, and vice versa.
-
-#### IPC Mechanism
-
-- **Transport:** two SPSC (Single-Producer Single-Consumer) lock-free ring buffers in a dedicated
-  ~32 KB shared SRAM region; one per direction. Each slot holds one `ipc_frame_t` (260 bytes).
-- **Doorbell:** RP2350 hardware FIFO (8 × 32-bit words, one per core) used as a wake signal only;
-  the HW FIFO word carries only a frame count, not data. Ring buffer carries the actual payload.
-- **Memory ordering:** `__dmb()` (Data Memory Barrier) on ring buffer head/tail writes before
-  writing the doorbell.
-- **Serialisation:** all application data (protobuf bytes, NMEA sentences, config fields) is
-  serialised into `ipc_frame_t.payload[]` by the sender and deserialised by the receiver.
-  No Meshtastic object references or pointers are present anywhere in shared SRAM.
-- **GPS double-buffer:** a `uint8_t gps_buf[2][128]` array in shared SRAM holds the latest NMEA
-  sentence as plain bytes. Defined in `ipc_protocol.h` as a POD array. Core 1 writes, Core 0
-  reads. Core 0 never calls any GPS I2C driver — it only reads this buffer.
-
-```
-Core 0 → Core 1 : c0_to_c1  SPSC ring buffer  (ipc_frame_t slots, events / notifications)
-Core 1 → Core 0 : c1_to_c0  SPSC ring buffer  (ipc_frame_t slots, commands)
-Both directions : HW FIFO doorbell (32-bit frame-count word, non-blocking)
-GPS data        : gps_buf uint8_t[2][128] in shared SRAM (Core 1 writes, Core 0 reads)
-```
-
-**Boot handshake:** Core 0 initialises the ring buffers and `gps_buf`, then signals Core 1 via
-HW FIFO (`IPC_BOOT_READY`) before Core 1 begins UI init. Core 1 must not touch IPC structures
-before receiving this signal.
-
-#### IPC Message Types
-
-All payloads are serialised byte sequences. No Meshtastic types or pointers appear in any payload.
-
-| Direction | Message Type              | Payload contents (serialised into `payload[]`)              |
-|-----------|---------------------------|-------------------------------------------------------------|
-| C0 → C1   | `IPC_MSG_PACKET_RECEIVED` | Meshtastic `Data` protobuf bytes (text, position, telemetry) |
-| C0 → C1   | `IPC_MSG_PACKET_SENT`     | `uint32_t` packet ID (4 bytes)                              |
-| C0 → C1   | `IPC_MSG_NODE_UPDATED`    | Serialised node record: node ID, SNR, battery %, lat/lon    |
-| C0 → C1   | `IPC_MSG_NODE_LIST`       | One or more serialised node records (response to `IPC_CMD_GET_NODE_LIST`) |
-| C0 → C1   | `IPC_MSG_GPS_UPDATE`      | Doorbell only — NMEA sentence already written to `gps_buf`  |
-| C0 → C1   | `IPC_MSG_RADIO_STATUS`    | `int8_t` RSSI, `int8_t` SNR, `uint8_t` channel utilisation % |
-| C0 → C1   | `IPC_MSG_LOG_LINE`        | UTF-8 log string (null-terminated, ≤ 255 chars)             |
-| C1 → C0   | `IPC_CMD_SEND_TEXT`       | ToRadio protobuf bytes                                      |
-| C1 → C0   | `IPC_CMD_SEND_POSITION`   | `double` lat, `double` lon, `float` alt (serialised)        |
-| C1 → C0   | `IPC_CMD_SET_CONFIG`      | Meshtastic `Config` protobuf bytes                          |
-| C1 → C0   | `IPC_CMD_GET_NODE_LIST`   | Empty payload — requests NodeDB dump as `IPC_MSG_NODE_LIST` frames |
-| C1 → C0   | `IPC_CMD_POWER_STATE`     | `uint8_t` state: 0 = ACTIVE, 1 = STANDBY, 2 = DORMANT      |
-| C1 → C0   | `IPC_CMD_REBOOT`          | Empty payload                                               |
-| C1 → C0   | `IPC_CMD_FACTORY_RESET`   | Empty payload                                               |
-
-#### CMake Build Isolation
-
-The CMake build system enforces the license boundary at the linker level:
-
-```
-firmware/
-├── core0/           CMakeLists.txt  — GPL-3.0 target
-│   links: meshtastic_base, pico-sdk, pico_multicore, ipc_protocol (INTERFACE)
-├── core1/           CMakeLists.txt  — Apache-2.0 target
-│   links: freertos, lvgl, mie, pico-sdk, pico_multicore, ipc_protocol (INTERFACE)
-├── mie/             CMakeLists.txt  — MIT static library (no Pico SDK dependency)
-└── shared/ipc/      CMakeLists.txt  — INTERFACE header-only target, zero library deps
-    provides: ipc_protocol header to both cores
-```
-
-**Rules:**
-- `core1` target must **not** `target_link_libraries` to any `core0` static library or object file.
-- `core0` target must **not** `target_link_libraries` to any `core1` static library or object file.
-- `ipc_protocol` is a CMake `INTERFACE` (header-only) target; its only dependency is `<stdint.h>`.
-- `ipc_protocol` is the **only** shared compile-time dependency between `core0` and `core1`.
-- The top-level `add_executable` that packages both images for the Pico SDK linker is the sole
-  permitted point of cross-core linkage in the build graph.
-
-#### Meshtastic PhoneAPI Porting
-
-`PhoneAPI` (`meshtastic/firmware/src/mesh/PhoneAPI.h`) is Meshtastic's abstract transport interface.
-A new subclass `IPCPhoneAPI` replaces the USB/BLE transport with IPC ring buffer writes.
-This is the **only structural addition to Meshtastic** on Core 0:
-
-| Meshtastic Component             | Adaptation                                                         |
-|----------------------------------|--------------------------------------------------------------------|
-| `PhoneAPI`                       | Subclassed as `IPCPhoneAPI` — serialises into `ipc_frame_t`, writes to `c0_to_c1` ring buffer |
-| `GPSDriver`                      | Replaced by GPS adapter that reads `gps_buf[]` (plain bytes, no I2C) |
-| `SerialAPI` / `BLEApi`           | Excluded from Core 0 build                                         |
-| `Router`, `MeshService`, all Modules | **No changes**                                               |
-| `NodeDB` / `config`              | Core 1 requests data via `IPC_CMD_GET_NODE_LIST` / `IPC_CMD_SET_CONFIG`; Core 0 serialises and replies. No direct cross-core memory access. |
-| `OSThread` / `Scheduler`         | Runs entirely on Core 0, no changes                                |
-
-#### Intent Declaration
-
-`firmware/shared/ipc/ipc_protocol.h` must carry the following header comment:
-
-```c
-/*
- * ipc_protocol.h -- MokyaLora Inter-Core Communication Protocol
- *
- * This header defines a strict, decoupled communication boundary between
- * Core 0 (GPL-3.0 Meshtastic firmware) and Core 1 (Apache-2.0 UI firmware).
- * It operates purely via value-passing of primitive C types (POD structs).
- *
- * No internal data structures, pointers, C++ objects, or GPL-licensed symbols
- * are shared or linked across this boundary. This file is intentionally kept
- * free of any Meshtastic or project-specific includes so that it may be used
- * by Core 1 without creating a GPL-3.0 derived work.
- *
- * SPDX-License-Identifier: MIT
- */
-```
+**Licence hygiene:** no Meshtastic type, pointer, or C++ object may cross the
+IPC boundary. Payloads are POD byte sequences.
 
 ---
 
 ## 2. HAL Driver Classes
 
-All HAL drivers listed below run on **Core 1** and exclusively own their respective peripherals.
+All HAL drivers run on **Core 1** (see FA §7 for bus ownership and GPIO
+assignment; see `docs/design-notes/mcu-gpio-allocation.md` for the GPIO map).
 
-### `ChargerManager` — TI BQ25622 [Core 1 · I2C1 · 0x6B]
+### `ChargerManager` — TI BQ25622
 
-- **Init:** read ILIM pin state; maintain hardware current limit (500 mA) by default.
-- **Dynamic current:** raise IINDPM to 1–2 A via I2C after USB enumeration or user enables fast-charge.
-- **Monitoring:** periodically read ADC registers — VBUS voltage, VBAT voltage, IBAT current, TS temperature.
-- **OTG control:** `enableOTG(bool on)` — activates / deactivates 5 V boost for reverse power output.
-- **Interrupt:** handle GPIO 8 (PWR_INT, open-drain); update UI on VBUS insertion/removal and charge completion.
+- **Init:** honour the hardware ILIM pin state as the default current limit
+  (500 mA).
+- **Dynamic current:** raise IINDPM to 1–2 A via I2C after USB enumeration or
+  when the user enables fast-charge.
+- **Monitoring:** periodically read VBUS voltage, VBAT voltage, IBAT current,
+  and TS temperature from the ADC.
+- **OTG control:** `enableOTG(bool on)` — activate / deactivate the 5 V boost
+  for reverse power output.
+- **Interrupt:** on charger IRQ assertion (open-drain), update UI for VBUS
+  insertion / removal and charge completion.
 
-### `GaugeMonitor` — TI BQ27441DRZR [Core 1 · I2C1 · 0x55]
+### `GaugeMonitor` — TI BQ27441
 
-- **Init:** set Design Capacity (1000 mAh) and Design Energy.
+- **Init:** set Design Capacity (1000 mAh) and Design Energy for the Nokia BL-4C
+  pack.
 - **API:** `getSoC()`, `getAverageCurrent()`, `getSOH()`.
-- **Remaining time:** compute `Time-to-Empty` from `getAverageCurrent()`.
+- **Remaining time:** compute Time-to-Empty from average current draw.
 
-### `EnvironmentSensor` — LSM6DSV16X, LIS2MDL, LPS22HH [Core 1 · sensor bus, `i2c1`, GPIO 34/35]
+### `EnvironmentSensor` — LSM6DSV16X + LIS2MDL + LPS22HH
 
-| Driver | Address | Function                                           |
-|--------|---------|----------------------------------------------------|
-| IMU    | 0x6A    | 6-axis attitude; gesture detection (raise-to-wake) |
-| Mag    | 0x1E    | Electronic compass heading                         |
-| Baro   | 0x5D    | Barometric altitude                                |
+| Driver | Function                                           |
+|--------|----------------------------------------------------|
+| IMU    | 6-axis attitude; gesture detection (raise-to-wake) |
+| Mag    | Electronic compass heading                         |
+| Baro   | Barometric altitude                                |
 
 - **Fusion:** Kalman filter or Madgwick algorithm for 9-DOF data fusion.
 
-### `AudioPipeline` — IM69D130 (PDM) + NAU8315 (I2S) [Core 1]
+### `GPSDriver_I2C` — ST Teseo-LIV3FL
 
-- **PDM driver:** PIO-based PDM sampling → 16-bit PCM conversion.
-- **DSP:** software high-pass filter to remove wind-noise low-frequency components.
-- **Codec2:** encode clean speech for LoRa voice transmission.
-- **Speaker protection:** limit NAU8315 output gain to −3 dB to stay within CMS-131304 (0.7 W) rating.
+- **Transport:** polling-mode I2C on the sensor bus (shared with IMU, Mag, Baro).
+  Driver lives in its own FreeRTOS task (`gps_task`, priority tskIDLE+2, 2 KB
+  stack) because the 100 ms drain cadence and line-accumulator parser state do
+  not fit the unified sensor tick.
+- **NMEA sentence set:** RMC + GGA + GSV + GSA kept **always on**. Runtime
+  mask switching is not implemented — bringup's `$PSTMSAVEPAR`-committed NVM
+  config already enables this set plus GLONASS and Galileo. Rationale: avoids a
+  state machine for per-screen mask toggling; total bandwidth at 10 Hz is
+  ~3 KB/s, trivial on a 400 kHz bus.
+- **Adjustable fix rate:** driver exposes
+  `teseo_set_fix_rate(GNSS_RATE_{OFF,1,2,5,10}HZ)`. The native ODR is the ceiling
+  for any consumer — device drives NMEA at `1 / period`, consumers read the
+  latest `teseo_get_state()` / `teseo_get_sat_view()` snapshot at whatever
+  cadence they want. Typical usage:
+  - Meshtastic position publish: 10 s – 60 s (background default; 1 Hz ceiling)
+  - UI satellite/speed screen: 10 Hz while mounted, back to 1 Hz on unmount
+  - Deep-sleep background: `GNSS_RATE_OFF` (`$PSTMGPSSUSPEND` — engine parked)
+  Policy (who requests what rate) is caller-owned; the driver does not
+  implement reference-counting in M3.4.5d.
+- **NVM policy:** driver never writes `$PSTMSAVEPAR`. Rate changes are RAM-only
+  (`$PSTMSETPAR,1303,<period>,0`) so the 10k NVM write cycle budget is preserved
+  for bringup / commissioning paths.
+- **State snapshots:**
+  - `teseo_state_t` — fix, lat/lon (×1e7), alt, speed, course, HDOP, UTC
+    time/date, sentence count, fail count. `lat_e7`/`lon_e7` chosen to feed
+    `IpcPayloadDeviceStatus` directly without conversion.
+  - `teseo_sat_view_t` — up to 32 satellites pooled from all talkers
+    (GP/GL/GA/BD), each with PRN + elevation + azimuth + SNR, plus an
+    `update_count` tick for UI staleness detection.
+- **Output:** M3.4.5d **does not yet populate `IpcGpsBuf`**. Core 0 still has no
+  GPS feed; Core 1 owns the snapshot. Wiring `IpcGpsBuf` (double-buffer, atomic
+  flip, no doorbell per FA §5.4) is deferred to a later milestone alongside
+  Core 0's position adapter.
 
-### `GPSDriver_I2C` — ST Teseo-LIV3FL [Core 1 · I2C0 · 0x3A]
-
-- **Transport:** I2C0 polling mode.
-- **Init:** disable unused NMEA sentences (keep RMC, GGA only); set 1 Hz update rate.
-- **IPC bridge:** parsed position fix written to `gps_double_buffer` (shared SRAM); doorbell sent
-  to Core 0 via `IPC_MSG_GPS_UPDATE`. Meshtastic's `PositionModule` reads from this buffer,
-  never directly from I2C.
-
-### `StatusController` — LM27965 LED Driver [Core 1 · I2C1 · 0x36]
+### `StatusController` — LM27965 LED Driver
 
 - **Priority state machine:** Error > Charging > Message > Idle.
 - **LED patterns:**
@@ -285,45 +150,65 @@ All HAL drivers listed below run on **Core 1** and exclusively own their respect
   - `MESSAGE` → orange breathing (PWM mix of red + green)
   - `ERROR` → red fast blink
 
-### `HapticFeedback` — Motor via PWM [Core 1 · GPIO 9]
+### `HapticFeedback` — Motor via PWM
 
-- **Voltage compensation:** read VBAT from BQ25622 ADC; dynamically adjust PWM duty cycle to keep average motor voltage at ~3.0 V (avoid overvoltage from VSYS at 4.2 V).
+- **Voltage compensation:** read VBAT from the charger ADC; adjust PWM duty cycle
+  to keep average motor voltage near **3.0 V** (avoid overvoltage from VSYS at
+  4.2 V).
 - **Patterns:** `Click` (short), `Buzz` (long), `Alarm` (SOS rhythm).
 
 ---
 
 ## 3. Power Management State Machine
 
-Power management runs on **Core 1**. Power state changes are communicated to Core 0 via
-`IPC_CMD_POWER_STATE` so that Core 0 can adjust LoRa duty cycle and radio behaviour accordingly.
+Power management runs on **Core 1**. The FSM has four states; every transition
+must be announced to Core 0 via IPC so Core 0 can adjust LoRa duty cycle and
+radio behaviour. Exact command ID and payload encoding are in
+`ipc_protocol.h`; FSM implementation lives in FA §4.5.
 
 ### States
 
-| State   | Screen | CPU Clock | LoRa          | Trigger                                   |
-|---------|--------|-----------|---------------|-------------------------------------------|
-| ACTIVE  | ON     | 133 MHz   | Rx/Tx         | Any key press                             |
-| STANDBY | OFF    | 48 MHz    | Duty-cycle Rx | 30 s idle; any key wakes                  |
-| DORMANT | OFF    | OSC OFF   | Standby / OFF | Manual power-off or battery < 15 %        |
+| State      | Screen | CPU Clock         | LoRa                  | Trigger                                                     |
+|------------|--------|-------------------|-----------------------|-------------------------------------------------------------|
+| `ACTIVE`   | ON     | 133 MHz           | Rx / Tx               | Any key press; boot                                         |
+| `IDLE`     | OFF    | 48 MHz            | Rx (short duty cycle) | 60 s idle in ACTIVE; any key or IMU WoM → ACTIVE            |
+| `SLEEP`    | OFF    | WFI + clock-gated | Rx (long duty cycle)  | 5 min in IDLE; LoRa IRQ / power key / USB wakes             |
+| `SHIPPING` | OFF    | OSC OFF           | OFF                   | Hold PWR 3 s — all peripherals off, charger ship-mode latch |
 
-### STANDBY Behaviour
+The `IDLE` / `SLEEP` split gives Core 0 two distinct LoRa duty-cycle profiles —
+one for "briefly stepping away", one for "in pocket for hours". `SHIPPING` is
+the cold-ship factory mode; exit requires USB insertion or a long PWR press that
+triggers a full reboot from the charger's ship-mode latch.
 
-- Core 1 sends `IPC_CMD_POWER_STATE = STANDBY` to Core 0; Core 0 switches LoRa to duty-cycle Rx.
-- LVGL rendering halted; only keypad scan and LoRa packet monitoring remain active.
-- LCD `Sleep In` command sent; backlight off.
+### IDLE / SLEEP Behaviour
 
-### DORMANT Wakeup Sources
+- On entry, Core 1 announces the new state to Core 0; Core 0 adjusts LoRa duty
+  cycle.
+- LVGL rendering is halted; only keypad scan, IMU WoM ISR, and IPC drain remain
+  live.
+- LCD `Sleep In` issued; backlight off.
+- In `SLEEP`, non-essential FreeRTOS tasks are suspended; only IPC-RX, power
+  management, and keypad / WoM ISRs are active.
 
-| Source        | GPIO                       |
-|---------------|----------------------------|
-| Power button  | GPIO 33                    |
-| LoRa interrupt | GPIO 29 (SX1262 DIO1)     |
-| USB insertion | GPIO 1                     |
+### Wakeup Sources (SLEEP / SHIPPING)
+
+| Source         | Trigger                    |
+|----------------|----------------------------|
+| Power button   | GPIO edge                  |
+| LoRa interrupt | SX1262 DIO1                |
+| USB insertion  | VBUS detect                |
+| IMU WoM        | LSM6DSV16X INT1            |
+
+GPIO assignments are defined in `docs/design-notes/mcu-gpio-allocation.md`.
 
 ### Wakeup Sequence
 
-1. IRQ detected → CPU clock restored → peripherals reinitialised → wakeup reason checked.
-2. **LoRa IRQ:** Core 0 reads packet → sends `IPC_MSG_PACKET_RECEIVED` to Core 1 → Core 1 displays notification or vibrates → returns to STANDBY.
-3. **Power key:** Core 1 turns on screen → sends `IPC_CMD_POWER_STATE = ACTIVE` to Core 0 → returns to ACTIVE.
+1. IRQ detected → CPU clock restored → peripherals reinitialised → wakeup
+   reason checked.
+2. **LoRa IRQ:** Core 0 decodes the packet and notifies Core 1; Core 1 displays
+   the notification or vibrates; system returns to `IDLE` / `SLEEP`.
+3. **Power key:** Core 1 turns on the screen and transitions to `ACTIVE`; Core 0
+   is notified.
 
 ---
 
@@ -336,20 +221,22 @@ Classic feature-phone navigation (Nokia / BlackBerry style):
 | Key  | Action                                        |
 |------|-----------------------------------------------|
 | FUNC | Open context menu for current page            |
-| BACK | Go back; long-press → home                   |
+| BACK | Go back; long-press → home                    |
 | OK   | Confirm / enter / view detail                 |
 | PWR  | Short: toggle standby; long: power menu       |
 | 0–9  | Quick-jump to app in grid view                |
 
 ### 4.2 Visual Theme Engine
 
-| Theme         | Description                                    |
-|---------------|------------------------------------------------|
-| High Contrast | White background, black bold text — sunlight readable |
-| Tactical Night | Pure black, red/green text, minimal brightness |
+| Theme          | Description                                           |
+|----------------|-------------------------------------------------------|
+| High Contrast  | White background, black bold text — sunlight readable |
+| Tactical Night | Pure black, red/green text, minimal brightness        |
 
-**Status bar (always visible):** left — LoRa RSSI, GPS satellite count; right — unread messages, battery, time.
-**Toasts:** bottom pop-up notifications (e.g. "Sent", "GPS locked") — auto-dismiss after 3 s.
+**Status bar (always visible):** left — LoRa RSSI, GPS satellite count; right —
+unread messages, battery, time.
+**Toasts:** bottom pop-up notifications (e.g. "Sent", "GPS locked") —
+auto-dismiss after 3 s.
 
 ### 4.3 App Sitemap
 
@@ -364,15 +251,19 @@ Grid menu or list layout (user preference). Core apps:
 
 #### Messages
 - **Thread list:** sorted by update time; unread shown bold with red dot.
-- **Chat view:** bubble layout; own messages right-aligned with delivery ticks (sending / delivered to mesh / read); others left-aligned with sender name.
-- **Composer:** T9 bilingual (Chinese + English) input; FUNC key inserts GPS coords, canned messages, or telemetry.
+- **Chat view:** bubble layout; own messages right-aligned with delivery ticks
+  (sending / delivered to mesh / read); others left-aligned with sender name.
+- **Composer:** T9 bilingual (Chinese + English) input; FUNC key inserts GPS
+  coords, canned messages, or telemetry.
 
 #### Map & Navigation
-- **Radar view:** no map file needed; concentric rings show relative bearing and distance of nearby nodes. Useful for SAR and low-visibility situations.
+- **Radar view:** no map file needed; concentric rings show relative bearing
+  and distance of nearby nodes. Useful for SAR and low-visibility situations.
 - **Offline map:** vector data from Flash; supports zoom; shows own track.
 
 #### Node Manager
-- List all mesh nodes; set custom aliases; add to ignore list; view telemetry history (battery, altitude, SNR).
+- List all mesh nodes; set custom aliases; add to ignore list; view telemetry
+  history (battery, altitude, SNR).
 - Start a direct message from node detail view.
 
 #### Settings
@@ -382,85 +273,96 @@ Full configuration without a phone app:
 - **Display:** brightness, sleep timeout, theme, 180° rotation.
 - **Notifications:** silent / vibrate / ring, LED colour.
 - **System:** reset NodeDB, format filesystem, firmware version.
-- **Power Expert:** OTG toggle, charge speed (500 mA / 1 A), live ADC readings (VBUS, IBAT, PCB temp, SOH %).
+- **Power Expert:** OTG toggle, charge speed (500 mA / 1 A), live ADC readings
+  (VBUS, IBAT, PCB temp, SOH %).
 
 ---
 
 ## 5. Input Method Engine — MokyaInput Engine (MIE)
 
-MIE is developed as a self-contained sub-library under `firmware/mie/`.
-See `docs/design-notes/mie-architecture.md` for the full architectural design note.
+MIE is developed as a self-contained sub-library. See
+`docs/design-notes/mie-architecture.md` for the full architectural design note.
 
-### 5.1 Sub-project Structure
+### 5.1 Input Modes (cycled via MODE key)
 
-| Layer      | Module        | Location                    | Reusability       |
-|------------|---------------|-----------------------------|-------------------|
-| Data       | Data Pipeline | `firmware/mie/tools/`       | Standalone tool   |
-| Core       | Trie-Searcher | `firmware/mie/src/`         | Full              |
-| Logic      | IME-Logic     | `firmware/mie/src/`         | Partial           |
-| Adaptation | HAL-Port      | `firmware/mie/hal/`         | Platform-specific |
-
-### 5.2 Data Assets (generated, not committed)
-
-| File               | Contents                                         | Budget  |
-|--------------------|--------------------------------------------------|---------|
-| `font_glyphs.bin`  | 8,104 × 16×16 monochrome glyphs (32 B/glyph)    | ~260 KB |
-| `font_index.bin`   | `(codepoint, offset)` lookup table               | ~65 KB  |
-| `dict_dat.bin`     | Double-Array Trie base[] + check[] arrays        | ≤ 2 MB  |
-| `dict_values.bin`  | Per-key word list with frequency weights         | ≤ 2 MB  |
-
-Total PSRAM budget for MIE runtime: **4 MB** (DAT + values loaded from Flash at boot).
-Font glyphs remain in Flash and are accessed on demand during rendering.
-
-### 5.3 Input Modes (cycled via MODE key)
-
-Five modes cycle in order: SmartZh → SmartEn → DirectUpper → DirectLower → DirectBopomofo → (back to SmartZh).
+Three modes cycle in order: SmartZh → SmartEn → Direct → (back to SmartZh).
 
 | # | `InputMode` enum | Trigger | Description |
 |---|-----------------|---------|-------------|
 | 0 | `SmartZh` | default | Bopomofo prefix prediction; SPACE appends first-tone marker `ˉ` |
-| 1 | `SmartEn` | MODE×1 | Half-keyboard letter-pair English prediction (en_dat.bin) |
-| 2 | `DirectUpper` | MODE×2 | Multi-tap uppercase letters / digits |
-| 3 | `DirectLower` | MODE×3 | Multi-tap lowercase letters |
-| 4 | `DirectBopomofo` | MODE×4 | Single Bopomofo phoneme cycling; single-char candidates only |
+| 1 | `SmartEn` | MODE×1 | English T9 prediction on rows 1–3; Direct multi-tap on the row 0 digit keys |
+| 2 | `Direct`  | MODE×2 | Full multi-tap on all 20 input keys (letter keys cycle a/s/A/S; digit keys cycle 1/2) — no dictionary |
 
-**Bopomofo disambiguation (SmartZh):** syllable position state machine (initial → medial → final → tone)
-constrains which of the two phonemes on an ambiguous key is valid. Phase 1 uses the primary
-phoneme only; full disambiguation is Phase 3.
+The v1 five-mode design (`DirectUpper`, `DirectLower`, `DirectBopomofo`)
+was retired in the v2 refactor: case-specific direct modes were merged
+into a single cycle and Bopomofo input is served exclusively by
+`SmartZh`.
 
-**Tone-aware ranking (SmartZh):** trailing tone-key bytes or SPACE after a matched prefix set a
-tone intent (1–5). Candidates are sorted into 4 tiers (single/multi × tone-match/no-match);
-tier-2/3 candidates are hidden when intent is non-zero (strict filter). Falls back to full
-frequency-sorted list when no tier-0/1 candidates exist (v1 dict compatibility).
+**Bopomofo disambiguation (SmartZh):** syllable position state machine
+(initial → medial → final → tone) constrains which of the two phonemes on an
+ambiguous key is valid. Phase 1 uses the primary phoneme only; full
+disambiguation is Phase 3.
 
-**English prediction (SmartEn):** each key press produces two candidate letters; all valid prefix
-combinations are searched against an English MIED dictionary; results are merged by frequency.
+**Tone-aware ranking (SmartZh):** trailing tone-key bytes or SPACE after a
+matched prefix set a tone intent (1–5). Candidates are sorted into 4 tiers
+(single/multi × tone-match/no-match); tier-2/3 candidates are hidden when
+intent is non-zero (strict filter). Falls back to full frequency-sorted list
+when no tier-0/1 candidates exist (v1 dict compatibility).
 
-**Direct modes:** no dictionary lookup; `DirectUpper` and `DirectLower` use multi-tap cycling;
-`DirectBopomofo` cycles the two phonemes on each key and produces single-character candidates.
+**English prediction (SmartEn):** prefix scan over the English MIED
+dictionary (half-keyboard ambiguity already encoded at compile time);
+per-candidate de-dup across abbreviation entries; results ranked by
+frequency. Sentence-aware spacing auto-prepends a leading space before
+each word (unless at sentence start) and auto-trails after `, . ? !`
+punctuation, matching standard English typing UX. First word after a
+sentence-ending punctuation or a fresh session is auto-capitalised.
 
-### 5.4 Smart Correction
+**Direct mode:** no dictionary lookup; 800 ms multi-tap timeout
+(configurable via `ImeLogic::kMultiTapTimeoutMs`); `OK` or a different
+key commits the pending slot; `DEL` cancels without committing. Used
+for passwords, rare characters, or literal alphanumeric content.
 
-- **Spatial correction:** candidate scoring penalised by physical key adjacency distance.
-- **Phonetic fuzzy match:** near-homophone Bopomofo syllables accepted as valid input.
-- **Dynamic weighting:** candidate rank updated from per-session input history (stored in LittleFS).
+### 5.1a Listener / time-injection contract
 
-### 5.5 Internationalisation
+MIE is platform-agnostic: the UI pushes `KeyEvent`s into
+`ImeLogic::process_key()` and periodic `ImeLogic::tick(now_ms)` calls,
+and MIE fires events back through a caller-supplied `IImeListener`
+(commit, cursor-move, delete-before-cursor, composition-changed). The
+`KeyEvent::now_ms` timestamp must come from a monotonic clock shared
+with the `tick` clock so multi-tap (800 ms) and long-press (500 ms)
+detection stay coherent across mixed producers (hardware keypad
+scanner, USB Control injection).
+
+See `docs/design-notes/mie-architecture.md §7` for the full API
+specification and key routing contract (BACK reserved for UI layer;
+DEL MIE-exclusive; DPAD candidates-vs-cursor split).
+
+### 5.2 Smart Correction
+
+- **Spatial correction:** candidate scoring penalised by physical key adjacency
+  distance.
+- **Phonetic fuzzy match:** near-homophone Bopomofo syllables accepted as valid
+  input.
+- **Dynamic weighting:** candidate rank updated from per-session input history
+  (stored in LittleFS).
+
+### 5.3 Internationalisation
 
 - IME-Logic and language data packs are fully decoupled.
-- Supports Latin-script languages (EN / FR / DE / ES) and syllabic scripts (Japanese kana / Korean / Bopomofo).
+- Supports Latin-script languages (EN / FR / DE / ES) and syllabic scripts
+  (Japanese kana / Korean / Bopomofo).
 - Language pack loaded from Flash into PSRAM on language switch.
 
-### 5.6 Shortcuts
+### 5.4 Shortcuts
 
-| Shortcut                     | Action                              |
-|------------------------------|-------------------------------------|
-| Long-press `0`               | Flashlight toggle                   |
-| Long-press `1`               | Speed dial                          |
-| FUNC + OK (hold 5 s)         | Send SOS distress signal            |
-| Long-press MODE (in text field) | Quick symbol picker               |
+| Shortcut                        | Action                    |
+|---------------------------------|---------------------------|
+| Long-press `0`                  | Flashlight toggle         |
+| Long-press `1`                  | Speed dial                |
+| FUNC + OK (hold 5 s)            | Send SOS distress signal  |
+| Long-press MODE (in text field) | Quick symbol picker       |
 
-### 5.7 MIE Development Roadmap
+### 5.5 MIE Development Roadmap
 
 **Phase 1 — PC environment & validation ✓ complete**
 - [x] `gen_font.py`: extract 8,104 glyphs from GNU Unifont; output MIEF v1 binary.
@@ -477,7 +379,6 @@ combinations are searched against an English MIED dictionary; results are merged
 - [x] `git subtree split --prefix=firmware/mie -b libmie-standalone` — branch ready.
 - [ ] Push `libmie-standalone` to `tengigabytes/libmie`; replace `firmware/mie/` with submodule *(deferred)*.
 
-
 **Phase 2 — Hardware integration (Rev A)**
 - [ ] `hal/rp2350/`: bridge PIO+DMA key buffer to `mie::KeyEvent`.
 - [ ] Boot loader: copy DAT + values from Flash to PSRAM; measure search latency.
@@ -488,3 +389,91 @@ combinations are searched against an English MIED dictionary; results are merged
 - [ ] Spatial + phonetic fuzzy correction.
 - [ ] User-defined word list in LittleFS, merged into DAT at runtime.
 - [ ] Additional language pack slots.
+
+---
+
+## 6. Debug / Test Control Interface
+
+A secondary USB CDC interface (`CDC#1`) provides a host-driven control channel
+for automated testing, remote debugging, and development tooling, in parallel
+with the Meshtastic CLI bridge on `CDC#0`.
+
+This is a **non-functional requirement** — it is invisible to the end user
+during normal operation, but firmware MUST support it so the product can be
+tested, field-debugged, and iterated on at engineering velocity.
+
+Wire format, command catalogue, ACK semantics, and authentication are
+normatively defined in
+[`docs/design-notes/usb-control-protocol.md`](../design-notes/usb-control-protocol.md).
+USB mode architecture (composite device, OFF/COMM selection) is in FA §4.6.
+
+### 6.1 Use Cases
+
+1. **Host-driven input injection** — the host synthesises key events, text
+   input, and semantic UI navigation commands. The device executes them as if
+   they came from the physical keypad, with an origin flag so the UI can
+   distinguish hardware from injected input.
+2. **UI state capture** — the host can query current screen, focus path, and
+   a framebuffer (full RGB565 or CRC-only) for visual regression testing.
+3. **Remote diagnostics** — the host can subscribe to push events (UI
+   transitions, IME commits, power-state changes, watchdog-near warnings) and
+   stream the breadcrumb log ring.
+4. **Hardware-in-the-loop CI** — a Python test harness drives real hardware
+   over CDC#1, making deterministic assertions via command ACKs.
+
+### 6.2 Functional Requirements
+
+- **FR-CTRL-1:** Every Control command MUST return a deterministic ACK with
+  a host-supplied sequence number. No command is fire-and-forget. Strict
+  serial order: the device MUST process one request at a time.
+- **FR-CTRL-2:** ACKs MUST be sent only after the command's effect is
+  observable (e.g. `KEY` ACK after the next LVGL tick, `TYPE` ACK after the
+  last codepoint is dispatched). See protocol §6.2 for the per-opcode table.
+- **FR-CTRL-3:** Injected key events MUST carry a `source = INJECT` flag
+  distinguishable from hardware events (`source = HW`). The UI layer MUST
+  honour the flag for arbitration (FR-CTRL-4) and logging (FR-CTRL-5).
+- **FR-CTRL-4:** Hardware key events MUST take priority over injected
+  events for the same keycode within the 20 ms debounce window. Injected
+  events losing arbitration return `ERR_BUSY`.
+- **FR-CTRL-5:** The breadcrumb log (FA §9.3) MUST tag injected events
+  distinguishably from hardware events, so post-mortem analysis can tell
+  automated activity from human activity.
+- **FR-CTRL-6:** `UI_STATE` responses MUST include enough information
+  (screen id, focus path, state hash) for a host to make deterministic
+  assertions without screenshot comparisons.
+
+### 6.3 Non-Functional Requirements
+
+- **NFR-CTRL-1 (Build-time kill switch):** the entire Control surface MUST
+  be removable via a single build flag (`MOKYA_ENABLE_USB_CONTROL=OFF`),
+  resulting in an image that does not declare CDC#1, does not link
+  `UsbCtrlTask`, and exposes zero Control attack surface. Reserved for
+  future certified shipments.
+- **NFR-CTRL-2 (Runtime gate):** even with the build flag ON, the feature
+  MUST start **disabled** at every boot. Activation requires an explicit
+  user action — either via Settings UI, or via a pre-authorised remote-unlock
+  flow signed by the pairing key.
+- **NFR-CTRL-3 (Authenticated sessions):** state-mutating commands (`KEY`,
+  `TYPE`, `UI_CMD`, `EVENT_SUB`) MUST require prior HMAC-SHA256
+  challenge-response authentication against a 32-byte control key stored in
+  LittleFS. Three authentication failures within 60 s MUST lock CDC#1 for
+  5 minutes.
+- **NFR-CTRL-4 (Safe-mode restriction):** during safe mode (§1.1), Control
+  MUST reject all state-mutating commands with `ERR_SAFE_MODE`. Read-only
+  commands (`UI_STATE`, `LOG_TAIL`, `MODE_GET`, `HELLO`) MAY remain available
+  for remote diagnosis.
+- **NFR-CTRL-5 (No UI degradation):** Control traffic MUST NOT stall the UI.
+  The `SCREEN` command MUST copy the framebuffer under the LVGL mutex within
+  one 5 ms tick, then stream asynchronously.
+
+### 6.4 Host Tooling Requirements
+
+- **HT-CTRL-1:** A Python CLI (`mokya-ctl`) MUST ship with the firmware
+  repository and provide command-line access to every Control opcode.
+- **HT-CTRL-2:** A reusable Python module (`mokya_control`) MUST expose the
+  protocol as a library so external `pytest` suites can drive the device
+  without subprocessing the CLI.
+- **HT-CTRL-3:** Keycode and UI-action enumerations used by the host MUST be
+  generated from the same C headers the firmware uses
+  (`firmware/mie/include/mie/keycode.h`, `firmware/core1/include/ui_actions.h`),
+  so firmware and host cannot drift.
