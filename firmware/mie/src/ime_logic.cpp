@@ -19,6 +19,15 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
     // All POD members initialized in-class.
 }
 
+void ImeLogic::set_selected(int idx) {
+    if (cand_count_ == 0) return;
+    if (idx < 0) idx = 0;
+    if (idx >= cand_count_) idx = cand_count_ - 1;
+    if (selected_ == idx) return;
+    selected_ = idx;
+    notify_changed();
+}
+
 void ImeLogic::set_listener(IImeListener* listener) {
     listener_ = listener;
 }
