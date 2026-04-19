@@ -459,6 +459,14 @@ int main(void)
      * is zeroed and the future ime_task will refuse to start. */
     (void)mie_dict_load_to_psram(&s_mie_dict);
 
+
+    /* Shared I2C bus (time-muxed i2c1). Creates s_bus_mutex and sets
+     * the default pinmux to the POWER pair. MUST run before any task
+     * that calls i2c_bus_acquire(): lvgl_task (lm27965 backlight),
+     * charger_task, sensor_task, gps_task. The call was accidentally
+     * dropped in M4 Step 3 when PSRAM init was added — restored here. */
+    i2c_bus_init_all();
+
     /* 7. Register doorbell ISR but do NOT enable yet — enabling before the
      *    FreeRTOS scheduler starts causes a HardFault because portYIELD_FROM_ISR
      *    triggers PendSV before the port has installed the PendSV handler.
