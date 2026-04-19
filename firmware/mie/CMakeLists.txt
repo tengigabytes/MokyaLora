@@ -184,7 +184,8 @@ if(NOT CMAKE_CROSSCOMPILING)
         # flash-resident image. Consumed by Core 1 at boot (copy to PSRAM
         # → mie_dict_open_memory). Flashed as an independent partition
         # by scripts/build_and_flash.sh at MIE_DICT_PARTITION_ADDR.
-        set(MIE_DICT_BLOB "${CMAKE_BINARY_DIR}/dict.blob")
+        # J-Link's loadbin rejects unknown file extensions — keep .bin.
+        set(MIE_DICT_BLOB "${CMAKE_BINARY_DIR}/dict.bin")
         add_custom_command(
             OUTPUT  "${MIE_DICT_BLOB}"
             COMMAND ${Python3_EXECUTABLE}

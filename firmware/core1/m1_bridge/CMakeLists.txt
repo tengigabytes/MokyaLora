@@ -104,6 +104,12 @@ set(KEYPAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/keypad)
 # ── UI diagnostic views (M3.3 Phase C) ───────────────────────────────────────
 set(UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui)
 
+# ── PSRAM driver (M4 Step 3) ─────────────────────────────────────────────────
+set(PSRAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/psram)
+
+# ── IME module (M4 Step 3+) ──────────────────────────────────────────────────
+set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
+
 # ── MIEF font blob (Phase F — Traditional Chinese rendering) ─────────────────
 # Embeds firmware/mie/data/mie_unifont_sm_16.bin into Core 1 .rodata via
 # .incbin. gen_font.py is invoked automatically whenever the charlist,
@@ -160,6 +166,8 @@ add_executable(core1_bridge
     ${UI_DIR}/rf_debug_view.c
     ${UI_DIR}/font_test_view.c
     ${UI_DIR}/view_router.c
+    ${PSRAM_DIR}/psram.c
+    ${IME_DIR}/mie_dict_loader.c
 )
 
 # mie_font_blob.S uses .incbin to pull in the MIEF binary. Pass the
@@ -192,6 +200,8 @@ target_include_directories(core1_bridge PRIVATE
     ${DISPLAY_DIR}
     ${KEYPAD_DIR}
     ${UI_DIR}
+    ${PSRAM_DIR}
+    ${IME_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/include
 )
 
