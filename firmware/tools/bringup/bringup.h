@@ -62,6 +62,17 @@ void sram_test(void);
 // bringup_flash.c — Flash test + speed sweep
 void flash_test(void);
 void flash_speed_test(void);// sweep M0 CLKDIV*RXDELAY from RAM, test Flash reads
+void flash_bench(void);     // bench current M0 64 KB uncached + cached throughput
+void flash_sweep2(void);    // sweep M0 with Pico SDK boot2_w25q080-style config (w/ M-byte)
+void flash_probe_75(void);  // 256-read stability probe at CLKDIV=1 across RXDELAY 0..7
+void flash_sweep3(void);    // exhaustive 75 MHz sweep: DUMMY x SUFFIX x RXDELAY
+void flash_try_qpi(void);   // enter full-QPI mode (0x35), test CLKDIV=1, exit (0xF5)
+void flash_reset(void);     // emergency 66+99 reset in both SPI & QPI modes
+void flash_try_114(void);   // Fast Read Quad Output (6Bh, 1-1-4) sweep at 75 MHz
+void flash_boost_drv(void); // volatile SR3 write: DRV1/DRV0 -> 00 (100% drive)
+void flash_read_sr3(void);  // read-only SR3 check
+void flash_boost_pads(void);// RP2350 QSPI pad high-speed config: SCLK 8mA+slewfast, SD schmitt off
+void flash_pad_ablation(void); // 2^3 ablation of SCLK drive/slew + SD schmitt at CLKDIV=1
 struct flash_speed_result {
     uint8_t  clkdiv;
     uint8_t  rxdelay;
