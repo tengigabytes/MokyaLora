@@ -215,10 +215,18 @@ bool psram_init(void) {
     for (int i = 0; i < 8; ++i) g_psram_read_id[i] = r.id[i];
 
     if (r.id_ok) {
-        /* Enable writable M1 window so writes via 0x15000000+ land on
-         * PSRAM. Cached access at 0x11000000 remains read-only (writes
-         * would go through the XIP cache, and PSRAM cache coherency is
-         * not enforced by hardware). */
+        /* Enable writable M1 window. With WRITABLE_M1 set, writes via
+         * either alias (0x11xxxxxx cached / 0x15xxxxxx uncached) are
+         * accepted by QMI and land on PSRAM. Alias choice matters only
+         * because the RP2350 XIP cache is WRITE-BACK for PSRAM:
+         *   - Uncached writes go directly to PSRAM (recommended; see
+         *     mie_dict_loader.c for the rationale).
+         *   - Cached writes leave dirty lines that must be flushed via
+         *     xip_cache_clean_range() before an alias-crossing read or
+         *     invalidate sees them — skipping that step silently loses
+         *     whatever was still dirty at cleanup (~0.19 % of an 8 MB
+         *     sequential write in practice, clustered at the tail).
+         */
         hw_set_bits(&xip_ctrl_hw->ctrl, XIP_CTRL_WRITABLE_M1_BITS);
     }
     return r.id_ok;
