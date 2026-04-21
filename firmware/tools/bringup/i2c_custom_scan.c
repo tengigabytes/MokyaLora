@@ -367,6 +367,18 @@ void handle_command(const char *cmd) {
         psram_diag_test();
     } else if (strcmp(cmd, "psram_probe") == 0) {
         psram_probe();
+    } else if (strcmp(cmd, "qmi_diag") == 0) {
+        qmi_diag();
+    } else if (strcmp(cmd, "psram_verify") == 0) {
+        psram_verify_full();
+    } else if (strncmp(cmd, "psram_at ", 9) == 0) {
+        int cd = 0, rd = 0;
+        if (sscanf(cmd + 9, "%d %d", &cd, &rd) == 2 &&
+            cd >= 1 && cd <= 7 && rd >= 0 && rd <= 7) {
+            psram_full_at((uint8_t)cd, (uint8_t)rd);
+        } else {
+            printf("Usage: psram_at <clkdiv 1..7> <rxdelay 0..7>\n");
+        }
     } else if (strcmp(cmd, "mem_diag") == 0) {
         cmd_memory_diag();
     } else if (strcmp(cmd, "psram_full_tft") == 0) {
@@ -534,9 +546,20 @@ static void bus_b_i2c_recovery(void) {
 static menu_ctx_t g_menu;
 
 void bringup_repl_init(void) {
-    // PSRAM init first — GPIO0 boots with pull-down (CE# LOW = bus contention).
+    // P2-13 port: re-enable XIP cache. RP2350 ROM (and/or our psram_init
+    // direct-mode toggling) clears XIP_CTRL EN_SECURE / EN_NONSECURE, so
+    // every instruction fetch hits QSPI at boot2 default timing. Write via
+    // the atomic SET alias (0x400CA000) to avoid disturbing WRITABLE_M1
+    // that psram_init will set. See variant.cpp:initVariant() in Core 0.
+    *(volatile uint32_t *)0x400CA000u = 0x00000003u;
+
+    // PSRAM init — GPIO0 boots with pull-down (CE# LOW = bus contention).
     // Must fix GPIO0 before any other peripheral touches the QSPI bus.
     psram_init();
+
+    // Re-enable XIP cache again — our psram_init direct-mode toggle may
+    // clear it (observed empirically in Core 1 bring-up).
+    *(volatile uint32_t *)0x400CA000u = 0x00000003u;
 
     // Immediately clear any I2C bus lockup on Bus B before anything else.
     // BQ27441 may have locked up if SDA/SCL glitched during cold boot

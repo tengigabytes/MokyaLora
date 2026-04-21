@@ -69,7 +69,10 @@ struct flash_speed_result {
     uint32_t read_val;
     uint32_t expected;
     bool     pass;
+    uint32_t bench_us;    // time to read FLASH_BENCH_WORDS (uncached)
+    uint32_t bench_kbps;  // KB/s for the bench pass
 };
+#define FLASH_BENCH_WORDS 16384u  // 64 KB
 void flash_speed_run(struct flash_speed_result *results, int count,
                      const uint8_t *clkdivs, const uint8_t *rxdelays,
                      uint32_t sys_hz);
@@ -79,14 +82,18 @@ bool psram_init(void);      // call once at boot — returns true if APS6404L fo
 void psram_test(void);
 void psram_full_test(void); // full 8 MB two-pass write+verify test
 void psram_full_test_75(void); // full 8 MB test at CLKDIV=1 (75 MHz), restores timing
+void psram_verify_full(void); // 6-pattern 8 MB stress (ADDR, ~ADDR, 0xFF, 0x00, walking, checker)
+void psram_full_at(uint8_t cd, uint8_t rd); // run psram_verify_full at given timing
 void psram_speed_test(void);// sweep CLKDIV*RXDELAY, find max PSRAM QPI speed
 void psram_diag_test(void); // CLKDIV=1 error pattern analysis & timing tuning
 void psram_jlink_prep(void);// write sentinel, print J-Link mem32 command
 void psram_diag(void);
 void psram_probe(void);
+void qmi_diag(void);        // dump QMI M0/M1 + XIP_CTRL cache state
 void psram_set_timing(uint8_t clkdiv, uint8_t rxdelay);
 uint32_t psram_sweep_pass(void);
 uint32_t psram_verify_pass(void);
+uint32_t psram_verify_pass_cached(void);
 void psram_set_full_timing(uint32_t timing);
 
 // bringup_memory_tft.c — TFT consolidated diagnostics (Step 20)
