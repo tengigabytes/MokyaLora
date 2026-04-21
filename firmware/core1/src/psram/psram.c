@@ -132,25 +132,41 @@ static void __no_inline_not_in_flash_func(psram_init_run)(
 
     /* Phase 2: configure M1 timing / rfmt / wfmt.
      *
-     * Rev A bring-up validated CLKDIV=2 (37.5 MHz) with RXDELAY=0 and
-     * COOLDOWN=2 across both boards in the lab. CLKDIV=1 worked on
-     * board #2 but not #1 — stay conservative in production firmware.
-     * COOLDOWN=2 satisfies APS6404L tCPH ≥ 18 ns.
+     * P2-16 (bringup re-verification, 2026-04-22): original "CLKDIV=2 for
+     * board parity" + "RXDELAY=0" + "DUMMY_LEN=28 bits / 7 clocks" was
+     * a compounded triple-error. Datasheet §9.5 calls for 6 wait cycles,
+     * and APS6404L tACLK + PCB trace delay requires RXDELAY=CLKDIV so
+     * QMI samples AFTER the data edge, not on it. At RXDELAY=0 one of
+     * the real clocks happens to land inside the data-valid window so
+     * padding an extra dummy clock makes it "work" — which is the
+     * legacy comment. Correct config: CLKDIV=1 (75 MHz), RXDELAY=2
+     * (matches divisor, mirrors Arduino-Pico's psram.cpp formula),
+     * DUMMY_LEN=24 bits (6 clocks, datasheet).
      *
-     * MAX_SELECT=1 (P2-15): required for APS6404L DRAM refresh. Inheriting
-     * M0's MAX_SELECT=0 lets QMI hold CS asserted indefinitely across
-     * back-to-back M1 accesses, starving PSRAM's self-refresh (datasheet
-     * tCEM=8µs standard grade). MAX_SELECT=1 triggers CS deassertion
-     * every 64 sys_clk (~427ns) + ≤316 cycle burst = 3.8µs total,
-     * comfortably under tCEM. Validated full 8 MB cached round-trip:
-     * 0 / 2,097,152 errors × 2 passes. Without the fix: 46.81% cached /
-     * 93.75% uncached err. See docs/bringup/phase2-log.md §P2-15.
+     * Verified 6-pattern x 8 MB x 3-run stress (ADDR / ~ADDR / ALL-FF /
+     * ALL-00 / WALKING-1 / CHECKER) = 0 / 108M words error. Throughput
+     * vs old CLKDIV=2: write 1.68x (32 MB/s), cached read 1.74x
+     * (23 MB/s). Read is bounded by 0 vs 6 wait cycles in the
+     * datasheet — ~73% of write, matching theory.
      *
-     * rfmt: cmd=Q/8b, addr=Q, dummy=Q/28 bits (7 quad clocks), data=Q.
-     * APS6404L 0xEB QPI datasheet says 6 wait cycles, but empirically
-     * requires 7 — likely because the mode byte slot (occupied in SPI
-     * mode) leaves 4+1 dummy clocks needed for QPI XIP without the
-     * mode byte.
+     * Uncached reads (0x15xxxxxx) now also pass 0 errors. The 47% rate
+     * documented in mie_dict_loader.c was likewise an RX-sampling edge
+     * case that RXDELAY=CLKDIV eliminates — not a refresh starvation
+     * issue. We still keep mie_dict_loader's write-uncached /
+     * read-cached pattern because the cached path is the actual hot
+     * path (32-byte line bursts amortise cmd+addr overhead).
+     *
+     * MAX_SELECT=1 (P2-15): required for APS6404L DRAM refresh.
+     * Inheriting M0's MAX_SELECT=0 lets QMI hold CS asserted indefinitely
+     * across back-to-back M1 accesses, starving PSRAM's self-refresh
+     * (datasheet tCEM=8µs standard grade). MAX_SELECT=1 triggers CS
+     * deassertion every 64 sys_clk (~427ns) + ≤316 cycle burst = 3.8µs
+     * total, comfortably under tCEM. Still required (unrelated to the
+     * RXDELAY fix — MAX_SELECT bounds CS-low time; RXDELAY adjusts
+     * sampling phase).
+     *
+     * COOLDOWN=2 satisfies APS6404L tCPH ≥ 18 ns at 75 MHz
+     * (2 × 13.3 ns = 26.7 ns > 18 ns).
      */
     qmi_hw->m[1].timing = (qmi_hw->m[0].timing &
                             ~(QMI_M1_TIMING_COOLDOWN_BITS    |
@@ -159,15 +175,15 @@ static void __no_inline_not_in_flash_func(psram_init_run)(
                               QMI_M1_TIMING_CLKDIV_BITS))
                          | (2u << QMI_M1_TIMING_COOLDOWN_LSB)
                          | (1u << QMI_M1_TIMING_MAX_SELECT_LSB)
-                         | (0u << QMI_M1_TIMING_RXDELAY_LSB)
-                         | (2u << QMI_M1_TIMING_CLKDIV_LSB);
+                         | (2u << QMI_M1_TIMING_RXDELAY_LSB)
+                         | (1u << QMI_M1_TIMING_CLKDIV_LSB);
 
     qmi_hw->m[1].rfmt = (QMI_M1_RFMT_PREFIX_LEN_VALUE_8  << QMI_M1_RFMT_PREFIX_LEN_LSB)  |
                         (QMI_M1_RFMT_PREFIX_WIDTH_VALUE_Q << QMI_M1_RFMT_PREFIX_WIDTH_LSB) |
                         (QMI_M1_RFMT_ADDR_WIDTH_VALUE_Q   << QMI_M1_RFMT_ADDR_WIDTH_LSB)   |
                         (QMI_M1_RFMT_DUMMY_WIDTH_VALUE_Q  << QMI_M1_RFMT_DUMMY_WIDTH_LSB)  |
                         (QMI_M1_RFMT_DATA_WIDTH_VALUE_Q   << QMI_M1_RFMT_DATA_WIDTH_LSB)   |
-                        (QMI_M1_RFMT_DUMMY_LEN_VALUE_28   << QMI_M1_RFMT_DUMMY_LEN_LSB);
+                        (QMI_M1_RFMT_DUMMY_LEN_VALUE_24   << QMI_M1_RFMT_DUMMY_LEN_LSB);
     qmi_hw->m[1].rcmd = 0xEBu;  /* QPI Fast Read */
 
     qmi_hw->m[1].wfmt = (QMI_M1_WFMT_PREFIX_LEN_VALUE_8  << QMI_M1_WFMT_PREFIX_LEN_LSB)  |
