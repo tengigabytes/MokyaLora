@@ -62,7 +62,12 @@ void flash_test(void) {
 // Known sentinel in Flash — address and value set by the linker.
 // We use the first word of the vector table (Initial MSP) which is always
 // 0x20082000 for RP2350B with 520 KB SRAM.
-#define FLASH_TEST_ADDR   0x10000000u
+//
+// Use the UNCACHED alias so the read bypasses the XIP cache. With cache
+// enabled, a cached read at a broken candidate timing triggers an async
+// cache-line fill that can hang the CPU; uncached forces a single-beat
+// read that either returns garbage or satisfies BUSY within our bench.
+#define FLASH_TEST_ADDR   (XIP_NOCACHE_NOALLOC_BASE)
 #define FLASH_TEST_EXPECT (*(volatile uint32_t *)FLASH_TEST_ADDR)
 
 void __no_inline_not_in_flash_func(flash_speed_run)(
@@ -94,6 +99,26 @@ void __no_inline_not_in_flash_func(flash_speed_run)(
         // Read test word from Flash (uses new timing)
         uint32_t val = *(volatile uint32_t *)FLASH_TEST_ADDR;
 
+        // Throughput bench: read FLASH_BENCH_WORDS from uncached alias,
+        // XOR-accumulate to prevent compiler eliding the loop. Uncached
+        // forces every read to go through QMI so we measure raw bus
+        // bandwidth at this timing, not cache effects.
+        uint32_t bench_us = 0;
+        uint32_t bench_kbps = 0;
+        if (val == expected) {
+            volatile uint32_t *src =
+                (volatile uint32_t *)(XIP_NOCACHE_NOALLOC_BASE);
+            uint32_t acc = 0;
+            uint32_t t0 = timer_hw->timerawl;
+            for (uint32_t n = 0; n < FLASH_BENCH_WORDS; n++)
+                acc ^= src[n];
+            uint32_t t1 = timer_hw->timerawl;
+            (void)acc;
+            bench_us = t1 - t0;
+            if (bench_us)
+                bench_kbps = (FLASH_BENCH_WORDS * 4u * 1000u) / bench_us;
+        }
+
         // Revert to original timing immediately (from RAM — safe even if
         // the read above returned garbage, because we are still in RAM)
         irq_save = save_and_disable_interrupts();
@@ -108,6 +133,8 @@ void __no_inline_not_in_flash_func(flash_speed_run)(
         results[i].read_val = val;
         results[i].expected = expected;
         results[i].pass     = (val == expected);
+        results[i].bench_us = bench_us;
+        results[i].bench_kbps = bench_kbps;
     }
 }
 
@@ -133,13 +160,16 @@ void flash_speed_test(void) {
 
     flash_speed_run(res, FLASH_COMBOS, cd_arr, rd_arr, sys_hz);
 
-    printf("  CLKDIV  RXDELAY  SCK_MHz  read_val    result\n");
-    printf("  ------  -------  -------  ----------  ------\n");
+    printf("  CLKDIV  RXDELAY  SCK_MHz  read_val    bench_us  KB/s    result\n");
+    printf("  ------  -------  -------  ----------  --------  ------  ------\n");
     for (int i = 0; i < FLASH_COMBOS; i++) {
-        printf("  %6u  %7u  %7u  0x%08X  %s\n",
+        printf("  %6u  %7u  %7u  0x%08X  %8u  %6u  %s\n",
                res[i].clkdiv, res[i].rxdelay, res[i].sck_mhz,
                (unsigned)res[i].read_val,
+               (unsigned)res[i].bench_us,
+               (unsigned)res[i].bench_kbps,
                res[i].pass ? "PASS" : "FAIL");
     }
+    printf("\n  (bench = 64 KB uncached read at the candidate timing)\n");
     #undef FLASH_COMBOS
 }
