@@ -84,6 +84,7 @@ void psram_full_test(void); // full 8 MB two-pass write+verify test
 void psram_full_test_75(void); // full 8 MB test at CLKDIV=1 (75 MHz), restores timing
 void psram_verify_full(void); // 6-pattern 8 MB stress (ADDR, ~ADDR, 0xFF, 0x00, walking, checker)
 void psram_full_at(uint8_t cd, uint8_t rd); // run psram_verify_full at given timing
+void psram_wthru_test(void); // 4 alias combos (wr_alias x rd_alias), probes write-through
 void psram_speed_test(void);// sweep CLKDIV*RXDELAY, find max PSRAM QPI speed
 void psram_diag_test(void); // CLKDIV=1 error pattern analysis & timing tuning
 void psram_jlink_prep(void);// write sentinel, print J-Link mem32 command

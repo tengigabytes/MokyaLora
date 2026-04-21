@@ -639,6 +639,172 @@ void psram_verify_full(void) {
            total_err == 0 ? "PASS" : "FAIL", (unsigned)total_err);
 }
 
+/* ---------------------------------------------------------------------
+ * psram_wthru — definitive write-through test.
+ *
+ * Tests all 4 (wr_alias, rd_alias) combinations on 8 MB. The key one
+ * is (wr=C, rd=U): if after writing via cached alias we read CORRECT
+ * data via the uncached alias (bypassing cache entirely), then the
+ * RP2350 XIP cache IS write-through for PSRAM when WRITABLE_M1=1.
+ *
+ * Cache is 4 KB; 8 MB sequential write evicts ~2046× lines. If cache
+ * is NOT write-through, only the last ~4 KB would remain in cache and
+ * PSRAM would hold pre-write content; rd=U would fail on most addresses.
+ *
+ * Between write and read, we always invalidate the XIP cache by address
+ * range so reads actually reach either the PSRAM (rd=U) or the
+ * newly-filled cache (rd=C).
+ * ------------------------------------------------------------------- */
+static void psram_alias_pass(const char *tag,
+                             volatile uint32_t *wr_base,
+                             volatile uint32_t *rd_base) {
+    uint32_t t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+        wr_base[i] = 0xA5000000u | i;
+    uint32_t wr_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    xip_cache_invalidate_range(0x01000000u,
+                               PSRAM_SIZE_MB * 1024u * 1024u);
+
+    uint32_t errors = 0;
+    uint32_t first_bad = 0xFFFFFFFFu;
+    uint32_t last_bad  = 0;
+    uint32_t per_mb[8] = {0};
+    t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
+        uint32_t actual = rd_base[i];
+        if (actual != (0xA5000000u | i)) {
+            if (first_bad == 0xFFFFFFFFu) first_bad = i;
+            last_bad = i;
+            per_mb[(i * 4u) >> 20]++;
+            errors++;
+        }
+    }
+    uint32_t rd_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    uint32_t wr_kbps = wr_ms ? (8u * 1024u * 1000u / wr_ms) : 0;
+    uint32_t rd_kbps = rd_ms ? (8u * 1024u * 1000u / rd_ms) : 0;
+    printf("  [%s] wr %4u ms %5u KB/s  rd %4u ms %5u KB/s  err=%u / %u (%.2f%%)%s\n",
+           tag,
+           (unsigned)wr_ms, (unsigned)wr_kbps,
+           (unsigned)rd_ms, (unsigned)rd_kbps,
+           (unsigned)errors, (unsigned)PSRAM_FULL_WORDS,
+           (double)errors * 100.0 / (double)PSRAM_FULL_WORDS,
+           errors == 0 ? "  PASS" : "  FAIL");
+    if (errors) {
+        printf("    first bad @ +0x%06X  last bad @ +0x%06X\n",
+               (unsigned)(first_bad * 4u), (unsigned)(last_bad * 4u));
+        printf("    per-MB: ");
+        for (int mb = 0; mb < 8; mb++)
+            printf("[%dMB:%u] ", mb, (unsigned)per_mb[mb]);
+        printf("\n");
+        printf("    first bad word: expected=0x%08X rd=0x%08X  re-read=0x%08X\n",
+               (unsigned)(0xA5000000u | first_bad),
+               (unsigned)rd_base[first_bad],
+               (unsigned)rd_base[first_bad]);
+    }
+}
+
+void psram_wthru_test(void) {
+    printf("\n--- PSRAM alias cross-product (write-through probe) ---\n");
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    if ((gpio0_ctrl & 0x1Fu) != 9) {
+        printf("  PSRAM not initialized. Run 'psram' first.\n");
+        return;
+    }
+    printf("  M1.timing = 0x%08X  XIP_CTRL = 0x%08X\n",
+           (unsigned)qmi_hw->m[1].timing,
+           (unsigned)xip_ctrl_hw->ctrl);
+    printf("  U=0x%08X (uncached)  C=0x%08X (cached)\n",
+           (unsigned)PSRAM_NOCACHE, (unsigned)PSRAM_CACHED);
+
+    /* Seed PSRAM with a distinct pattern via UNCACHED so a subsequent
+     * cached write that fails to write-through leaves the seed visible
+     * (first bad word's rd= value tells us what did propagate). */
+    {
+        volatile uint32_t *u = (volatile uint32_t *)PSRAM_NOCACHE;
+        for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+            u[i] = 0xDEAD0000u | i;
+    }
+
+    psram_alias_pass("wr=C rd=U  write-through probe   ",
+                     (volatile uint32_t *)PSRAM_CACHED,
+                     (volatile uint32_t *)PSRAM_NOCACHE);
+
+    /* Same test but CLEAN cache between write and invalidate/read.
+     * xip_cache_clean_range flushes dirty lines to PSRAM — if this
+     * combo passes cleanly, RP2350 cache for PSRAM is write-back
+     * (deferred flush) and cached writes become safe *with* an explicit
+     * clean step. */
+    {
+        /* Re-seed so we can distinguish clean-helped writes from residue. */
+        volatile uint32_t *u = (volatile uint32_t *)PSRAM_NOCACHE;
+        for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+            u[i] = 0xBEEF0000u | i;
+
+        volatile uint32_t *c = (volatile uint32_t *)PSRAM_CACHED;
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+            c[i] = 0xA5000000u | i;
+        uint32_t wr_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+        xip_cache_clean_range(0x01000000u,
+                              PSRAM_SIZE_MB * 1024u * 1024u);
+        xip_cache_invalidate_range(0x01000000u,
+                                   PSRAM_SIZE_MB * 1024u * 1024u);
+
+        volatile uint32_t *r = (volatile uint32_t *)PSRAM_NOCACHE;
+        uint32_t errors = 0, first_bad = 0xFFFFFFFFu, last_bad = 0;
+        uint32_t per_mb[8] = {0};
+        t0 = to_ms_since_boot(get_absolute_time());
+        for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
+            if (r[i] != (0xA5000000u | i)) {
+                if (first_bad == 0xFFFFFFFFu) first_bad = i;
+                last_bad = i;
+                per_mb[(i * 4u) >> 20]++;
+                errors++;
+            }
+        }
+        uint32_t rd_ms = to_ms_since_boot(get_absolute_time()) - t0;
+        uint32_t wr_kbps = wr_ms ? (8u * 1024u * 1000u / wr_ms) : 0;
+        uint32_t rd_kbps = rd_ms ? (8u * 1024u * 1000u / rd_ms) : 0;
+        printf("  [%s] wr %4u ms %5u KB/s  rd %4u ms %5u KB/s  err=%u / %u (%.2f%%)%s\n",
+               "wr=C CLEAN+INV rd=U             ",
+               (unsigned)wr_ms, (unsigned)wr_kbps,
+               (unsigned)rd_ms, (unsigned)rd_kbps,
+               (unsigned)errors, (unsigned)PSRAM_FULL_WORDS,
+               (double)errors * 100.0 / (double)PSRAM_FULL_WORDS,
+               errors == 0 ? "  PASS" : "  FAIL");
+        if (errors) {
+            printf("    first bad @ +0x%06X  last bad @ +0x%06X  per-MB: ",
+                   (unsigned)(first_bad * 4u), (unsigned)(last_bad * 4u));
+            for (int mb = 0; mb < 8; mb++)
+                printf("[%dMB:%u] ", mb, (unsigned)per_mb[mb]);
+            printf("\n");
+            printf("    first bad word: expected=0x%08X rd=0x%08X\n",
+                   (unsigned)(0xA5000000u | first_bad),
+                   (unsigned)r[first_bad]);
+        }
+    }
+
+    psram_alias_pass("wr=C rd=C  cache round-trip      ",
+                     (volatile uint32_t *)PSRAM_CACHED,
+                     (volatile uint32_t *)PSRAM_CACHED);
+    psram_alias_pass("wr=U rd=C  production pattern    ",
+                     (volatile uint32_t *)PSRAM_NOCACHE,
+                     (volatile uint32_t *)PSRAM_CACHED);
+    psram_alias_pass("wr=U rd=U  raw QMI bandwidth     ",
+                     (volatile uint32_t *)PSRAM_NOCACHE,
+                     (volatile uint32_t *)PSRAM_NOCACHE);
+
+    printf("\n  Interpretation:\n");
+    printf("    * wr=C rd=U FAIL + wr=C CLEAN+INV rd=U PASS ->\n");
+    printf("      cache is WRITE-BACK; cached writes need xip_cache_clean_range()\n");
+    printf("      before reads via other alias can see them.\n");
+    printf("    * wr=U rd=C PASS -> current loader rule is safe as-is\n");
+    printf("      (simpler than clean+invalidate, same correctness).\n");
+}
+
 /* Run `psram_full_test` at an arbitrary CLKDIV/RXDELAY, then restore. */
 void psram_full_at(uint8_t cd, uint8_t rd) {
     uint32_t orig = qmi_hw->m[1].timing;
