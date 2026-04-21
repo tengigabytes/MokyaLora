@@ -54,9 +54,12 @@ typedef enum {
  *
  * Requires psram_init() to have succeeded first.
  *
- * Writes land on cached PSRAM (0x11000000); RP2350 XIP_CTRL writable-M1
- * makes this a write-through to the APS6404L. Total copy ~5 MB takes
- * ~200 ms at 37.5 MHz QPI (150 Mbit/s) plus flash-read time.
+ * Writes go through the UNCACHED alias (0x15000000) so they land on
+ * PSRAM directly without cache bookkeeping. The cache is then
+ * invalidated by address range so subsequent reads via the cached
+ * alias (0x11000000) miss-and-fill from the freshly-written PSRAM
+ * rather than from pre-load stale lines. Total copy ~5 MB takes
+ * ~160 ms at 75 MHz QPI (~31 MB/s via uncached) plus flash-read time.
  */
 bool mie_dict_load_to_psram(mie_dict_pointers_t *out);
 

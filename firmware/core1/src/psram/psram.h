@@ -9,9 +9,17 @@
  *
  * After psram_init() returns true:
  *   - GPIO0 is bound to XIP_CS1 (FUNCSEL=9)
- *   - QMI M1 is configured for APS6404L QPI at CLKDIV=2 (37.5 MHz)
+ *   - QMI M1 is configured for APS6404L QPI at CLKDIV=1 (75 MHz),
+ *     RXDELAY=2, DUMMY_LEN=6 clocks (datasheet §9.5), MAX_SELECT=1
  *   - PSRAM is mapped at 0x11000000 (cached) / 0x15000000 (uncached)
- *   - XIP_CTRL.WRITABLE_M1 is set so writes to 0x15000000+ land on PSRAM
+ *   - XIP_CTRL.WRITABLE_M1 is set so writes land on PSRAM.
+ *
+ * The RP2350 XIP cache is WRITE-BACK (not write-through) for PSRAM:
+ * writes via 0x11000000 stay dirty in cache until eviction or an
+ * explicit xip_cache_clean_range(). Consumers that want the simplest
+ * correctness story should write via 0x15000000 (uncached alias —
+ * direct to PSRAM, no cache bookkeeping) and read via 0x11000000
+ * (cached alias — 32-byte bursts). See mie_dict_loader.c.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

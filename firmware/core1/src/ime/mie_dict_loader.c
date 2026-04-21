@@ -15,21 +15,30 @@
  * section starts on a (arbitrary) 1 MB boundary so the layout is easy
  * to eyeball in SWD and grown sections don't collide.
  *
- * IMPORTANT (see psram.c §§comment at ctrl.WRITABLE_M1): writes go to
- * the UNCACHED alias (0x15xxxxxx), reads go through the CACHED alias
- * (0x11xxxxxx). Writing via the cached alias only populates the XIP
- * cache without write-through to PSRAM; once the cache evicts those
- * lines (any subsequent multi-MB traffic does so), subsequent reads
- * pick up garbage from PSRAM and search results come back with stray
- * 0x06 prefixes / embedded NULs in Candidate.word.
+ * Alias rule: writes via UNCACHED (0x15xxxxxx), reads via CACHED
+ * (0x11xxxxxx). Reasoning:
  *
- * P2-15 update: uncached reads also trigger ~47% word errors on
- * tight-loop CPU reads (trie prefix scan, glyph lookup), because
- * back-to-back single-beat accesses don't give APS6404L enough CS-HIGH
- * time for DRAM refresh even with MAX_SELECT=1. Cached burst reads
- * (32-byte line fill + CPU work between) pass 0%. Reads MUST go
- * through the CACHED alias — this was the original intent per the
- * comment above but the macro had regressed to uncached. */
+ * 1. RP2350 XIP cache is write-BACK for PSRAM (empirically confirmed
+ *    by the bringup psram_wthru test, 2026-04-22): writing via the
+ *    cached alias leaves dirty lines sitting in the 4 KB cache.
+ *    During an 8 MB sequential write most lines get evicted-and-
+ *    written-through by later writes — but the tail ~1 MB worth
+ *    remains dirty when the loop ends. Invalidating the cache at
+ *    that point drops those dirty lines without flushing, leaving
+ *    the tail of PSRAM holding pre-write content (~0.19 % silent
+ *    word corruption — catastrophic for a dict blob).
+ *
+ *    Writing via uncached is simpler AND 2.5× faster (31 vs 12.6
+ *    MB/s) than the write-cached + xip_cache_clean_range +
+ *    xip_cache_invalidate_range alternative.
+ *
+ * 2. Reading via cached wins on random access patterns: the 32-byte
+ *    cache-line burst amortises cmd+addr+dummy across 8 words, and
+ *    hot trie nodes stay resident between lookups. Uncached reads
+ *    are correct (with RXDELAY=CLKDIV applied — see psram.c) but
+ *    pay full QMI overhead on every word, which hurts the MIE trie
+ *    walk hot path disproportionately.
+ */
 #define PSRAM_ZH_DAT_OFF    0x00000000u
 #define PSRAM_ZH_VAL_OFF    0x00200000u
 #define PSRAM_EN_DAT_OFF    0x00500000u
@@ -107,17 +116,21 @@ bool mie_dict_load_to_psram(mie_dict_pointers_t *out)
         memcpy((void *)PSRAM_WRITE_ADDR(PSRAM_EN_VAL_OFF),
                blob_base + hdr->en_val_off, hdr->en_val_size);
 
-    /* Invalidate the XIP cache lines that cover the dict we just wrote
-     * to PSRAM. We must invalidate by address range rather than the
-     * cheaper `xip_cache_invalidate_all()` — empirically the set/way
-     * variant leaves stale lines on RP2350 (reads through the cached
-     * alias still return pre-load bytes until explicit address-range
-     * invalidation, which is how this bug manifested: Candidate.word
-     * came back with a byte like 0x55 at positions where PSRAM held
-     * 0x25, because the cache was seeded with uninitialised PSRAM
-     * content during the pre-load bring-up). `xip_cache_invalidate_range`
-     * takes an offset from XIP_BASE (0x10000000), so PSRAM sections
-     * live at 0x01000000 + PSRAM_*_OFF.                                  */
+    /* Drop any cache lines that might alias what we just wrote via the
+     * UNCACHED path. Before the dict load ran, the cache may have been
+     * seeded with uninitialised PSRAM content from incidental reads
+     * through the cached alias (e.g. SWD inspection, PSRAM probe,
+     * prefetch); leaving those lines resident would mean subsequent
+     * reads via the cached alias return pre-load bytes instead of the
+     * fresh dict. We don't have dirty lines of our own to worry about
+     * because all writes in this function went via UNCACHED.
+     *
+     * Must be invalidate-by-range — the cheaper xip_cache_invalidate_
+     * all() set/way variant is broken on RP2350 and leaves stale lines
+     * intact (bug originally manifested as Candidate.word returning
+     * 0x55 at positions where PSRAM held 0x25). The range API takes an
+     * offset from XIP_BASE (0x10000000), so PSRAM sections live at
+     * 0x01000000 + PSRAM_*_OFF.                                         */
     #define PSRAM_XIP_OFFSET   0x01000000u    /* 0x11000000 - 0x10000000  */
     #define CACHE_LINE_ALIGN(sz) (((sz) + 7u) & ~7u)
     if (hdr->zh_dat_size)
