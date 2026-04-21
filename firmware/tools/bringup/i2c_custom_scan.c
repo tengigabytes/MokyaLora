@@ -371,6 +371,8 @@ void handle_command(const char *cmd) {
         qmi_diag();
     } else if (strcmp(cmd, "psram_verify") == 0) {
         psram_verify_full();
+    } else if (strcmp(cmd, "psram_wthru") == 0) {
+        psram_wthru_test();
     } else if (strncmp(cmd, "psram_at ", 9) == 0) {
         int cd = 0, rd = 0;
         if (sscanf(cmd + 9, "%d %d", &cd, &rd) == 2 &&
