@@ -67,8 +67,12 @@ void flash_sweep2(void);    // sweep M0 with Pico SDK boot2_w25q080-style config
 void flash_reset(void);     // emergency 66+99 device reset (both cmd widths)
 void flash_boost_pads(void);// RP2350 QSPI pad high-speed config (see P2-16)
 void flash_pad_ablation(void); // 2^3 ablation of SCLK drive/slew + SD schmitt at CLKDIV=1
-void flash_deep_scan(void);    // full 16 MB XOR compare: baseline vs CLKDIV=1 + SLEWFAST
-void flash_deep_ablation(void);// deep-scan oracle across 4 pad configs at CLKDIV=1
+void flash_deep_scan(void);    // full 16 MB XOR compare: baseline vs CLKDIV=1 + SLEWFAST (uncached 1-beat)
+void flash_deep_ablation(void);// deep-scan oracle across 4 pad configs at CLKDIV=1 (uncached 1-beat)
+void flash_deep_scan_cached(void);     // P2-16 revisit: cached-burst oracle, XIP_BASE + per-block invalidate
+void flash_deep_ablation_cached(void); // P2-16 revisit: cached-burst ablation across 4 pad configs
+void flash_rand_scan_cached(void);     // P2-16 revisit 2: random-address cached oracle, 100k samples
+void flash_rand_scan_long(void);       // P2-16 revisit 2: 1M samples random cached (duration stress)
 struct flash_speed_result {
     uint8_t  clkdiv;
     uint8_t  rxdelay;

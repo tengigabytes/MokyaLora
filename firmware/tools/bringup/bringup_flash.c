@@ -865,6 +865,519 @@ void flash_deep_ablation(void) {
                combos[i].bad_blocks == 0 ? "PASS" : "FAIL");
     }
     printf("\n  0 bad blocks = CLKDIV=1 is actually viable at this pad config.\n");
+    printf("  WARNING: uncached oracle only — production fetches via XIP cache\n");
+    printf("           (cache-line burst). Use flash_deep_ablation_cached to\n");
+    printf("           cover that path too.\n");
+}
+
+/* ---------------------------------------------------------------------
+ * flash_deep_scan_cached — cached-path oracle (P2-16 revisit).
+ *
+ * Motivation. flash_deep_scan (and flash_deep_ablation) read through
+ * XIP_NOCACHE_NOALLOC_BASE, i.e. every word is an independent 1-beat
+ * QMI read. Production CPU instruction fetches go through XIP_BASE,
+ * where every miss triggers a fresh cache-line burst from QMI (8-byte
+ * line on RP2350 → 2-word burst). The two paths:
+ *
+ *   - have different CS-low durations per transaction,
+ *   - can have different dummy/address-phase timing effects, and
+ *   - amortize the command/address overhead differently.
+ *
+ * Any timing margin that's just-wide-enough for 1-beat reads but
+ * too-narrow for 2-beat burst fills would show as "uncached PASS /
+ * cached FAIL" — which is a plausible explanation for the observation
+ * that flash_deep_ablation reports 0 bad blocks at SLEWFAST+DRIVE=8 mA
+ * while the production image (identical M0.timing + pad state, verified
+ * by SWD) still HardFaults in vStartFirstTask.
+ *
+ * This function mirrors flash_deep_scan_run but:
+ *   (a) reads every block through XIP_BASE (cached alias), and
+ *   (b) calls xip_cache_invalidate_range() for the block first, so
+ *       every word is a cold miss and produces a burst fill at the
+ *       candidate timing.
+ *
+ * Pass 1 runs with the orig M0 (baseline CACHED XOR). Pass 2 switches
+ * to CLKDIV=1 + SLEWFAST=1 + RXDELAY=2 and re-scans cached. A block
+ * whose XOR differs between passes = cached-path corruption that the
+ * uncached oracle can't catch.
+ *
+ * Interrupts disabled throughout. xip_cache_invalidate_all() after
+ * the scan so a post-return instruction fetch can't hit a stale
+ * CLKDIV=1 line.
+ * ------------------------------------------------------------------- */
+static inline void __always_inline flash_deep_block_invalidate(uint32_t blk) {
+    xip_cache_invalidate_range((uintptr_t)blk * DEEP_BLOCK_WORDS * 4u,
+                               (uintptr_t)DEEP_BLOCK_WORDS * 4u);
+}
+
+/* CRITICAL: while the CPU runs at CLKDIV=1 with cache on, we must NEVER
+ * fetch from flash — any cache line fill in the CLKDIV=1 window returns
+ * corrupted instructions (SLEWFAST-only config is known-bad uncached),
+ * and the cache then persists that garbage for later code fetches. This
+ * is precisely the production HardFault mechanism: the cached burst
+ * path poisons XIP cache entries, and any subsequent fetch of the
+ * poisoned line executes garbage → IACCVIOL / UNDEFINSTR.
+ *
+ * Guarantee: all timing is read from timer_hw->timerawl (MMIO, no flash
+ * fetch). No flash-resident helper (printf, get_absolute_time,
+ * to_ms_since_boot, multicore_*, etc.) is called between the M0 switch
+ * and the M0 restore + xip_cache_invalidate_all. */
+void __no_inline_not_in_flash_func(flash_deep_scan_cached_run)(
+        struct deep_scan_result *r) {
+    volatile uint32_t *flash = (volatile uint32_t *)XIP_BASE;
+    uint32_t orig_pads = pads_qspi_hw->io[0];
+    uint32_t orig_timing = qmi_hw->m[0].timing;
+    r->baseline_timing = orig_timing;
+
+    uint32_t irq_save = save_and_disable_interrupts();
+
+    /* Pass 1: baseline CACHED XOR per 64 KB block. Per-block
+     * invalidate forces the first 16 KB (cache capacity) to cold-miss
+     * at the block start; the remaining 48 KB naturally evict each
+     * other as the sequential scan fills the 16 KB cache. Every read
+     * therefore triggers a burst fill from QMI at orig_timing. */
+    uint32_t t_us0 = timer_hw->timerawl;
+    for (uint32_t blk = 0; blk < DEEP_BLOCKS; blk++) {
+        flash_deep_block_invalidate(blk);
+        uint32_t acc = 0;
+        const uint32_t base = blk * DEEP_BLOCK_WORDS;
+        for (uint32_t w = 0; w < DEEP_BLOCK_WORDS; w++)
+            acc ^= flash[base + w];
+        s_deep_baseline[blk] = acc;
+    }
+    uint32_t pass1_us = timer_hw->timerawl - t_us0;
+
+    /* Apply SLEWFAST=1 + CLKDIV=1 RXDELAY=2 COOLDOWN=1. */
+    pads_qspi_hw->io[0] = orig_pads | PADS_QSPI_GPIO_QSPI_SCLK_SLEWFAST_BITS;
+    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    const uint32_t kMask = QMI_M0_TIMING_COOLDOWN_BITS |
+                           QMI_M0_TIMING_RXDELAY_BITS |
+                           QMI_M0_TIMING_CLKDIV_BITS;
+    qmi_hw->m[0].timing = (orig_timing & ~kMask) |
+                          (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
+                          (2u << QMI_M0_TIMING_RXDELAY_LSB) |
+                          (1u << QMI_M0_TIMING_CLKDIV_LSB);
+    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    __asm volatile ("dsb sy" ::: "memory");
+    uint32_t clkdiv1_timing = qmi_hw->m[0].timing;
+
+    /* Pass 2: CLKDIV=1 CACHED XOR. Same per-block invalidate. */
+    uint32_t bad_blocks = 0;
+    int32_t  first_bad_blk = -1;
+    uint32_t t_us2 = timer_hw->timerawl;
+    for (uint32_t blk = 0; blk < DEEP_BLOCKS; blk++) {
+        flash_deep_block_invalidate(blk);
+        uint32_t acc = 0;
+        const uint32_t base = blk * DEEP_BLOCK_WORDS;
+        for (uint32_t w = 0; w < DEEP_BLOCK_WORDS; w++)
+            acc ^= flash[base + w];
+        if (acc != s_deep_baseline[blk]) {
+            bad_blocks++;
+            if (first_bad_blk < 0) first_bad_blk = (int32_t)blk;
+        }
+    }
+    uint32_t pass2_us = timer_hw->timerawl - t_us2;
+
+    /* Restore M0 + pads, then invalidate the entire cache so every
+     * future instruction fetch cold-misses at the restored (safe)
+     * timing. Doing this BEFORE any flash-resident call (including the
+     * caller's next printf) is mandatory — otherwise poisoned lines
+     * from pass 2 will corrupt fetches of e.g. timer_time_us_64. */
+    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    qmi_hw->m[0].timing = orig_timing;
+    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    pads_qspi_hw->io[0] = orig_pads;
+    xip_cache_invalidate_all();
+    __asm volatile ("dsb sy" ::: "memory");
+
+    /* Now safe to populate the result struct in RAM with previously
+     * captured values; no flash fetch required here, just memory
+     * stores (the struct lives in caller's stack / BSS, and the
+     * pass*_us → pass*_ms conversion is pure arithmetic). */
+    r->pass1_ms = pass1_us / 1000u;
+    r->pass2_ms = pass2_us / 1000u;
+    r->clkdiv1_timing = clkdiv1_timing;
+    r->bad_blocks = bad_blocks;
+    r->first_bad_blk = first_bad_blk;
+    r->first_bad_word_idx = 0xFFFFFFFFu;
+    r->baseline_word_val = 0;
+    r->clkdiv1_word_val = 0;
+
+    restore_interrupts(irq_save);
+}
+
+void flash_deep_scan_cached(void) {
+    printf("\n--- Flash deep scan CACHED (16 MB: baseline vs CLKDIV=1 + SLEWFAST=1) ---\n");
+    printf("  Oracle: per-block xip_cache_invalidate_range + XIP_BASE reads\n");
+    printf("  so every word triggers a cold cache-line burst fill from QMI\n");
+    printf("  at the candidate M0 timing. This path is what the CPU actually\n");
+    printf("  uses for instruction fetch — flash_deep_scan's uncached 1-beat\n");
+    printf("  reads can pass while the cached burst path corrupts.\n\n");
+    struct deep_scan_result r = {0};
+    flash_deep_scan_cached_run(&r);
+
+    printf("  baseline M0.timing = 0x%08X\n", (unsigned)r.baseline_timing);
+    printf("  CLKDIV=1 M0.timing = 0x%08X\n", (unsigned)r.clkdiv1_timing);
+    printf("  Pass 1 (baseline)  = %u ms  (%u KB/s effective)\n",
+           (unsigned)r.pass1_ms,
+           r.pass1_ms ? (unsigned)(16u * 1024u * 1000u / r.pass1_ms) : 0);
+    printf("  Pass 2 (CLKDIV=1)  = %u ms  (%u KB/s effective)\n",
+           (unsigned)r.pass2_ms,
+           r.pass2_ms ? (unsigned)(16u * 1024u * 1000u / r.pass2_ms) : 0);
+    printf("  Bad blocks (XOR mismatch) = %u / %u\n",
+           (unsigned)r.bad_blocks, (unsigned)DEEP_BLOCKS);
+
+    if (r.first_bad_blk < 0) {
+        printf("  CLKDIV=1 cached path matches baseline across all 16 MB.\n");
+        printf("  => Cached burst fills alone are NOT the production HardFault.\n");
+        printf("     Next suspects: concurrent M0+M1 QMI arbitration, DUMMY_LEN\n");
+        printf("     vs boot2 mismatch, temperature drift, supply noise.\n");
+        return;
+    }
+
+    uint32_t bad_blk_addr = 0x10000000u + (uint32_t)r.first_bad_blk * (DEEP_BLOCK_WORDS * 4u);
+    printf("  First bad block @ 0x%08X (block #%u, offset 0x%X)\n",
+           (unsigned)bad_blk_addr, (unsigned)r.first_bad_blk,
+           (unsigned)((uint32_t)r.first_bad_blk * (DEEP_BLOCK_WORDS * 4u)));
+    printf("  => CACHED burst path corrupts at CLKDIV=1 even where the\n");
+    printf("     UNCACHED 1-beat path was clean. Hypothesis confirmed:\n");
+    printf("     flash_deep_scan's oracle is incomplete.\n");
+    printf("  Next: flash_deep_ablation_cached to check whether a different\n");
+    printf("  pad config makes the cached path pass. If none does, sweep\n");
+    printf("  DUMMY_LEN / RXDELAY / COOLDOWN.\n");
+}
+
+/* ---------------------------------------------------------------------
+ * flash_deep_ablation_cached — cached-path ablation across 4 pad combos.
+ *
+ * Same combos as flash_deep_ablation (SLEWFAST only / + DRIVE=8 mA /
+ * + SCHMITT off / full boost), but the oracle is cached XOR compared
+ * against a cached baseline. A combo passes only if the cached path
+ * returns identical block XORs at CLKDIV=1 as at baseline.
+ *
+ * If no combo passes, the cached burst path is fundamentally unreliable
+ * at CLKDIV=1 on this hardware and further investigation should move
+ * to DUMMY_LEN / RXDELAY / COOLDOWN sweeps. If a combo passes, that
+ * is the one to try shipping to production (with the caveat that a
+ * single-pass scan still isn't a load-test under concurrent M0+M1).
+ * ------------------------------------------------------------------- */
+/* Same flash-safety rules as flash_deep_scan_cached_run: never call a
+ * flash-resident function between the per-combo M0 switch and the M0
+ * restore + xip_cache_invalidate_all. Use timer_hw->timerawl for
+ * timing, and stage all per-combo bookkeeping in local RAM scalars. */
+void __no_inline_not_in_flash_func(flash_deep_ablation_cached_run)(
+        struct dab_combo *combos, int n) {
+    volatile uint32_t *flash = (volatile uint32_t *)XIP_BASE;
+    uint32_t orig_sclk = pads_qspi_hw->io[0];
+    uint32_t orig_sd[4] = { pads_qspi_hw->io[1], pads_qspi_hw->io[2],
+                            pads_qspi_hw->io[3], pads_qspi_hw->io[4] };
+    uint32_t orig_timing = qmi_hw->m[0].timing;
+
+    uint32_t irq_save = save_and_disable_interrupts();
+
+    /* Baseline CACHED XOR at orig M0. */
+    for (uint32_t blk = 0; blk < DEEP_BLOCKS; blk++) {
+        flash_deep_block_invalidate(blk);
+        uint32_t acc = 0;
+        const uint32_t base = blk * DEEP_BLOCK_WORDS;
+        for (uint32_t w = 0; w < DEEP_BLOCK_WORDS; w++)
+            acc ^= flash[base + w];
+        s_deep_baseline[blk] = acc;
+    }
+
+    /* Per-combo timing captured in RAM scalars first; converted to
+     * ms + written back to combos[] AFTER the M0 is safely restored
+     * and the cache is flushed, so the stores don't have to touch
+     * flash. combos[] itself lives in caller stack / BSS, not flash. */
+    uint32_t pass_us[8] = {0};
+    uint32_t bad_ct[8]  = {0};
+
+    for (int i = 0; i < n; i++) {
+        uint32_t sclk_val =
+            ((uint32_t)combos[i].drive << PADS_QSPI_GPIO_QSPI_SCLK_DRIVE_LSB) |
+            (combos[i].slewfast ? PADS_QSPI_GPIO_QSPI_SCLK_SLEWFAST_BITS : 0) |
+            (combos[i].schmitt_off ? 0 : PADS_QSPI_GPIO_QSPI_SCLK_SCHMITT_BITS) |
+            PADS_QSPI_GPIO_QSPI_SCLK_IE_BITS;
+        pads_qspi_hw->io[0] = sclk_val;
+        for (int j = 1; j <= 4; j++) {
+            uint32_t v = pads_qspi_hw->io[j];
+            if (combos[i].schmitt_off)
+                v &= ~PADS_QSPI_GPIO_QSPI_SD0_SCHMITT_BITS;
+            else
+                v |= PADS_QSPI_GPIO_QSPI_SD0_SCHMITT_BITS;
+            pads_qspi_hw->io[j] = v;
+        }
+
+        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        const uint32_t kMask = QMI_M0_TIMING_COOLDOWN_BITS |
+                               QMI_M0_TIMING_RXDELAY_BITS |
+                               QMI_M0_TIMING_CLKDIV_BITS;
+        qmi_hw->m[0].timing = (orig_timing & ~kMask) |
+                              (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
+                              (2u << QMI_M0_TIMING_RXDELAY_LSB) |
+                              (1u << QMI_M0_TIMING_CLKDIV_LSB);
+        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        __asm volatile ("dsb sy" ::: "memory");
+
+        uint32_t t_us0 = timer_hw->timerawl;
+        uint32_t bad = 0;
+        for (uint32_t blk = 0; blk < DEEP_BLOCKS; blk++) {
+            flash_deep_block_invalidate(blk);
+            uint32_t acc = 0;
+            const uint32_t base = blk * DEEP_BLOCK_WORDS;
+            for (uint32_t w = 0; w < DEEP_BLOCK_WORDS; w++)
+                acc ^= flash[base + w];
+            if (acc != s_deep_baseline[blk]) bad++;
+        }
+        pass_us[i] = timer_hw->timerawl - t_us0;
+        bad_ct[i]  = bad;
+
+        /* Restore M0 + invalidate BEFORE the next combo's pad changes
+         * and before the loop header reads combos[i+1] from RAM. pad
+         * changes don't need flash, but the next iteration's CLKDIV=1
+         * switch should start from a known-clean cache. */
+        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        qmi_hw->m[0].timing = orig_timing;
+        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        xip_cache_invalidate_all();
+        __asm volatile ("dsb sy" ::: "memory");
+    }
+
+    pads_qspi_hw->io[0] = orig_sclk;
+    pads_qspi_hw->io[1] = orig_sd[0];
+    pads_qspi_hw->io[2] = orig_sd[1];
+    pads_qspi_hw->io[3] = orig_sd[2];
+    pads_qspi_hw->io[4] = orig_sd[3];
+    xip_cache_invalidate_all();
+    __asm volatile ("dsb sy" ::: "memory");
+
+    /* Write-back results to combos[] AFTER cache is clean. */
+    for (int i = 0; i < n; i++) {
+        combos[i].pass_ms    = pass_us[i] / 1000u;
+        combos[i].bad_blocks = bad_ct[i];
+    }
+
+    restore_interrupts(irq_save);
+}
+
+void flash_deep_ablation_cached(void) {
+    printf("\n--- Flash deep ablation CACHED oracle at CLKDIV=1 RXDELAY=2 ---\n");
+    printf("  Oracle: 16 MB cached block-XOR (XIP_BASE + per-block invalidate)\n");
+    printf("  baseline vs CLKDIV=1. Tests the cache-line burst path the CPU\n");
+    printf("  actually uses for instruction fetch.\n\n");
+
+    struct dab_combo combos[4] = {
+        { 1, true, false, 0, 0 },  /* SLEWFAST only */
+        { 2, true, false, 0, 0 },  /* + DRIVE=8 mA */
+        { 1, true, true,  0, 0 },  /* + SCHMITT off */
+        { 2, true, true,  0, 0 },  /* full boot2_w25q080 boost */
+    };
+    flash_deep_ablation_cached_run(combos, 4);
+
+    printf("  SCLK DRIVE  SLEWFAST  SD SCHMITT  bad_blocks/%u  scan_ms  result\n",
+           (unsigned)DEEP_BLOCKS);
+    printf("  ----------  --------  ----------  -------------  -------  ------\n");
+    for (int i = 0; i < 4; i++) {
+        printf("  %s       %s        %s         %8u       %5u    %s\n",
+               combos[i].drive == 2 ? "8mA" : "4mA",
+               combos[i].slewfast    ? "on " : "off",
+               combos[i].schmitt_off ? "off" : "on ",
+               (unsigned)combos[i].bad_blocks,
+               (unsigned)combos[i].pass_ms,
+               combos[i].bad_blocks == 0 ? "PASS" : "FAIL");
+    }
+    printf("\n  0 bad blocks on the CACHED oracle = this pad config drives\n");
+    printf("  QMI cleanly for cache-line bursts AND 1-beat reads at CLKDIV=1.\n");
+    printf("  Still not a concurrency test: does not cover simultaneous\n");
+    printf("  M0(flash) + M1(PSRAM) traffic as seen under Core 1 dict load.\n");
+}
+
+/* ---------------------------------------------------------------------
+ * flash_rand_scan_cached — random-address cached oracle (P2-16 revisit 2).
+ *
+ * Production at CLKDIV=1 + 8 mA + SLEWFAST HardFaults reproducibly on
+ * cache-line-fill corruption. Bringup flash_deep_scan_cached at the
+ * same register state reports 0/256 bad blocks. The two differ in
+ * one obvious way: bringup's linear scan has sequential ADDR phase
+ * bit transitions (only low bits toggle between back-to-back fills),
+ * while production's random code path fetches have wide-swing ADDR
+ * transitions that exercise Simultaneous Switching Noise on SD[3:0]
+ * during the 6-quad-clock address phase of the Fast Read Quad I/O
+ * (0xEB) transaction.
+ *
+ * This oracle:
+ *   - generates RAND_TOTAL_SAMPLES random flash offsets via LCG
+ *     (reproducible from a seed),
+ *   - at baseline M0 reads each offset through XIP_BASE with per-
+ *     cache-line invalidate so every read is a fresh burst fill,
+ *   - accumulates a per-bucket XOR (100 buckets × 1000 samples),
+ *   - switches to CLKDIV=1 + 8 mA + SLEWFAST,
+ *   - repeats the pass with the same seed,
+ *   - compares buckets, reports first-bad bucket + mismatch count.
+ *
+ * A mismatch = specific random-access QMI burst fill returned data
+ * that doesn't match the baseline fill of the same word. That is the
+ * corruption signature we see in production. Linear-scan oracles miss
+ * this because they never force an ADDR-phase bit-swing.
+ * ------------------------------------------------------------------- */
+#define RAND_TOTAL_SAMPLES  100000u
+#define RAND_BUCKET_SIZE    1000u
+#define RAND_BUCKET_COUNT   (RAND_TOTAL_SAMPLES / RAND_BUCKET_SIZE)
+
+/* LCG (Numerical Recipes) — reproducible, avoids division / % cost. */
+static inline uint32_t flash_lcg_next(uint32_t *state) {
+    *state = (*state) * 1664525u + 1013904223u;
+    return *state;
+}
+
+static uint32_t s_rand_baseline[RAND_BUCKET_COUNT];
+
+struct rand_scan_result {
+    uint32_t baseline_timing;
+    uint32_t clkdiv1_timing;
+    uint32_t pass1_us;
+    uint32_t pass2_us;
+    uint32_t mismatch_buckets;
+    int32_t  first_bad_bucket;
+    uint32_t seed;
+};
+
+void __no_inline_not_in_flash_func(flash_rand_scan_cached_run_n)(
+        struct rand_scan_result *r, uint32_t seed,
+        uint32_t samples_per_bucket) {
+    volatile uint32_t *flash = (volatile uint32_t *)XIP_BASE;
+    uint32_t orig_pads = pads_qspi_hw->io[0];
+    uint32_t orig_timing = qmi_hw->m[0].timing;
+    r->baseline_timing = orig_timing;
+    r->seed = seed;
+
+    uint32_t irq_save = save_and_disable_interrupts();
+
+    /* Pass 1: baseline CLKDIV=3 CACHED, per-sample invalidate so
+     * every read is a fresh cache-line burst fill at this timing. */
+    uint32_t state = seed;
+    uint32_t t_us0 = timer_hw->timerawl;
+    for (uint32_t b = 0; b < RAND_BUCKET_COUNT; b++) {
+        uint32_t acc = 0;
+        for (uint32_t i = 0; i < samples_per_bucket; i++) {
+            /* Mask to 16 MB flash range, word-aligned. No `%` cost. */
+            uint32_t off_bytes = flash_lcg_next(&state) & 0x00FFFFFCu;
+            xip_cache_invalidate_range(off_bytes & ~7u, 8u);
+            acc ^= flash[off_bytes >> 2];
+        }
+        s_rand_baseline[b] = acc;
+    }
+    uint32_t pass1_us = timer_hw->timerawl - t_us0;
+
+    /* Apply CLKDIV=1 + 8 mA + SLEWFAST pad. */
+    pads_qspi_hw->io[0] =
+        (PADS_QSPI_GPIO_QSPI_SCLK_DRIVE_VALUE_8MA
+                << PADS_QSPI_GPIO_QSPI_SCLK_DRIVE_LSB) |
+        PADS_QSPI_GPIO_QSPI_SCLK_SLEWFAST_BITS |
+        PADS_QSPI_GPIO_QSPI_SCLK_SCHMITT_BITS |
+        PADS_QSPI_GPIO_QSPI_SCLK_IE_BITS;
+    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    const uint32_t kMask = QMI_M0_TIMING_COOLDOWN_BITS |
+                           QMI_M0_TIMING_RXDELAY_BITS |
+                           QMI_M0_TIMING_CLKDIV_BITS;
+    qmi_hw->m[0].timing = (orig_timing & ~kMask) |
+                          (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
+                          (2u << QMI_M0_TIMING_RXDELAY_LSB) |
+                          (1u << QMI_M0_TIMING_CLKDIV_LSB);
+    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    __asm volatile("dsb sy" ::: "memory");
+    uint32_t clkdiv1_timing = qmi_hw->m[0].timing;
+
+    /* Pass 2: CLKDIV=1 CACHED, same seed → same address sequence. */
+    state = seed;
+    uint32_t mismatches = 0;
+    int32_t first_bad = -1;
+    uint32_t t_us1 = timer_hw->timerawl;
+    for (uint32_t b = 0; b < RAND_BUCKET_COUNT; b++) {
+        uint32_t acc = 0;
+        for (uint32_t i = 0; i < samples_per_bucket; i++) {
+            uint32_t off_bytes = flash_lcg_next(&state) & 0x00FFFFFCu;
+            xip_cache_invalidate_range(off_bytes & ~7u, 8u);
+            acc ^= flash[off_bytes >> 2];
+        }
+        if (acc != s_rand_baseline[b]) {
+            mismatches++;
+            if (first_bad < 0) first_bad = (int32_t)b;
+        }
+    }
+    uint32_t pass2_us = timer_hw->timerawl - t_us1;
+
+    /* Restore M0 + pads + flush poisoned cache before any subsequent
+     * flash-resident fetch. */
+    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    qmi_hw->m[0].timing = orig_timing;
+    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    pads_qspi_hw->io[0] = orig_pads;
+    xip_cache_invalidate_all();
+    __asm volatile("dsb sy" ::: "memory");
+
+    r->pass1_us = pass1_us;
+    r->pass2_us = pass2_us;
+    r->clkdiv1_timing = clkdiv1_timing;
+    r->mismatch_buckets = mismatches;
+    r->first_bad_bucket = first_bad;
+
+    restore_interrupts(irq_save);
+}
+
+static void flash_rand_scan_print(const struct rand_scan_result *r,
+                                  uint32_t total_samples) {
+    printf("  baseline M0.timing = 0x%08X\n", (unsigned)r->baseline_timing);
+    printf("  CLKDIV=1 M0.timing = 0x%08X\n", (unsigned)r->clkdiv1_timing);
+    printf("  seed               = 0x%08X\n", (unsigned)r->seed);
+    printf("  Pass 1 (baseline)  = %u us  (%u samples/s)\n",
+           (unsigned)r->pass1_us,
+           r->pass1_us ? (unsigned)((uint64_t)total_samples * 1000000u / r->pass1_us) : 0);
+    printf("  Pass 2 (CLKDIV=1)  = %u us  (%u samples/s)\n",
+           (unsigned)r->pass2_us,
+           r->pass2_us ? (unsigned)((uint64_t)total_samples * 1000000u / r->pass2_us) : 0);
+    printf("  Mismatch buckets   = %u / %u  (total samples %u)\n",
+           (unsigned)r->mismatch_buckets, (unsigned)RAND_BUCKET_COUNT,
+           (unsigned)total_samples);
+    if (r->first_bad_bucket < 0) {
+        printf("  CLKDIV=1 random cached fills match baseline across all\n");
+        printf("  %u samples.\n", (unsigned)total_samples);
+    } else {
+        uint32_t samples_per_bucket = total_samples / RAND_BUCKET_COUNT;
+        printf("  First bad bucket   = %d  (samples %u..%u)\n",
+               (int)r->first_bad_bucket,
+               (unsigned)r->first_bad_bucket * samples_per_bucket,
+               (unsigned)(r->first_bad_bucket + 1) * samples_per_bucket - 1);
+    }
+}
+
+void flash_rand_scan_cached(void) {
+    printf("\n--- Flash RANDOM-access cached oracle (CLKDIV=1 + 8 mA + SLEWFAST) ---\n");
+    printf("  %u random 4-byte samples, %u buckets × %u samples each\n\n",
+           (unsigned)RAND_TOTAL_SAMPLES,
+           (unsigned)RAND_BUCKET_COUNT,
+           (unsigned)RAND_BUCKET_SIZE);
+
+    struct rand_scan_result r = {0};
+    flash_rand_scan_cached_run_n(&r, 0xDEADBEEFu, RAND_BUCKET_SIZE);
+    flash_rand_scan_print(&r, RAND_BUCKET_SIZE * RAND_BUCKET_COUNT);
+}
+
+/* 10× longer run — 1 M samples — to catch transient errors at rates
+ * below what the 100 k run would see. IRQ off throughout. */
+#define RAND_LONG_BUCKET_SIZE  10000u
+
+void flash_rand_scan_long(void) {
+    printf("\n--- Flash RANDOM-access cached oracle LONG (1 M samples) ---\n");
+    printf("  %u buckets × %u samples each = %u total at CLKDIV=1 +\n",
+           (unsigned)RAND_BUCKET_COUNT,
+           (unsigned)RAND_LONG_BUCKET_SIZE,
+           (unsigned)(RAND_BUCKET_COUNT * RAND_LONG_BUCKET_SIZE));
+    printf("  8 mA + SLEWFAST, IRQ-off. Baseline + CLKDIV=1 each ~1 s.\n\n");
+
+    struct rand_scan_result r = {0};
+    flash_rand_scan_cached_run_n(&r, 0xDEADBEEFu, RAND_LONG_BUCKET_SIZE);
+    flash_rand_scan_print(&r, RAND_LONG_BUCKET_SIZE * RAND_BUCKET_COUNT);
 }
 
 void flash_speed_test(void) {
