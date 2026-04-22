@@ -365,24 +365,16 @@ void handle_command(const char *cmd) {
         flash_bench();
     } else if (strcmp(cmd, "flash_sweep2") == 0) {
         flash_sweep2();
-    } else if (strcmp(cmd, "flash_probe_75") == 0) {
-        flash_probe_75();
-    } else if (strcmp(cmd, "flash_sweep3") == 0) {
-        flash_sweep3();
-    } else if (strcmp(cmd, "flash_try_qpi") == 0) {
-        flash_try_qpi();
     } else if (strcmp(cmd, "flash_reset") == 0) {
         flash_reset();
-    } else if (strcmp(cmd, "flash_try_114") == 0) {
-        flash_try_114();
-    } else if (strcmp(cmd, "flash_boost_drv") == 0) {
-        flash_boost_drv();
-    } else if (strcmp(cmd, "flash_read_sr3") == 0) {
-        flash_read_sr3();
     } else if (strcmp(cmd, "flash_boost_pads") == 0) {
         flash_boost_pads();
     } else if (strcmp(cmd, "flash_pad_ablation") == 0) {
         flash_pad_ablation();
+    } else if (strcmp(cmd, "flash_deep_scan") == 0) {
+        flash_deep_scan();
+    } else if (strcmp(cmd, "flash_deep_ablation") == 0) {
+        flash_deep_ablation();
     } else if (strcmp(cmd, "psram_jlink") == 0) {
         psram_jlink_prep();
     } else if (strcmp(cmd, "psram_diag") == 0) {
