@@ -375,6 +375,14 @@ void handle_command(const char *cmd) {
         flash_deep_scan();
     } else if (strcmp(cmd, "flash_deep_ablation") == 0) {
         flash_deep_ablation();
+    } else if (strcmp(cmd, "flash_deep_scan_cached") == 0) {
+        flash_deep_scan_cached();
+    } else if (strcmp(cmd, "flash_deep_ablation_cached") == 0) {
+        flash_deep_ablation_cached();
+    } else if (strcmp(cmd, "flash_rand_scan_cached") == 0) {
+        flash_rand_scan_cached();
+    } else if (strcmp(cmd, "flash_rand_scan_long") == 0) {
+        flash_rand_scan_long();
     } else if (strcmp(cmd, "psram_jlink") == 0) {
         psram_jlink_prep();
     } else if (strcmp(cmd, "psram_diag") == 0) {
