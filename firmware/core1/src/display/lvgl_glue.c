@@ -41,6 +41,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "mokya_trace.h"
+
 /* ── Framebuffer ─────────────────────────────────────────────────────────── *
  * 240 x 320 x 2 B/px = 153 600 B = exactly 150 KB. Lives in the dedicated
  * `.framebuffer` NOLOAD section so it does NOT consume the 48 KB lv_mem
@@ -67,11 +69,16 @@ static void lvgl_flush_cb(lv_display_t *disp,
     /* DIRECT mode: px_map always equals the framebuffer base; `area` is
      * the dirty rect inside it. The strided helper handles byte-swap
      * + row-by-row DMA without touching the framebuffer. */
+    int rect_w = (int)area->x2 - (int)area->x1 + 1;
+    int rect_h = (int)area->y2 - (int)area->y1 + 1;
+    TRACE("lvgl", "flush_start", "w=%d,h=%d", rect_w, rect_h);
+
     display_flush_rect_strided((uint16_t)area->x1, (uint16_t)area->y1,
                                (uint16_t)area->x2, (uint16_t)area->y2,
                                (const uint16_t *)px_map,
                                (uint16_t)DISPLAY_W);
 
+    TRACE_BARE("lvgl", "flush_done");
     lv_display_flush_ready(disp);
 }
 

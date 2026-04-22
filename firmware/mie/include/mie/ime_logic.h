@@ -45,6 +45,9 @@
 
 namespace mie {
 
+class CompositionSearcher;  // forward decl; see mie/composition_searcher.h
+
+
 // ── Input modes ──────────────────────────────────────────────────────────────
 enum class InputMode : uint8_t {
     SmartZh = 0,   // 注音
@@ -114,7 +117,14 @@ public:
 
     // Candidate display.
     static constexpr int      kPageSize          = 5;
-    static constexpr int      kMaxCandidates     = 50;
+    // Half-keyboard single-syllable searches routinely surface 70–200+
+    // matches (each slot byte conflates 2 phonemes — e.g. ㄅ/ㄉ on slot 0,
+    // so byte 0x21+ㄧ+ˋ resolves to 229 distinct chars). At 50 the user
+    // couldn't reach mid-rank chars like 滷 (rank 46) or rare chars like
+    // 丼 (rank 71). 100 covers ≥ 90 % of (byte_seq, tone) buckets in the
+    // current dict; cost = +1.8 KB per ImeLogic + ~3.6 KB stack per
+    // nested search.
+    static constexpr int      kMaxCandidates     = 100;
 
     // Internal buffer limits.
     static constexpr int      kMaxKeySeq         = 64;
@@ -125,6 +135,17 @@ public:
     ///                     mode). nullptr disables English prediction but
     ///                     leaves SmartEn digit multi-tap working.
     explicit ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher = nullptr);
+
+    /// Attach a MIED v4 CompositionSearcher. When attached AND is_loaded(),
+    /// SmartZh's run_search() uses the composition engine (position-based
+    /// dispatch + 0-result fallback + 5+ truncated prefix chain) instead of
+    /// the v2 TrieSearcher. Pass nullptr to revert to v2 behaviour.
+    ///
+    /// Rationale: enables incremental rollout; existing tests and callers
+    /// that use only the v2 constructor keep working unchanged. Once
+    /// Core 1 firmware switches to v4 (Phase 5), this becomes the default
+    /// and the legacy v2 path can be removed.
+    void attach_composition_searcher(CompositionSearcher* cs);
 
     /// Attach the event listener. Single slot; nullptr detaches.
     void set_listener(IImeListener* listener);
@@ -194,6 +215,17 @@ public:
     const Candidate& page_cand(int i) const;
     int page_sel()        const { return cand_count_ ? selected_ % kPageSize : 0; }
 
+    // ── Position counter (public so unit tests + UI can call) ────────────
+    /// Count distinct syllable positions in a key-sequence byte string.
+    /// See ime_keys.cpp for the role classification and heuristic rationale.
+    /// Used by run_search_v4() to dispatch to the matching word-length bucket.
+    static int count_positions(const char* seq, int len);
+
+    /// Return the byte offset covering the first `n_positions` syllable
+    /// positions in the key sequence. Used by 5+ truncated fallback chain.
+    static int first_n_positions_bytes(const char* seq, int len,
+                                       int n_positions);
+
 private:
     // ── Mode handlers (ime_smart.cpp / ime_direct.cpp) ───────────────────
     bool handle_smart(const KeyEvent& ev);
@@ -216,6 +248,8 @@ private:
 
     // ── Search helpers (ime_search.cpp) ──────────────────────────────────
     void run_search();
+    void run_search_v2_legacy();   ///< Former run_search body, TrieSearcher path.
+    void run_search_v4();          ///< CompositionSearcher dispatch + fallback.
     void rebuild_display_smart();
 
     // ── Display helpers (ime_display.cpp) ────────────────────────────────
@@ -226,9 +260,10 @@ private:
     void notify_changed();
 
     // ── State data ───────────────────────────────────────────────────────
-    TrieSearcher&  zh_searcher_;
-    TrieSearcher*  en_searcher_;
-    IImeListener*  listener_ = nullptr;
+    TrieSearcher&         zh_searcher_;
+    TrieSearcher*         en_searcher_;
+    CompositionSearcher*  composition_searcher_ = nullptr;  ///< v4 opt-in (Phase 3)
+    IImeListener*         listener_ = nullptr;
 
     InputMode      mode_ = InputMode::SmartZh;
 

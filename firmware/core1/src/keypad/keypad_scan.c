@@ -38,6 +38,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include "mokya_trace.h"
+
 volatile uint8_t  g_kp_snapshot[KEY_ROWS];
 volatile uint8_t  g_kp_stable[KEY_ROWS];
 volatile uint32_t g_kp_scan_tick;
@@ -222,6 +224,8 @@ void keypad_scan_task(void *pv)
                     const mokya_keycode_t kc = g_keymap[r][c];
                     if (kc != MOKYA_KEY_NONE) {
                         (void)key_event_push_hw(kc, bit != 0u);
+                        TRACE("kpad", "commit", "kc=0x%02x,p=%u",
+                              (unsigned)kc, (unsigned)bit);
                     }
                 }
             }

@@ -10,10 +10,13 @@
 #   0x10C00000  LittleFS / free           (4 MB)
 #
 # Run from project root:
-#   bash scripts/build_and_flash.sh          # build + flash everything
+#   bash scripts/build_and_flash.sh          # build + flash everything (MDBL v2 dict)
 #   bash scripts/build_and_flash.sh --core1  # build + flash Core 1 + assets
 #   bash scripts/build_and_flash.sh --dict   # flash dict blob only
 #   bash scripts/build_and_flash.sh --font   # flash font blob only
+#   bash scripts/build_and_flash.sh --v4     # flash MIED v4 (composition) dict
+#                                            # in place of MDBL — Core 1 firmware
+#                                            # auto-detects via MIE4 magic
 #
 # Requires: PlatformIO, VS Build Tools 2019, ARM GCC, Ninja, Pico SDK,
 #           J-Link Ultra connected via SWD.
@@ -24,18 +27,39 @@ cd "$(dirname "$0")/.."
 JLINK="C:/Program Files/SEGGER/JLink_V932/JLink.exe"
 CORE1_BIN="build/core1_bridge/core1_bridge.bin"
 DICT_BLOB="build/mie-host/dict.bin"
+DICT_BLOB_V4="firmware/mie/data/dict_mie_v4.bin"
 DICT_ADDR="0x10400000"
 FONT_BLOB="firmware/mie/data/mie_unifont_sm_16.bin"
 FONT_ADDR="0x10A00000"
 CORE1_ONLY=false
 DICT_ONLY=false
 FONT_ONLY=false
+USE_V4=false
 
-case "$1" in
-    --core1) CORE1_ONLY=true ;;
-    --dict)  DICT_ONLY=true ;;
-    --font)  FONT_ONLY=true ;;
-esac
+for arg in "$@"; do
+    case "$arg" in
+        --core1) CORE1_ONLY=true ;;
+        --dict)  DICT_ONLY=true ;;
+        --font)  FONT_ONLY=true ;;
+        --v4)    USE_V4=true ;;
+    esac
+done
+
+# When --v4 is set, swap the dict source to the MIED v4 single binary.
+# Core 1's mie_dict_loader auto-detects by magic byte.
+if [ "$USE_V4" = true ]; then
+    if [ ! -f "$DICT_BLOB_V4" ]; then
+        echo "ERROR: $DICT_BLOB_V4 not found."
+        echo "  Build it first: python firmware/mie/tools/gen_dict.py \\"
+        echo "                    --libchewing firmware/mie/data_sources/tsi.csv \\"
+        echo "                    --zh-max-abbr-syls 4 \\"
+        echo "                    --v4-output $DICT_BLOB_V4 \\"
+        echo "                    --output-dir /tmp/mie_v2_throwaway"
+        exit 1
+    fi
+    DICT_BLOB="$DICT_BLOB_V4"
+    echo "=== --v4 mode: dict will be flashed from $DICT_BLOB ==="
+fi
 
 # ── Core 0: PlatformIO build ────────────────────────────────────────────
 if [ "$CORE1_ONLY" = false ] && [ "$DICT_ONLY" = false ] && [ "$FONT_ONLY" = false ]; then
@@ -68,13 +92,20 @@ if [ "$DICT_ONLY" = false ] && [ "$FONT_ONLY" = false ]; then
     echo "OK: $FONT_BLOB ($(stat -c%s "$FONT_BLOB" 2>/dev/null || wc -c < "$FONT_BLOB") bytes)"
 fi
 
-# ── Dict blob: CMake/MSBuild via mie-host ───────────────────────────────
+# ── Dict blob: CMake/MSBuild via mie-host (MDBL v2) or pre-built v4 ────
 if [ "$FONT_ONLY" = false ]; then
-    echo ""
-    echo "=== Building MIE dict blob (mie-host/mie_dict_blob) ==="
-    cmake --build build/mie-host --config Debug --target mie_dict_blob 2>&1
+    if [ "$USE_V4" = true ]; then
+        # v4 dict is built directly by gen_dict.py (no CMake target yet).
+        # Caller is responsible for keeping $DICT_BLOB_V4 fresh.
+        echo ""
+        echo "=== Using pre-built v4 dict at $DICT_BLOB ==="
+    else
+        echo ""
+        echo "=== Building MIE dict blob (mie-host/mie_dict_blob) ==="
+        cmake --build build/mie-host --config Debug --target mie_dict_blob 2>&1
+    fi
     if [ ! -f "$DICT_BLOB" ]; then
-        echo "ERROR: $DICT_BLOB not found — blob packaging failed"
+        echo "ERROR: $DICT_BLOB not found"
         exit 1
     fi
     echo "OK: $DICT_BLOB ($(stat -c%s "$DICT_BLOB" 2>/dev/null || wc -c < "$DICT_BLOB") bytes)"

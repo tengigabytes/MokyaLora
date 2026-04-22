@@ -37,6 +37,12 @@ extern "C" {
 #define MIE_MDBL_VERSION         1u
 #define MIE_MDBL_HEADER_SIZE     0x28u
 
+/* MIED v4 (composition dict) magic. Single binary with header.total_size
+ * at offset 0x20 (see firmware/mie/include/mie/composition_searcher.h). */
+#define MIE_MIE4_MAGIC           0x3445494Du  /* "MIE4" as u32 LE */
+#define MIE_MIE4_HEADER_SIZE     0x30u
+#define MIE_MIE4_TOTAL_SIZE_OFF  0x20u
+
 typedef struct {
     uint32_t magic;        /* MIE_MDBL_MAGIC */
     uint16_t version;      /* MIE_MDBL_VERSION */

@@ -21,6 +21,7 @@ endif()
 add_library(mie STATIC
     src/mie_init.cpp
     src/trie_searcher.cpp
+    src/composition_searcher.cpp
     src/ime_logic.cpp
     src/ime_keys.cpp
     src/ime_search.cpp
