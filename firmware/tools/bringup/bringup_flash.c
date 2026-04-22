@@ -343,420 +343,14 @@ void flash_sweep2(void) {
     #undef SW2_COMBOS
 }
 
-/* ---------------------------------------------------------------------
- * flash_probe_75 — diagnose 75 MHz failure mode.
- *
- * Reads three known flash words N=256 times each at CLKDIV=1 across
- * RXDELAY 0..7 and reports up to 4 most-common values per slot. If a
- * slot always returns the SAME wrong value, the failure is a
- * deterministic sampling offset (timing — fixable with DUMMY_LEN or
- * RXDELAY tuning). If values vary randomly, we're in signal-integrity
- * territory (PCB/trace/pad, not fixable by register tweaks).
- *
- * Probe addresses:
- *   0x10000000 -> MSP sentinel (expected 0x20082000)
- *   0x10000004 -> reset handler (some Thumb code address)
- *   0x10001000 -> deep in code section (should be non-zero non-FF)
- * ------------------------------------------------------------------- */
-#define PROBE_COUNT 16
-#define PROBE_TOP   4
-
-struct probe_slot {
-    uint32_t values[PROBE_TOP];
-    uint16_t counts[PROBE_TOP];
-    uint8_t  unique;  /* bounded to PROBE_TOP; > = ran out of slots */
-};
-
-static void __no_inline_not_in_flash_func(probe_record)(
-        struct probe_slot *s, uint32_t v) {
-    for (int i = 0; i < s->unique && i < PROBE_TOP; i++) {
-        if (s->values[i] == v) { s->counts[i]++; return; }
-    }
-    if (s->unique < PROBE_TOP) {
-        s->values[s->unique] = v;
-        s->counts[s->unique] = 1;
-        s->unique++;
-    } else {
-        /* Saturated — just bump last slot to keep error count meaningful. */
-        s->counts[PROBE_TOP - 1]++;
-    }
-}
-
-void __no_inline_not_in_flash_func(flash_probe_75_run)(
-        uint8_t rd, const uint32_t *addrs, int n_addr,
-        struct probe_slot *out /* [n_addr] */) {
-    uint32_t orig_timing = qmi_hw->m[0].timing;
-    uint32_t orig_rfmt   = qmi_hw->m[0].rfmt;
-    uint32_t orig_rcmd   = qmi_hw->m[0].rcmd;
-
-    /* Program CLKDIV=1, rd = requested. rfmt/rcmd unchanged (keep
-     * original boot2 config — we only tweak timing). */
-    uint32_t irq_save = save_and_disable_interrupts();
-    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-    qmi_hw->m[0].timing =
-        (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
-        ((uint32_t)rd << QMI_M0_TIMING_RXDELAY_LSB) |
-        (1u << QMI_M0_TIMING_CLKDIV_LSB);
-    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-    restore_interrupts(irq_save);
-
-    for (int a = 0; a < n_addr; a++) {
-        out[a].unique = 0;
-        for (int i = 0; i < PROBE_TOP; i++) { out[a].values[i] = 0; out[a].counts[i] = 0; }
-        volatile uint32_t *p = (volatile uint32_t *)addrs[a];
-        for (int k = 0; k < PROBE_COUNT; k++) {
-            probe_record(&out[a], *p);
-        }
-    }
-
-    /* Restore. */
-    irq_save = save_and_disable_interrupts();
-    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-    qmi_hw->m[0].timing = orig_timing;
-    qmi_hw->m[0].rfmt   = orig_rfmt;
-    qmi_hw->m[0].rcmd   = orig_rcmd;
-    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-    restore_interrupts(irq_save);
-}
-
-void flash_probe_75(void) {
-    printf("\n--- Flash 75 MHz failure diagnosis (256 reads/slot) ---\n");
-    uint32_t sys_hz = clock_get_hz(clk_sys);
-    printf("  sys_clk = %u MHz  M0 baseline timing = 0x%08X\n",
-           (unsigned)(sys_hz / 1000000u),
-           (unsigned)qmi_hw->m[0].timing);
-
-    /* Expected values grabbed at the known-good baseline BEFORE any
-     * timing tweak, via uncached alias so cache doesn't mask. */
-    const uint32_t addrs[3] = {
-        XIP_NOCACHE_NOALLOC_BASE + 0x0000u,
-        XIP_NOCACHE_NOALLOC_BASE + 0x0004u,
-        XIP_NOCACHE_NOALLOC_BASE + 0x1000u,
-    };
-    uint32_t expected[3];
-    for (int i = 0; i < 3; i++) expected[i] = *(volatile uint32_t *)addrs[i];
-    printf("  Expected: [0x%08X] [0x%08X] [0x%08X]\n",
-           (unsigned)expected[0], (unsigned)expected[1], (unsigned)expected[2]);
-
-    for (uint8_t rd = 0; rd < 8; rd++) {
-        struct probe_slot s[3];
-        flash_probe_75_run(rd, addrs, 3, s);
-        printf("\n  RXDELAY=%u:\n", rd);
-        for (int a = 0; a < 3; a++) {
-            int correct_count = 0;
-            for (int u = 0; u < s[a].unique; u++)
-                if (s[a].values[u] == expected[a]) correct_count = s[a].counts[u];
-            printf("    [%08X] unique=%u  correct=%u/%u",
-                   (unsigned)(addrs[a] - XIP_NOCACHE_NOALLOC_BASE + 0x10000000u),
-                   s[a].unique, correct_count, PROBE_COUNT);
-            /* Print top entries so we can see the dominant wrong value. */
-            for (int u = 0; u < s[a].unique; u++) {
-                printf("  [%08X:%u]", (unsigned)s[a].values[u], s[a].counts[u]);
-            }
-            printf("\n");
-        }
-    }
-
-    printf("\n  Interpretation:\n");
-    printf("    unique==1 always -> deterministic sampling offset (timing fixable)\n");
-    printf("    unique>1 many    -> random bit errors (signal integrity limit)\n");
-    printf("    unique==1 correct-> that (CLKDIV=1, RXDELAY) is a valid combo\n");
-}
 
 /* ---------------------------------------------------------------------
- * flash_sweep3 — exhaustive 75 MHz config sweep.
- *
- * Hypothesis: PSRAM works at 75 MHz with DUMMY_LEN=24 (6 Q-clocks),
- * but our flash config used DUMMY_LEN=16 (4 Q-clocks). Since PSRAM and
- * flash share SCK/SD[3:0] on the same QMI bus, signal-integrity can't
- * be the sole limit — something in flash's rfmt/rcmd must differ.
- *
- * Sweep grid at CLKDIV=1:
- *   DUMMY_LEN = 4, 5, 6, 7 (Q-clocks = 16, 20, 24, 28 bits)
- *   SUFFIX = none / 0xA0 / 0xF0
- *   RXDELAY = 1, 2, 3
- * = 4 × 3 × 3 = 36 combos. For each: single-word correctness + 16 KB
- * bench (shortened to keep wall-clock manageable).
- * ------------------------------------------------------------------- */
-struct fs3_result {
-    uint8_t  dummy_field;  /* DUMMY_LEN field value (1..7) */
-    uint8_t  suffix_mode;  /* 0=none, 1=0xA0, 2=0xF0 */
-    uint8_t  rxdelay;
-    uint32_t rfmt;
-    uint32_t rcmd;
-    uint32_t read_val;
-    bool     pass;
-    uint32_t us;
-    uint32_t kbps;
-};
-
-#define FS3_BENCH_WORDS 4096u   /* 16 KB */
-
-void __no_inline_not_in_flash_func(flash_sweep3_run)(
-        struct fs3_result *out, int n,
-        uint32_t expected) {
-    uint32_t orig_timing = qmi_hw->m[0].timing;
-    uint32_t orig_rfmt   = qmi_hw->m[0].rfmt;
-    uint32_t orig_rcmd   = qmi_hw->m[0].rcmd;
-
-    for (int i = 0; i < n; i++) {
-        uint32_t rfmt_base =
-            (QMI_M0_RFMT_PREFIX_WIDTH_VALUE_S << QMI_M0_RFMT_PREFIX_WIDTH_LSB) |
-            (QMI_M0_RFMT_ADDR_WIDTH_VALUE_Q   << QMI_M0_RFMT_ADDR_WIDTH_LSB)   |
-            (QMI_M0_RFMT_DUMMY_WIDTH_VALUE_Q  << QMI_M0_RFMT_DUMMY_WIDTH_LSB)  |
-            (QMI_M0_RFMT_DATA_WIDTH_VALUE_Q   << QMI_M0_RFMT_DATA_WIDTH_LSB)   |
-            (QMI_M0_RFMT_PREFIX_LEN_VALUE_8   << QMI_M0_RFMT_PREFIX_LEN_LSB)   |
-            ((uint32_t)out[i].dummy_field     << QMI_M0_RFMT_DUMMY_LEN_LSB);
-
-        uint32_t rcmd = (0xEBu << QMI_M0_RCMD_PREFIX_LSB);
-        if (out[i].suffix_mode == 1) {
-            rfmt_base |=
-                (QMI_M0_RFMT_SUFFIX_WIDTH_VALUE_Q << QMI_M0_RFMT_SUFFIX_WIDTH_LSB) |
-                (QMI_M0_RFMT_SUFFIX_LEN_VALUE_8   << QMI_M0_RFMT_SUFFIX_LEN_LSB);
-            rcmd |= (0xA0u << QMI_M0_RCMD_SUFFIX_LSB);
-        } else if (out[i].suffix_mode == 2) {
-            rfmt_base |=
-                (QMI_M0_RFMT_SUFFIX_WIDTH_VALUE_Q << QMI_M0_RFMT_SUFFIX_WIDTH_LSB) |
-                (QMI_M0_RFMT_SUFFIX_LEN_VALUE_8   << QMI_M0_RFMT_SUFFIX_LEN_LSB);
-            rcmd |= (0xF0u << QMI_M0_RCMD_SUFFIX_LSB);
-        }
-
-        out[i].rfmt = rfmt_base;
-        out[i].rcmd = rcmd;
-
-        uint32_t irq_save = save_and_disable_interrupts();
-        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-        qmi_hw->m[0].timing =
-            (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
-            ((uint32_t)out[i].rxdelay << QMI_M0_TIMING_RXDELAY_LSB) |
-            (1u << QMI_M0_TIMING_CLKDIV_LSB);
-        qmi_hw->m[0].rfmt = rfmt_base;
-        qmi_hw->m[0].rcmd = rcmd;
-        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-        restore_interrupts(irq_save);
-
-        uint32_t val = *(volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-        out[i].read_val = val;
-        out[i].pass = (val == expected);
-
-        if (out[i].pass) {
-            volatile uint32_t *src = (volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-            uint32_t acc = 0;
-            uint32_t t0 = timer_hw->timerawl;
-            for (uint32_t k = 0; k < FS3_BENCH_WORDS; k++) acc ^= src[k];
-            out[i].us = timer_hw->timerawl - t0;
-            if (out[i].us)
-                out[i].kbps = (FS3_BENCH_WORDS * 4u * 1000u) / out[i].us;
-            else
-                out[i].kbps = 0;
-            (void)acc;
-        } else {
-            out[i].us = 0;
-            out[i].kbps = 0;
-        }
-
-        irq_save = save_and_disable_interrupts();
-        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-        qmi_hw->m[0].timing = orig_timing;
-        qmi_hw->m[0].rfmt   = orig_rfmt;
-        qmi_hw->m[0].rcmd   = orig_rcmd;
-        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-        restore_interrupts(irq_save);
-    }
-}
-
-void flash_sweep3(void) {
-    printf("\n--- Flash M0 75 MHz exhaustive sweep (DUMMY x SUFFIX x RXDELAY) ---\n");
-    uint32_t expected = *(volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-    printf("  Expected: 0x%08X\n", (unsigned)expected);
-
-    /* DUMMY field values: 4=16b(4clk) 5=20b(5clk) 6=24b(6clk) 7=28b(7clk) */
-    static const uint8_t dummies[] = {4, 5, 6, 7};
-    static const char *sfx_name[3] = {"none", "M=0xA0", "M=0xF0"};
-    static const uint32_t sfx_qclks[3] = {0, 2, 2};
-
-    #define FS3_N 36
-    struct fs3_result res[FS3_N];
-    int idx = 0;
-    for (int sf = 0; sf < 3; sf++)
-        for (int d = 0; d < 4; d++)
-            for (uint8_t rx = 1; rx <= 3; rx++) {
-                res[idx].dummy_field = dummies[d];
-                res[idx].suffix_mode = sf;
-                res[idx].rxdelay = rx;
-                idx++;
-            }
-
-    flash_sweep3_run(res, FS3_N, expected);
-
-    printf("  SUFFIX  DUMMY  total_wait  RXDELAY  read_val    KB/s   result\n");
-    printf("  ------  -----  ----------  -------  ----------  -----  ------\n");
-    for (int i = 0; i < FS3_N; i++) {
-        uint32_t total_wait = res[i].dummy_field + sfx_qclks[res[i].suffix_mode];
-        printf("  %-6s  %5uQ  %8uQ    %7u  0x%08X  %5u  %s\n",
-               sfx_name[res[i].suffix_mode],
-               (unsigned)res[i].dummy_field,
-               (unsigned)total_wait,
-               (unsigned)res[i].rxdelay,
-               (unsigned)res[i].read_val,
-               (unsigned)res[i].kbps,
-               res[i].pass ? "PASS" : "FAIL");
-    }
-    printf("\n  (total_wait = SUFFIX clocks + DUMMY clocks, all quad)\n");
-    printf("  (DUMMY field 4/5/6/7 = 16/20/24/28 bits = 4/5/6/7 Q-clocks)\n");
-    #undef FS3_N
-}
-
-/* ---------------------------------------------------------------------
- * Flash QPI experiment (0x35 Enter QPI / 0xF5 Exit QPI).
- *
- * Hypothesis from sweep3: 1-4-4 mode's single-bit cmd + bit-width
- * transition fails at 75 MHz. Full QPI (4-4-4) avoids that transition
- * and matches what PSRAM uses successfully. Test: briefly put flash in
- * QPI mode, read at CLKDIV=1, then ALWAYS exit before returning.
- *
- * Safety: on every exit path (success or fail) we send 0xF5 (Exit QPI
- * in quad) + Reset Enable 0x66 / Reset 0x99 (SPI) as belt-and-braces.
- * If the MCU crashes mid-test and flash is stuck in QPI, emergency
- * recovery = J-Link halt + flash_reset command (also registered).
- * ------------------------------------------------------------------- */
-struct qpi_result {
-    uint32_t expected;
-    uint32_t read_val;
-    bool     pass;
-    uint32_t us, kbps;
-    uint32_t m0_timing_used, m0_rfmt_used;
-};
-
-#define QPI_BENCH_WORDS 4096u  /* 16 KB */
-
-static void __no_inline_not_in_flash_func(flash_try_qpi_run)(
-        struct qpi_result *out) {
-    uint32_t orig_timing = qmi_hw->m[0].timing;
-    uint32_t orig_rfmt   = qmi_hw->m[0].rfmt;
-    uint32_t orig_rcmd   = qmi_hw->m[0].rcmd;
-
-    uint32_t irq_save = save_and_disable_interrupts();
-
-    /* --- Enter direct mode at a safe slow clock (CLKDIV=10) with
-     *     AUTO CS management for CS0 (flash). ----------------------- */
-    qmi_hw->direct_csr = (10u << QMI_DIRECT_CSR_CLKDIV_LSB) |
-                         QMI_DIRECT_CSR_EN_BITS |
-                         QMI_DIRECT_CSR_AUTO_CS0N_BITS;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS);
-
-    /* Send 0x35 (Enter QPI) as single-bit on SD0. Device still in SPI
-     * mode at this point, so default IWIDTH (single) is correct. */
-    qmi_hw->direct_tx = QMI_DIRECT_TX_NOPUSH_BITS | 0x35u;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS);
-
-    /* --- Reconfigure M0 for full QPI @ 75 MHz, matching PSRAM's
-     *     working config (PREFIX_WIDTH=Q, DUMMY_LEN=24 bits). -------- */
-    uint32_t new_timing = (2u << QMI_M0_TIMING_COOLDOWN_LSB) |
-                          (2u << QMI_M0_TIMING_RXDELAY_LSB) |
-                          (1u << QMI_M0_TIMING_CLKDIV_LSB);
-    uint32_t new_rfmt =
-        (QMI_M0_RFMT_PREFIX_WIDTH_VALUE_Q << QMI_M0_RFMT_PREFIX_WIDTH_LSB) |
-        (QMI_M0_RFMT_ADDR_WIDTH_VALUE_Q   << QMI_M0_RFMT_ADDR_WIDTH_LSB)   |
-        (QMI_M0_RFMT_DUMMY_WIDTH_VALUE_Q  << QMI_M0_RFMT_DUMMY_WIDTH_LSB)  |
-        (QMI_M0_RFMT_DATA_WIDTH_VALUE_Q   << QMI_M0_RFMT_DATA_WIDTH_LSB)   |
-        (QMI_M0_RFMT_PREFIX_LEN_VALUE_8   << QMI_M0_RFMT_PREFIX_LEN_LSB)   |
-        (6u                               << QMI_M0_RFMT_DUMMY_LEN_LSB);
-    qmi_hw->m[0].timing = new_timing;
-    qmi_hw->m[0].rfmt   = new_rfmt;
-    qmi_hw->m[0].rcmd   = 0xEBu;  /* QPI Fast Read (in QPI: cmd is quad) */
-    out->m0_timing_used = new_timing;
-    out->m0_rfmt_used   = new_rfmt;
-
-    /* Exit direct mode so M1 XIP engine (now configured for QPI) takes
-     * over. */
-    qmi_hw->direct_csr = (10u << QMI_DIRECT_CSR_CLKDIV_LSB); /* EN=0 */
-    __asm volatile ("dsb sy" ::: "memory");
-
-    /* --- Test read via XIP at new timing. ---------------------------- */
-    uint32_t val = *(volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-    out->read_val = val;
-    out->pass = (val == out->expected);
-
-    if (out->pass) {
-        volatile uint32_t *src = (volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-        uint32_t acc = 0;
-        uint32_t t0 = timer_hw->timerawl;
-        for (uint32_t k = 0; k < QPI_BENCH_WORDS; k++) acc ^= src[k];
-        out->us = timer_hw->timerawl - t0;
-        if (out->us) out->kbps = (QPI_BENCH_WORDS * 4u * 1000u) / out->us;
-        (void)acc;
-    } else {
-        out->us = 0; out->kbps = 0;
-    }
-
-    /* --- UNCONDITIONAL exit: re-enter direct mode, send 0xF5 in QUAD
-     *     (device is in QPI, cmd must be quad now), then also send
-     *     Reset Enable 0x66 + Reset 0x99 (now back in SPI) as a
-     *     belt-and-braces to force flash to known default. ----------- */
-    qmi_hw->direct_csr = (10u << QMI_DIRECT_CSR_CLKDIV_LSB) |
-                         QMI_DIRECT_CSR_EN_BITS |
-                         QMI_DIRECT_CSR_AUTO_CS0N_BITS;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS);
-
-    /* Exit QPI: 0xF5 sent as quad */
-    qmi_hw->direct_tx = QMI_DIRECT_TX_NOPUSH_BITS |
-                        (QMI_DIRECT_TX_IWIDTH_VALUE_Q << QMI_DIRECT_TX_IWIDTH_LSB) |
-                        0xF5u;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS);
-
-    /* Belt-and-braces: Reset Enable + Reset (single-bit now). Works
-     * from either mode per W25Q datasheet §8.2.24. */
-    qmi_hw->direct_tx = QMI_DIRECT_TX_NOPUSH_BITS | 0x66u;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS);
-    qmi_hw->direct_tx = QMI_DIRECT_TX_NOPUSH_BITS | 0x99u;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS);
-    /* tRST = 30 us per datasheet — spin wait. */
-    for (volatile uint32_t i = 0; i < 5000; i++) __asm volatile ("nop");
-
-    /* Restore original M0 config. */
-    qmi_hw->m[0].timing = orig_timing;
-    qmi_hw->m[0].rfmt   = orig_rfmt;
-    qmi_hw->m[0].rcmd   = orig_rcmd;
-
-    /* Exit direct mode — XIP resumes at baseline config. */
-    qmi_hw->direct_csr = 0;
-    __asm volatile ("dsb sy" ::: "memory");
-
-    restore_interrupts(irq_save);
-}
-
-void flash_try_qpi(void) {
-    printf("\n--- Flash QPI experiment (0x35 Enter / 0xF5 Exit, CLKDIV=1) ---\n");
-    uint32_t expected = *(volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-    printf("  Expected: 0x%08X\n", (unsigned)expected);
-
-    struct qpi_result r = { .expected = expected };
-    flash_try_qpi_run(&r);
-
-    printf("  M0.timing tested: 0x%08X (CLKDIV=1 RXDELAY=2)\n",
-           (unsigned)r.m0_timing_used);
-    printf("  M0.rfmt   tested: 0x%08X (PREFIX=Q ADDR=Q DUMMY=Q/24b DATA=Q)\n",
-           (unsigned)r.m0_rfmt_used);
-    printf("  read_val: 0x%08X  %s\n", (unsigned)r.read_val,
-           r.pass ? "MATCH — QPI works at 75 MHz!" : "MISMATCH");
-    if (r.pass) {
-        printf("  Bench 16 KB: %u us = %u KB/s\n",
-               (unsigned)r.us, (unsigned)r.kbps);
-    }
-
-    /* Confirm normal XIP is back (read MSP after restore). */
-    uint32_t recheck = *(volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-    printf("  Post-restore recheck @ baseline: 0x%08X  %s\n",
-           (unsigned)recheck,
-           recheck == expected ? "OK (flash back in SPI mode)"
-                               : "BAD — flash stuck in QPI, run 'flash_reset'");
-}
-
-/* ---------------------------------------------------------------------
- * flash_reset — emergency recovery. Sends 0x66 + 0x99 (Reset Enable +
- * Reset) to flash via direct mode. Tries both SPI and QPI modes.
- * Use after flash_try_qpi if the post-restore recheck fails.
+ * flash_reset — emergency recovery. Sends Reset Enable (0x66) + Reset
+ * (0x99) to flash via direct mode, in both quad and single-bit cmd
+ * widths. W25Q datasheet §8.2.24: this sequence resets the device to
+ * power-on state regardless of current SPI/QPI mode. Kept as a
+ * standalone utility in case future bringup experiments leave flash
+ * in an unexpected mode.
  * ------------------------------------------------------------------- */
 static void __no_inline_not_in_flash_func(flash_reset_run)(void) {
     uint32_t irq_save = save_and_disable_interrupts();
@@ -796,245 +390,6 @@ void flash_reset(void) {
     printf("  Post-reset MSP read: 0x%08X  %s\n",
            (unsigned)v,
            v == 0x20082000u ? "OK" : "still wrong");
-}
-
-/* ---------------------------------------------------------------------
- * flash_try_114 — test 1-1-4 mode (6Bh Fast Read Quad Output) at
- * CLKDIV=1. In 1-1-4 the cmd + addr are BOTH single-bit, only data
- * is quad. This gives the device 40 single-bit clocks of settling
- * before the IO direction switch to quad-data (vs 1-4-4 where addr
- * is already quad and switch happens much earlier).
- *
- * Datasheet §9.5: 6Bh requires 8 dummy clocks, max freq 104 MHz.
- * Sweep RXDELAY 1..5 to find the data-sampling sweet spot.
- * ------------------------------------------------------------------- */
-struct fs114_result {
-    uint8_t  rxdelay;
-    uint32_t read_val;
-    bool     pass;
-    uint32_t us, kbps;
-};
-
-void __no_inline_not_in_flash_func(flash_try_114_run)(
-        struct fs114_result *res, int n, uint32_t expected) {
-    uint32_t orig_timing = qmi_hw->m[0].timing;
-    uint32_t orig_rfmt   = qmi_hw->m[0].rfmt;
-    uint32_t orig_rcmd   = qmi_hw->m[0].rcmd;
-
-    /* rfmt for 1-1-4: PREFIX=S(8 clk), ADDR=S, DATA=Q, DUMMY=Q(8 clk).
-     * No SUFFIX (6Bh has no M-byte). DUMMY_LEN field value:
-     *   8 Q-clocks would need a value of 8 but field is 3 bits (0..7).
-     *   We can use DUMMY_WIDTH=S instead: 8 S-clocks = DUMMY_LEN field
-     *   value = 2 (8 bits) with width S... wait DUMMY_LEN is in bits.
-     *   8 S-clocks = 8 bits = DUMMY_LEN_VALUE_8 field value 2, width S.
-     *   That gives exactly 8 dummy clocks on single wire. */
-    uint32_t rfmt =
-        (QMI_M0_RFMT_PREFIX_WIDTH_VALUE_S << QMI_M0_RFMT_PREFIX_WIDTH_LSB) |
-        (QMI_M0_RFMT_ADDR_WIDTH_VALUE_S   << QMI_M0_RFMT_ADDR_WIDTH_LSB)   |
-        (QMI_M0_RFMT_DUMMY_WIDTH_VALUE_S  << QMI_M0_RFMT_DUMMY_WIDTH_LSB)  |
-        (QMI_M0_RFMT_DATA_WIDTH_VALUE_Q   << QMI_M0_RFMT_DATA_WIDTH_LSB)   |
-        (QMI_M0_RFMT_PREFIX_LEN_VALUE_8   << QMI_M0_RFMT_PREFIX_LEN_LSB)   |
-        (QMI_M0_RFMT_DUMMY_LEN_VALUE_8    << QMI_M0_RFMT_DUMMY_LEN_LSB);
-    uint32_t rcmd = (0x6Bu << QMI_M0_RCMD_PREFIX_LSB);
-
-    for (int i = 0; i < n; i++) {
-        uint32_t irq_save = save_and_disable_interrupts();
-        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-        qmi_hw->m[0].timing =
-            (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
-            ((uint32_t)res[i].rxdelay << QMI_M0_TIMING_RXDELAY_LSB) |
-            (1u << QMI_M0_TIMING_CLKDIV_LSB);
-        qmi_hw->m[0].rfmt = rfmt;
-        qmi_hw->m[0].rcmd = rcmd;
-        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-        restore_interrupts(irq_save);
-
-        uint32_t val = *(volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-        res[i].read_val = val;
-        res[i].pass = (val == expected);
-
-        if (res[i].pass) {
-            volatile uint32_t *src = (volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-            uint32_t acc = 0;
-            uint32_t t0 = timer_hw->timerawl;
-            for (uint32_t k = 0; k < FLASH_BENCH_WORDS; k++) acc ^= src[k];
-            res[i].us = timer_hw->timerawl - t0;
-            if (res[i].us)
-                res[i].kbps = (FLASH_BENCH_WORDS * 4u * 1000u) / res[i].us;
-            else
-                res[i].kbps = 0;
-            (void)acc;
-        } else {
-            res[i].us = 0; res[i].kbps = 0;
-        }
-
-        irq_save = save_and_disable_interrupts();
-        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-        qmi_hw->m[0].timing = orig_timing;
-        qmi_hw->m[0].rfmt   = orig_rfmt;
-        qmi_hw->m[0].rcmd   = orig_rcmd;
-        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
-        restore_interrupts(irq_save);
-    }
-}
-
-void flash_try_114(void) {
-    printf("\n--- Flash 1-1-4 mode (6Bh) sweep at CLKDIV=1 (75 MHz) ---\n");
-    uint32_t expected = *(volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
-    printf("  Expected: 0x%08X\n", (unsigned)expected);
-    printf("  rfmt: PREFIX=S/8b, ADDR=S, DUMMY=S/8b (8 dummy clocks), DATA=Q\n");
-    printf("  rcmd: PREFIX=0x6B (Fast Read Quad Output)\n\n");
-
-    struct fs114_result res[5];
-    for (int i = 0; i < 5; i++) res[i].rxdelay = (uint8_t)(i + 1);
-    flash_try_114_run(res, 5, expected);
-
-    printf("  RXDELAY  read_val    KB/s   result\n");
-    printf("  -------  ----------  -----  ------\n");
-    for (int i = 0; i < 5; i++) {
-        printf("  %7u  0x%08X  %5u  %s\n",
-               (unsigned)res[i].rxdelay,
-               (unsigned)res[i].read_val,
-               (unsigned)res[i].kbps,
-               res[i].pass ? "PASS" : "FAIL");
-    }
-}
-
-/* ---------------------------------------------------------------------
- * flash_boost_drv — write Status Register-3 via volatile path
- * (0x50 + 0x11) to set DRV1=DRV0=0 (100% drive). Factory default is
- * 11 = 25% — may explain 75 MHz nibble-shift failures since the
- * output edge rate at 25% can't settle in a 13.3 ns half-period.
- *
- * Volatile write does not persist after power cycle → safe for
- * experimentation. flash_boost_drv_read prints SR3 so we can verify.
- * ------------------------------------------------------------------- */
-/* Direct-mode helpers, copied from PSRAM pattern and adapted for CS0.
- * OE=1, NOPUSH=1: transmit without RX capture (for cmd/data bytes).
- * OE=1, NOPUSH=0: drive dummy byte and capture RX (for response). */
-static bool __no_inline_not_in_flash_func(flash_direct_tx)(uint8_t b) {
-    qmi_hw->direct_tx = (1u << 20) | (1u << 19) | b;  /* NOPUSH | OE | data */
-    while (!(qmi_hw->direct_csr & QMI_DIRECT_CSR_TXEMPTY_BITS));
-    for (uint32_t t = 125000; t; --t)
-        if (!(qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS)) return true;
-    return false;
-}
-
-static bool __no_inline_not_in_flash_func(flash_direct_rx)(uint8_t *out) {
-    qmi_hw->direct_tx = (1u << 19) | 0x00u;  /* OE | dummy, NOPUSH=0 captures RX */
-    while (!(qmi_hw->direct_csr & QMI_DIRECT_CSR_TXEMPTY_BITS));
-    for (uint32_t t = 125000; t; --t) {
-        if (!(qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS)) {
-            *out = (uint8_t)qmi_hw->direct_rx;
-            return true;
-        }
-    }
-    *out = 0xEE;
-    return false;
-}
-
-static void __no_inline_not_in_flash_func(flash_sr3_read_write_run)(
-        uint8_t *sr3_before, uint8_t *sr3_after, uint8_t drv_bits) {
-    uint32_t irq_save = save_and_disable_interrupts();
-
-    /* Enter direct mode at CLKDIV=30 (~5 MHz). AUTO_CS0N toggles CS0
-     * around each direct_tx write, so we do one command+response per tx
-     * sequence (bracketed by the auto-toggle). */
-    qmi_hw->direct_csr = (30u << QMI_DIRECT_CSR_CLKDIV_LSB) |
-                         QMI_DIRECT_CSR_EN_BITS |
-                         QMI_DIRECT_CSR_AUTO_CS0N_BITS;
-    while (qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS);
-    /* Drain any stale RX from a previous session. */
-    while (!(qmi_hw->direct_csr & QMI_DIRECT_CSR_RXEMPTY_BITS))
-        (void)qmi_hw->direct_rx;
-
-    /* AUTO_CS0N deasserts CS between direct_tx writes. To keep CS LOW
-     * across a multi-byte transaction, we switch to ASSERT_CS0N (manual
-     * assert) instead of AUTO. */
-    qmi_hw->direct_csr = (30u << QMI_DIRECT_CSR_CLKDIV_LSB) |
-                         QMI_DIRECT_CSR_EN_BITS;
-
-    #define FLASH_CS_LOW()  (qmi_hw->direct_csr = (30u << QMI_DIRECT_CSR_CLKDIV_LSB) | \
-                                                  QMI_DIRECT_CSR_EN_BITS |             \
-                                                  QMI_DIRECT_CSR_ASSERT_CS0N_BITS)
-    #define FLASH_CS_HIGH() (qmi_hw->direct_csr = (30u << QMI_DIRECT_CSR_CLKDIV_LSB) | \
-                                                  QMI_DIRECT_CSR_EN_BITS)
-
-    /* --- Read SR3 (0x15 + 1 response byte) --- */
-    FLASH_CS_LOW();
-    flash_direct_tx(0x15);
-    flash_direct_rx(sr3_before);
-    FLASH_CS_HIGH();
-
-    /* --- Volatile Status Register Write Enable (0x50) --- */
-    FLASH_CS_LOW();
-    flash_direct_tx(0x50);
-    FLASH_CS_HIGH();
-
-    /* --- Write SR3 (0x11 + data byte) with new DRV bits.
-     *     SR3 bits: S16:WPS S17:R S18:R S19:R S20:R S21:DRV0 S22:DRV1 S23:R
-     *     drv_bits input is the byte value where bit1=DRV1, bit0=DRV0
-     *     mapped into SR3: shift left by 5 so bit5=DRV0, bit6=DRV1. */
-    uint8_t sr3_new = (*sr3_before & ~0x60u) | ((drv_bits & 0x03u) << 5);
-    FLASH_CS_LOW();
-    flash_direct_tx(0x11);
-    flash_direct_tx(sr3_new);
-    FLASH_CS_HIGH();
-
-    /* --- Read SR3 back to verify --- */
-    FLASH_CS_LOW();
-    flash_direct_tx(0x15);
-    flash_direct_rx(sr3_after);
-    FLASH_CS_HIGH();
-
-    qmi_hw->direct_csr = 0;
-    __asm volatile ("dsb sy" ::: "memory");
-    restore_interrupts(irq_save);
-
-    #undef FLASH_CS_LOW
-    #undef FLASH_CS_HIGH
-}
-
-static void __no_inline_not_in_flash_func(flash_sr3_read_run)(uint8_t *sr3) {
-    uint32_t irq_save = save_and_disable_interrupts();
-    qmi_hw->direct_csr = (30u << QMI_DIRECT_CSR_CLKDIV_LSB) | QMI_DIRECT_CSR_EN_BITS;
-    while (!(qmi_hw->direct_csr & QMI_DIRECT_CSR_RXEMPTY_BITS))
-        (void)qmi_hw->direct_rx;
-    qmi_hw->direct_csr = (30u << QMI_DIRECT_CSR_CLKDIV_LSB) |
-                         QMI_DIRECT_CSR_EN_BITS | QMI_DIRECT_CSR_ASSERT_CS0N_BITS;
-    flash_direct_tx(0x15);
-    flash_direct_rx(sr3);
-    qmi_hw->direct_csr = 0;
-    __asm volatile ("dsb sy" ::: "memory");
-    restore_interrupts(irq_save);
-}
-
-void flash_read_sr3(void) {
-    uint8_t s = 0;
-    flash_sr3_read_run(&s);
-    printf("\n--- Flash SR3 = 0x%02X  DRV=%u%u (%s)\n",
-           s, (s >> 6) & 1, (s >> 5) & 1,
-           ((s >> 5) & 3) == 0 ? "100%%" :
-           ((s >> 5) & 3) == 1 ? "50%%" :
-           ((s >> 5) & 3) == 2 ? "75%%" : "25%%");
-}
-
-void flash_boost_drv(void) {
-    printf("\n--- Flash DRV boost (SR3 DRV1/DRV0 -> 00 = 100%%) ---\n");
-    uint8_t before = 0, after = 0;
-    flash_sr3_read_write_run(&before, &after, 0x00);
-    printf("  SR3 before: 0x%02X  DRV=%u%u (%s)\n",
-           before, (before >> 6) & 1, (before >> 5) & 1,
-           ((before >> 5) & 3) == 0 ? "100%%" :
-           ((before >> 5) & 3) == 1 ? "50%%"  :
-           ((before >> 5) & 3) == 2 ? "75%%"  : "25%%");
-    printf("  SR3 after : 0x%02X  DRV=%u%u (%s)\n",
-           after, (after >> 6) & 1, (after >> 5) & 1,
-           ((after >> 5) & 3) == 0 ? "100%%" :
-           ((after >> 5) & 3) == 1 ? "50%%"  :
-           ((after >> 5) & 3) == 2 ? "75%%"  : "25%%");
-    printf("  (Volatile write — reverts on power cycle)\n");
-    printf("  Now try flash_sweep2 or flash_probe_75 at CLKDIV=1.\n");
 }
 
 /* ---------------------------------------------------------------------
@@ -1243,6 +598,273 @@ void flash_pad_ablation(void) {
     }
     printf("\n  (combos listed default-first: 4mA/slow/on is the bootrom baseline)\n");
     printf("  Find the smallest change-count that passes = minimum necessary tweaks.\n");
+}
+
+/* ---------------------------------------------------------------------
+ * flash_deep_scan — whole-flash XOR compare at baseline (current M0)
+ * vs CLKDIV=1 + SLEWFAST=1.
+ *
+ * Motivation: flash_pad_ablation only reads first 16 KB (4096 words).
+ * Production firmware hit a deterministic corruption at flash offset
+ * 0x2B8A6 (180 KB deep) under CLKDIV=1, where M0 returns stale/wrong
+ * bytes despite the shallow-address test passing. This scan covers
+ * the full 16 MB address space so we can tell whether CLKDIV=1 is
+ * genuinely unreliable or whether it was just a production-specific
+ * interaction.
+ *
+ * Approach: per-64 KB block (256 blocks for 16 MB), accumulate an XOR
+ * of all 16384 words in each block. Pass 1 at baseline timing (known
+ * good; CLKDIV=3 by default). Pass 2 after switching to CLKDIV=1 +
+ * SLEWFAST=1 + RXDELAY=2. Any block whose XOR differs between the
+ * two passes is a corruption signal. Report count + first bad block;
+ * then word-scan the first bad block at baseline timing to locate
+ * the exact first wrong word.
+ *
+ * Interrupts disabled across both passes (~1.6 s total at 20 MB/s).
+ * Runs from RAM so the CLKDIV=1 window doesn't fault its own fetch.
+ * ------------------------------------------------------------------- */
+#define DEEP_BLOCK_WORDS  16384u      /* 64 KB per block */
+#define DEEP_BLOCKS       256u        /* 16 MB / 64 KB  */
+
+static uint32_t s_deep_baseline[DEEP_BLOCKS];
+
+struct deep_scan_result {
+    uint32_t baseline_timing;
+    uint32_t clkdiv1_timing;
+    uint32_t bad_blocks;        /* count of blocks whose XOR differs */
+    int32_t  first_bad_blk;     /* -1 if all clean */
+    uint32_t first_bad_word_idx;    /* within block */
+    uint32_t baseline_word_val;
+    uint32_t clkdiv1_word_val;
+    uint32_t pass1_ms;
+    uint32_t pass2_ms;
+};
+
+void __no_inline_not_in_flash_func(flash_deep_scan_run)(
+        struct deep_scan_result *r) {
+    volatile uint32_t *flash = (volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
+    uint32_t orig_pads = pads_qspi_hw->io[0];
+    uint32_t orig_timing = qmi_hw->m[0].timing;
+    r->baseline_timing = orig_timing;
+
+    uint32_t irq_save = save_and_disable_interrupts();
+
+    /* Pass 1: baseline XOR per 64 KB block. */
+    uint32_t t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t blk = 0; blk < DEEP_BLOCKS; blk++) {
+        uint32_t acc = 0;
+        const uint32_t base = blk * DEEP_BLOCK_WORDS;
+        for (uint32_t w = 0; w < DEEP_BLOCK_WORDS; w++)
+            acc ^= flash[base + w];
+        s_deep_baseline[blk] = acc;
+    }
+    r->pass1_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    /* Apply SLEWFAST=1 + CLKDIV=1 RXDELAY=2 COOLDOWN=1. */
+    pads_qspi_hw->io[0] = orig_pads | PADS_QSPI_GPIO_QSPI_SCLK_SLEWFAST_BITS;
+    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    const uint32_t kMask = QMI_M0_TIMING_COOLDOWN_BITS |
+                           QMI_M0_TIMING_RXDELAY_BITS |
+                           QMI_M0_TIMING_CLKDIV_BITS;
+    qmi_hw->m[0].timing = (orig_timing & ~kMask) |
+                          (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
+                          (2u << QMI_M0_TIMING_RXDELAY_LSB) |
+                          (1u << QMI_M0_TIMING_CLKDIV_LSB);
+    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    __asm volatile ("dsb sy" ::: "memory");
+    r->clkdiv1_timing = qmi_hw->m[0].timing;
+
+    /* Pass 2: CLKDIV=1 XOR per block, find first divergence. */
+    r->bad_blocks = 0;
+    r->first_bad_blk = -1;
+    t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t blk = 0; blk < DEEP_BLOCKS; blk++) {
+        uint32_t acc = 0;
+        const uint32_t base = blk * DEEP_BLOCK_WORDS;
+        for (uint32_t w = 0; w < DEEP_BLOCK_WORDS; w++)
+            acc ^= flash[base + w];
+        if (acc != s_deep_baseline[blk]) {
+            r->bad_blocks++;
+            if (r->first_bad_blk < 0) r->first_bad_blk = (int32_t)blk;
+        }
+    }
+    r->pass2_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    /* Restore baseline timing + pads. Word-level localisation of the
+     * first bad address is skipped here (it would need a 64 KB RAM
+     * buffer for the whole block's CLKDIV=1 values, which blows the
+     * 520 KB RAM budget when combined with the PSRAM + TFT state).
+     * User can follow up with SWD `mem32` at the bad block base and
+     * binary-search to find the exact first wrong word. */
+    hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    qmi_hw->m[0].timing = orig_timing;
+    hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+    pads_qspi_hw->io[0] = orig_pads;
+    __asm volatile ("dsb sy" ::: "memory");
+    restore_interrupts(irq_save);
+    r->first_bad_word_idx = 0xFFFFFFFFu;
+    r->baseline_word_val = 0;
+    r->clkdiv1_word_val = 0;
+}
+
+void flash_deep_scan(void) {
+    printf("\n--- Flash deep scan (full 16 MB: baseline vs CLKDIV=1 + SLEWFAST=1) ---\n");
+    struct deep_scan_result r = {0};
+    flash_deep_scan_run(&r);
+
+    printf("  baseline M0.timing = 0x%08X\n", (unsigned)r.baseline_timing);
+    printf("  CLKDIV=1 M0.timing = 0x%08X\n", (unsigned)r.clkdiv1_timing);
+    printf("  Pass 1 (baseline)  = %u ms  (%u KB/s)\n",
+           (unsigned)r.pass1_ms,
+           r.pass1_ms ? (unsigned)(16u * 1024u * 1000u / r.pass1_ms) : 0);
+    printf("  Pass 2 (CLKDIV=1)  = %u ms  (%u KB/s)\n",
+           (unsigned)r.pass2_ms,
+           r.pass2_ms ? (unsigned)(16u * 1024u * 1000u / r.pass2_ms) : 0);
+    printf("  Bad blocks (XOR mismatch) = %u / %u\n",
+           (unsigned)r.bad_blocks, (unsigned)DEEP_BLOCKS);
+
+    if (r.first_bad_blk < 0) {
+        printf("  CLKDIV=1 reads entire 16 MB correctly — matches baseline.\n");
+        printf("  => Production HardFault is NOT a CLKDIV=1 data-corruption issue.\n");
+        return;
+    }
+
+    uint32_t bad_blk_addr = 0x10000000u + (uint32_t)r.first_bad_blk * (DEEP_BLOCK_WORDS * 4u);
+    printf("  First bad block @ 0x%08X (block #%u, offset 0x%X)\n",
+           (unsigned)bad_blk_addr, (unsigned)r.first_bad_blk,
+           (unsigned)((uint32_t)r.first_bad_blk * (DEEP_BLOCK_WORDS * 4u)));
+    printf("  => CLKDIV=1 + SLEWFAST=1 is genuinely unreliable at deep flash\n");
+    printf("     addresses; bringup_pad_ablation's 16 KB test was too narrow.\n");
+    printf("  Word-level isolation: use SWD `mem32 0x%08X N` at two\n",
+           (unsigned)bad_blk_addr);
+    printf("  timings (baseline then CLKDIV=1) to bisect the exact bad word.\n");
+}
+
+/* ---------------------------------------------------------------------
+ * flash_deep_ablation — re-run the pad ablation using deep_scan as
+ * the oracle (not the one-word sentinel check in flash_pad_ablation,
+ * which was a false positive for CLKDIV=1).
+ *
+ * For each of 4 pad configs (minimum → full boot2_w25q080), scan the
+ * entire 16 MB address space at CLKDIV=1 + RXDELAY=2 and count how
+ * many 64 KB blocks diverge from the baseline (CLKDIV=3) XOR. A
+ * config "passes" only if bad_blocks == 0.
+ *
+ * Runs IRQ-off throughout (~6.4 s total for 4 combos × 1.6 s each).
+ * ------------------------------------------------------------------- */
+struct dab_combo {
+    uint8_t  drive;     /* 1=4 mA default, 2=8 mA */
+    bool     slewfast;
+    bool     schmitt_off;  /* true = clear SCHMITT on SD0-3 */
+    uint32_t bad_blocks;
+    uint32_t pass_ms;
+};
+
+void __no_inline_not_in_flash_func(flash_deep_ablation_run)(
+        struct dab_combo *combos, int n) {
+    volatile uint32_t *flash = (volatile uint32_t *)XIP_NOCACHE_NOALLOC_BASE;
+    uint32_t orig_sclk = pads_qspi_hw->io[0];
+    uint32_t orig_sd[4] = { pads_qspi_hw->io[1], pads_qspi_hw->io[2],
+                            pads_qspi_hw->io[3], pads_qspi_hw->io[4] };
+    uint32_t orig_timing = qmi_hw->m[0].timing;
+
+    uint32_t irq_save = save_and_disable_interrupts();
+
+    /* Baseline XOR table at current (safe) M0 timing. */
+    for (uint32_t blk = 0; blk < DEEP_BLOCKS; blk++) {
+        uint32_t acc = 0;
+        const uint32_t base = blk * DEEP_BLOCK_WORDS;
+        for (uint32_t w = 0; w < DEEP_BLOCK_WORDS; w++)
+            acc ^= flash[base + w];
+        s_deep_baseline[blk] = acc;
+    }
+
+    for (int i = 0; i < n; i++) {
+        /* Apply pad config for this combo. */
+        uint32_t sclk_val =
+            ((uint32_t)combos[i].drive << PADS_QSPI_GPIO_QSPI_SCLK_DRIVE_LSB) |
+            (combos[i].slewfast ? PADS_QSPI_GPIO_QSPI_SCLK_SLEWFAST_BITS : 0) |
+            (combos[i].schmitt_off ? 0 : PADS_QSPI_GPIO_QSPI_SCLK_SCHMITT_BITS) |
+            PADS_QSPI_GPIO_QSPI_SCLK_IE_BITS;
+        pads_qspi_hw->io[0] = sclk_val;
+        for (int j = 1; j <= 4; j++) {
+            uint32_t v = pads_qspi_hw->io[j];
+            if (combos[i].schmitt_off)
+                v &= ~PADS_QSPI_GPIO_QSPI_SD0_SCHMITT_BITS;
+            else
+                v |= PADS_QSPI_GPIO_QSPI_SD0_SCHMITT_BITS;
+            pads_qspi_hw->io[j] = v;
+        }
+
+        /* Switch M0 to CLKDIV=1 RXDELAY=2. */
+        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        const uint32_t kMask = QMI_M0_TIMING_COOLDOWN_BITS |
+                               QMI_M0_TIMING_RXDELAY_BITS |
+                               QMI_M0_TIMING_CLKDIV_BITS;
+        qmi_hw->m[0].timing = (orig_timing & ~kMask) |
+                              (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
+                              (2u << QMI_M0_TIMING_RXDELAY_LSB) |
+                              (1u << QMI_M0_TIMING_CLKDIV_LSB);
+        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        __asm volatile ("dsb sy" ::: "memory");
+
+        /* Scan at CLKDIV=1 and diff against baseline. */
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        uint32_t bad = 0;
+        for (uint32_t blk = 0; blk < DEEP_BLOCKS; blk++) {
+            uint32_t acc = 0;
+            const uint32_t base = blk * DEEP_BLOCK_WORDS;
+            for (uint32_t w = 0; w < DEEP_BLOCK_WORDS; w++)
+                acc ^= flash[base + w];
+            if (acc != s_deep_baseline[blk]) bad++;
+        }
+        combos[i].pass_ms = to_ms_since_boot(get_absolute_time()) - t0;
+        combos[i].bad_blocks = bad;
+
+        /* Restore M0 timing between combos so the next combo starts
+         * from a known-good baseline read (and won't compound errors
+         * if the pad change alone leaves M0 wedged). */
+        hw_set_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        qmi_hw->m[0].timing = orig_timing;
+        hw_clear_bits(&qmi_hw->direct_csr, QMI_DIRECT_CSR_EN_BITS);
+        __asm volatile ("dsb sy" ::: "memory");
+    }
+
+    /* Restore everything. */
+    pads_qspi_hw->io[0] = orig_sclk;
+    pads_qspi_hw->io[1] = orig_sd[0];
+    pads_qspi_hw->io[2] = orig_sd[1];
+    pads_qspi_hw->io[3] = orig_sd[2];
+    pads_qspi_hw->io[4] = orig_sd[3];
+    restore_interrupts(irq_save);
+}
+
+void flash_deep_ablation(void) {
+    printf("\n--- Flash deep ablation: adding DRIVE and SCHMITT on top of SLEWFAST ---\n");
+    printf("  Oracle: 16 MB block-XOR compared baseline (CLKDIV=3) vs CLKDIV=1.\n");
+    printf("  Goal: find minimum pad config that passes the full-flash verify.\n\n");
+
+    struct dab_combo combos[4] = {
+        { 1, true, false, 0, 0 },  /* SLEWFAST only */
+        { 2, true, false, 0, 0 },  /* + DRIVE=8 mA */
+        { 1, true, true,  0, 0 },  /* + SCHMITT off */
+        { 2, true, true,  0, 0 },  /* full boot2_w25q080 boost */
+    };
+    flash_deep_ablation_run(combos, 4);
+
+    printf("  SCLK DRIVE  SLEWFAST  SD SCHMITT  bad_blocks/%u  scan_ms  result\n",
+           (unsigned)DEEP_BLOCKS);
+    printf("  ----------  --------  ----------  -------------  -------  ------\n");
+    for (int i = 0; i < 4; i++) {
+        printf("  %s       %s        %s         %8u       %5u    %s\n",
+               combos[i].drive == 2 ? "8mA" : "4mA",
+               combos[i].slewfast    ? "on " : "off",
+               combos[i].schmitt_off ? "off" : "on ",
+               (unsigned)combos[i].bad_blocks,
+               (unsigned)combos[i].pass_ms,
+               combos[i].bad_blocks == 0 ? "PASS" : "FAIL");
+    }
+    printf("\n  0 bad blocks = CLKDIV=1 is actually viable at this pad config.\n");
 }
 
 void flash_speed_test(void) {
