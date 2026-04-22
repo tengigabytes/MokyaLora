@@ -80,9 +80,12 @@
 #include "lvgl_glue.h"
 #include "keypad_scan.h"
 #include "key_event.h"
+#include "key_inject.h"
 #include "psram.h"
 #include "mie_dict_loader.h"
 #include "ime_task.h"
+
+#include "mokya_trace.h"
 
 /* Dict pointers stay file-scope; ime_task_start takes a pointer to it. */
 static mie_dict_pointers_t s_mie_dict = {0};
@@ -387,6 +390,13 @@ int main(void)
     dbg_u32(BRIDGE_USB_STATE_ADDR,  0u);
     __dmb();
 
+    /* RTT trace transport up — see mokya_trace.h. The control block lives
+     * at &_SEGGER_RTT in BSS; J-Link / OpenOCD / pyOCD all auto-discover it.
+     * Init must run before any TRACE() call. Cheap (~50 instructions),
+     * does not touch hardware, safe to call before the boot_magic spin. */
+    SEGGER_RTT_Init();
+    TRACE_BARE("core1", "boot");
+
     /* 2. Wait for Core 0's shared-SRAM publication. Core 0 writes
      * IPC_BOOT_MAGIC before it launches us, so this should observe the
      * ready value on the very first load — but we spin defensively in
@@ -543,6 +553,13 @@ int main(void)
      * right behaviour (IME unusable means nothing to do). */
     TASK_START_OR_PANIC(ime_task_start(&s_mie_dict, tskIDLE_PRIORITY + 3),
                         "ime");
+
+    /* SWD key-injection task — lets a J-Link-equipped host write virtual
+     * keypress events into g_key_inject_buf so the IME can be driven
+     * programmatically without a human at the keypad. Arbitration ensures
+     * the user's physical keypress always wins. Safe in production: if
+     * nobody writes to the ring, the task just polls and sleeps. */
+    key_inject_task_start();
 
     #undef TASK_START_OR_PANIC
 

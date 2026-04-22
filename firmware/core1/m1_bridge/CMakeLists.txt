@@ -110,6 +110,16 @@ set(PSRAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/psram)
 # ── IME module (M4 Step 3+) ──────────────────────────────────────────────────
 set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
 
+# ── Debug / RTT trace ────────────────────────────────────────────────────────
+# Reuse the SEGGER RTT C source bundled with pico-sdk (same file pico_stdio_rtt
+# uses internally) but DO NOT enable pico_stdio_rtt — Core 1 doesn't use the
+# pico_stdio framework. We call SEGGER_RTT_Write / SEGGER_RTT_printf directly
+# from our own TRACE() macro so we can run multi-channel structured trace.
+# Host: J-Link, OpenOCD, pyOCD and probe-rs all read the same _SEGGER_RTT
+# control block, so this stays vendor-neutral.
+set(DEBUG_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/../src/debug)
+set(SEGGER_DIR ${PICO_SDK_PATH}/src/rp2_common/pico_stdio_rtt/SEGGER)
+
 # ── MIE library sources (compiled directly into core1_bridge) ────────────────
 # Building MIE as an independent static library would require replicating the
 # Pico SDK cross-compile toolchain state. Compiling straight into the Core 1
@@ -172,6 +182,7 @@ add_executable(core1_bridge
     ${DISPLAY_DIR}/mie_font.c
     ${KEYPAD_DIR}/keypad_scan.c
     ${KEYPAD_DIR}/key_event.c
+    ${KEYPAD_DIR}/key_inject.c
     ${UI_DIR}/keypad_view.c
     ${UI_DIR}/rf_debug_view.c
     ${UI_DIR}/font_test_view.c
@@ -180,8 +191,11 @@ add_executable(core1_bridge
     ${PSRAM_DIR}/psram.c
     ${IME_DIR}/mie_dict_loader.c
     ${IME_DIR}/ime_task.cpp
+    ${SEGGER_DIR}/RTT/SEGGER_RTT.c
+    ${DEBUG_DIR}/mokya_trace.c
     ${MIE_SRC_DIR}/mie_init.cpp
     ${MIE_SRC_DIR}/trie_searcher.cpp
+    ${MIE_SRC_DIR}/composition_searcher.cpp
     ${MIE_SRC_DIR}/ime_logic.cpp
     ${MIE_SRC_DIR}/ime_keys.cpp
     ${MIE_SRC_DIR}/ime_search.cpp
@@ -190,6 +204,12 @@ add_executable(core1_bridge
     ${MIE_SRC_DIR}/ime_smart.cpp
     ${MIE_SRC_DIR}/ime_direct.cpp
 )
+
+# SEGGER_RTT.c triggers -Wcast-qual and -Wcast-align under our default
+# warning flags. pico_stdio_rtt's CMakeLists silences the same two warnings
+# locally — we match that.
+set_source_files_properties(${SEGGER_DIR}/RTT/SEGGER_RTT.c
+    PROPERTIES COMPILE_OPTIONS "-Wno-cast-qual;-Wno-cast-align")
 
 # Font .bin is a flashable partition, not embedded in Core 1 image.
 # Build-time dep so the blob is regenerated when charlist.txt changes
@@ -219,6 +239,9 @@ target_include_directories(core1_bridge PRIVATE
     ${UI_DIR}
     ${PSRAM_DIR}
     ${IME_DIR}
+    ${DEBUG_DIR}
+    ${SEGGER_DIR}/RTT
+    ${SEGGER_DIR}/Config
     ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/include
 )
 
@@ -242,6 +265,9 @@ target_compile_definitions(core1_bridge PRIVATE
     PICO_NO_PROGRAM_VERSION_STRING=1
     # FreeRTOS single core
     configNUMBER_OF_CORES=1
+    # Opt MIE source files into RTT perf trace (mie/src/ime_search.cpp etc.).
+    # PC tests do not define this so MIE stays decoupled from mokya_trace.h.
+    MOKYA_MIE_PERF_TRACE=1
 )
 
 target_link_libraries(core1_bridge

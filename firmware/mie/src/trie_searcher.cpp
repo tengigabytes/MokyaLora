@@ -13,6 +13,14 @@
 #include <cstdio>
 #include <cstring>
 
+// Optional opt-in performance trace (Core 1 RTT path). Default no-op.
+#ifdef MOKYA_MIE_PERF_TRACE
+#include "mokya_trace.h"
+#define MIE_TRACE(src, ev, fmt, ...) TRACE(src, ev, fmt, ##__VA_ARGS__)
+#else
+#define MIE_TRACE(src, ev, fmt, ...) ((void)0)
+#endif
+
 namespace mie {
 
 // ── File-format constants ─────────────────────────────────────────────────
@@ -167,6 +175,8 @@ int TrieSearcher::search(const char* key_utf8,
     //      word into a size-capped top-N buffer sorted by freq descending.
     //   3. Entries are lex-sorted, so the first key whose prefix diverges
     //      terminates the scan.
+    MIE_TRACE("ts", "bin_start", "qlen=%u,kc=%u",
+              (unsigned)qlen, (unsigned)key_count_);
     int lo = 0, hi = static_cast<int>(key_count_);
     while (lo < hi) {
         const int mid = lo + (hi - lo) / 2;
@@ -175,12 +185,20 @@ int TrieSearcher::search(const char* key_utf8,
         else
             hi = mid;
     }
+    MIE_TRACE("ts", "bin_end", "lo=%d", lo);
 
     const bool     has_tone  = (version_ == 2);
     const uint32_t hdr_bytes = has_tone ? 4u : 3u;   // per-word header size
 
+    /* Counters: n_scan = entries visited; n_match = entries with prefix
+     * match (= n_scan in normal case, since we break on first non-match);
+     * n_words = total word records decoded; n_dedup_cmp = strcmp/memcmp
+     * compares done in the dedup inner loop. Reported once at search end. */
+    int n_scan = 0, n_words = 0, n_dedup_cmp = 0;
+
     int collected = 0;
     for (int i = lo; i < static_cast<int>(key_count_); ++i) {
+        ++n_scan;
         // Read this entry's key length + bytes.
         const uint32_t entry_off = kHeaderSize + static_cast<uint32_t>(i) * kEntrySize;
         uint32_t ko = 0;
@@ -206,6 +224,7 @@ int TrieSearcher::search(const char* key_utf8,
 
         for (int w = 0; w < static_cast<int>(word_count); ++w) {
             if (vo + hdr_bytes > val_size_) break;
+            ++n_words;
 
             uint16_t freq = 0;
             memcpy(&freq, val_ + vo, 2);
@@ -225,6 +244,7 @@ int TrieSearcher::search(const char* key_utf8,
             // we have already collected this word.
             bool is_dup = false;
             for (int j = 0; j < collected; ++j) {
+                ++n_dedup_cmp;
                 if (strlen(out[j].word) == static_cast<size_t>(wlen) &&
                     memcmp(out[j].word, val_ + vo, wlen) == 0) {
                     is_dup = true;
@@ -261,6 +281,9 @@ int TrieSearcher::search(const char* key_utf8,
             vo += wlen;
         }
     }
+    MIE_TRACE("ts", "search_stats",
+              "scan=%d,words=%d,dedup=%d,collected=%d",
+              n_scan, n_words, n_dedup_cmp, collected);
     return collected;
 }
 

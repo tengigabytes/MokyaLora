@@ -74,6 +74,10 @@ const char *ime_view_text(int *byte_len, int *cursor_bytes);
 /* One-char current mode tag ("中" / "EN" / "ABC"). */
 const char *ime_view_mode_indicator(void);
 
+/* Numeric form of the active InputMode for SWD-side observability:
+ *   0 = SmartZh, 1 = SmartEn, 2 = Direct, 0xFF = engine not initialised. */
+uint8_t     ime_view_mode_byte(void);
+
 /* Engine pagination (kPageSize = 5) — TAB cycles between pages. */
 int         ime_view_page_candidate_count(void);
 const char *ime_view_page_candidate(int idx);

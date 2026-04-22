@@ -32,6 +32,10 @@ void ImeLogic::set_listener(IImeListener* listener) {
     listener_ = listener;
 }
 
+void ImeLogic::attach_composition_searcher(CompositionSearcher* cs) {
+    composition_searcher_ = cs;
+}
+
 // ── Top-level dispatcher ─────────────────────────────────────────────────────
 
 bool ImeLogic::process_key(const KeyEvent& ev) {
@@ -213,28 +217,16 @@ bool ImeLogic::handle_dpad(mokya_keycode_t kc) {
             case MOKYA_KEY_RIGHT:
                 selected_ = (selected_ + 1) % cand_count_;
                 break;
-            case MOKYA_KEY_UP: {
-                // Previous page, keeping slot within page.
-                int slot = selected_ % kPageSize;
-                int p    = page();
-                int pc   = page_count();
-                int np   = (p - 1 + pc) % pc;
-                int pos  = np * kPageSize + slot;
-                if (pos >= cand_count_) pos = cand_count_ - 1;
-                selected_ = pos;
-                break;
-            }
-            case MOKYA_KEY_DOWN: {
-                // Next page, keeping slot within page.
-                int slot = selected_ % kPageSize;
-                int p    = page();
-                int pc   = page_count();
-                int np   = (p + 1) % pc;
-                int pos  = np * kPageSize + slot;
-                if (pos >= cand_count_) pos = cand_count_ - 1;
-                selected_ = pos;
-                break;
-            }
+            case MOKYA_KEY_UP:
+            case MOKYA_KEY_DOWN:
+                // Up/Down navigation is owned by the view layer, which knows
+                // the visual flex-wrap row layout (see ime_view_apply +
+                // find_row_neighbour). The engine's kPageSize page-jump
+                // raced the view override and caused the highlight to flash
+                // to the wrong cell for one frame before snapping back.
+                // Consume the event without changing selected_; the view
+                // override runs in the LVGL task and sets selected_ itself.
+                return true;
             default: return false;
         }
         notify_changed();

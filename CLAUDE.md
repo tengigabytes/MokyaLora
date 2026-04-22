@@ -285,6 +285,107 @@ EOF
 - **COM port stuck/busy:** If serial open fails (`UnauthorizedAccessException`), re-flash via J-Link — this resets the MCU and forces USB CDC re-enumeration, releasing the port. Always flash before retrying serial.
 - `scripts/bringup_run.ps1` handles build+flash+serial in one step with `-Flash` flag.
 
+## Default Debug Methodology — SWD + RTT
+
+**SWD + SEGGER RTT is the FIRST tool to reach for** when debugging Core 1
+behavioural problems (latency, hangs, wrong output, crashes). Don't start
+with breadcrumbs, `printf`-over-CDC, or LED toggles — RTT is faster to set
+up, faster to read, and far less invasive.
+
+### Why RTT first
+
+| Mechanism | Setup | Live read | Per-event cost | Cross-task picture |
+|---|---|---|---|---|
+| SWD breadcrumb | low | requires halt | ~5 cycles | one point per slot |
+| `printf` over USB CDC | medium | yes (CDC stack) | ~50 µs (USB) | text only |
+| **SWD + RTT** | **medium (one-time)** | **yes (no halt)** | **~50 ns** | **CSV with µs timestamps** |
+| GPIO toggle + scope | trivial | yes (scope) | ns | needs hardware |
+
+RTT writes to a SRAM ring buffer; J-Link drains it via background DAP
+transactions without halting the CPU. **Multi-task latency profiling is
+essentially impossible without it** — breadcrumbs only capture point-in-time
+state, USB CDC is too slow and noisy.
+
+### Trace infrastructure (already wired into Core 1)
+
+- `firmware/core1/src/debug/mokya_trace.h` — `TRACE(src, ev, fmt, ...)` and
+  `TRACE_BARE(src, ev)` macros emit one CSV line per event:
+  `<us_timestamp>,<source>,<event>[,<key=val>...]`
+- Backed by SEGGER `SEGGER_RTT.c` bundled in `pico-sdk/src/rp2_common/pico_stdio_rtt/SEGGER/`
+- Initialised once via `SEGGER_RTT_Init()` near the top of
+  `main_core1_bridge.c`. Available immediately, even before USB / FreeRTOS.
+- `MOKYA_MIE_PERF_TRACE=1` compile flag (set in Core 1 CMakeLists) enables
+  optional `MIE_TRACE` macros inside `firmware/mie/src/` so MIE stays
+  decoupled from `mokya_trace.h` on PC builds.
+
+### Adding a trace point
+
+```c
+#include "mokya_trace.h"
+
+// With payload fields:
+TRACE("ime", "key_pop", "kc=0x%02x,p=%u",
+      (unsigned)ev.keycode, (unsigned)ev.pressed);
+
+// Without payload:
+TRACE_BARE("ime", "done");
+```
+
+The first column is always a microsecond timestamp from `timer_hw->timerawl`
+(no syscall, single MMIO load). `src` and `ev` together form the event tag.
+
+### Capturing a trace
+
+```sh
+# Run logger in background
+"C:/Program Files/SEGGER/JLink_V932/JLinkRTTLogger.exe" \
+    -Device RP2350_M33_1 -If SWD -Speed 4000 \
+    -RTTSearchRanges "0x20000000 0x80000" \
+    -RTTChannel 0 /tmp/rtt.log
+
+# Reproduce the issue on hardware (press keys, type, etc.)
+
+# Stop logger and analyze
+taskkill //IM JLinkRTTLogger.exe //F
+python scripts/analyze_rtt_latency.py /tmp/rtt.log
+```
+
+Notes:
+- Output may end up at the Windows-native path `C:/Users/<u>/AppData/Local/Temp/rtt.log`
+  even when `/tmp/rtt.log` was given on the command line. Read both if one is empty.
+- The 1 KB up-buffer can drop events under heavy bursts. If important events
+  are missing, raise `BUFFER_SIZE_UP` in
+  `pico-sdk/src/rp2_common/pico_stdio_rtt/SEGGER/Config/SEGGER_RTT_Conf.h`
+  (or override locally) before rebuilding.
+- The same RTT control block can be read by OpenOCD (raspberrypi fork) and
+  pyOCD — use J-Link for everyday work, fall back to those for CI / vendor
+  neutrality.
+
+### Analysing a trace
+
+`scripts/analyze_rtt_latency.py` parses CSV events and matches them up into
+per-keystroke pipeline rows (`ime,key_pop` → `ime,done` → `lvgl,render_*` →
+`lvgl,flush_done`) with p50 / p90 / max stats per segment. Use it to compare
+"before" vs "after" of any optimisation that touches the input pipeline.
+
+For ad-hoc analysis use Python directly:
+
+```python
+events = [(int(p[0]), p[1], p[2], p[3:])
+          for line in open('/tmp/rtt.log')
+          for p in [line.strip().split(',')] if len(p) >= 3]
+# pair proc_start/proc_end, group by keycode, etc.
+```
+
+### When NOT to use RTT
+
+- Hard fault / pre-`SEGGER_RTT_Init` boot crashes — RTT control block isn't
+  set up yet, so use SWD memory inspection (`mem32` of stack/PC/sentinel
+  addresses) instead.
+- Non-Core-1 contexts (Core 0 Meshtastic) — RTT is wired into Core 1 only.
+- Production firmware (RTT consumes ~6 KB code + 1 KB SRAM); compile out
+  via `#ifdef DEBUG_RTT` if shipping size is tight.
+
 ## IPC Protocol
 
 `firmware/shared/ipc/ipc_protocol.h` is the **only** cross-core shared header.

@@ -2,20 +2,52 @@
 // ime_search.cpp — Greedy prefix dictionary search + display rebuild.
 
 #include "ime_internal.h"
+#include <mie/composition_searcher.h>
 #include <algorithm>
 #include <cstring>
 
+// Optional opt-in performance trace for MokyaLora Core 1 builds. PC tests
+// and other consumers leave MOKYA_MIE_PERF_TRACE undefined, so the macros
+// expand to no-ops and MIE stays decoupled from any platform header.
+#ifdef MOKYA_MIE_PERF_TRACE
+#include "mokya_trace.h"
+#define MIE_TRACE(src, ev, fmt, ...) TRACE(src, ev, fmt, ##__VA_ARGS__)
+#define MIE_TRACE_BARE(src, ev)      TRACE_BARE(src, ev)
+#else
+#define MIE_TRACE(src, ev, fmt, ...) ((void)0)
+#define MIE_TRACE_BARE(src, ev)      ((void)0)
+#endif
+
 namespace mie {
 
-// Greedy prefix search: try decreasing key_seq_ lengths until the dict
-// returns results. Fill candidates_, matched_prefix_keys_, and rebuild
-// display_ + matched_prefix_bytes_ via rebuild_display_smart.
+// Top-level dispatcher: routes between v4 CompositionSearcher (when attached)
+// and the legacy v2 TrieSearcher path. Both implementations populate
+// candidates_, matched_prefix_keys_, and call rebuild_display_smart at the end.
 void ImeLogic::run_search() {
     cand_count_           = 0;
     selected_             = 0;
     matched_prefix_bytes_ = 0;
     matched_prefix_keys_  = 0;
 
+    if (key_seq_len_ == 0) {
+        rebuild_display_smart();
+        return;
+    }
+
+    if (composition_searcher_ && composition_searcher_->is_loaded() &&
+        mode_ == InputMode::SmartZh) {
+        run_search_v4();
+        rebuild_display_smart();
+        return;
+    }
+
+    run_search_v2_legacy();
+}
+
+// Legacy: original TrieSearcher path. Unchanged from the pre-v4 implementation
+// except for the rename. Kept while v4 rolls out (Phase 5 may remove this
+// once Core 1 firmware loads dict_mie.bin exclusively).
+void ImeLogic::run_search_v2_legacy() {
     if (key_seq_len_ == 0) {
         rebuild_display_smart();
         return;
@@ -81,6 +113,9 @@ void ImeLogic::run_search() {
 
     Candidate tmp[kMaxCandidates];
 
+    MIE_TRACE("mie", "rs_start", "kseq=%d,strip=%d",
+              key_seq_len_, stripped_len);
+
     // Iterate from the longest prefix down. Candidates from longer
     // matches are more constrained and rank first; shorter-match
     // candidates fill the remainder so the user can commit at any
@@ -93,7 +128,10 @@ void ImeLogic::run_search() {
 
         char saved      = stripped[slen];
         stripped[slen]  = '\0';
+        MIE_TRACE("mie", "search_call", "slen=%d", slen);
         int n           = searcher->search(stripped, tmp, kMaxCandidates);
+        MIE_TRACE("mie", "search_done", "slen=%d,n=%d,cum=%d",
+                  slen, n, cand_count_);
         stripped[slen]  = saved;
         if (n == 0) continue;
 
@@ -138,7 +176,122 @@ void ImeLogic::run_search() {
         }
     }
 
+    MIE_TRACE("mie", "rs_end", "total=%d", cand_count_);
     rebuild_display_smart();
+}
+
+// ── v4 dispatch ──────────────────────────────────────────────────────────
+// Position-based bucket dispatch over CompositionSearcher. Architecture
+// from docs/plan: count_positions(key_seq_) yields the user's intended word
+// length; that drives target_char_count. 0-result fallback chains adjacent
+// buckets (1-4) or truncated prefixes (5+).
+//
+// Caller (run_search) has already zeroed candidates_ / matched_prefix_keys_.
+void ImeLogic::run_search_v4() {
+    // Prefer the data-driven syllable parser (uses the dict's own reading
+    // table as ground truth) when the searcher is loaded; fall back to the
+    // hand-rolled phonotactic state machine for callers that haven't built
+    // a prefix table (PC tests with synthetic dicts).
+    int positions = composition_searcher_
+        ? composition_searcher_->count_syllables(
+              reinterpret_cast<const uint8_t*>(key_seq_), key_seq_len_)
+        : count_positions(key_seq_, key_seq_len_);
+    if (positions <= 0) {
+        positions = count_positions(key_seq_, key_seq_len_);
+    }
+    MIE_TRACE("v4", "rs_dispatch", "pos=%d,kseq_len=%d", positions, key_seq_len_);
+    if (positions <= 0) return;
+
+    int n = 0;
+
+    if (positions <= 4) {
+        // Main: search the matching word-length bucket with full user keys.
+        n = composition_searcher_->search(
+            reinterpret_cast<const uint8_t*>(key_seq_), key_seq_len_,
+            positions, candidates_, kMaxCandidates);
+
+        // Always augment with adjacent buckets (not only when n==0). The
+        // position counter's H2 heuristic is ambiguous around ㄧ/ㄨ/ㄩ
+        // (Medial role, but can also be a syllable initial — e.g. ㄍㄓㄩㄓ
+        // for 高瞻遠矚 abbrev, where ㄩ is actually an initial). Merging
+        // +1/-1 buckets tolerates both over- and under-count without the
+        // primary dropping high-rank results.
+        //
+        // Order: +1 first so any missed longer match comes right after the
+        // primary set; then -1 for shorter matches. Dedup by word string.
+        const int adj[4] = {positions + 1, positions - 1,
+                            positions + 2, positions - 2};
+        // Static to avoid blowing the IME task's 8 KB stack — at
+        // kMaxCandidates=100 a stack-local Candidate[100] is ~3.6 KB.
+        // Safe because the IME task is the only caller of run_search().
+        static Candidate tmp[kMaxCandidates];
+        for (int k = 0; k < 4 && n < kMaxCandidates; ++k) {
+            int t = adj[k];
+            if (t < 1 || t > 4) continue;
+            int m = composition_searcher_->search(
+                reinterpret_cast<const uint8_t*>(key_seq_), key_seq_len_,
+                t, tmp, kMaxCandidates);
+            for (int i = 0; i < m && n < kMaxCandidates; ++i) {
+                bool dup = false;
+                for (int j = 0; j < n; ++j) {
+                    if (std::strcmp(candidates_[j].word, tmp[i].word) == 0) {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (dup) continue;
+                candidates_[n++] = tmp[i];
+            }
+        }
+
+        // Whole user input was the search prefix in all attempts above.
+        for (int i = 0; i < n; ++i) {
+            candidates_prefix_keys_[i] = (uint8_t)key_seq_len_;
+        }
+        matched_prefix_keys_ = key_seq_len_;
+        cand_count_ = n;
+        return;
+    }
+
+    // positions >= 5: char-by-char commit mode with optional long-phrase
+    // suggestion appended.
+    //
+    // Rationale: long inputs (5+ initials) are typically the user typing a
+    // SENTENCE one initial per character, intending to commit char-by-char.
+    // Presenting 1-char candidates for the FIRST initial lets them pick
+    // immediately; commit consumes 1 byte and the remaining 4+ positions
+    // re-dispatch as normal 4-char (or shorter) bucket search.
+    //
+    // We ALSO append any 5+ char phrase matches (target=-1) at the end of
+    // the candidate list so the rare case where the user IS typing a known
+    // long phrase still surfaces it. The phrase candidates rank below the
+    // 1-char ones because that matches the much-more-common usage pattern.
+
+    // Primary: 1-char candidates for first initial.
+    uint8_t first_byte = (uint8_t)key_seq_[0];
+    n = composition_searcher_->search(
+        &first_byte, 1, /*target=*/1, candidates_, kMaxCandidates);
+    for (int i = 0; i < n; ++i) {
+        candidates_prefix_keys_[i] = 1;  // commit consumes 1 byte
+    }
+
+    // Append optional 5+ phrase match (commits the full key_seq if picked).
+    int phrase_capacity = kMaxCandidates - n;
+    int phrase_n = 0;
+    if (phrase_capacity > 0) {
+        phrase_n = composition_searcher_->search(
+            reinterpret_cast<const uint8_t*>(key_seq_), key_seq_len_,
+            /*target_char_count=*/ -1,
+            candidates_ + n, phrase_capacity);
+        for (int i = 0; i < phrase_n; ++i) {
+            candidates_prefix_keys_[n + i] = (uint8_t)key_seq_len_;
+        }
+    }
+
+    MIE_TRACE("v4", "rs5_charmode", "char_n=%d,phrase_n=%d", n, phrase_n);
+
+    cand_count_ = n + phrase_n;
+    matched_prefix_keys_ = (n > 0) ? 1 : (phrase_n > 0 ? key_seq_len_ : 0);
 }
 
 // Rebuild display_ from key_seq_. Shared between SmartZh and SmartEn.

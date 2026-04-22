@@ -54,6 +54,47 @@
 
 volatile uint32_t g_mie_dict_load_status = MIE_DICT_LOAD_NONE;
 
+/* v4 single-blob loader: copies the entire MIE4 binary to the start of
+ * PSRAM and exposes a (ptr, size) pair via out->v4_blob.
+ *
+ * Geometry check: the blob's total_size (header[0x20]) must fit within
+ * the partition AND within the PSRAM zh_dat budget (kept here for
+ * symmetry with the MDBL path; v4 uses the same 2 MB slot at PSRAM
+ * offset 0). */
+static bool mie_dict_load_v4_to_psram(mie_dict_pointers_t *out,
+                                       const uint8_t *blob_base)
+{
+    /* Read total_size from the header (LE u32 at offset 0x20). */
+    uint32_t total_size = 0;
+    memcpy(&total_size, blob_base + MIE_MIE4_TOTAL_SIZE_OFF, sizeof(total_size));
+
+    if (total_size < MIE_MIE4_HEADER_SIZE ||
+        total_size > MIE_DICT_PARTITION_SIZE ||
+        total_size > PSRAM_ZH_DAT_BUDGET + PSRAM_ZH_VAL_BUDGET) {
+        g_mie_dict_load_status = MIE_DICT_LOAD_ERR_GEOMETRY;
+        return false;
+    }
+
+    /* Copy via UNCACHED alias (same rationale as MDBL path). */
+    memcpy((void *)PSRAM_WRITE_ADDR(PSRAM_ZH_DAT_OFF), blob_base, total_size);
+
+    /* Invalidate cached alias for the freshly-written range. */
+    #define PSRAM_XIP_OFFSET   0x01000000u
+    #define CACHE_LINE_ALIGN(sz) (((sz) + 7u) & ~7u)
+    xip_cache_invalidate_range(PSRAM_XIP_OFFSET + PSRAM_ZH_DAT_OFF,
+                               CACHE_LINE_ALIGN(total_size));
+    #undef PSRAM_XIP_OFFSET
+    #undef CACHE_LINE_ALIGN
+
+    if (out) {
+        out->v4_blob      = (const uint8_t *)PSRAM_READ_ADDR(PSRAM_ZH_DAT_OFF);
+        out->v4_blob_size = total_size;
+    }
+
+    g_mie_dict_load_status = MIE_DICT_LOAD_OK;
+    return true;
+}
+
 bool mie_dict_load_to_psram(mie_dict_pointers_t *out)
 {
     if (out) memset(out, 0, sizeof(*out));
@@ -63,6 +104,14 @@ bool mie_dict_load_to_psram(mie_dict_pointers_t *out)
     }
 
     const uint8_t *blob_base = (const uint8_t *)MIE_DICT_PARTITION_ADDR;
+
+    /* Magic dispatch: MIE4 -> v4 single-blob loader; MDBL -> legacy v2 path. */
+    uint32_t magic = 0;
+    memcpy(&magic, blob_base, sizeof(magic));
+    if (magic == MIE_MIE4_MAGIC) {
+        return mie_dict_load_v4_to_psram(out, blob_base);
+    }
+
     const mie_mdbl_header_t *hdr = (const mie_mdbl_header_t *)blob_base;
 
     if (hdr->magic != MIE_MDBL_MAGIC) {

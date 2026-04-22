@@ -14,6 +14,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ime_task.h"
+#include "mokya_trace.h"
 
 #include <cstring>
 #include <new>
@@ -26,6 +27,7 @@
 
 #include <mie/ime_logic.h>
 #include <mie/trie_searcher.h>
+#include <mie/composition_searcher.h>
 
 #include "key_event.h"
 
@@ -33,8 +35,9 @@ namespace {
 
 /* ── Static state ─────────────────────────────────────────────────── */
 
-mie::TrieSearcher g_zh_searcher;
-mie::TrieSearcher g_en_searcher;
+mie::TrieSearcher        g_zh_searcher;
+mie::TrieSearcher        g_en_searcher;
+mie::CompositionSearcher g_v4_searcher;     /* attached when v4 dict loaded */
 
 alignas(mie::ImeLogic) uint8_t g_ime_storage[sizeof(mie::ImeLogic)];
 mie::ImeLogic *g_ime = nullptr;
@@ -194,6 +197,10 @@ void ime_task_fn(void *) {
          * execute within this critical section without re-taking the
          * mutex — they mutate the text buffer and call set_text_context
          * on the same thread. */
+        if (got_ev) {
+            TRACE("ime", "key_pop", "kc=0x%02x,p=%u",
+                  (unsigned)ev.keycode, (unsigned)ev.pressed);
+        }
         xSemaphoreTake(g_snapshot_mutex, portMAX_DELAY);
         if (got_ev) {
             mie::KeyEvent mev;
@@ -201,13 +208,18 @@ void ime_task_fn(void *) {
             mev.pressed = ev.pressed != 0;
             mev.now_ms  = now_ms();
 
+            TRACE("ime", "proc_start", "kc=0x%02x", (unsigned)ev.keycode);
             g_ime->process_key(mev);
+            TRACE_BARE("ime", "proc_end");
         }
+        TRACE_BARE("ime", "tick_start");
         g_ime->tick(now_ms());
+        TRACE_BARE("ime", "tick_end");
         xSemaphoreGive(g_snapshot_mutex);
 
         if (got_ev) {
             __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
+            TRACE_BARE("ime", "done");
         }
     }
 }
@@ -221,13 +233,33 @@ extern "C" {
 volatile uint32_t g_ime_dirty_counter = 0;
 
 bool ime_task_start(const mie_dict_pointers_t *dict, UBaseType_t priority) {
-    if (!dict || !dict->zh_dat || dict->zh_dat_size == 0 ||
-        !dict->zh_val || dict->zh_val_size == 0) {
-        return false;
+    if (!dict) return false;
+
+    /* Path A: MIED v4 (composition dict) — single-blob; preferred when present.
+     * v2 sections may also be loaded for the legacy fallback / English
+     * dictionary, but if v4 is attached run_search uses the composition
+     * engine and ignores TrieSearcher state. */
+    bool have_v4 = (dict->v4_blob && dict->v4_blob_size > 0);
+    bool v4_loaded = false;
+    if (have_v4) {
+        v4_loaded = g_v4_searcher.load_from_memory(dict->v4_blob,
+                                                    dict->v4_blob_size);
     }
 
-    if (!g_zh_searcher.load_from_memory(dict->zh_dat, dict->zh_dat_size,
-                                        dict->zh_val, dict->zh_val_size)) {
+    /* Path B: MDBL v2 — the original two-section format. Required when v4
+     * is absent so SmartZh still has a Chinese dictionary; also provides
+     * the English dict (v4 currently has no English support). */
+    bool have_zh_v2 = (dict->zh_dat && dict->zh_dat_size > 0 &&
+                      dict->zh_val && dict->zh_val_size > 0);
+    if (have_zh_v2) {
+        if (!g_zh_searcher.load_from_memory(dict->zh_dat, dict->zh_dat_size,
+                                            dict->zh_val, dict->zh_val_size)) {
+            have_zh_v2 = false;
+        }
+    }
+
+    /* Need at least one Chinese dict path. */
+    if (!v4_loaded && !have_zh_v2) {
         return false;
     }
 
@@ -242,6 +274,14 @@ bool ime_task_start(const mie_dict_pointers_t *dict, UBaseType_t priority) {
 
     mie::TrieSearcher *en = have_en ? &g_en_searcher : nullptr;
     g_ime = new (g_ime_storage) mie::ImeLogic(g_zh_searcher, en);
+
+    /* When v4 is loaded, attach it; ImeLogic.run_search will route SmartZh
+     * to the composition engine. The legacy zh_searcher remains as a
+     * structural prerequisite of the constructor (reference, not optional). */
+    if (v4_loaded) {
+        g_ime->attach_composition_searcher(&g_v4_searcher);
+    }
+
     g_listener.ime = g_ime;
     g_ime->set_listener(&g_listener);
 
@@ -287,6 +327,16 @@ const char *ime_view_text(int *byte_len, int *cursor_bytes) {
 
 const char *ime_view_mode_indicator(void) {
     return g_ime ? g_ime->mode_indicator() : "";
+}
+
+uint8_t ime_view_mode_byte(void) {
+    if (!g_ime) return 0xFFu;
+    switch (g_ime->mode()) {
+        case mie::InputMode::SmartZh: return 0u;
+        case mie::InputMode::SmartEn: return 1u;
+        case mie::InputMode::Direct:  return 2u;
+    }
+    return 0xFFu;
 }
 
 int ime_view_page_candidate_count(void) {

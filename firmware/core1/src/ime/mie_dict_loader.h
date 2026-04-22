@@ -26,12 +26,21 @@ extern "C" {
 #endif
 
 /* Pointer pack returned by the loader. All pointers are into PSRAM at
- * the cached base; sizes are zero for sections the blob omitted. */
+ * the cached base; sizes are zero for sections the blob omitted.
+ *
+ * The partition can hold either an MDBL pack (v2 dict, 4 sections) or a
+ * MIE4 single binary (v4 composition dict). The loader auto-detects via
+ * the magic at byte 0:
+ *   - MDBL magic: populate zh_dat / zh_val / en_dat / en_val pointers
+ *   - MIE4 magic: populate v4_blob pointer (other sections zeroed)
+ * Caller can check which format loaded via the populated fields. */
 typedef struct {
     const uint8_t *zh_dat; size_t zh_dat_size;
     const uint8_t *zh_val; size_t zh_val_size;
     const uint8_t *en_dat; size_t en_dat_size;
     const uint8_t *en_val; size_t en_val_size;
+    /* MIED v4 (composition dict) — set when partition holds a MIE4 blob. */
+    const uint8_t *v4_blob; size_t v4_blob_size;
 } mie_dict_pointers_t;
 
 /* Outcome of a load attempt. NONE = not tried; OK = all sections landed

@@ -53,8 +53,13 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /*Size of the memory available for `lv_malloc()` in bytes (>= 2kB)*/
-    /* MokyaLora: budget per firmware-architecture.md §3 — Core 1 LVGL heap 48 KB. */
-    #define LV_MEM_SIZE (48 * 1024U)          /*[bytes]*/
+    /* MokyaLora: bumped from 48 KB to 56 KB. 48 KB ran out when the IME
+     * view pre-allocated CAND_MAX=50 cells (~22 KB just for cells +
+     * existing widgets + dynamic styles), causing TLSF heap corruption
+     * (lv_free_core hard fault, 2026-04-22). Cap is set by the .shared_ipc
+     * section sitting at 0x2007A000 — pushing LVGL too high overflows
+     * BSS into the IPC pad. 56 KB leaves ~6 KB headroom below 0x2007A000. */
+    #define LV_MEM_SIZE (56 * 1024U)          /*[bytes]*/
 
     /*Size of the memory expand for `lv_malloc()` in bytes*/
     #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -73,9 +78,11 @@
  *====================*/
 
 /*Default display refresh, input device read and animation step period.*/
-/* MokyaLora: 33 ms -> ~30 FPS. DIRECT-mode flush is blocking (per-row
- * byte-swap + DMA), so 5 ms is unachievable and keeps the task CPU-bound. */
-#define LV_DEF_REFR_PERIOD  33      /*[ms]*/
+/* MokyaLora: 16 ms -> ~60 FPS. RTT trace (2026-04-22) showed ~15 ms p50
+ * "lvgl_wakeup" latency at 33 ms — typing felt sluggish. 16 ms halves the
+ * wait window. DIRECT-mode flush is blocking (per-row byte-swap + DMA),
+ * so going lower than 16 saturates CPU without further perceptible gain. */
+#define LV_DEF_REFR_PERIOD  16      /*[ms]*/
 
 /*Default Dot Per Inch. Used to initialize default sizes such as widgets sized, style paddings.
  *(Not so important, you can adjust it to modify default sizes and spaces)*/
