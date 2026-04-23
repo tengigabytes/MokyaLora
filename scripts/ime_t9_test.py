@@ -156,13 +156,20 @@ def type_word_multitap(drv, word, stats, from_reason):
     return True
 
 
+# SmartEn punctuation via SYM1 / SYM2 (see firmware/mie/src/ime_direct.cpp):
+#   SYM1 short-press (mode=SmartEn): emits ", " (comma + trailing space)
+#   SYM2 multi-tap  (mode=SmartEn): cycles ". ", "? ", "! "
+# That covers the four English sentence-punctuation characters. Anything
+# else (';', ':', '"', ...) has no English path in the current firmware
+# and is reported as unreachable.
+SYM2_EN_CYCLE = ['.', '?', '!']
+
+
 def type_separator(drv, ch, stats):
     """Space / newline / punctuation. SmartEn commits on SPACE/OK so
-    we have to exit the word boundary cleanly regardless of where
-    we came from. Punctuation falls back to Direct."""
+    we have to exit the word boundary cleanly regardless of where we
+    came from. SYM1/SYM2 reach the English sentence punctuation set."""
     if ch.isspace():
-        # SPACE in Direct OR SmartEn both emit a literal space and
-        # close any open word. Prefer SmartEn (cheaper, auto-caps).
         drv.ensure_mode(MODE_SMART_EN)
         pre_len = drv.read_text_len()
         drv.inject_keycodes([drv.KC_SPACE])
@@ -171,24 +178,43 @@ def type_separator(drv, ch, stats):
         stats['keystrokes'] += 1
         stats['ideal_keystrokes'] += 1
         return True
-    # Punctuation: use Direct multitap if the char is in the table,
-    # otherwise declare unreachable (a future pass could route
-    # through SYM1 picker for , . ; : etc.).
-    plan = CHAR_TO_DIRECT.get(ch)
-    if plan is None:
-        stats['punct_unreachable'].append(ch)
-        return False
-    drv.ensure_mode(MODE_DIRECT)
-    key_name, idx = plan
-    kc = drv.km[key_name]
-    pre_len = drv.read_text_len()
-    drv.inject_keycodes([kc] * (idx + 1) + [drv.KC_OK])
-    drv.wait_until(drv.read_text_len,
-                   lambda v: v != pre_len, timeout_s=0.5)
-    stats['keystrokes'] += (idx + 1) + 1
-    stats['ideal_keystrokes'] += 2
-    stats['punct_ok'] += 1
-    return True
+
+    # ','  → single SYM1 short-press in SmartEn (emits ", ").
+    if ch == ',':
+        drv.ensure_mode(MODE_SMART_EN)
+        kc_sym1 = drv.km['KEY_SYM1']
+        pre_len = drv.read_text_len()
+        drv.inject_keycodes([kc_sym1])
+        drv.wait_until(drv.read_text_len,
+                       lambda v: v != pre_len, timeout_s=0.4)
+        stats['punct_ok'] += 1
+        stats['keystrokes'] += 1
+        stats['ideal_keystrokes'] += 1   # comma is one char
+        return True
+
+    # '.', '?', '!' → SYM2 multi-tap cycle. 1 tap = '.', 2 = '?', 3 = '!'.
+    if ch in SYM2_EN_CYCLE:
+        idx = SYM2_EN_CYCLE.index(ch)          # 0 / 1 / 2
+        drv.ensure_mode(MODE_SMART_EN)
+        kc_sym2 = drv.km['KEY_SYM2']
+        pre_len = drv.read_text_len()
+        # Multi-tap: press (idx+1) times, then commit with SPACE (SmartEn
+        # SYM2 auto-trails a space so sentences end with ". " cleanly).
+        # A trailing SPACE also forces the cycle to close without waiting
+        # for the 800 ms multitap timeout.
+        drv.inject_keycodes([kc_sym2] * (idx + 1) + [drv.KC_SPACE])
+        drv.wait_until(drv.read_text_len,
+                       lambda v: v != pre_len, timeout_s=0.6)
+        stats['punct_ok'] += 1
+        # (idx+1) SYM2 presses + 1 SPACE commit; ideal is just the punct
+        # + space the firmware inserts automatically.
+        stats['keystrokes'] += (idx + 1) + 1
+        stats['ideal_keystrokes'] += 2
+        return True
+
+    # No English path for ';' ':' '"' etc.
+    stats['punct_unreachable'].append(ch)
+    return False
 
 
 def main():
