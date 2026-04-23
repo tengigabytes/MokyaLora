@@ -449,6 +449,34 @@ class ImeDriver:
             self.inject_keycodes([self.KC_DEL] * batch)
         raise RuntimeError(f"reset failed: text_len={snap['text_len']} pending={snap['pending']!r}")
 
+    def inject_picker_char(self, ch):
+        """Type one Traditional-Chinese punctuation char via the SYM1
+        long-press picker. Sequence: long-press SYM1 (hold ≥ 500 ms so
+        the engine tick fires), DPAD RIGHT × cell_idx, OK. Returns True
+        when text_buf grows by len(ch.encode('utf-8'))."""
+        idx = PICKER_INDEX.get(ch)
+        if idx is None: return False
+        pre_len = self.read_snapshot()['text_len']
+        # Press SYM1 (no flag — SYM1 has its own engine-side long-press
+        # timer driven by now_ms deltas; the keypad scan deferred-press
+        # FSM does NOT apply to SYM1 by design).
+        kc_sym1 = self.km['KEY_SYM1']
+        self.queue_events([(0x80 | kc_sym1, 0)])
+        time.sleep(0.6)   # > 500 ms so tick() opens the picker
+        self.queue_events([(0x00 | kc_sym1, 0)])
+        # Navigate + commit.
+        if idx > 0:
+            self.queue_events(
+                [(0x80 | self.KC_RIGHT, 0), (0x00 | self.KC_RIGHT, 0)] * idx)
+        self.queue_events(
+            [(0x80 | self.KC_OK, 0), (0x00 | self.KC_OK, 0)])
+        deadline = time.time() + 0.4
+        while time.time() < deadline:
+            snap = self.read_snapshot()
+            if snap['text_len'] != pre_len: break
+            time.sleep(0.01)
+        return snap['text_len'] - pre_len == len(ch.encode('utf-8'))
+
     def commit_rank(self, rank):
         """Navigate to `rank` and press OK. Batches RIGHT × rank + OK for
         speed, then verifies the selected index actually reached `rank`
@@ -463,11 +491,23 @@ class ImeDriver:
 CJK_RE   = re.compile(r'[一-鿿㐀-䶿]')
 ASCII_RE = re.compile(r'[A-Za-z0-9]')
 
+# Mirror of ime_logic.cpp::kSymPickerCells_; cell index = position in
+# this list. Used to route Traditional-Chinese punctuation through the
+# SYM1 long-press picker instead of skipping it.
+PICKER_CELLS = [
+    "「", "」", "『", "』",
+    "（", "）", "【", "】",
+    "，", "。", "、", "；",
+    "：", "？", "！", "…",
+]
+PICKER_INDEX = {c: i for i, c in enumerate(PICKER_CELLS)}
+
 def classify(ch):
-    if CJK_RE.match(ch):   return 'cjk'
-    if ASCII_RE.match(ch): return 'ascii'
-    if ch == ' ':          return 'space'
-    return None  # punctuation / emoji / etc. → skip
+    if CJK_RE.match(ch):       return 'cjk'
+    if ASCII_RE.match(ch):     return 'ascii'
+    if ch == ' ':              return 'space'
+    if ch in PICKER_INDEX:     return 'picker'
+    return None  # other punctuation / emoji / etc. → skip
 
 def main():
     ap = argparse.ArgumentParser()
@@ -578,6 +618,7 @@ def main():
             'rank_hist': {}, 'miss': [], 'commit_miss': [],
             'ascii_tested': 0, 'ascii_ok': 0, 'ascii_fail': [],
             'space_tested': 0, 'space_ok': 0,
+            'picker_tested': 0, 'picker_ok': 0, 'picker_fail': [],
             # --user-sim accounting (zero in non-sim modes)
             'us_short_ok'   : 0,   # found in top-N on short-tap pass
             'us_long_ok'    : 0,   # short missed but long-press found
@@ -613,6 +654,16 @@ def main():
                 drv.ensure_mode(MODE_DIRECT)
                 if drv.inject_space():
                     stats['space_ok'] += 1
+                continue
+            if kind == 'picker':
+                stats['picker_tested'] += 1
+                # The picker works in any input mode — it intercepts at
+                # the top-level dispatcher. Skip ensure_mode to avoid the
+                # mode-switch overhead.
+                if drv.inject_picker_char(ch):
+                    stats['picker_ok'] += 1
+                else:
+                    stats['picker_fail'].append((idx, ch))
                 continue
             # ── CJK branch: Bopomofo SmartZh mode. ──
             drv.ensure_mode(MODE_SMART_ZH)
@@ -770,6 +821,9 @@ def main():
                   f"({100*stats['ascii_ok']/stats['ascii_tested']:.1f}%)")
         if stats['space_tested']:
             print(f"  Space:     {stats['space_ok']}/{stats['space_tested']}")
+        if stats['picker_tested']:
+            print(f"  Picker:    {stats['picker_ok']}/{stats['picker_tested']}  "
+                  f"({100*stats['picker_ok']/stats['picker_tested']:.1f}%)")
         if not args.no_commit:
             print(f"  committed:  {stats['committed_ok']} / {n}  "
                   f"({100*stats['committed_ok']/n:.1f}%)")
