@@ -382,4 +382,21 @@ void ime_view_set_selected(int idx) {
     __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
 }
 
+bool ime_view_picker_active(void) {
+    return g_ime && g_ime->picker_active();
+}
+int ime_view_picker_cell_count(void) {
+    return g_ime ? g_ime->picker_cell_count() : 0;
+}
+int ime_view_picker_cols(void) {
+    return g_ime ? g_ime->picker_cols() : 0;
+}
+const char *ime_view_picker_cell(int idx) {
+    return (g_ime && idx >= 0 && idx < g_ime->picker_cell_count())
+           ? g_ime->picker_cell(idx) : "";
+}
+int ime_view_picker_selected(void) {
+    return g_ime ? g_ime->picker_selected() : 0;
+}
+
 } // extern "C"

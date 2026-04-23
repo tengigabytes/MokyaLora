@@ -97,6 +97,13 @@ int         ime_view_selected(void);
  * snapshot mutex internally. */
 void        ime_view_set_selected(int idx);
 
+/* ── SYM1 long-press symbol picker (Phase 1.4 Task B) ────────────────── */
+bool        ime_view_picker_active(void);
+int         ime_view_picker_cell_count(void);
+int         ime_view_picker_cols(void);
+const char *ime_view_picker_cell(int idx);
+int         ime_view_picker_selected(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

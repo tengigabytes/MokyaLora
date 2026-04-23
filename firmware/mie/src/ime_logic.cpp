@@ -10,6 +10,35 @@
 
 namespace mie {
 
+// ── SYM1 long-press symbol picker (Phase 1.4 Task B) ────────────────────
+// 4-column × 4-row grid of common Traditional-Chinese punctuation that the
+// user can't otherwise type from the half-keyboard. Layout (row-major):
+//
+//   「  」  『  』
+//   （  ）  【  】
+//   ，  。  、  ；
+//   ：  ？  ！  …
+//
+// Selection wraps modulo grid size on Left/Right; Up/Down step ±cols and
+// also wrap mod size. The grid lives in .rodata — no runtime allocation.
+static constexpr int kSymPickerCols  = 4;
+static constexpr int kSymPickerRows  = 4;
+static constexpr int kSymPickerCells = kSymPickerCols * kSymPickerRows;
+
+static const char* const kSymPickerCells_[kSymPickerCells] = {
+    "\xe3\x80\x8c", "\xe3\x80\x8d", "\xe3\x80\x8e", "\xe3\x80\x8f",  // 「」『』
+    "\xef\xbc\x88", "\xef\xbc\x89", "\xe3\x80\x90", "\xe3\x80\x91",  // （）【】
+    "\xef\xbc\x8c", "\xe3\x80\x82", "\xe3\x80\x81", "\xef\xbc\x9b",  // ，。、；
+    "\xef\xbc\x9a", "\xef\xbc\x9f", "\xef\xbc\x81", "\xe2\x80\xa6",  // ：？！…
+};
+
+int  ImeLogic::picker_cell_count() const { return kSymPickerCells; }
+int  ImeLogic::picker_cols()        const { return kSymPickerCols;  }
+const char* ImeLogic::picker_cell(int idx) const {
+    if (idx < 0 || idx >= kSymPickerCells) return "";
+    return kSymPickerCells_[idx];
+}
+
 // ── Construction / configuration ─────────────────────────────────────────────
 
 ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
@@ -52,6 +81,39 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
     if (!ev.pressed) return false;
 
     const mokya_keycode_t kc = ev.keycode;
+
+    // ── Picker-active routing ───────────────────────────────────────
+    // While the SYM1 long-press picker is open, DPAD navigates the
+    // grid and OK commits the selected symbol. Any other key closes
+    // the picker without commit (the user changed their mind).
+    if (sym_picker_open_) {
+        if (kc == MOKYA_KEY_LEFT || kc == MOKYA_KEY_RIGHT ||
+            kc == MOKYA_KEY_UP   || kc == MOKYA_KEY_DOWN) {
+            int sel = sym_picker_sel_;
+            if      (kc == MOKYA_KEY_LEFT)  sel = (sel - 1 + kSymPickerCells) % kSymPickerCells;
+            else if (kc == MOKYA_KEY_RIGHT) sel = (sel + 1) % kSymPickerCells;
+            else if (kc == MOKYA_KEY_UP)    sel = (sel - kSymPickerCols + kSymPickerCells) % kSymPickerCells;
+            else                            sel = (sel + kSymPickerCols) % kSymPickerCells;
+            sym_picker_sel_ = sel;
+            notify_changed();
+            return true;
+        }
+        if (kc == MOKYA_KEY_OK) {
+            const char* s = kSymPickerCells_[sym_picker_sel_];
+            sym_picker_open_ = false;
+            sym_picker_sel_  = 0;
+            emit_commit(s);
+            notify_changed();
+            return true;
+        }
+        // Any other key (DEL, MODE, slot keys, SYM2, etc): close
+        // without commit and fall through so the key is ignored this
+        // press. Next press hits normal routing.
+        sym_picker_open_ = false;
+        sym_picker_sel_  = 0;
+        notify_changed();
+        return true;
+    }
 
     // MODE — commit any pending, then cycle mode.
     if (kc == MOKYA_KEY_MODE) { cycle_mode(); return true; }

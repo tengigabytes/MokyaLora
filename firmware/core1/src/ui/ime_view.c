@@ -334,6 +334,11 @@ static int find_row_neighbour(int dir /* -1 = up, +1 = down */)
 void ime_view_apply(const key_event_t *ev)
 {
     if (!ev || !ev->pressed) return;
+    /* SYM1 picker has its own engine-side DPAD routing (steps ±cols on
+     * UP/DOWN, ±1 on LEFT/RIGHT, mod cell_count). Skip the view's
+     * row-neighbour remap so we don't fight the engine and flash a
+     * stale selection between snapshots. */
+    if (ime_view_picker_active()) return;
     if (s_cand_total <= 0) return;         /* DPAD with no candidates falls
                                             * through to engine's cursor move */
 
@@ -391,19 +396,39 @@ static bool snapshot(void)
     strncpy(s_mode_buf, mi, sizeof(s_mode_buf) - 1);
     s_mode_buf[sizeof(s_mode_buf) - 1] = '\0';
 
-    int total = ime_view_candidate_count();
-    if (total < 0) total = 0;
-    int n = total;
-    if (n > CAND_MAX) n = CAND_MAX;
-    s_cand_count = n;
-    s_cand_total = total;
-    for (int i = 0; i < n; ++i) {
-        const char *w = ime_view_candidate(i);
-        if (!w) w = "";
-        strncpy(s_cand_buf[i], w, CAND_BUF_SZ - 1);
-        s_cand_buf[i][CAND_BUF_SZ - 1] = '\0';
+    if (ime_view_picker_active()) {
+        /* SYM1 long-press picker overlay. The picker's grid replaces the
+         * candidate row contents — same flex-wrap renderer, just sourcing
+         * its strings + selection from picker_* APIs. The user sees a
+         * highlighted grid of common Traditional-Chinese punctuation. */
+        int total = ime_view_picker_cell_count();
+        if (total < 0) total = 0;
+        int n = total;
+        if (n > CAND_MAX) n = CAND_MAX;
+        s_cand_count = n;
+        s_cand_total = total;
+        for (int i = 0; i < n; ++i) {
+            const char *c = ime_view_picker_cell(i);
+            if (!c) c = "";
+            strncpy(s_cand_buf[i], c, CAND_BUF_SZ - 1);
+            s_cand_buf[i][CAND_BUF_SZ - 1] = '\0';
+        }
+        s_selected = ime_view_picker_selected();
+    } else {
+        int total = ime_view_candidate_count();
+        if (total < 0) total = 0;
+        int n = total;
+        if (n > CAND_MAX) n = CAND_MAX;
+        s_cand_count = n;
+        s_cand_total = total;
+        for (int i = 0; i < n; ++i) {
+            const char *w = ime_view_candidate(i);
+            if (!w) w = "";
+            strncpy(s_cand_buf[i], w, CAND_BUF_SZ - 1);
+            s_cand_buf[i][CAND_BUF_SZ - 1] = '\0';
+        }
+        s_selected = ime_view_selected();
     }
-    s_selected = ime_view_selected();
 
     ime_view_unlock();
     return true;
