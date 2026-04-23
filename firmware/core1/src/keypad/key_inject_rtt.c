@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "key_inject_rtt.h"
+#include "key_inject.h"        /* for g_key_inject_mode arbitration */
 #include "key_inject_frame.h"
 #include "key_event.h"
 #include "mokya_trace.h"
@@ -81,6 +82,12 @@ static void key_inject_rtt_task_fn(void *arg)
      * any remainder bigger than that. */
     uint8_t scratch[32];
     for (;;) {
+        if (g_key_inject_mode != KEY_INJECT_MODE_RTT) {
+            /* Mode byte says SWD is in charge. Long-sleep so we don't
+             * compete for CPU with ime_task + key_inject SWD task.   */
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
         s_rtt_loops++;
         unsigned avail = SEGGER_RTT_HasData(MOKYA_RTT_KEYINJ_CHAN);
         s_rtt_has_data = avail;

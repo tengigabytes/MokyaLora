@@ -61,6 +61,17 @@ typedef struct {
 
 extern volatile key_inject_buf_t g_key_inject_buf;
 
+/* Transport arbitration. Exactly one of {SWD ring, RTT down-channel}
+ * actively polls at a time; the other task checks this byte at the
+ * top of its loop and long-sleeps when it isn't selected. The host
+ * switches mode via SWD memory_write before running a batch of key
+ * inject operations and switches back when done, so the two
+ * transports don't compete for the same priority band and starve
+ * ime_task. Default 0 (SWD) preserves historical behaviour.          */
+#define KEY_INJECT_MODE_SWD   0u
+#define KEY_INJECT_MODE_RTT   1u
+extern volatile uint8_t g_key_inject_mode;
+
 /* Create and start the polling task. Must be called after FreeRTOS
  * scheduler is up. Idempotent — second call is a no-op. */
 void key_inject_task_start(void);
