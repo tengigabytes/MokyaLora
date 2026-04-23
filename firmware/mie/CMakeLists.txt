@@ -215,11 +215,18 @@ if(NOT CMAKE_CROSSCOMPILING)
         # ── Large variant ─────────────────────────────────────────────────
         # mie_dict_data_lg: all English words, no charlist emit
         # mie_font_data_lg: full Unicode ranges (for PC testing)
+        #
+        # Outputs go to MIE_DATA_DIR/lg/ — NOT the top-level MIE_DATA_DIR.
+        # The `lg` variant emits identically-named files (dict_dat.bin,
+        # dict_values.bin) as `sm` but without the freq/per-key filtering
+        # knobs, so sharing the directory silently overwrites the sm
+        # outputs with 89 MB blobs. Root cause for MIE_DICT_LOAD_ERR_GEOMETRY
+        # bricks seen on-device before 2026-04-23.
         if(MIE_DATA_SOURCES_DIR)
             set(_lg_dict_args
                 --libchewing  "${MIE_DATA_SOURCES_DIR}/tsi.csv"
                 --en-wordlist "${MIE_DATA_SOURCES_DIR}/google-10000-english-no-swears.txt"
-                --output-dir  "${MIE_DATA_DIR}")
+                --output-dir  "${MIE_DATA_DIR}/lg")
             set(_lg_dict_depends
                 "${MIE_TOOLS_DIR}/gen_dict.py"
                 "${MIE_DATA_SOURCES_DIR}/tsi.csv"
@@ -244,17 +251,19 @@ if(NOT CMAKE_CROSSCOMPILING)
         endif()
 
         if(MIE_UNIFONT_OTF)
+            # lg font also lives under MIE_DATA_DIR/lg/ for parity with the
+            # lg dict (see note above about sm/lg filename collision).
             add_custom_command(
-                OUTPUT  "${MIE_DATA_DIR}/mie_unifont_16.bin"
+                OUTPUT  "${MIE_DATA_DIR}/lg/mie_unifont_16.bin"
                 COMMAND ${Python3_EXECUTABLE}
                         "${MIE_TOOLS_DIR}/gen_font.py"
                         --unifont "${MIE_UNIFONT_OTF}"
-                        --out     "${MIE_DATA_DIR}/mie_unifont_16.bin"
+                        --out     "${MIE_DATA_DIR}/lg/mie_unifont_16.bin"
                 DEPENDS "${MIE_TOOLS_DIR}/gen_font.py" "${MIE_UNIFONT_OTF}"
                 COMMENT "Generating large MIE font (full Unicode ranges)"
                 VERBATIM)
             add_custom_target(mie_font_data_lg
-                DEPENDS "${MIE_DATA_DIR}/mie_unifont_16.bin")
+                DEPENDS "${MIE_DATA_DIR}/lg/mie_unifont_16.bin")
         else()
             add_custom_target(mie_font_data_lg
                 COMMAND ${CMAKE_COMMAND} -E echo
