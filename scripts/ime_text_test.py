@@ -229,6 +229,11 @@ class ImeDriver:
             self._KIJ_MAGIC = bytes([0xAA, 0x55])
             # Warm up CB lookup now so the first inject doesn't pay.
             swd._rtt_locate()
+            # Hand transport arbitration over to the RTT task. SWD task
+            # will observe g_key_inject_mode != SWD at the top of its
+            # loop and long-sleep — so ime_task isn't competing with
+            # two hot pollers at priority 2.
+            swd.set_key_inject_mode(swd.KEY_INJECT_MODE_RTT)
         # view_router uses uniquely-named s_view_router_active so nm can
         # disambiguate from i2c_bus.c's s_active (both static int).
         self.a_active = swd.symbol('s_view_router_active')

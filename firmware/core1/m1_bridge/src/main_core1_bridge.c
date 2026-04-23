@@ -563,16 +563,12 @@ int main(void)
      * the user's physical keypress always wins. Safe in production: if
      * nobody writes to the ring, the task just polls and sleeps. */
     key_inject_task_start();
-    /* RTT alternate transport: host + firmware plumbing all in place
-     * (see key_inject_rtt.c / scripts/mokya_rtt.py) and proven on
-     * 30-frame drain bench (~4 ms). Left off here because running
-     * alongside the SWD key_inject consumer drags --user-sim regression
-     * from 400 ms/char to timeout — the SWD ring producer never gets
-     * enough CPU to push events before the test's 2 s inject deadline.
-     * Proper fix is a single shared consumer task with transport-
-     * specific producers; tracked as P1.6.1. Uncomment to exercise
-     * RTT when testing that path in isolation.                        */
-    /* key_inject_rtt_task_start();                                    */
+    /* RTT alternate transport. Both inject tasks coexist but only the
+     * one selected by g_key_inject_mode actively polls — the other
+     * long-sleeps (50 ms) so ime_task doesn't compete with two hot
+     * pollers. Host flips the mode byte via SWD for the duration of
+     * a RTT burst and flips it back when done. Default = SWD.        */
+    key_inject_rtt_task_start();
 
     #undef TASK_START_OR_PANIC
 

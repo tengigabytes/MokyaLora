@@ -9,6 +9,10 @@
 
 volatile key_inject_buf_t g_key_inject_buf __attribute__((used));
 
+/* Default mode = SWD so existing tooling works out of the box. Host
+ * flips to RTT for fast-burst tests and flips back when done.        */
+volatile uint8_t g_key_inject_mode __attribute__((used)) = KEY_INJECT_MODE_SWD;
+
 static TaskHandle_t s_task = NULL;
 
 static void key_inject_task_fn(void *arg)
@@ -24,6 +28,12 @@ static void key_inject_task_fn(void *arg)
     g_key_inject_buf.magic        = KEY_INJECT_MAGIC;
 
     for (;;) {
+        if (g_key_inject_mode != KEY_INJECT_MODE_SWD) {
+            /* Host has handed the band over to the RTT transport.
+             * Long-sleep so ime_task + RTT task share CPU cleanly. */
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
         uint32_t prod = g_key_inject_buf.producer_idx;
         while (g_key_inject_buf.consumer_idx != prod) {
             uint32_t idx   = g_key_inject_buf.consumer_idx

@@ -41,6 +41,13 @@ class MokyaSwd:
         return self
 
     def __exit__(self, *a):
+        # Return transport to SWD so the next pylink session isn't met
+        # with key_inject SWD task still long-sleeping. Best-effort:
+        # if the symbol isn't there (older firmware) just swallow.
+        try:
+            self.set_key_inject_mode(self.KEY_INJECT_MODE_SWD)
+        except Exception:
+            pass
         self.close()
 
     def open(self):
@@ -172,6 +179,34 @@ class MokyaSwd:
         wr = self._jl.memory_read32(self._rtt_wroff_addr, 1)[0]
         rd = self._jl.memory_read32(self._rtt_rdoff_addr, 1)[0]
         return wr == rd
+
+    # ── Transport-mode arbitration (g_key_inject_mode) ────────────────
+    # Firmware keeps both SWD and RTT key-inject tasks alive, but only
+    # the one matching this byte runs at active cadence — the other
+    # long-sleeps. Keeps ime_task from competing with two hot pollers.
+    # Host flips to RTT before a burst and flips back to SWD on exit.
+    KEY_INJECT_MODE_SWD = 0
+    KEY_INJECT_MODE_RTT = 1
+
+    def set_key_inject_mode(self, mode):
+        """Write g_key_inject_mode on the target. Use RTT-mode around a
+        RTT burst, SWD-mode for the default SWD ring path."""
+        if mode not in (self.KEY_INJECT_MODE_SWD, self.KEY_INJECT_MODE_RTT):
+            raise ValueError(f"bad mode {mode!r}")
+        addr = self.symbol("g_key_inject_mode")
+        self._jl.memory_write8(addr, [mode])
+        # One short pause so the target task loop observes the switch
+        # before the host starts pushing frames / bumping producer_idx.
+        import time as _t
+        _t.sleep(0.060)
+
+    def __del__(self):
+        # Best-effort return-to-default if a test forgets to exit.
+        try:
+            if self._jl is not None:
+                self.set_key_inject_mode(self.KEY_INJECT_MODE_SWD)
+        except Exception:
+            pass
 
     # ── ELF symbol lookup (one-off, cached) ──────────────────────────
 
