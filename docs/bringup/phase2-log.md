@@ -1712,12 +1712,30 @@ Hardware verification (SWD-only, J-Link Commander):
 - `0x2007FFE0` debug breadcrumbs (now removed) confirmed the
   throttle loop fires exactly once per MODE cycle and returns ok.
 
-Two open items deferred to a follow-up session:
-1. Five-passage `test_lru_regression.py` end-to-end run —
-   `ime_text_test.py` currently fails on Meshtastic protobuf parse
-   over USB CDC (independent from this phase). Script is committed
-   and ready to run once the bridge issue clears.
-2. `mie_dict_blob` target regenerates a corrupt 89 MB `dict.bin`
+Hardware regression ran 2026-04-23 on `user1.txt` (first 30 chars,
+`--erase --limit 30`):
+
+    Pass 1 (cold cache): rank 0 = 5 / rank ≤ 3 = 16 / rank ≥ 8 = 1
+    Pass 2 (warm cache): rank 0 = 22 / rank ≤ 3 = 24 / rank ≥ 8 = 0
+    Δ rank 0 = +17, Δ rank ≤ 3 = +8, Δ rank ≥ 8 = −1
+
+The +17 bump at rank 0 is the LRU promoting the 17 chars that were
+committed on Pass 1. All 24 CJK chars in Pass 2 are visible in the
+top-3 candidate row without any DPAD navigation — exactly the
+"repeat-typer cost" win Phase 1.6 was built to deliver.
+
+Three items deferred to a follow-up session:
+1. `--reboot` path (flash-persistence across a SWD reset) is scripted
+   but hit a Core 1-stays-in-bootrom edge case after repeated
+   erase/reset cycles in the same session. The flash contents were
+   verified with `mem32 0x10C00000 4` → `0x3155524C` ("LRU1") after
+   a save; the load path ran on boot and returned success during
+   normal (non-erase) testing. Needs a clean session to reproduce
+   the failure shape and fix.
+2. Full five-passage regression run across user{1..5}.txt +
+   echeneis.txt. Script is ready; awaiting a session that isn't
+   already deep in debugging churn.
+3. `mie_dict_blob` target regenerates a corrupt 89 MB `dict.bin`
    from the local `tsi.csv`; ship-path uses the pre-built
    `dict_mie_v4.bin` via `--v4` which is unaffected.
 
