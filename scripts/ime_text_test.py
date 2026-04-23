@@ -449,6 +449,19 @@ class ImeDriver:
             self.inject_keycodes([self.KC_DEL] * batch)
         raise RuntimeError(f"reset failed: text_len={snap['text_len']} pending={snap['pending']!r}")
 
+    def inject_newline(self):
+        """Press OK once when the engine is idle (no candidates / no
+        multitap pending) → emit "\\n" (Phase 1.4 Task C, mirrors SPACE-
+        when-idle behaviour)."""
+        pre_len = self.read_snapshot()['text_len']
+        self.inject_keycodes([self.KC_OK])
+        deadline = time.time() + 0.4
+        while time.time() < deadline:
+            snap = self.read_snapshot()
+            if snap['text_len'] != pre_len: break
+            time.sleep(0.01)
+        return snap['text_len'] - pre_len == 1
+
     def inject_picker_char(self, ch):
         """Type one Traditional-Chinese punctuation char via the SYM1
         long-press picker. Sequence: long-press SYM1 (hold ≥ 500 ms so
@@ -506,6 +519,7 @@ def classify(ch):
     if CJK_RE.match(ch):       return 'cjk'
     if ASCII_RE.match(ch):     return 'ascii'
     if ch == ' ':              return 'space'
+    if ch == '\n':             return 'newline'
     if ch in PICKER_INDEX:     return 'picker'
     return None  # other punctuation / emoji / etc. → skip
 
@@ -618,6 +632,7 @@ def main():
             'rank_hist': {}, 'miss': [], 'commit_miss': [],
             'ascii_tested': 0, 'ascii_ok': 0, 'ascii_fail': [],
             'space_tested': 0, 'space_ok': 0,
+            'newline_tested': 0, 'newline_ok': 0,
             'picker_tested': 0, 'picker_ok': 0, 'picker_fail': [],
             # --user-sim accounting (zero in non-sim modes)
             'us_short_ok'   : 0,   # found in top-N on short-tap pass
@@ -651,9 +666,17 @@ def main():
                 continue
             if kind == 'space':
                 stats['space_tested'] += 1
-                drv.ensure_mode(MODE_DIRECT)
+                # Phase 1.4 Task C: SmartZh / SmartEn / Direct all support
+                # idle SPACE → " " (handle_smart's idle path + handle_direct's
+                # SPACE branch). No mode switch required — exercise whatever
+                # mode the previous chars left us in.
                 if drv.inject_space():
                     stats['space_ok'] += 1
+                continue
+            if kind == 'newline':
+                stats['newline_tested'] += 1
+                if drv.inject_newline():
+                    stats['newline_ok'] += 1
                 continue
             if kind == 'picker':
                 stats['picker_tested'] += 1
@@ -821,6 +844,8 @@ def main():
                   f"({100*stats['ascii_ok']/stats['ascii_tested']:.1f}%)")
         if stats['space_tested']:
             print(f"  Space:     {stats['space_ok']}/{stats['space_tested']}")
+        if stats['newline_tested']:
+            print(f"  Newline:   {stats['newline_ok']}/{stats['newline_tested']}")
         if stats['picker_tested']:
             print(f"  Picker:    {stats['picker_ok']}/{stats['picker_tested']}  "
                   f"({100*stats['picker_ok']/stats['picker_tested']:.1f}%)")

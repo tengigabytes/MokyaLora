@@ -264,6 +264,36 @@ TEST(Sym1Picker, ShortPressSym1ClosesWithoutCommit) {
     EXPECT_TRUE(L.committed.empty());
 }
 
+// ── OK idle = newline (Phase 1.4 Task C, mirrors SPACE-when-idle) ──────
+TEST(OkIdle, EmitsNewlineWhenNoPendingNoCandidates) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "\n");
+}
+
+TEST(OkIdle, MultiplePressesEmitMultipleNewlines) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    press(ime, MOKYA_KEY_OK);
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "\n\n");
+}
+
+TEST(OkIdle, PickerOpenDoesNotEmitNewline) {
+    // While the SYM1 picker is open, OK commits the highlighted symbol
+    // — must not also emit \n.
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    open_picker(ime);
+    press(ime, MOKYA_KEY_OK, 1000);
+    EXPECT_EQ(L.committed, "「");
+    EXPECT_FALSE(ime.picker_active());
+}
+
 TEST(Sym1Picker, OtherKeyClosesWithoutCommit) {
     TrieSearcher ts;
     ImeLogic ime(ts);

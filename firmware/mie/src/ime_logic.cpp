@@ -73,7 +73,7 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
     if (ev.keycode == MOKYA_KEY_NONE)               return false;
     if (ev.keycode >= MOKYA_KEY_LIMIT)              return false;
 
-    // SYM1 uses both edges (short-press vs long-press).
+    // SYM1 uses both edges (short-press vs long-press picker).
     if (ev.keycode == MOKYA_KEY_SYM1)
         return handle_sym1(ev.pressed, ev.now_ms);
 
@@ -106,9 +106,10 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
             notify_changed();
             return true;
         }
-        // Any other key (DEL, MODE, slot keys, SYM2, etc): close
-        // without commit and fall through so the key is ignored this
-        // press. Next press hits normal routing.
+        // SYM1 short-press in picker is intercepted by handle_sym1
+        // (closes picker without commit). Any other key (DEL, MODE,
+        // slot keys, SYM2, etc): close without commit, ignore this
+        // press; next press hits normal routing.
         sym_picker_open_ = false;
         sym_picker_sel_  = 0;
         notify_changed();
@@ -126,16 +127,30 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
         kc == MOKYA_KEY_LEFT || kc == MOKYA_KEY_RIGHT)
         return handle_dpad(kc);
 
-    // OK — commit selected candidate, or commit multi-tap pending, or let
-    // the UI handle it as Enter/confirm. OK does NOT auto-append a
-    // trailing space in SmartEn: the English-sentence convention is
-    // that the next word carries its own leading space (handled in
-    // commit_selected_candidate), so punctuation can follow a word
-    // immediately without creating "Apple ," artifacts.
+    // OK — short-press semantics:
+    //   - has candidates    → commit selected
+    //   - multi-tap pending → commit it
+    //   - otherwise (idle)  → emit "\n" (Phase 1.4 Task C, mirrors the
+    //                          SPACE-when-idle convention)
     if (kc == MOKYA_KEY_OK) {
-        if (has_candidates()) { commit_selected_candidate(); notify_changed(); return true; }
-        if (multitap_.keycode != MOKYA_KEY_NONE) { multitap_commit(); notify_changed(); return true; }
-        return false;
+        if (sym_picker_open_) {
+            // Picker has its own OK semantic (commit highlighted symbol);
+            // already routed above in the picker-active block.
+            return false;
+        }
+        if (has_candidates()) {
+            commit_selected_candidate();
+            notify_changed();
+            return true;
+        }
+        if (multitap_.keycode != MOKYA_KEY_NONE) {
+            multitap_commit();
+            notify_changed();
+            return true;
+        }
+        emit_commit("\n");
+        notify_changed();
+        return true;
     }
 
     // SYM2 — multi-tap punctuation cycling.
@@ -181,6 +196,7 @@ bool ImeLogic::tick(uint32_t now_ms) {
         // wires the picker list into pending_view().
         changed = true;
     }
+
 
     // Lock the long-press cycle once the multitap timeout passes — no
     // visible change (the cycled phoneme stays in phoneme_hint_), just
