@@ -288,16 +288,38 @@ early-passage chars have been evicted in Pass 1's own tail. Future
 P1.6.1 could raise kCap, add frequency weighting, or spill eviction
 to a second-chance tier. Out of scope for the initial P1.6 land.
 
-Known outstanding:
+Follow-up work (2026-04-23 / 24):
 - `--reboot` round-trip fix: `force_lru_save()` was resetting
   `producer_idx` to 2, which wrapped the key-inject ring past its
   (stale-from-Pass-1) consumer position and re-replayed ~30 garbage
-  events into IME, crashing Core 1 mid-flash-write. Commit `f63f41b`
+  events into IME, crashing Core 1 mid-flash-write. Commit `3af07f6`
   appends events at `cur_prod & (RING-1)` and bumps `producer_idx`
   by +2 instead — confirmed with live SWD reproduction.
 - `build/mie-host/dict.bin` 89 MB regeneration fixed by CMake change
   to route `mie_dict_data_lg` to `${MIE_DATA_DIR}/lg/` so it no
   longer clobbers the `sm` variant outputs (commit `f63f41b`).
+- **RTT key-inject transport** added as an alternative to the SWD
+  ring. `firmware/core1/src/keypad/key_inject_rtt.{c,h}` +
+  `scripts/mokya_rtt.py` + `ime_text_test.py --transport rtt`.
+  Both transports coexist under a shared `g_key_inject_mode` byte
+  (default SWD) — whichever isn't selected long-sleeps 50 ms so
+  ime_task never competes with two hot pollers. Host flips the
+  byte for the duration of an RTT burst and flips it back on
+  context-manager exit. Commits `7e2443a` / `1a21ee9`. Net effect:
+  a binary-framed, ring-wrap-safe second transport with ~35 %
+  higher raw throughput at the SWD level but identical per-char
+  latency under regression (IME processing dominates), whose main
+  value is safety (no producer/consumer competition, CRC-protected
+  frames, resync on magic byte).
+- **Poll refactor** (commit `eb182a3`) replaced the 10 ms full-
+  snapshot polls in `ime_text_test.py` wait loops with 3 ms
+  single-u32 polls via a new `ImeDriver.wait_until(reader,
+  condition, ...)` helper. Per-char steady-state 400 → 310 ms.
+- **LFU-weighted LRU eviction** (commit `01af1b9`) was a hypothesis
+  test for the long-passage flat-lift problem. Hardware result
+  was a null — see `docs/design-notes/mie-p1.6-lru-plan.md`
+  "What we learned about long passages". Kept in tree as a unit
+  test + honest commit message for future P1.6.1 revisits.
 - Simultaneous flash writes from both cores is still an uncovered
   race (low probability, both sides honour a 5 ms park timeout).
   Document as follow-up — add a global `flash_op_arb` CAS if it
@@ -312,11 +334,23 @@ Known outstanding:
   (`scripts/mokya_swd.py`) — persistent SWD connection, ~0.3 ms per
   memory op vs the 500 ms launch cost of one-shot `J-Link Commander`
   scripts. Used for end-to-end IME testing without keypad operator.
+- **RTT key-inject transport** (Phase 1.6 followup): alternate path
+  at `firmware/core1/src/keypad/key_inject_rtt.{c,h}` using SEGGER
+  RTT down-channel 1 with a binary wire frame (magic + type + len +
+  payload + crc8; see `key_inject_frame.h`). Same downstream path
+  (`key_event_push_inject_flags`) as the SWD ring. `g_key_inject_mode`
+  arbitrates — only one transport polls at a time. Host side is
+  `MokyaSwd.rtt_send_frame` (memory-write into the SEGGER CB;
+  bypasses pylink's `rtt_write` which is unreliable on RP2350) plus
+  `ime_text_test.py --transport rtt`.
 - **Text-driven IME regression** lives in `scripts/ime_text_test.py` —
   takes a UTF-8 passage, types it char-by-char (CJK via SmartZh, ASCII
   via Direct mode, space directly), reads back `g_text`, reports per-
   rank histogram + reachability stats. Three reference passages under
-  `scripts/ime_passage_*.txt`.
+  `scripts/ime_passage_*.txt`. `--transport {swd,rtt}` picks the
+  injection transport; `wait_until(cheap_read, condition, poll_s=3)`
+  replaced the 10 ms + 400 B-snapshot polls that used to dominate
+  wait-loop cost (per-char 400 → 310 ms post-refactor).
 - SWD+RTT debug methodology was promoted to default in `CLAUDE.md`'s
   Hardware Debug section earlier this week. RTT trace is the first
   tool to reach for on Core 1 latency / hang investigations.
@@ -353,20 +387,40 @@ Known outstanding:
 - `firmware/core1/src/debug/mokya_trace.c` — vsnprintf → SEGGER_RTT_Write
 - `scripts/analyze_rtt_latency.py` — pipeline latency analyzer
 
-### SWD virtual key injection + text-driven IME tests
+### SWD/RTT virtual key injection + text-driven IME tests
 - `firmware/core1/src/keypad/key_inject.{h,c}` — 64-event ring polled by
-  a FreeRTOS task (5 ms cadence), forwards into `key_event_push_inject`
+  a FreeRTOS task (5 ms cadence), forwards into `key_event_push_inject`.
+  `g_key_inject_mode` byte arbitrates SWD vs RTT — active task runs at
+  poll cadence, inactive long-sleeps 50 ms.
+- `firmware/core1/src/keypad/key_inject_rtt.{h,c}` — RTT transport
+  counterpart; SEGGER down-channel 1 (buffer `"keyinj"`, 256 B),
+  uses `key_inject_frame.h` parser. Task stack 256 words (TRACE()
+  vsnprintf needs ~128 B inside).
+- `firmware/core1/src/keypad/key_inject_frame.{h,c}` — shared binary
+  wire frame (magic + type + len + payload + crc8) + re-sync parser
+  state machine. Reused by future USB-CDC transport.
 - `firmware/core1/src/ui/ime_view.c` — `ime_view_debug_t` v0003 (seq-
   locked snapshot of cand/text/pending/mode) + `g_ime_cand_full` (full
   100-candidate mirror in regular .bss for SWD readback beyond the 8-cell
   on-screen window)
 - `scripts/mokya_swd.py` — pylink-based persistent SWD connection,
-  ~0.3 ms per memory op + transient-error retry
+  ~0.3 ms per memory op + transient-error retry. Adds `rtt_send_frame`,
+  `rtt_ring_empty`, `set_key_inject_mode` for the RTT path.
+- `scripts/mokya_rtt.py` — standalone RTT client + `_selftest()` for
+  bring-up verification without invoking ime_text_test.
 - `scripts/inject_keys.py` — CLI for injection + view cycling + reset
 - `scripts/ime_text_test.py` — text passage → per-char Bopomofo / Direct
-  / mode-switching pipeline; verifies via `g_text` byte growth
-- `scripts/ime_passage_*.txt` — three reference passages (chat / fish /
-  technical wiki)
+  / mode-switching pipeline; verifies via `g_text` byte growth.
+  `--transport {swd,rtt}` picks the injection transport;
+  `ImeDriver.wait_until` polls cheap u32 fields rather than 400 B
+  snapshots.
+- `scripts/test_lru_regression.py` — Pass 1 / Pass 2 rank-histogram
+  regression around Phase 1.6 LRU. `--erase` wipes flash LRU slot,
+  `--reboot` exercises cross-reset persistence. `force_lru_save()`
+  uses safe `(cur_prod + 2)` ring advancement (the ring-wrap bug
+  that wedged QMI in the 2026-04-23 session).
+- `scripts/ime_passage_*.txt` — six reference passages (user1..5 +
+  echeneis); see Phase 1.6 regression table above.
 
 ## Recovery (if v4 is broken)
 
