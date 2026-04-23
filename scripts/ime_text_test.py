@@ -208,10 +208,15 @@ def reading_to_events(reading_bytes, phoneme_pos, tone, keymap,
 # ── IME client with persistent pylink ──────────────────────────────────
 
 class ImeDriver:
-    def __init__(self, swd, keymap):
+    def __init__(self, swd, keymap, transport="swd"):
         self.swd = swd
         self.km  = keymap
-        # Resolve addresses once.
+        if transport not in ("swd", "rtt"):
+            raise ValueError(f"unknown transport {transport!r}")
+        self.transport = transport
+        # Resolve addresses once. g_key_inject_buf is always available;
+        # even when transport=rtt we use the magic word as a sanity
+        # check that Core 1's scheduler is up.
         base = swd.symbol('g_key_inject_buf')
         self.a_magic    = base
         self.a_producer = base + 4
@@ -219,6 +224,11 @@ class ImeDriver:
         self.a_pushed   = base + 12
         self.a_rejected = base + 16
         self.a_events   = base + 20
+        if transport == "rtt":
+            # Precompute magic + nop frame for cheap send_frame calls.
+            self._KIJ_MAGIC = bytes([0xAA, 0x55])
+            # Warm up CB lookup now so the first inject doesn't pay.
+            swd._rtt_locate()
         # view_router uses uniquely-named s_view_router_active so nm can
         # disambiguate from i2c_bus.c's s_active (both static int).
         self.a_active = swd.symbol('s_view_router_active')
@@ -308,6 +318,9 @@ class ImeDriver:
         and the consumer pointer (long sequences like RIGHT*N + OK can
         exceed the ring otherwise, with later writes corrupting events
         the consumer hasn't drained yet)."""
+        if self.transport == "rtt":
+            self._queue_events_rtt(event_list)
+            return
         idx = 0
         n   = len(event_list)
         chunk_max = RING_EVENTS - 2
@@ -334,6 +347,38 @@ class ImeDriver:
             if self.swd.read_u32(self.a_consumer) >= target_producer: return
             time.sleep(self.poll_ms / 1000.0)
         raise RuntimeError("inject timeout")
+
+    @staticmethod
+    def _crc8(data):
+        crc = 0
+        for b in data:
+            crc ^= b
+            for _ in range(8):
+                crc = ((crc << 1) ^ 0x07) & 0xFF if (crc & 0x80) \
+                                                 else (crc << 1) & 0xFF
+        return crc
+
+    def _queue_events_rtt(self, event_list):
+        """RTT transport path: wrap each (kb, fb) into a KEY_EVENT frame
+        (magic 0xAA 0x55 + type 0x01 + len 2 + payload + crc8) and
+        stream them down the SEGGER RTT down-channel. rtt_send_frame
+        blocks internally if the ring fills — no host-side pacing
+        needed beyond that. Waits for the ring to drain before
+        returning so the caller's usual post-inject poll is valid."""
+        for (kb, fb) in event_list:
+            body = bytes([0x01, 0x02, kb & 0xFF, fb & 0xFF])
+            frame = self._KIJ_MAGIC + body + bytes([self._crc8(body)])
+            self.swd.rtt_send_frame(frame, timeout_s=2.0)
+        # Wait for firmware to drain everything we pushed. +5 ms cushion
+        # covers the key_inject_rtt task's 5 ms poll cadence plus the
+        # key_event_push_inject_flags queue hop.
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            if self.swd.rtt_ring_empty():
+                time.sleep(0.005)
+                return
+            time.sleep(self.poll_ms / 1000.0)
+        raise RuntimeError("rtt inject timeout (ring never drained)")
 
     def inject_keycodes(self, kc_list, flags=0):
         """Press+release each keycode in order. Optional flags byte is
@@ -528,6 +573,12 @@ def main():
     ap.add_argument('path', nargs='?')
     ap.add_argument('--stdin', action='store_true')
     ap.add_argument('--elf', default='build/core1_bridge/core1_bridge.elf')
+    ap.add_argument('--transport', choices=['swd', 'rtt'], default='swd',
+                    help='Key-injection transport. swd (default) writes '
+                    'g_key_inject_buf ring over SWD memory. rtt streams '
+                    'frames through the SEGGER RTT down-channel — same '
+                    'debugger, but bypasses the ring (faster bursts, '
+                    'avoids the ring-wrap pitfall).')
     ap.add_argument('--dict', default='firmware/mie/data/dict_mie_v4.bin')
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--no-commit', action='store_true')
@@ -620,7 +671,7 @@ def main():
         print(f"CJK chars not in dict ({len(absent)}): " + ''.join(list(absent)[:40]))
 
     with MokyaSwd(elf=args.elf) as swd:
-        drv = ImeDriver(swd, keymap)
+        drv = ImeDriver(swd, keymap, transport=args.transport)
         drv.check_alive()
         drv.cycle_view_to(IME_VIEW_INDEX)
         drv.reset_text()

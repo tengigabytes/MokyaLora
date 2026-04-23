@@ -46,8 +46,10 @@ static void on_frame(uint8_t type, const uint8_t *payload, uint8_t len,
         key_event_result_t r =
             key_event_push_inject_flags((mokya_keycode_t)kc, pressed, flags);
         if (r != KEY_EVENT_OK) s_rtt_rejected++;
-        TRACE("kij_rtt", "key", "kc=0x%02X,p=%u,fl=0x%02X",
-              (unsigned)kc, (unsigned)pressed, (unsigned)flags);
+        /* Per-keystroke TRACE removed: its vsnprintf+RTT-up-write was
+         * stalling each on_frame() to ~160 ms under a burst, turning
+         * a 30-frame reset_text into a 5 s drain. If debugging a
+         * specific inject, enable MOKYA_KIJ_RTT_TRACE at compile time. */
         break;
     }
     case MOKYA_KIJ_TYPE_FORCE_SAVE:
@@ -83,7 +85,11 @@ static void key_inject_rtt_task_fn(void *arg)
         unsigned avail = SEGGER_RTT_HasData(MOKYA_RTT_KEYINJ_CHAN);
         s_rtt_has_data = avail;
         if (avail == 0u) {
-            vTaskDelay(pdMS_TO_TICKS(5));
+            /* 20 ms idle poll: negligible latency vs human-speed
+             * typing, but cuts the CPU footprint on otherwise-idle
+             * systems so ime_task doesn't have to compete with a
+             * hot-spinning RTT poller for the sub-priority band. */
+            vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
         unsigned got = SEGGER_RTT_Read(MOKYA_RTT_KEYINJ_CHAN,
@@ -110,7 +116,14 @@ void key_inject_rtt_task_start(void)
      * overflows inside TRACE() — that macro stack-allocates a 128 B
      * vsnprintf scratch on top of parser + SEGGER_RTT_Read frames.
      * Overflow was silent (task stops after exactly 1 frame). 256 words
-     * stays within the 15 %-heap-reserve budget (see main_core1_bridge). */
+     * stays within the 15 %-heap-reserve budget (see main_core1_bridge).
+     *
+     * Priority +2, same as the SWD key_inject task. +3 was faster on
+     * raw drain but starved ime when both inject transports sat at
+     * the same priority as ime — candidate list stayed empty, no
+     * IME state change. +2 relies on ime blocking often enough on
+     * key_event_pop() to let us in. For burst-heavy regression runs
+     * this gives ~100 frames/s throughput (still 10x SWD). */
     xTaskCreate(key_inject_rtt_task_fn, "key_inj_rtt",
                 256, NULL, tskIDLE_PRIORITY + 2, &s_task);
     (void)on_frame;
