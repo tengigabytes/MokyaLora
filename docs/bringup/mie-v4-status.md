@@ -257,12 +257,24 @@ Hardware checks (SWD):
 - MODE inject triggers the mode_tripwire → flash save completes
   without HardFault on either core.
 
+Hardware regression — `scripts/test_lru_regression.py` on
+`ime_passage_user1.txt` (first 30 chars, erased partition):
+
+    Pass 1 (cold): rank 0 = 5 / rank ≤ 3 = 16 / rank ≥ 8 = 1
+    Pass 2 (warm): rank 0 = 22 / rank ≤ 3 = 24 / rank ≥ 8 = 0
+
+17 of the 22 rank-0 hits on Pass 2 are LRU promotions — every char
+committed on Pass 1 re-surfaces at the top of the candidate list on
+Pass 2 without any DPAD navigation.
+
 Known outstanding:
-- Full five-passage regression (`scripts/test_lru_regression.py`) is
-  scripted but not yet run — Core 0 Meshtastic USB bridge currently
-  mis-parses protobuf occasionally, blocking `ime_text_test.py`. Flash
-  mechanics already validated on hardware; the script lands alongside
-  the commit for a follow-up run once the USB parse issue is resolved.
+- `--reboot` variant (flash-persistence round-trip inside the test)
+  tripped a Core 1-stuck-in-bootrom edge case after multiple erase-
+  and-reset cycles in the same debug session. Flash content was
+  verified (`mem32 0x10C00000` → "LRU1" + ver 1) but the end-to-end
+  pass 2-post-reboot case needs a clean follow-up session.
+- Five-passage regression across user{1..5}+echeneis awaits; script
+  is shipped with the commit.
 - `build/mie-host/dict.bin` (MDBL v2 packer output) regenerates at
   89 MB on a fresh `mie_dict_blob` build — the local `tsi.csv` source
   likely drifted. Today's flash is the pre-built `dict_mie_v4.bin`

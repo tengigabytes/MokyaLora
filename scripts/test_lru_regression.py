@@ -63,10 +63,45 @@ def erase_lru_partition():
     time.sleep(3)  # USB CDC re-enumerate
 
 
+def force_lru_save():
+    """Inject a MODE keypress to trip the mode_tripwire throttle so the
+    current LruCache is written to flash even when commit count < 50."""
+    # Find g_key_inject_buf via nm on the core1 ELF.
+    nm = r"C:/Program Files/Arm/GNU Toolchain mingw-w64-x86_64-arm-none-eabi/bin/arm-none-eabi-nm.exe"
+    elf = "build/core1_bridge/core1_bridge.elf"
+    out = subprocess.run([nm, elf], capture_output=True, text=True, check=True)
+    base = None
+    for line in out.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] == "g_key_inject_buf":
+            base = int(parts[0], 16)
+            break
+    if base is None:
+        raise RuntimeError("could not locate g_key_inject_buf")
+    prod_addr = base + 4
+    evt_addr  = base + 20  # first event byte
+    # MODE keycode = 0x19; pressed-bit at byte[0] bit 7
+    run_jlink([
+        "connect", "h",
+        f"w1 0x{evt_addr:08X} 0x99",       # press MODE
+        f"w1 0x{evt_addr + 1:08X} 0x00",   # flags
+        f"w1 0x{evt_addr + 2:08X} 0x19",   # release MODE
+        f"w1 0x{evt_addr + 3:08X} 0x00",
+        f"w4 0x{prod_addr:08X} 2",         # bump producer_idx to 2
+        "g",
+    ])
+    time.sleep(2)  # let throttle loop observe mode_tripwire + flush
+    print(f"[force-save] MODE injected; first LRU partition word = "
+          f"{read_lru_magic()} (expected 3155524C for 'LRU1')")
+
+
 def reboot_board():
     print("[reboot] SWD reset + resume")
     run_jlink(["connect", "r", "g"])
-    time.sleep(3)
+    # Core 1 boot: USB re-enumerate, key_inject task poll-loop start.
+    # Typical cold boot on Rev A takes ~2 s for USB, ~3 s for the full
+    # task tree; pad to 6 s for safety.
+    time.sleep(6)
 
 
 def read_lru_magic():
@@ -78,12 +113,13 @@ def read_lru_magic():
 def run_pass(passage, limit, v4):
     """Invoke ime_text_test.py and parse its rank-histogram output."""
     cmd = [sys.executable, "scripts/ime_text_test.py", str(passage),
-           "--user-sim", "--keystroke-report"]
+           "--user-sim"]
     if limit:
         cmd += ["--limit", str(limit)]
     print(f"[pass] {' '.join(cmd)}")
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-    out = proc.stdout + proc.stderr
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=600)
+    out = (proc.stdout or "") + (proc.stderr or "")
     print(out[-2000:])
     # Extract "rank hist: {0: 123, 1: 45, ...}" line
     m = re.search(r'rank hist:\s*(\{[^}]*\})', out)
@@ -126,6 +162,11 @@ def main():
     t1, r01, le31, ge81 = summarise(hist1)
 
     if args.reboot:
+        # Force a save before reboot so the throttle's 50-commit / 30 s-
+        # idle gates don't keep the LruCache in-memory only for short
+        # passes. MODE cycle trips the mode_tripwire path in
+        # ime_task.cpp and is the cheapest way to flush.
+        force_lru_save()
         reboot_board()
 
     print("\n=== Pass 2 (warm cache) ===")
