@@ -81,6 +81,7 @@
 #include "keypad_scan.h"
 #include "key_event.h"
 #include "key_inject.h"
+#include "key_inject_rtt.h"
 #include "psram.h"
 #include "mie_dict_loader.h"
 #include "ime_task.h"
@@ -560,6 +561,10 @@ int main(void)
      * the user's physical keypress always wins. Safe in production: if
      * nobody writes to the ring, the task just polls and sleeps. */
     key_inject_task_start();
+    /* RTT transport under bring-up — disabled while the task body
+     * wedges the scheduler. Re-enable once key_inject_rtt.c has been
+     * proven not to hog CPU on RP2350.
+     *    key_inject_rtt_task_start();                                 */
 
     #undef TASK_START_OR_PANIC
 

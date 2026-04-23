@@ -183,6 +183,8 @@ add_executable(core1_bridge
     ${KEYPAD_DIR}/keypad_scan.c
     ${KEYPAD_DIR}/key_event.c
     ${KEYPAD_DIR}/key_inject.c
+    ${KEYPAD_DIR}/key_inject_frame.c
+    ${KEYPAD_DIR}/key_inject_rtt.c
     ${UI_DIR}/keypad_view.c
     ${UI_DIR}/rf_debug_view.c
     ${UI_DIR}/font_test_view.c

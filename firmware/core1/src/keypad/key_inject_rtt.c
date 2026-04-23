@@ -1,0 +1,114 @@
+/* key_inject_rtt.c — see key_inject_rtt.h.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#include "key_inject_rtt.h"
+#include "key_inject_frame.h"
+#include "key_event.h"
+#include "mokya_trace.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
+
+#include "SEGGER_RTT.h"
+
+/* Room for ~36 max-sized frames before the host blocks on write. More
+ * than enough for a burst of phonemes on any single-char input — a
+ * worst-case CJK char is ~8 frames (phonemes + tone + commit). */
+#define MOKYA_RTT_KEYINJ_BUF_BYTES   256
+
+static uint8_t s_down_buf[MOKYA_RTT_KEYINJ_BUF_BYTES];
+static TaskHandle_t s_task = NULL;
+
+/* Stats for debug — read via SWD if a host wants to check that RTT
+ * traffic is reaching the parser. */
+static volatile uint32_t s_rtt_bytes_read = 0;
+static volatile uint32_t s_rtt_frames_ok  = 0;
+static volatile uint32_t s_rtt_rejected   = 0;
+/* Debug: bumps every task iteration so a host can confirm the task is
+ * actually running. */
+static volatile uint32_t s_rtt_loops      = 0;
+static volatile uint32_t s_rtt_has_data   = 0;
+
+static void on_frame(uint8_t type, const uint8_t *payload, uint8_t len,
+                     void *ctx)
+{
+    (void)ctx;
+    s_rtt_frames_ok++;
+    switch (type) {
+    case MOKYA_KIJ_TYPE_KEY_EVENT: {
+        if (len != 2u) { s_rtt_rejected++; return; }
+        uint8_t ev    = payload[0];
+        uint8_t flags = payload[1];
+        uint8_t kc      = ev & 0x7Fu;
+        int     pressed = (ev & 0x80u) ? 1 : 0;
+        if (kc < 0x01u || kc >= 0x40u) { s_rtt_rejected++; return; }
+        key_event_result_t r =
+            key_event_push_inject_flags((mokya_keycode_t)kc, pressed, flags);
+        if (r != KEY_EVENT_OK) s_rtt_rejected++;
+        TRACE("kij_rtt", "key", "kc=0x%02X,p=%u,fl=0x%02X",
+              (unsigned)kc, (unsigned)pressed, (unsigned)flags);
+        break;
+    }
+    case MOKYA_KIJ_TYPE_FORCE_SAVE:
+        /* Cycling MODE is the lightest-touch way to trip mode_tripwire in
+         * ime_task.cpp and flush the LRU to flash. Same mechanism the
+         * regression script uses over SWD, without needing symbol lookup
+         * on the host. */
+        (void)key_event_push_inject_flags(MOKYA_KEY_MODE, 1, 0u);
+        (void)key_event_push_inject_flags(MOKYA_KEY_MODE, 0, 0u);
+        TRACE_BARE("kij_rtt", "force_save");
+        break;
+    case MOKYA_KIJ_TYPE_NOP:
+        break;
+    default:
+        s_rtt_rejected++;
+        break;
+    }
+}
+
+static void key_inject_rtt_task_fn(void *arg)
+{
+    (void)arg;
+
+    mokya_kij_parser_t parser;
+    mokya_kij_parser_reset(&parser);
+
+    uint8_t scratch[64];
+    for (;;) {
+        s_rtt_loops++;
+        unsigned avail = SEGGER_RTT_HasData(MOKYA_RTT_KEYINJ_CHAN);
+        s_rtt_has_data = avail;
+        if (avail == 0u) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+            continue;
+        }
+        unsigned got = SEGGER_RTT_Read(MOKYA_RTT_KEYINJ_CHAN,
+                                       scratch, sizeof(scratch));
+        if (got == 0u) continue;
+        s_rtt_bytes_read += got;
+        mokya_kij_parser_push(&parser, scratch, got, on_frame, NULL);
+    }
+}
+
+void key_inject_rtt_task_start(void)
+{
+    if (s_task) return;
+    /* Register the down-buffer here — runs on the caller's stack
+     * (FreeRTOS main init task) which has more headroom than the
+     * 2 KB task stack we allocate below. If we call this inside
+     * key_inject_rtt_task_fn instead, SEGGER_RTT_ConfigDownBuffer's
+     * internal memcpy of the name string can blow a stack that's
+     * already carrying a 64 B read scratch + parser state. */
+    SEGGER_RTT_ConfigDownBuffer(MOKYA_RTT_KEYINJ_CHAN, "keyinj",
+                                s_down_buf, sizeof(s_down_buf),
+                                SEGGER_RTT_MODE_NO_BLOCK_SKIP);
+
+    /* Priority +3 matches ime_task. +2 gets starved under any load where
+     * ime and LVGL are both busy — confirmed on a build where key_inject
+     * at +2 never touched its magic word. +3 puts us on the same
+     * round-robin band as ime so we get at least every-other-tick CPU.
+     * Stack = 512 words (2 KB). */
+    xTaskCreate(key_inject_rtt_task_fn, "key_inj_rtt",
+                512, NULL, tskIDLE_PRIORITY + 3, &s_task);
+}
