@@ -26,14 +26,17 @@ static void key_inject_task_fn(void *arg)
     for (;;) {
         uint32_t prod = g_key_inject_buf.producer_idx;
         while (g_key_inject_buf.consumer_idx != prod) {
-            uint32_t idx = g_key_inject_buf.consumer_idx % KEY_INJECT_RING_BYTES;
-            uint8_t  ev  = g_key_inject_buf.events[idx];
-            uint8_t  kc  = ev & 0x7Fu;
+            uint32_t idx   = g_key_inject_buf.consumer_idx
+                             % KEY_INJECT_RING_EVENTS;
+            uint8_t  ev    = g_key_inject_buf.events[idx * 2 + 0];
+            uint8_t  flags = g_key_inject_buf.events[idx * 2 + 1];
+            uint8_t  kc    = ev & 0x7Fu;
             int      pressed = (ev & 0x80u) ? 1 : 0;
 
             if (kc >= 0x01u && kc < 0x40u) {
                 key_event_result_t r =
-                    key_event_push_inject((mokya_keycode_t)kc, pressed);
+                    key_event_push_inject_flags((mokya_keycode_t)kc,
+                                                 pressed, flags);
                 if (r == KEY_EVENT_OK) {
                     g_key_inject_buf.pushed++;
                 } else {

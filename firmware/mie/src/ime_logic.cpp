@@ -120,6 +120,15 @@ bool ImeLogic::tick(uint32_t now_ms) {
         changed = true;
     }
 
+    // Lock the long-press cycle once the multitap timeout passes — no
+    // visible change (the cycled phoneme stays in phoneme_hint_), just
+    // means the next long-press of the same slot will start a new byte
+    // instead of cycling the previous one.
+    if (lp_cycle_.byte_index >= 0 &&
+        (uint32_t)(now_ms - lp_cycle_.last_ms) >= kMultiTapTimeoutMs) {
+        lp_cycle_.byte_index = -1;
+    }
+
     if (changed) notify_changed();
     return changed;
 }
@@ -163,6 +172,7 @@ void ImeLogic::abort() {
 
     key_seq_len_          = 0;
     key_seq_[0]           = '\0';
+    std::memset(phoneme_hint_, 0, sizeof(phoneme_hint_));
     display_clear();
     pending_style_        = PendingStyle::None;
     matched_prefix_bytes_ = 0;
@@ -173,6 +183,7 @@ void ImeLogic::abort() {
     sym1_                 = {};
     sym_picker_open_      = false;
     sym_picker_sel_       = 0;
+    lp_cycle_             = {};
     en_capitalize_next_        = true;   // treat abort as new sentence start
     en_last_ended_with_space_  = true;
 
@@ -191,12 +202,14 @@ void ImeLogic::cycle_mode() {
     // Clear remaining composition (no candidates → just discard).
     key_seq_len_          = 0;
     key_seq_[0]           = '\0';
+    std::memset(phoneme_hint_, 0, sizeof(phoneme_hint_));
     display_clear();
     pending_style_        = PendingStyle::None;
     matched_prefix_bytes_ = 0;
     matched_prefix_keys_  = 0;
     cand_count_           = 0;
     selected_             = 0;
+    lp_cycle_             = {};
 
     switch (mode_) {
         case InputMode::SmartZh: mode_ = InputMode::SmartEn; break;
@@ -265,6 +278,11 @@ bool ImeLogic::handle_del() {
     if (key_seq_len_ > 0) {
         --key_seq_len_;
         key_seq_[key_seq_len_] = '\0';
+        // If the cycled byte was just deleted, clear the cycle so the
+        // next long-press starts fresh.
+        if (lp_cycle_.byte_index >= key_seq_len_) {
+            lp_cycle_.byte_index = -1;
+        }
         run_search();
         notify_changed();
         return true;

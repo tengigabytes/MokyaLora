@@ -136,10 +136,18 @@ _BPMF_KEYMAP_RAW = [
 
 # Reverse map: phoneme → key_index
 PHONEME_TO_KEY: dict = {}
+# Reverse map: phoneme → (key_index, position_within_key 0..2). Phase 1.4
+# long-press disambiguation needs to know which phoneme of a half-key the
+# user typed (primary / secondary / tertiary), so the engine can reject
+# matches whose dict reading was actually authored from a different
+# phoneme of the same key. Slot 4 (ㄞ/ㄢ/ㄦ) is the only key with a
+# tertiary phoneme; everything else maxes at 2.
+PHONEME_TO_KEY_POS: dict = {}
 for _entry in _BPMF_KEYMAP_RAW:
     _idx = _entry[0]
-    for _ph in _entry[1:]:
+    for _pos, _ph in enumerate(_entry[1:]):
         PHONEME_TO_KEY[_ph] = _idx
+        PHONEME_TO_KEY_POS[_ph] = (_idx, _pos)
 
 # English letter → key_index (rows 1–3 of the input grid)
 _ENG_KEYMAP_RAW = [
@@ -180,6 +188,40 @@ def phonemes_to_keyseq(phoneme_list: list) -> bytes:
         if ph in PHONEME_TO_KEY:
             seq.append(PHONEME_TO_KEY[ph] + KEY_OFFSET)
     return bytes(seq)
+
+
+def phonemes_to_keyseq_with_pos(phoneme_list: list) -> tuple:
+    """
+    Like phonemes_to_keyseq but also returns the per-byte phoneme-position
+    indices (0 = primary, 1 = secondary, 2 = tertiary) for the resulting
+    bytes. Used by the v4/v5 builder to record long-press disambiguation
+    metadata in the dict's reading entries.
+
+    Returns (key_bytes, pos_list) where len(pos_list) == len(key_bytes).
+    """
+    seq = bytearray()
+    pos = []
+    for ph in phoneme_list:
+        info = PHONEME_TO_KEY_POS.get(ph)
+        if info is None:
+            continue
+        idx, p = info
+        seq.append(idx + KEY_OFFSET)
+        pos.append(p)
+    return bytes(seq), pos
+
+
+def pack_phoneme_pos(pos_list: list) -> int:
+    """Pack up to 4 phoneme-position values (0..3) into a single byte,
+    2 bits per position, position 0 in the low bits. Bopomofo syllables
+    are bounded at 4 keys (initial + medial + final + tone). Values >3
+    are clamped to 3 (reserved sentinel)."""
+    v = 0
+    for i, p in enumerate(pos_list[:4]):
+        if p < 0:    p = 0
+        if p > 3:    p = 3
+        v |= (p & 0x3) << (2 * i)
+    return v
 
 
 def word_to_eng_keyseq(word: str) -> bytes:
@@ -624,7 +666,9 @@ def build_mied(entries: list, max_per_key: int = 0) -> tuple:
 #   header (0x30 bytes):
 #     magic                  4 B    "MIE4"
 #     version                2 B    u16 = 4
-#     flags                  2 B    u16 (reserved, 0)
+#     flags                  2 B    u16
+#                                     bit 0 = per-reading phoneme_pos byte
+#                                              present (Phase 1.4)
 #     char_count             4 B    u32
 #     word_count             4 B    u32
 #     char_table_off         4 B    u32 (offset from file start)
@@ -638,10 +682,22 @@ def build_mied(entries: list, max_per_key: int = 0) -> tuple:
 #       utf8_len             1 B    u8
 #       utf8_bytes           N B    UTF-8 (typically 3 for CJK)
 #       reading_count        1 B    u8
-#       per reading:
+#       per reading (when header.flags bit 0 = 1):
 #         key_len            1 B    u8
 #         key_bytes          M B    phoneme key sequence
+#         phoneme_pos        1 B    packed 2-bit-per-byte position index
+#                                    (LSB = byte 0; 0=primary 1=secondary
+#                                     2=tertiary). Slot 4 (ㄞ/ㄢ/ㄦ) is
+#                                    the only key with tertiary; everything
+#                                    else maxes at 1. Bopomofo syllables
+#                                    are bounded at 4 keys so 1 byte is
+#                                    enough.
 #         tone               1 B    u8 (1-5, 0 = unspecified)
+#         base_freq          2 B    u16
+#       per reading (legacy, header.flags bit 0 = 0):
+#         key_len            1 B    u8
+#         key_bytes          M B    phoneme key sequence
+#         tone               1 B    u8
 #         base_freq          2 B    u16
 #
 #   word_table:                     (grouped by char_count for O(1) filter)
@@ -730,18 +786,26 @@ def build_char_table_v4(raw_entries: list,
     """Build char_table from raw (word, freq, reading) entries.
 
     For each char in each word, parse the corresponding syllable and record
-    (key_bytes, tone, freq) as one of the char's readings. Aggregate freq
-    via max across all sightings.
+    (key_bytes, phoneme_pos, tone, freq) as one of the char's readings.
+    Aggregate freq via max across all sightings. The phoneme_pos list runs
+    parallel to key_bytes and records which phoneme of each half-key the
+    syllable was authored from (0 = primary, 1 = secondary, 2 = tertiary).
+    The runtime uses it to filter long-press-disambiguated user input.
 
     unihan_readings: optional {char: [(key_bytes, tone)]} dict to seed
-    chars not present in raw_entries (low base_freq for rarity).
+    chars not present in raw_entries (low base_freq for rarity). Unihan
+    readings have no phoneme_pos info; the loader assumes primary (0) for
+    every byte — Unihan is a fallback for rare chars and the user is
+    unlikely to long-press for them anyway.
 
     Returns (char_to_id, char_table) where char_table is a list ordered by
-    char_id, each entry = (utf8_char, sorted_readings_freq_desc).
+    char_id, each entry = (utf8_char, sorted_readings_freq_desc) and each
+    reading is (key_bytes, phoneme_pos_tuple, tone, freq).
     """
-    # char -> {(key_bytes, tone): max_freq_seen}
-    # Use plain dict to avoid defaultdict side-effect of creating empty entries
-    # when a char's reading is unmappable.
+    # char -> {(key_bytes, phoneme_pos_tuple, tone): max_freq_seen}
+    # phoneme_pos is part of the dict key so two readings that differ only
+    # in which half-key phoneme produced them are kept distinct (e.g. ㄍ
+    # vs ㄐ both encode to byte 0x28 but pos differs).
     accum = {}
 
     for word, freq, reading in raw_entries:
@@ -758,23 +822,26 @@ def build_char_table_v4(raw_entries: list,
         # the reading is still recorded with a minimum-rank base_freq.
         eff_freq = max(freq, 1)
         for ch, syl in zip(chars, sylls):
-            keyseq = phonemes_to_keyseq(syl)
+            keyseq, pos = phonemes_to_keyseq_with_pos(syl)
             tone = syllable_tone(syl)
             if not keyseq:
                 continue
-            key = (keyseq, tone)
+            key = (keyseq, tuple(pos), tone)
             ch_dict = accum.setdefault(ch, {})
             existing = ch_dict.get(key, 0)
             if eff_freq > existing:
                 ch_dict[key] = eff_freq
 
-    # Optionally seed from Unihan for chars never seen in raw entries
+    # Optionally seed from Unihan for chars never seen in raw entries.
+    # Unihan entries don't carry phoneme-position metadata; assume primary
+    # (0) for every byte.
     DEFAULT_RARE_FREQ = 5
     if unihan_readings:
         for ch, readings in unihan_readings.items():
             if ch not in accum:
                 for keyseq, tone in readings:
-                    accum[ch][(keyseq, tone)] = DEFAULT_RARE_FREQ
+                    pos = tuple(0 for _ in keyseq)
+                    accum.setdefault(ch, {})[(keyseq, pos, tone)] = DEFAULT_RARE_FREQ
 
     # Build sorted char_table: ascending by codepoint for stable char_ids
     char_to_id = {}
@@ -783,8 +850,8 @@ def build_char_table_v4(raw_entries: list,
         char_to_id[ch] = cid
         # Sort readings: most-frequent first (so reading[0] is the default)
         sorted_readings = sorted(
-            ((k, t, f) for (k, t), f in accum[ch].items()),
-            key=lambda r: -r[2]
+            ((k, p, t, f) for (k, p, t), f in accum[ch].items()),
+            key=lambda r: -r[3]
         )
         char_table.append((ch, sorted_readings))
 
@@ -829,16 +896,28 @@ def build_word_table_v4(raw_entries: list,
         char_ids = [char_to_id[c] for c in word]
         reading_idxs = []
         for ch_idx, (ch, syl) in enumerate(zip(word, sylls)):
-            keyseq = phonemes_to_keyseq(syl)
+            keyseq, pos = phonemes_to_keyseq_with_pos(syl)
             tone = syllable_tone(syl)
+            pos_tuple = tuple(pos)
             cid = char_to_id[ch]
             readings = char_table[cid][1]
-            # Find matching reading; default to 0 if not found
+            # Prefer an exact (keyseq, pos, tone) match so the chosen
+            # reading_idx encodes the right phoneme positions for long-press
+            # filtering. Fall back to (keyseq, tone) ignoring pos if no
+            # exact reading exists (Unihan-only chars, etc.) — picks the
+            # first match deterministically.
             idx = 0
-            for i, (rk, rt, _rf) in enumerate(readings):
-                if rk == keyseq and rt == tone:
+            found_exact = False
+            for i, (rk, rp, rt, _rf) in enumerate(readings):
+                if rk == keyseq and rp == pos_tuple and rt == tone:
                     idx = i
+                    found_exact = True
                     break
+            if not found_exact:
+                for i, (rk, _rp, rt, _rf) in enumerate(readings):
+                    if rk == keyseq and rt == tone:
+                        idx = i
+                        break
             reading_idxs.append(idx)
         last_tone = syllable_tone(sylls[-1]) if sylls else 0
         word_table.append((word, char_ids, reading_idxs, freq, last_tone))
@@ -846,11 +925,19 @@ def build_word_table_v4(raw_entries: list,
     return word_table
 
 
-def serialize_char_table_v4(char_table: list) -> tuple:
+def serialize_char_table_v4(char_table: list,
+                            include_phoneme_pos: bool = True) -> tuple:
     """Per char: utf8_len + utf8 + reading_count + per reading.
+
+    Per reading layout (with include_phoneme_pos=True, header.flags bit 0):
+        klen | kbytes | phoneme_pos_packed (1B) | tone | freq
+
+    Without phoneme_pos (legacy MIE4): klen | kbytes | tone | freq
+
     Returns (bytes, offsets_list) where offsets_list[i] is the byte offset
     of char_id i from char_table start. offsets_list has char_count + 1
-    entries (last entry = total bytes, useful as a sentinel)."""
+    entries (last entry = total bytes, useful as a sentinel).
+    """
     buf = bytearray()
     offsets = []
     for ch, readings in char_table:
@@ -859,9 +946,11 @@ def serialize_char_table_v4(char_table: list) -> tuple:
         buf.append(len(utf8))
         buf += utf8
         buf.append(len(readings))
-        for keyseq, tone, freq in readings:
+        for keyseq, pos, tone, freq in readings:
             buf.append(len(keyseq))
             buf += keyseq
+            if include_phoneme_pos:
+                buf.append(pack_phoneme_pos(list(pos)))
             buf.append(tone)
             buf += struct.pack('<H', min(freq, 0xFFFF))
     offsets.append(len(buf))
@@ -972,7 +1061,8 @@ def build_syllable_prefix_set_from_char_table(char_table: list) -> list:
     chars that were injected after char_table assembly)."""
     prefixes = set()
     for _ch, readings in char_table:
-        for (kb, _tone, _freq) in readings:
+        for r in readings:
+            kb = r[0]
             if not kb:
                 continue
             max_len = min(len(kb), 4)
@@ -1029,7 +1119,8 @@ def serialize_key_to_char_idx_v4(char_table: list) -> bytes:
         # Each char contributes one entry per unique first-byte across its readings.
         # The runtime uses this to find candidate first-chars matching user_keys[0].
         seen_first = set()
-        for keyseq, tone, freq in readings:
+        for r in readings:
+            keyseq = r[0]
             if keyseq:
                 fb = keyseq[0]
                 if fb not in seen_first:
@@ -1095,9 +1186,16 @@ def build_mied_v4(raw_entries: list,
     prefix_off     = word_offs_off + len(word_off_section)
     total_size     = prefix_off + len(prefix_section)
 
+    # Header flags:
+    #   bit 0  = per-reading phoneme_pos byte present (Phase 1.4 long-press
+    #            disambiguation). Loader keys filtering on this bit so old
+    #            MIE4 dicts (flags=0) keep working with no filter applied.
+    HEADER_FLAG_PHONEME_POS = 0x0001
+    flags_word = HEADER_FLAG_PHONEME_POS
+
     header = bytearray()
     header += MAGIC_V4
-    header += struct.pack('<HH', VERSION_V4, 0)
+    header += struct.pack('<HH', VERSION_V4, flags_word)
     header += struct.pack('<II', len(char_table), len(flat))
     header += struct.pack('<IIII',
                           char_off, word_off, first_off, key_off)

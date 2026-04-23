@@ -272,6 +272,18 @@ private:
     char           key_seq_[kMaxKeySeq + 1] = {0};
     int            key_seq_len_ = 0;
 
+    // Parallel phoneme-position hint per key_seq_ byte. Values:
+    //   0     = user demands the primary phoneme of this key.
+    //   1     = secondary (long-press).
+    //   2     = tertiary (slot 4 only).
+    //   0xFF  = no demand (e.g. the byte is a tone marker like ˊ or
+    //           a space — both phoneme positions of the slot would be
+    //           equally valid).
+    // When the v4 dict was built with header.flags bit 0, the searcher
+    // filters candidates against these hints; for legacy dicts the
+    // hints are silently ignored.
+    uint8_t        phoneme_hint_[kMaxKeySeq] = {0};
+
     // Display buffer backing pending_view().str. Contents depend on mode:
     //   SmartZh — compound "ㄅㄉ, ㄆㄊ" (grouped phonemes per key).
     //   SmartEn — accumulated letters "we".
@@ -314,6 +326,28 @@ private:
     // SYM picker (opened by SYM1 long-press; DPAD navigates, OK commits).
     bool sym_picker_open_ = false;
     int  sym_picker_sel_  = 0;
+
+    // Long-press cycling state (Phase 1.4 final design).
+    //
+    // Two-tier input model:
+    //   short tap of a slot key  → append byte with hint = ANY (fuzzy
+    //                              half-keyboard match)
+    //   long  tap of a slot key  → enter precise mode for THIS byte
+    //                              (hint = primary phoneme of the slot);
+    //                              every subsequent long-press of the
+    //                              SAME slot within kMultiTapTimeoutMs
+    //                              cycles the hint through primary →
+    //                              secondary → tertiary → primary.
+    // Any short-tap, key on a different slot, DEL, OK, MODE, or tick
+    // timeout locks the cycle (the last cycled phoneme stays in
+    // phoneme_hint_; we just stop further long-presses from re-cycling
+    // the same byte).
+    struct LpCycleState {
+        int      byte_index  = -1;   ///< index into key_seq_; -1 = idle
+        int      slot        = -1;
+        int      phoneme_idx = 0;
+        uint32_t last_ms     = 0;
+    } lp_cycle_;
 
     // SmartEn auto-capitalize after sentence-ending punctuation.
     // Default-true so the very first SmartEn word after construction

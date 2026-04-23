@@ -19,10 +19,17 @@
 
 namespace mie {
 
+/// Producer-side event flags. Aliases of the C-callable
+/// MOKYA_KEY_FLAG_* constants in <mie/keycode.h>; kept here for the
+/// readable C++ namespace.
+constexpr uint8_t KEY_FLAG_LONG_PRESS = MOKYA_KEY_FLAG_LONG_PRESS;
+constexpr uint8_t KEY_FLAG_HINT_ANY   = MOKYA_KEY_FLAG_HINT_ANY;
+
 struct KeyEvent {
     mokya_keycode_t keycode;    ///< semantic keycode (see <mie/keycode.h>)
     bool            pressed;    ///< true = key-down, false = key-up
     uint32_t        now_ms;     ///< monotonic ms at event source
+    uint8_t         flags = 0;  ///< KEY_FLAG_* bitmask (0 = short tap)
 };
 
 } // namespace mie

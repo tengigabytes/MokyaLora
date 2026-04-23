@@ -162,9 +162,57 @@ void keypad_read(volatile uint8_t out_state[KEY_ROWS])
  * On commit: update g_kp_stable, translate through g_keymap, push an
  * event into the KeyEvent queue (KEY_SOURCE_HW). Drops from a full
  * queue are counted in g_key_event_dropped but never stall the scan.
+ *
+ * Phase 1.4 — slot keys (the 20 SmartZh half-keys) defer their press
+ * emission so the engine can carry a long-press flag at press time:
+ *
+ *   short tap (release < 500 ms)  → fire press(flags=0) on release,
+ *                                    immediately followed by release.
+ *                                    Engine treats as fuzzy half-keyboard.
+ *   long  tap (held ≥ 500 ms)     → fire press(flags=LONG_PRESS) at
+ *                                    the 500 ms mark; subsequent release
+ *                                    fires release as normal. Engine
+ *                                    filters strictly to the secondary
+ *                                    phoneme.
+ *
+ * Non-slot keys (FUNC, SYM1/2, OK, DPAD, MODE, BACK, DEL, SET, TAB, SPACE,
+ * VOL_UP/DOWN) keep the original press-on-press / release-on-release
+ * behaviour — SYM1's own long-press handler in MIE expects to see the
+ * raw press immediately, and DPAD/OK are latency-sensitive.
  */
-#define KP_SCAN_PERIOD_MS     5u
-#define KP_DEBOUNCE_THRESHOLD 4u
+#define KP_SCAN_PERIOD_MS       5u
+#define KP_DEBOUNCE_THRESHOLD   4u
+#define KP_LONG_PRESS_MS      500u
+#define KP_LONG_PRESS_TICKS  (KP_LONG_PRESS_MS / KP_SCAN_PERIOD_MS)
+
+/* Returns true if the given keycode should defer its press event for
+ * long-press disambiguation. Mirrors mie/src/ime_keys.cpp::kKeyTable —
+ * the 20 SmartZh half-keys whose primary/secondary/tertiary phoneme
+ * choice depends on hold duration. */
+static bool keycode_defers_press(mokya_keycode_t kc)
+{
+    switch (kc) {
+        case MOKYA_KEY_1: case MOKYA_KEY_3: case MOKYA_KEY_5:
+        case MOKYA_KEY_7: case MOKYA_KEY_9:
+        case MOKYA_KEY_Q: case MOKYA_KEY_E: case MOKYA_KEY_T:
+        case MOKYA_KEY_U: case MOKYA_KEY_O:
+        case MOKYA_KEY_A: case MOKYA_KEY_D: case MOKYA_KEY_G:
+        case MOKYA_KEY_J: case MOKYA_KEY_L:
+        case MOKYA_KEY_Z: case MOKYA_KEY_C: case MOKYA_KEY_B:
+        case MOKYA_KEY_M: case MOKYA_KEY_BACKSLASH:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/* Per-slot-key deferred-press FSM. */
+typedef enum {
+    LP_IDLE = 0,           /* nothing pending */
+    LP_PRESS_PENDING,      /* debounce committed press, waiting for release
+                              or long-press tick */
+    LP_LONG_EMITTED,       /* long-press already fired; awaiting release */
+} lp_state_t;
 
 void keypad_scan_task(void *pv)
 {
@@ -176,6 +224,10 @@ void keypad_scan_task(void *pv)
     static uint8_t pending[KEY_ROWS][KEY_COLS];
     static uint8_t count[KEY_ROWS][KEY_COLS];
 
+    /* Long-press FSM state, also indexed by (row, col). */
+    static lp_state_t lp_state[KEY_ROWS][KEY_COLS];
+    static uint32_t   lp_press_tick[KEY_ROWS][KEY_COLS];
+
     uint8_t raw[KEY_ROWS];
 
     keypad_init();
@@ -186,6 +238,8 @@ void keypad_scan_task(void *pv)
     for (;;) {
         keypad_read(raw);
 
+        const uint32_t now_tick = g_kp_scan_tick;
+
         for (uint32_t r = 0; r < KEY_ROWS; r++) {
             g_kp_snapshot[r] = raw[r];
 
@@ -194,24 +248,21 @@ void keypad_scan_task(void *pv)
                 const uint8_t bit     = (uint8_t)((raw[r] >> c) & 1u);
                 const uint8_t stbl    = stable[r][c];
 
-                if (bit == stbl) {
+                if (bit != stbl) {
+                    /* Differs from committed state: track a candidate. */
+                    if (bit == pending[r][c]) {
+                        if (count[r][c] < 0xFFu) count[r][c]++;
+                    } else {
+                        pending[r][c] = bit;
+                        count[r][c]   = 1u;
+                    }
+                } else {
                     /* Matches committed state — drop any pending change. */
                     count[r][c]   = 0u;
                     pending[r][c] = stbl;
-                    continue;
                 }
 
-                /* Differs from committed state: track a candidate. */
-                if (bit == pending[r][c]) {
-                    if (count[r][c] < 0xFFu) {
-                        count[r][c]++;
-                    }
-                } else {
-                    pending[r][c] = bit;
-                    count[r][c]   = 1u;
-                }
-
-                if (count[r][c] >= KP_DEBOUNCE_THRESHOLD) {
+                if (bit != stbl && count[r][c] >= KP_DEBOUNCE_THRESHOLD) {
                     /* Commit the new state. */
                     stable[r][c] = bit;
                     count[r][c]  = 0u;
@@ -222,14 +273,72 @@ void keypad_scan_task(void *pv)
                     }
 
                     const mokya_keycode_t kc = g_keymap[r][c];
-                    if (kc != MOKYA_KEY_NONE) {
+                    if (kc == MOKYA_KEY_NONE) continue;
+
+                    if (!keycode_defers_press(kc)) {
+                        /* Non-slot key: emit immediately as before. */
                         (void)key_event_push_hw(kc, bit != 0u);
                         TRACE("kpad", "commit", "kc=0x%02x,p=%u",
                               (unsigned)kc, (unsigned)bit);
+                        continue;
+                    }
+
+                    /* Slot key: drive the deferred-press FSM. */
+                    if (bit) {
+                        /* Fresh press — start the long-press timer.
+                         * Do NOT enqueue the press yet. */
+                        lp_state[r][c]      = LP_PRESS_PENDING;
+                        lp_press_tick[r][c] = now_tick;
+                        TRACE("kpad", "lp_down", "kc=0x%02x", (unsigned)kc);
+                    } else {
+                        /* Release transition. */
+                        switch (lp_state[r][c]) {
+                        case LP_PRESS_PENDING:
+                            /* Short tap — emit press(flags=0) then release. */
+                            (void)key_event_push_hw_flags(kc, true,  0u);
+                            (void)key_event_push_hw_flags(kc, false, 0u);
+                            TRACE("kpad", "lp_short", "kc=0x%02x", (unsigned)kc);
+                            break;
+                        case LP_LONG_EMITTED:
+                            /* Long press already fired its press — just
+                             * release, with the same flag bit so the
+                             * arbitration / log shows the long-press pair. */
+                            (void)key_event_push_hw_flags(kc, false,
+                                                          MOKYA_KEY_FLAG_LONG_PRESS);
+                            TRACE("kpad", "lp_long_up", "kc=0x%02x",
+                                  (unsigned)kc);
+                            break;
+                        default:
+                            /* Spurious release with no recorded press —
+                             * still emit a release so consumers stay
+                             * symmetric. */
+                            (void)key_event_push_hw_flags(kc, false, 0u);
+                            break;
+                        }
+                        lp_state[r][c] = LP_IDLE;
                     }
                 }
             }
             g_kp_stable[r] = stable_row;
+        }
+
+        /* Long-press timer evaluation, after the row pass so the FSM
+         * sees the latest committed state. Walks all 36 keys — cheap
+         * (one tick comparison each). */
+        for (uint32_t r = 0; r < KEY_ROWS; r++) {
+            for (uint32_t c = 0; c < KEY_COLS; c++) {
+                const mokya_keycode_t kc = g_keymap[r][c];
+                if (kc == MOKYA_KEY_NONE || !keycode_defers_press(kc)) continue;
+
+                const uint32_t held = now_tick - lp_press_tick[r][c];
+                if (lp_state[r][c] == LP_PRESS_PENDING &&
+                    held >= KP_LONG_PRESS_TICKS) {
+                    (void)key_event_push_hw_flags(kc, true,
+                                                  MOKYA_KEY_FLAG_LONG_PRESS);
+                    lp_state[r][c] = LP_LONG_EMITTED;
+                    TRACE("kpad", "lp_long", "kc=0x%02x", (unsigned)kc);
+                }
+            }
         }
 
         g_kp_scan_tick++;

@@ -52,12 +52,15 @@ void ImeLogic::commit_partial(const char* utf8, int prefix_keys) {
         if (listener_) listener_->on_commit(utf8);
     }
 
-    // Remove the matched prefix bytes from key_seq_.
+    // Remove the matched prefix bytes from key_seq_ and the parallel
+    // phoneme_hint_ array (same index space).
     int remove = (prefix_keys > 0 && prefix_keys <= key_seq_len_)
                  ? prefix_keys : key_seq_len_;
     if (remove > 0) {
         std::memmove(key_seq_, key_seq_ + remove,
                      (size_t)(key_seq_len_ - remove + 1));
+        std::memmove(phoneme_hint_, phoneme_hint_ + remove,
+                     (size_t)(key_seq_len_ - remove));
         key_seq_len_ -= remove;
     }
 
@@ -67,6 +70,8 @@ void ImeLogic::commit_partial(const char* utf8, int prefix_keys) {
     while (key_seq_len_ > 0 &&
            ((uint8_t)key_seq_[0] == 0x20 || (uint8_t)key_seq_[0] == 0x22)) {
         std::memmove(key_seq_, key_seq_ + 1, (size_t)key_seq_len_);
+        std::memmove(phoneme_hint_, phoneme_hint_ + 1,
+                     (size_t)(key_seq_len_ - 1));
         --key_seq_len_;
     }
     key_seq_[key_seq_len_] = '\0';
@@ -75,6 +80,9 @@ void ImeLogic::commit_partial(const char* utf8, int prefix_keys) {
     selected_             = 0;
     matched_prefix_bytes_ = 0;
     matched_prefix_keys_  = 0;
+    // Any active long-press cycle was indexed against pre-shift bytes;
+    // commit invalidates that, so reset.
+    lp_cycle_             = {};
 
     // Re-run search on the remainder (populates display_ via rebuild).
     run_search();

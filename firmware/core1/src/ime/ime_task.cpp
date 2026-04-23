@@ -207,6 +207,7 @@ void ime_task_fn(void *) {
             mev.keycode = (mokya_keycode_t)ev.keycode;
             mev.pressed = ev.pressed != 0;
             mev.now_ms  = now_ms();
+            mev.flags   = (uint8_t)ev.flags;
 
             TRACE("ime", "proc_start", "kc=0x%02x", (unsigned)ev.keycode);
             g_ime->process_key(mev);

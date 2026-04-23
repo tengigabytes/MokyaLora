@@ -39,8 +39,16 @@ if hasattr(sys.stdout, 'reconfigure'):
     except Exception: pass
 
 # ── Constants matching firmware ─────────────────────────────────────────
-RING_SIZE       = 64
-KEYI_MAGIC      = 0x4B454949
+# Phase 1.4: inject ring upgraded to 2-byte events (key_byte, flags_byte)
+# and the ring is now indexed in events (32 slots × 2 bytes = 64 byte
+# storage). Matches firmware/core1/src/keypad/key_inject.h.
+RING_EVENTS     = 32
+EVENT_SIZE      = 2
+KEYI_MAGIC      = 0x4B45494A   # "KEYJ"
+
+# Long-press hint flags (match mie/keycode.h MOKYA_KEY_FLAG_*).
+KEY_FLAG_LONG_PRESS = 0x01
+KEY_FLAG_HINT_ANY   = 0x04
 IME_DBG_ADDR    = 0x2007FE00
 IME_DBG_MAGIC   = 0xEEED0003
 IME_DBG_SIZE    = 0x190
@@ -151,6 +159,52 @@ def reading_to_keycodes(reading_bytes, tone, keymap):
         codes.append(keymap['KEY_SPACE'])
     return codes
 
+
+def reading_to_events(reading_bytes, phoneme_pos, tone, keymap,
+                       short_only=False, hint_any=False):
+    """Build a key-event sequence for a dict reading.
+
+    Modes:
+      precise (default)  — each slot byte becomes (phoneme_pos + 1)
+                           consecutive LONG_PRESS events. The engine's
+                           long-press multitap cycle lands on phoneme
+                           position p after (p+1) presses.
+                             pos 0 → 1 long-press
+                             pos 1 → 2 long-presses
+                             pos 2 → 3 long-presses (slot 4 ㄦ only)
+      short_only         — each slot byte emits exactly one short-tap
+                           event (no long-press cycling). The engine
+                           treats every byte as fuzzy half-keyboard.
+      short_only + hint_any — same as short_only but flag=HINT_ANY so
+                           the engine explicitly records ANY (used by
+                           --user-sim's short-tap pass to be format-
+                           independent of the engine default).
+
+    SPACE tone-1 marker and tone bytes always emit plain (no flag)
+    presses.
+
+    phoneme_pos: tuple parallel to reading_bytes (empty → primary).
+    """
+    events = []
+    for i, b in enumerate(reading_bytes):
+        if b == 0x20:
+            events.append((keymap['KEY_SPACE'], 0))
+            continue
+        idx = b - 0x21
+        if not (0 <= idx < 20):
+            return None
+        kc = keymap[SLOT_TO_KEY[idx]]
+        if short_only:
+            flag = KEY_FLAG_HINT_ANY if hint_any else 0
+            events.append((kc, flag))
+        else:
+            p = phoneme_pos[i] if phoneme_pos and i < len(phoneme_pos) else 0
+            for _ in range(p + 1):
+                events.append((kc, KEY_FLAG_LONG_PRESS))
+    if tone == 1:
+        events.append((keymap['KEY_SPACE'], 0))
+    return events
+
 # ── IME client with persistent pylink ──────────────────────────────────
 
 class ImeDriver:
@@ -246,36 +300,34 @@ class ImeDriver:
             'words'   : [cstr(OFF_WORDS + i*24, 24) for i in range(8)],
         }
 
-    def queue_bytes(self, byte_list):
-        """Write events to the inject ring + bump producer, chunking to
-        respect the 64-slot capacity. The previous one-shot write blew
-        through the ring on long sequences (e.g. RIGHT*33 + OK = 68
-        events): bytes after slot 63 wrapped and overwrote already-
-        published events that the consumer hadn't drained yet, so the
-        engine saw a corrupted RIGHT sequence and committed the wrong
-        candidate. Chunk size = RING_SIZE-2 keeps a 2-slot safety margin
-        between the active write window and the consumer pointer."""
+    def queue_events(self, event_list):
+        """Write 2-byte events to the inject ring + bump producer,
+        chunking to respect the RING_EVENTS capacity. event_list is a
+        list of (key_byte, flags_byte) tuples. Chunk = RING_EVENTS-2
+        keeps a 2-slot safety margin between the producer write window
+        and the consumer pointer (long sequences like RIGHT*N + OK can
+        exceed the ring otherwise, with later writes corrupting events
+        the consumer hasn't drained yet)."""
         idx = 0
-        n   = len(byte_list)
-        chunk_max = RING_SIZE - 2
+        n   = len(event_list)
+        chunk_max = RING_EVENTS - 2
         while idx < n:
             producer = self.swd.read_u32(self.a_producer)
             consumer = self.swd.read_u32(self.a_consumer)
-            # Block until enough free slots for the next chunk.
             while producer - consumer >= chunk_max:
                 time.sleep(self.poll_ms / 1000.0)
                 consumer = self.swd.read_u32(self.a_consumer)
             free = chunk_max - (producer - consumer)
             take = min(free, n - idx)
             writes = []
-            for byte in byte_list[idx:idx + take]:
-                slot = producer % RING_SIZE
-                writes.append((self.a_events + slot, byte))
+            for (kb, fb) in event_list[idx:idx + take]:
+                slot = producer % RING_EVENTS
+                writes.append((self.a_events + slot * EVENT_SIZE + 0, kb))
+                writes.append((self.a_events + slot * EVENT_SIZE + 1, fb))
                 producer += 1
             self.swd.write_u8_many(writes)
             self.swd.write_u32(self.a_producer, producer)
             idx += take
-        # Wait for Core 1 to drain everything we sent.
         deadline = time.time() + 2.0
         target_producer = self.swd.read_u32(self.a_producer)
         while time.time() < deadline:
@@ -283,13 +335,26 @@ class ImeDriver:
             time.sleep(self.poll_ms / 1000.0)
         raise RuntimeError("inject timeout")
 
-    def inject_keycodes(self, kc_list):
-        """Press+release each keycode in order, one ring event each."""
+    def inject_keycodes(self, kc_list, flags=0):
+        """Press+release each keycode in order. Optional flags byte is
+        applied to BOTH the press and release events (so a long-press
+        short test path mirrors what the keypad scanner emits)."""
         seq = []
         for kc in kc_list:
-            seq.append(0x80 | (kc & 0x7F))
-            seq.append(0x00 | (kc & 0x7F))
-        self.queue_bytes(seq)
+            seq.append((0x80 | (kc & 0x7F), flags & 0xFF))
+            seq.append((0x00 | (kc & 0x7F), flags & 0xFF))
+        self.queue_events(seq)
+
+    def inject_events_pairs(self, kc_flag_list):
+        """Press+release each (keycode, flags) pair in order. Each pair
+        produces two ring events sharing the flags byte. Used for typing
+        Bopomofo readings where each phoneme key carries its own short-
+        vs long-tap intent."""
+        seq = []
+        for (kc, fb) in kc_flag_list:
+            seq.append((0x80 | (kc & 0x7F), fb & 0xFF))
+            seq.append((0x00 | (kc & 0x7F), fb & 0xFF))
+        self.queue_events(seq)
 
     def cycle_view_to(self, target, max_retries=2):
         """Cycle FUNC until s_active == target. Verifies EVERY step — if a
@@ -415,6 +480,32 @@ def main():
     ap.add_argument('--reset-every-n', type=int, default=0,
                     help='reset engine state every N chars '
                          '(0 = let text accumulate; 1 = isolate each char)')
+    ap.add_argument('--no-hints', action='store_true',
+                    help='Force every Bopomofo press to send hint=0xFF '
+                         '(any phoneme position) — simulates v2 / pre-Phase 1.4 '
+                         'half-keyboard behaviour for rank comparison.')
+    ap.add_argument('--user-sim', action='store_true',
+                    help='Realistic-user mode: type every byte as short-tap '
+                         '(primary-phoneme filter) first; if target is not '
+                         'within --user-threshold, DEL the pending input and '
+                         'retype with the dict\'s correct long-press hints. '
+                         'Reports keystroke effort breakdown alongside ranks.')
+    ap.add_argument('--user-threshold', type=int, default=8,
+                    help='--user-sim: backtrack to long-press only when the '
+                         'short-tap attempt has the target outside the top-N '
+                         'candidates (default 8 = one visible page).')
+    ap.add_argument('--user-short-mode', choices=['any', 'primary'],
+                    default='any',
+                    help='--user-sim short-tap semantics (default any):\n'
+                         '  any     — short-tap sends HINT_ANY, matching '
+                         'legacy half-keyboard behaviour where any phoneme '
+                         'of a slot is valid. Long-press then narrows to '
+                         'the secondary/tertiary phoneme. Most realistic '
+                         'for untrained users.\n'
+                         '  primary — short-tap sends flags=0 (primary '
+                         'phoneme filter), the strict Phase 1.4 semantic. '
+                         'Tests the upper bound of long-press benefit '
+                         'when users have learned the new semantics.')
     args = ap.parse_args()
 
     if args.stdin: text = sys.stdin.read()
@@ -433,17 +524,44 @@ def main():
 
     # Precompute Bopomofo key plan only for CJK chars — ASCII/space go
     # through a separate Direct-mode path.
-    plans = {}
+    plans = {}            # canonical plan (long-press where dict pos != 0)
+    plans_short = {}      # all-short-tap variant for --user-sim first attempt
     absent = set()
+    has_pp = d.get('has_phoneme_pos', False)
     for ch in set(chars):
         if classify(ch) != 'cjk': continue
         if ch not in ch_to_cid: absent.add(ch); continue
         rs = d['char_table'][ch_to_cid[ch]][1]
         if not rs: absent.add(ch); continue
-        kb, tone, _ = rs[0]
-        codes = reading_to_keycodes(bytes(kb), tone, keymap)
-        if codes is None: absent.add(ch); continue
-        plans[ch] = codes
+        # Reading tuple shape varies by dict version:
+        #   MIE4 legacy:  (kbytes, tone, freq)        — pos info absent
+        #   MIE4 + pp:    (kbytes, pos_tuple, tone, freq)
+        if has_pp and len(rs[0]) == 4:
+            kb, pos, tone, _ = rs[0]
+        else:
+            kb, tone, _ = rs[0]
+            pos = ()
+        if args.no_hints:
+            # v2 simulation: every byte is a short-tap with HINT_ANY
+            # (no phoneme-position filter). One event per byte.
+            events = reading_to_events(bytes(kb), pos, tone, keymap,
+                                       short_only=True, hint_any=True)
+        else:
+            # Canonical precise plan: cycle long-presses to land on the
+            # exact phoneme position the dict authored.
+            events = reading_to_events(bytes(kb), pos, tone, keymap)
+        if events is None: absent.add(ch); continue
+        plans[ch] = events
+        # All-short-tap plan (one event per byte) for --user-sim's
+        # first attempt. 'any' uses HINT_ANY (fuzzy half-keyboard
+        # behaviour); 'primary' uses flags=0 (engine treats short-tap
+        # the same way under the current default — flags=0 also yields
+        # ANY when no LONG_PRESS bit set, but we keep the option as a
+        # forward-compat hook for engine semantic experiments).
+        plans_short[ch] = reading_to_events(
+            bytes(kb), pos, tone, keymap,
+            short_only=True,
+            hint_any=(args.user_short_mode == 'any'))
     if absent:
         print(f"CJK chars not in dict ({len(absent)}): " + ''.join(list(absent)[:40]))
 
@@ -460,6 +578,12 @@ def main():
             'rank_hist': {}, 'miss': [], 'commit_miss': [],
             'ascii_tested': 0, 'ascii_ok': 0, 'ascii_fail': [],
             'space_tested': 0, 'space_ok': 0,
+            # --user-sim accounting (zero in non-sim modes)
+            'us_short_ok'   : 0,   # found in top-N on short-tap pass
+            'us_long_ok'    : 0,   # short missed but long-press found
+            'us_miss'       : 0,   # both passes missed top-100
+            'us_keystrokes' : 0,   # total slot-key + DEL + RIGHT + OK
+            'us_long_extra' : 0,   # extra keystrokes spent on backtrack
         }
         t0 = time.time()
         expected_accum = ""
@@ -501,26 +625,77 @@ def main():
 
             before_text_len = drv.read_snapshot()['text_len']
 
-            drv.inject_keycodes(plans[ch])
-            # Poll the SWD snapshot until LVGL has published a post-
-            # keystroke refresh. Pending-len becoming non-zero is the
-            # earliest signal the engine saw the injected bytes.
-            t_deadline = time.time() + 0.4
-            while True:
-                snap = drv.read_snapshot()
-                if snap['pending']: break
-                if time.time() >= t_deadline: break
-                time.sleep(0.01)
+            # Helper closures kept inline so they share local stats /
+            # before_text_len without ferrying them through a class.
+            def inject_and_locate(events):
+                """Inject one pass and return (rank, snapshot). Polls
+                until pending is non-empty (or 0.4 s timeout)."""
+                drv.inject_events_pairs(events)
+                deadline = time.time() + 0.4
+                while True:
+                    s = drv.read_snapshot()
+                    if s['pending']: break
+                    if time.time() >= deadline: break
+                    time.sleep(0.01)
+                # Fast path: top-8 mirror in the small snapshot.
+                r = None
+                for i, w in enumerate(s['words']):
+                    if w == ch: r = i; break
+                if r is None:
+                    r = drv.find_rank(ch)
+                return r, s
 
-            # Fast path: search top-8 mirror in the small snapshot.
-            rank = None
-            for i, w in enumerate(snap['words']):
-                if w == ch: rank = i; break
-            # Slow path: target not in top-8 → scan the full 100-candidate
-            # mirror (ELF-resolved g_ime_cand_full buffer). This matches
-            # real-user behaviour of scrolling RIGHT past the visible page.
-            if rank is None:
-                rank = drv.find_rank(ch)
+            if args.user_sim:
+                # Pass 1: short-tap (primary-phoneme filter).
+                short_events = plans_short[ch]
+                rank_short, snap = inject_and_locate(short_events)
+                # User keystrokes for this attempt = one per byte event.
+                ks = len(short_events)
+
+                if rank_short is not None and rank_short < args.user_threshold:
+                    # Short-tap reached the target inside the visible window
+                    # → user accepts and commits. No fallback needed.
+                    rank = rank_short
+                    used_path = 'short'
+                else:
+                    # Backtrack: DEL the pending input one byte per slot
+                    # press, then retype with the canonical long-press
+                    # plan. Both short and precise plans append the SAME
+                    # number of bytes to key_seq_ (precise just cycles
+                    # the same byte's phoneme hint via repeated long-
+                    # presses) — so byte count = len(plans_short[ch]).
+                    n_pending = len(short_events)
+                    drv.inject_keycodes([drv.KC_DEL] * n_pending)
+                    # Wait for the IME task to fully drain its queue.
+                    wait_deadline = time.time() + 0.4
+                    while time.time() < wait_deadline:
+                        s = drv.read_snapshot()
+                        if s['pending'] == '': break
+                        time.sleep(0.01)
+                    rank_long, snap = inject_and_locate(plans[ch])
+                    extra_ks = n_pending + len(plans[ch])
+                    ks += extra_ks
+                    stats['us_long_extra'] += extra_ks
+                    rank = rank_long
+                    used_path = 'long' if rank_long is not None else 'miss'
+
+                if rank is not None:
+                    # Scroll RIGHT × rank, then OK.
+                    ks += rank + 1
+                    if used_path == 'short': stats['us_short_ok'] += 1
+                    else:                    stats['us_long_ok']  += 1
+                else:
+                    # Both passes missed top-100. Clear pending so the
+                    # next char isn't typed onto stale state. Use byte
+                    # count, NOT event count (long-press cycle adds
+                    # multiple events per byte).
+                    drv.inject_keycodes([drv.KC_DEL] * len(plans_short[ch]))
+                    ks += len(plans_short[ch])
+                    stats['us_miss'] += 1
+                stats['us_keystrokes'] += ks
+            else:
+                rank, snap = inject_and_locate(plans[ch])
+                used_path = None
 
             stats['tested'] += 1
             if rank is not None:
@@ -556,8 +731,12 @@ def main():
                     status = f"rank {rank}"
             else:
                 stats['miss'].append((idx, ch, f'cand={snap["cand"]}'))
-                if not args.no_commit:
-                    # Still commit best guess so state advances.
+                # In user-sim mode the simulated user has already given
+                # up and we explicitly DEL'd the pending input — don't
+                # double-press OK on an empty state. In standard mode we
+                # still commit the best guess (rank 0) so the visible
+                # text approximates a real session.
+                if not args.no_commit and not args.user_sim:
                     pre_len = snap['text_len']
                     drv.commit_rank(0)
                     deadline = time.time() + 0.4
@@ -594,6 +773,23 @@ def main():
         if not args.no_commit:
             print(f"  committed:  {stats['committed_ok']} / {n}  "
                   f"({100*stats['committed_ok']/n:.1f}%)")
+        if args.user_sim:
+            total_ks = stats['us_keystrokes']
+            extra    = stats['us_long_extra']
+            print()
+            print(f"  -- user-sim (threshold = top-{args.user_threshold}) --")
+            print(f"    short-tap OK       : {stats['us_short_ok']} / {n}  "
+                  f"({100*stats['us_short_ok']/n:.1f}%)")
+            print(f"    long-press rescue  : {stats['us_long_ok']} / {n}  "
+                  f"({100*stats['us_long_ok']/n:.1f}%)")
+            print(f"    total miss         : {stats['us_miss']} / {n}  "
+                  f"({100*stats['us_miss']/n:.1f}%)")
+            print(f"    keystrokes total   : {total_ks}  "
+                  f"({total_ks/n:.2f} / char)")
+            print(f"    backtrack waste    : {extra}  "
+                  f"({extra/n:.2f} / char avg, "
+                  f"{extra/max(1,stats['us_long_ok']+stats['us_miss']):.2f} "
+                  f"/ fallback char)")
         print(f"  rank hist: {dict(sorted(stats['rank_hist'].items()))}")
         if stats['miss']:
             uniq = {}

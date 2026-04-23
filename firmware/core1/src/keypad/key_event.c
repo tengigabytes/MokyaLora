@@ -122,6 +122,12 @@ static key_event_result_t push_locked(key_event_t ev)
 
 key_event_result_t key_event_push_hw(mokya_keycode_t keycode, bool pressed)
 {
+    return key_event_push_hw_flags(keycode, pressed, 0u);
+}
+
+key_event_result_t key_event_push_hw_flags(mokya_keycode_t keycode,
+                                           bool pressed, uint8_t flags)
+{
     if (!keycode_valid(keycode)) {
         return KEY_EVENT_ERR_BAD_KEY;
     }
@@ -137,12 +143,18 @@ key_event_result_t key_event_push_hw(mokya_keycode_t keycode, bool pressed)
         .keycode = keycode,
         .pressed = pressed ? 1u : 0u,
         .source  = (uint8_t)KEY_SOURCE_HW,
-        .flags   = 0u,
+        .flags   = (uint8_t)(flags & 0x3Fu),
     };
     return push_locked(ev);
 }
 
 key_event_result_t key_event_push_inject(mokya_keycode_t keycode, bool pressed)
+{
+    return key_event_push_inject_flags(keycode, pressed, 0u);
+}
+
+key_event_result_t key_event_push_inject_flags(mokya_keycode_t keycode,
+                                                bool pressed, uint8_t flags)
 {
     if (!keycode_valid(keycode)) {
         return KEY_EVENT_ERR_BAD_KEY;
@@ -158,7 +170,7 @@ key_event_result_t key_event_push_inject(mokya_keycode_t keycode, bool pressed)
         .keycode = keycode,
         .pressed = pressed ? 1u : 0u,
         .source  = (uint8_t)KEY_SOURCE_INJECT,
-        .flags   = 0u,
+        .flags   = (uint8_t)(flags & 0x3Fu),
     };
     return push_locked(ev);
 }
