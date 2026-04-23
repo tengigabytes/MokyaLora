@@ -320,6 +320,15 @@ Follow-up work (2026-04-23 / 24):
   was a null — see `docs/design-notes/mie-p1.6-lru-plan.md`
   "What we learned about long passages". Kept in tree as a unit
   test + honest commit message for future P1.6.1 revisits.
+- **`build_and_flash.sh --core1` partition preservation fix**
+  (2026-04-24). `--core1` was re-flashing `build/mie-host/dict.bin`
+  (MDBL v2) over whatever was already on the board — including any
+  `--v4` MIE4 blob the user had flashed earlier. Symptom was IME
+  timing out after a "quick Core 1 flash", because v2 dict has
+  different candidate rankings than v4. Tightened `--core1` so it
+  now flashes *only* the Core 1 image at 0x10200000; callers must
+  combine with `--dict`, `--font`, or `--v4` to refresh those
+  partitions deliberately.
 - Simultaneous flash writes from both cores is still an uncovered
   race (low probability, both sides honour a 5 ms park timeout).
   Document as follow-up — add a global `flash_op_arb` CAS if it

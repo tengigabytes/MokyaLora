@@ -12,12 +12,22 @@
 #
 # Run from project root:
 #   bash scripts/build_and_flash.sh          # build + flash everything (MDBL v2 dict)
-#   bash scripts/build_and_flash.sh --core1  # build + flash Core 1 + assets
+#   bash scripts/build_and_flash.sh --core1  # build + flash ONLY Core 1 image —
+#                                            # preserves whatever dict/font are
+#                                            # already on the board (use this for
+#                                            # fast Core 1 iteration)
 #   bash scripts/build_and_flash.sh --dict   # flash dict blob only
 #   bash scripts/build_and_flash.sh --font   # flash font blob only
 #   bash scripts/build_and_flash.sh --v4     # flash MIED v4 (composition) dict
 #                                            # in place of MDBL — Core 1 firmware
 #                                            # auto-detects via MIE4 magic
+#
+# IMPORTANT: --core1 used to ALSO reflash dict + font, which silently overwrote
+# a prior --v4 MIE4 dict with the default MDBL v2 build. Symptom was
+# ime_text_test timing out after a "quick Core 1 flash" because the v2 dict
+# has different candidate rankings than v4. Fixed 2026-04-24 to keep --core1
+# strictly Core-1-only; combine with --dict / --font / --v4 if you need
+# those partitions refreshed.
 #
 # Requires: PlatformIO, VS Build Tools 2019, ARM GCC, Ninja, Pico SDK,
 #           J-Link Ultra connected via SWD.
@@ -85,16 +95,24 @@ if [ "$DICT_ONLY" = false ] && [ "$FONT_ONLY" = false ]; then
         exit 1
     fi
     echo "OK: $CORE1_BIN"
-    # Core 1 build also regenerates $FONT_BLOB via mie_font_data target.
-    if [ ! -f "$FONT_BLOB" ]; then
-        echo "ERROR: $FONT_BLOB not found — font blob build failed"
-        exit 1
+    # Core 1 build also regenerates $FONT_BLOB via mie_font_data target,
+    # but we only check for the font blob when we're actually going to flash
+    # it (i.e. NOT --core1, which leaves the font partition alone).
+    if [ "$CORE1_ONLY" = false ]; then
+        if [ ! -f "$FONT_BLOB" ]; then
+            echo "ERROR: $FONT_BLOB not found — font blob build failed"
+            exit 1
+        fi
+        echo "OK: $FONT_BLOB ($(stat -c%s "$FONT_BLOB" 2>/dev/null || wc -c < "$FONT_BLOB") bytes)"
     fi
-    echo "OK: $FONT_BLOB ($(stat -c%s "$FONT_BLOB" 2>/dev/null || wc -c < "$FONT_BLOB") bytes)"
 fi
 
 # ── Dict blob: CMake/MSBuild via mie-host (MDBL v2) or pre-built v4 ────
-if [ "$FONT_ONLY" = false ]; then
+# --core1 skips this section entirely: the flash step below won't reflash
+# the dict partition either, so preserving whatever is already there wins
+# over wasted build time + the real footgun of downgrading a prior --v4
+# MIE4 blob back to MDBL v2.
+if [ "$FONT_ONLY" = false ] && [ "$CORE1_ONLY" = false ]; then
     if [ "$USE_V4" = true ]; then
         # v4 dict is built directly by gen_dict.py (no CMake target yet).
         # Caller is responsible for keeping $DICT_BLOB_V4 fresh.
@@ -131,10 +149,13 @@ FONT_BLOB_WIN="$(cygpath -w "$(pwd)/$FONT_BLOB")"
         CORE1_BIN_WIN="$(cygpath -w "$(pwd)/$CORE1_BIN")"
         printf 'loadbin "%s" 0x10200000\n' "$CORE1_BIN_WIN"
     fi
-    if [ "$FONT_ONLY" = false ]; then
+    # Dict + font are flashed only when the caller explicitly wants them.
+    # --core1 is Core-1-only on purpose (see header comment for the bug
+    # that forced this tightening).
+    if [ "$FONT_ONLY" = false ] && [ "$CORE1_ONLY" = false ]; then
         printf 'loadbin "%s" %s\n' "$DICT_BLOB_WIN" "$DICT_ADDR"
     fi
-    if [ "$DICT_ONLY" = false ]; then
+    if [ "$DICT_ONLY" = false ] && [ "$CORE1_ONLY" = false ]; then
         printf 'loadbin "%s" %s\n' "$FONT_BLOB_WIN" "$FONT_ADDR"
     fi
     echo "r"

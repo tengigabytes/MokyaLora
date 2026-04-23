@@ -1812,10 +1812,17 @@ Bugs hit during the follow-up:
   that was reset mid-flash-write. `build_and_flash.sh` (J-Link
   loadbin) fails with "RAMCode did not respond" while QMI is
   dead. Memory updated in `project_qmi_wedge_recovery.md`.
-- Partial `--core1` reflash can leave Meshtastic IPC or dict
-  state inconsistent enough that post-flash `ime_text_test`
-  times out injecting the first batch; `--v4` full reflash is
-  the quickest known recovery. Separate bug to chase.
+- Partial `--core1` reflash used to leave Meshtastic IPC or dict
+  state inconsistent enough that post-flash `ime_text_test` timed
+  out; `--v4` full reflash was the quickest known recovery. Root-
+  caused 2026-04-24: `--core1` was also re-running the
+  `mie_dict_blob` cmake target and flashing `build/mie-host/dict.bin`
+  (always MDBL v2) over any prior `--v4` MIE4 blob. v2 dict has
+  different candidate rankings than v4, so the test saw unexpected
+  top-8 and timed out trying to reach the target char. Fixed by
+  making `--core1` flash strictly the Core 1 image — dict/font
+  partitions must be refreshed with explicit `--dict` / `--font` /
+  `--v4` flags.
 - Boot-time `panic()` on `heap_free < 20 %` fired silently when
   adding the RTT task (+1 KB TCB/stack pushed free from 9.6 KB
   to 8.8 KB). Loosened threshold to 15 % and exposed
