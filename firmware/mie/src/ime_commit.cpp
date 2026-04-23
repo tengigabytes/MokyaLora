@@ -48,6 +48,24 @@ void ImeLogic::commit_selected_candidate() {
 
 void ImeLogic::commit_partial(const char* utf8, int prefix_keys) {
     if (utf8 && *utf8) {
+        // Phase 1.6: teach the LRU cache from this commit. Runs before the
+        // key_seq_ strip so we can record (matched_prefix, utf8) accurately.
+        // SmartZh only — SmartEn words are not reading-keyed and Direct has
+        // no candidate selection. prefix_keys>0 excludes standalone-space
+        // commits and other zero-prefix emissions.
+        if (mode_ == InputMode::SmartZh && prefix_keys > 0 &&
+            prefix_keys <= key_seq_len_) {
+            uint8_t tone = 0;
+            if (cand_count_ > 0) {
+                int sel = (selected_ < cand_count_) ? selected_ : 0;
+                tone = candidates_[sel].tone;
+            }
+            uint8_t pos_packed = lru_pack_phoneme_hints(phoneme_hint_, prefix_keys);
+            lru_.upsert(
+                reinterpret_cast<const uint8_t*>(key_seq_),
+                prefix_keys, pos_packed, tone, utf8, now_ms_cache_);
+        }
+
         did_commit(utf8);
         if (listener_) listener_->on_commit(utf8);
     }

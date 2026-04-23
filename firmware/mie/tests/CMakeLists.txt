@@ -21,6 +21,7 @@ add_executable(mie_tests
     test_ime_direct.cpp
     test_ime_timer.cpp
     test_lru_cache.cpp
+    test_ime_lru.cpp
     # test_mie_c_api.cpp — deferred to Phase D (C API rewrite)
 )
 

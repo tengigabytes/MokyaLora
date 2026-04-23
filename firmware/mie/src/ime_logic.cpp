@@ -65,9 +65,21 @@ void ImeLogic::attach_composition_searcher(CompositionSearcher* cs) {
     composition_searcher_ = cs;
 }
 
+bool ImeLogic::load_lru(const uint8_t* buf, int len) {
+    return lru_.deserialize(buf, len);
+}
+
+int ImeLogic::serialize_lru(uint8_t* buf, int cap) const {
+    return lru_.serialize(buf, cap);
+}
+
 // ── Top-level dispatcher ─────────────────────────────────────────────────────
 
 bool ImeLogic::process_key(const KeyEvent& ev) {
+    // Cache now_ms so commit paths (did_commit / commit_partial) can stamp
+    // LRU entries without routing a clock through every call site.
+    now_ms_cache_ = ev.now_ms;
+
     // BACK is reserved for UI; silently ignore if the router missed it.
     if (ev.keycode == MOKYA_KEY_BACK)               return false;
     if (ev.keycode == MOKYA_KEY_NONE)               return false;
@@ -178,6 +190,7 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
 // ── Periodic tick (multi-tap timeout + SYM1 long-press detection) ───────────
 
 bool ImeLogic::tick(uint32_t now_ms) {
+    now_ms_cache_ = now_ms;
     bool changed = false;
 
     if (multitap_.keycode != MOKYA_KEY_NONE &&
