@@ -127,6 +127,8 @@ def type_word_t9(drv, word, stats):
     stats['t9_ranks'].append(rank)
     stats['keystrokes'] += ks
     stats['ideal_keystrokes'] += len(kc_list) + 1
+    stats['per_word'].append(
+        (word, len(kc_list), rank, ks, 't9'))
     return True
 
 
@@ -153,6 +155,8 @@ def type_word_multitap(drv, word, stats, from_reason):
         stats['multitap_reasons'].get(from_reason, 0) + 1
     stats['keystrokes'] += ks_this
     stats['ideal_keystrokes'] += len(word) + 1
+    stats['per_word'].append(
+        (word, len(word), None, ks_this, 'multitap-' + from_reason))
     return True
 
 
@@ -242,6 +246,8 @@ def main():
         'punct_ok': 0, 'punct_unreachable': [],
         'unreachable_chars': [],
         'keystrokes': 0, 'ideal_keystrokes': 0,
+        # Per-word breakdown: (word, letters, rank-or-None, keystrokes, path)
+        'per_word': [],
     }
 
     with MokyaSwd(elf=args.elf) as swd:
@@ -290,6 +296,33 @@ def main():
         ideal = stats['ideal_keystrokes']
         print(f"  Keystrokes     : {stats['keystrokes']} "
               f"(ideal {ideal}; overhead = {stats['keystrokes'] - ideal})")
+
+        # Per-word keystroke breakdown. Groups words by keystroke cost vs
+        # the ideal of "one tap per letter + 1 OK", so the long tail of
+        # rank-N hits and multitap fallbacks is visible.
+        print()
+        print("  === Per-word keystroke breakdown ===")
+        print(f"  {'word':<20} {'letters':>7}  {'rank':>5}  {'keys':>5}  "
+              f"{'over':>4}  path")
+        # Show only non-zero-overhead rows + all multitaps (ideal-cost
+        # rows would otherwise flood the output).
+        shown = 0
+        for (word, letters, rank, keys, path) in stats['per_word']:
+            overhead = keys - (letters + 1)
+            if overhead == 0 and path == 't9':
+                continue   # ideal-cost T9 hit — skip
+            rank_str = str(rank) if rank is not None else '-'
+            print(f"  {word[:20]:<20} {letters:>7}  {rank_str:>5}  "
+                  f"{keys:>5}  {overhead:>+4}  {path}")
+            shown += 1
+        if shown == 0:
+            print("  (every word hit T9 at rank 0 — no overhead anywhere)")
+        else:
+            # Also report how many were at the ideal (rank 0, no overhead).
+            ideal_count = sum(1 for w in stats['per_word']
+                              if (w[3] - (w[1] + 1)) == 0 and w[4] == 't9')
+            print(f"  ... plus {ideal_count} T9 rank-0 words typed at "
+                  f"letters+1 keystrokes (ideal).")
 
 
 if __name__ == '__main__':
