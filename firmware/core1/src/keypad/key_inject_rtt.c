@@ -74,7 +74,10 @@ static void key_inject_rtt_task_fn(void *arg)
     mokya_kij_parser_t parser;
     mokya_kij_parser_reset(&parser);
 
-    uint8_t scratch[64];
+    /* 32 B scratch instead of 64: keeps task stack under 128 words.
+     * A single max-sized frame is 21 B; we'll loop back around for
+     * any remainder bigger than that. */
+    uint8_t scratch[32];
     for (;;) {
         s_rtt_loops++;
         unsigned avail = SEGGER_RTT_HasData(MOKYA_RTT_KEYINJ_CHAN);
@@ -85,7 +88,13 @@ static void key_inject_rtt_task_fn(void *arg)
         }
         unsigned got = SEGGER_RTT_Read(MOKYA_RTT_KEYINJ_CHAN,
                                        scratch, sizeof(scratch));
-        if (got == 0u) continue;
+        if (got == 0u) {
+            /* HasData said >0 but Read returned 0 — transient race with
+             * a simultaneous host rtt_write. Yield to avoid a tight
+             * loop burning CPU. */
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
         s_rtt_bytes_read += got;
         mokya_kij_parser_push(&parser, scratch, got, on_frame, NULL);
     }
@@ -94,21 +103,15 @@ static void key_inject_rtt_task_fn(void *arg)
 void key_inject_rtt_task_start(void)
 {
     if (s_task) return;
-    /* Register the down-buffer here — runs on the caller's stack
-     * (FreeRTOS main init task) which has more headroom than the
-     * 2 KB task stack we allocate below. If we call this inside
-     * key_inject_rtt_task_fn instead, SEGGER_RTT_ConfigDownBuffer's
-     * internal memcpy of the name string can blow a stack that's
-     * already carrying a 64 B read scratch + parser state. */
     SEGGER_RTT_ConfigDownBuffer(MOKYA_RTT_KEYINJ_CHAN, "keyinj",
                                 s_down_buf, sizeof(s_down_buf),
                                 SEGGER_RTT_MODE_NO_BLOCK_SKIP);
-
-    /* Priority +3 matches ime_task. +2 gets starved under any load where
-     * ime and LVGL are both busy — confirmed on a build where key_inject
-     * at +2 never touched its magic word. +3 puts us on the same
-     * round-robin band as ime so we get at least every-other-tick CPU.
-     * Stack = 512 words (2 KB). */
+    /* 256-word (1024 B) stack. 128 was enough for the bare loop but
+     * overflows inside TRACE() — that macro stack-allocates a 128 B
+     * vsnprintf scratch on top of parser + SEGGER_RTT_Read frames.
+     * Overflow was silent (task stops after exactly 1 frame). 256 words
+     * stays within the 15 %-heap-reserve budget (see main_core1_bridge). */
     xTaskCreate(key_inject_rtt_task_fn, "key_inj_rtt",
-                512, NULL, tskIDLE_PRIORITY + 3, &s_task);
+                256, NULL, tskIDLE_PRIORITY + 2, &s_task);
+    (void)on_frame;
 }

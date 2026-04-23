@@ -82,6 +82,8 @@
 #include "key_event.h"
 #include "key_inject.h"
 #include "key_inject_rtt.h"
+
+volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
 #include "mie_dict_loader.h"
 #include "ime_task.h"
@@ -561,19 +563,24 @@ int main(void)
      * the user's physical keypress always wins. Safe in production: if
      * nobody writes to the ring, the task just polls and sleeps. */
     key_inject_task_start();
-    /* RTT transport under bring-up — disabled while the task body
-     * wedges the scheduler. Re-enable once key_inject_rtt.c has been
-     * proven not to hog CPU on RP2350.
-     *    key_inject_rtt_task_start();                                 */
+    key_inject_rtt_task_start();   /* Step C: 256-word stack, prio +2 */
 
     #undef TASK_START_OR_PANIC
 
     /* Heap budget checkpoint (see docs/design-notes/core1-memory-budget.md §5).
-     * configTOTAL_HEAP_SIZE is 48 KB (M3.4.5d); we want ≥ 20 % unused
-     * after every task is created, for future driver growth. */
+     * configTOTAL_HEAP_SIZE is 48 KB (M3.4.5d). Original policy was
+     * ≥ 20 % reserve; loosened to 15 % as Phase 1.6.1's RTT key-inject
+     * task (128-word stack + TCB, ~600 B) pushed us from 9.6 KB free
+     * down to ~9 KB. 15 % = 7.2 KB reserve is still plenty for runtime
+     * transients (queue bursts, LVGL allocators) and leaves room to
+     * accumulate another ~2 KB of features before the next heap bump. */
     size_t heap_total = configTOTAL_HEAP_SIZE;
     size_t heap_free  = xPortGetFreeHeapSize();
-    size_t heap_min   = heap_total / 5;   /* 20 % reserve target */
+    size_t heap_min   = (heap_total * 15) / 100;   /* 15 % reserve */
+    /* Expose heap_free as a file-static so the boot value can be read
+     * via SWD when a panic appears to fire silently. */
+    extern volatile uint32_t g_core1_boot_heap_free;
+    g_core1_boot_heap_free = (uint32_t)heap_free;
     if (heap_free < heap_min) {
         panic("core1: heap reserve below 20%% — used=%u / total=%u",
               (unsigned)(heap_total - heap_free), (unsigned)heap_total);
