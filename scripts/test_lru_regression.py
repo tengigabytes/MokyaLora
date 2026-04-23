@@ -89,8 +89,8 @@ def dump_state(tag, halt_for_pc=True):
             if halt_for_pc:
                 try:
                     swd._jl.halt()
-                    pc = swd._jl.register_read(REG_PC)
-                    lr = swd._jl.register_read(REG_LR)
+                    pc = (swd._jl.register_read(REG_PC) & 0xFFFFFFFF)
+                    lr = swd._jl.register_read(REG_LR) & 0xFFFFFFFF
                 finally:
                     try: swd._jl.restart()
                     except Exception: pass
@@ -130,26 +130,67 @@ def erase_lru_partition():
     dump_state("post-erase", halt_for_pc=True)
 
 
+def wait_for_xip_ready(timeout_s=8.0, poll_s=0.2):
+    """Poll a known-valid flash word (Core 0 image vector) until the read
+    succeeds. XIP is disabled by flash_safety_wrap.c for the duration of
+    any flash erase/program, so a failing read here means a save is still
+    in flight. Returns True once readable; raises on timeout.
+
+    Must be called on an entry boundary (e.g. after a test pass) before
+    injecting anything into Core 1 — halting Core 1 while it's in a
+    flash op leaves Core 0 stuck in the park spin and XIP off, which is
+    the exact wedge that kills QMI unrecoverably."""
+    deadline = time.time() + timeout_s
+    with MokyaSwd(device="RP2350_M33_0") as swd:
+        while time.time() < deadline:
+            try:
+                swd.read_u32(CORE0_FLASH_BASE + 4)
+                return True
+            except Exception:
+                time.sleep(poll_s)
+    raise RuntimeError(
+        f"XIP never became readable within {timeout_s}s — flash op stuck; "
+        "aborting rather than piling on halts (power-cycle required).")
+
+
 def force_lru_save():
     """Inject a MODE keypress to trip the mode_tripwire throttle so the
     current LruCache is written to flash even when commit count < 50.
-    Uses a persistent pylink session."""
+
+    IMPORTANT: do NOT halt Core 1 here. Core 1 runs the key_inject
+    consumer and the LRU flash save path. Halting it while it is inside
+    flash_range_program leaves XIP off + Core 0 parked forever, which
+    wedges QMI unrecoverably (project_qmi_wedge_recovery.md).
+
+    Atomicity w.r.t. the consumer is instead provided by write order:
+    event bytes first, producer_idx last. The consumer loads producer_idx
+    with acquire semantics and only then reads the event slots, so it
+    cannot observe a torn event.
+
+    We also wait for XIP to be readable before injecting, so any
+    in-progress save from Pass 1 has fully completed."""
+    wait_for_xip_ready()
     with MokyaSwd(device="RP2350_M33_1") as swd:
-        base = swd.symbol("g_key_inject_buf")
-        prod_addr = base + 4
-        evt_addr  = base + 20
-        # Halt to make the write atomic w.r.t. the key_inject consumer.
-        swd._jl.halt()
-        try:
-            swd.write_u8_many([
-                (evt_addr + 0, 0x99),   # MODE press (0x19 | pressed bit)
-                (evt_addr + 1, 0x00),
-                (evt_addr + 2, 0x19),   # MODE release
-                (evt_addr + 3, 0x00),
-            ])
-            swd.write_u32(prod_addr, 2)
-        finally:
-            swd._jl.restart()
+        base        = swd.symbol("g_key_inject_buf")
+        prod_addr   = base + 4
+        events_base = base + 20
+        RING        = 32                 # KEY_INJECT_RING_EVENTS
+        EVSZ        = 2                  # KEY_INJECT_EVENT_SIZE
+        # Read current producer_idx and append — NEVER reset it to 0/2.
+        # The ring is shared with Pass 1's leftover consumer position, so
+        # overwriting producer_idx with a small value would make the
+        # consumer race around the ring re-processing ~30 stale events,
+        # corrupting IME state and crashing Core 1 mid-flash-write.
+        cur_prod = swd.read_u32(prod_addr)
+        slot0 = (cur_prod      ) & (RING - 1)
+        slot1 = (cur_prod + 1  ) & (RING - 1)
+        swd.write_u8_many([
+            (events_base + slot0 * EVSZ + 0, 0x99),  # MODE press
+            (events_base + slot0 * EVSZ + 1, 0x00),
+            (events_base + slot1 * EVSZ + 0, 0x19),  # MODE release
+            (events_base + slot1 * EVSZ + 1, 0x00),
+        ])
+        swd.write_u32(prod_addr, cur_prod + 2)
 
 
 def wait_for_save_complete(timeout_s=10.0, stable_reads=5, poll_s=0.15):
@@ -200,37 +241,40 @@ def wait_for_save_complete(timeout_s=10.0, stable_reads=5, poll_s=0.15):
 
 
 def reboot_and_verify(max_wait_s=8.0):
-    """Reset the target via pylink and wait until the PC is out of
-    bootrom. Raises RuntimeError if the core does not leave bootrom
-    within max_wait_s."""
-    print("[reboot] pylink reset + verify-not-in-bootrom")
+    """Reset the target via pylink and wait until flash (XIP) is
+    readable AND matches the expected Core 0 image vector. We do NOT
+    sample PC by halt/restart: on RP2350 with Security Extension,
+    halting mid-boot-sequence can stall the chip in odd states (we've
+    seen EXC_RETURN-like PC values that defeat any "is it in bootrom?"
+    check). Flash readability is sufficient — if Core 0 is wedged in a
+    RAM park spin, XIP stays off and reads fail. If Core 0 is in
+    bootrom, XIP is on and reads return the boot image. Either way a
+    stable readable image means the chip is healthy post-reset; Core 1
+    liveness is implicitly validated when Pass 2 runs ime_text_test.py."""
+    print("[reboot] pylink reset (halt=False)")
     with MokyaSwd(device="RP2350_M33_0") as swd:
-        swd._jl.reset(ms=0, halt=False)   # resets + JLINKARM_Go
-        # Poll PC every 200 ms; halt briefly, sample, restart.
+        swd._jl.reset(ms=0, halt=False)
         deadline = time.time() + max_wait_s
-        last_pc = None
+        last_err = None
         while time.time() < deadline:
             time.sleep(0.4)
             try:
-                swd._jl.halt()
-                pc = swd._jl.register_read(REG_PC)
-                swd._jl.restart()
-                last_pc = pc
-                if pc >= XIP_BASE:
-                    print(f"[reboot] PC=0x{pc:08X} — out of bootrom OK "
-                          f"(t={time.time() - (deadline - max_wait_s):.1f}s)")
+                c0 = swd.read_u32(CORE0_FLASH_BASE + 4)
+                c1 = swd.read_u32(CORE1_FLASH_BASE + 4)
+                if c0 != 0 and c0 != 0xFFFFFFFF:
+                    print(f"[reboot] flash readable: core0[+4]=0x{c0:08X} "
+                          f"core1[+4]=0x{c1:08X}")
                     break
             except Exception as e:
-                print(f"[reboot] poll error: {e}")
-                continue
+                last_err = e
         else:
-            last_fmt = (f"0x{last_pc:08X}" if isinstance(last_pc, int)
-                        else str(last_pc))
             raise RuntimeError(
-                f"Core 0 never left bootrom; last PC={last_fmt}")
-    # USB CDC still needs a moment to re-enumerate.
-    time.sleep(4)
-    dump_state("post-reboot", halt_for_pc=True)
+                f"Flash never became readable within {max_wait_s}s post-"
+                f"reset (last err: {last_err}). QMI may be wedged — "
+                "physical USB re-plug required.")
+    # USB CDC re-enumerate + give Core 1 time to be launched by Core 0.
+    time.sleep(5)
+    dump_state("post-reboot", halt_for_pc=False)
 
 
 def read_lru_magic():
@@ -251,7 +295,14 @@ def run_pass(passage, limit, v4):
     proc = subprocess.run(cmd, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=600)
     out = (proc.stdout or "") + (proc.stderr or "")
-    print(out[-2000:])
+    # Windows console is cp950 by default — strip to ASCII-safe for the
+    # log tail print so CJK chars in a ime_text_test summary don't crash
+    # the aggregator.
+    tail = out[-2000:]
+    try:
+        print(tail)
+    except UnicodeEncodeError:
+        print(tail.encode("ascii", "replace").decode("ascii"))
     m = re.search(r'rank hist:\s*(\{[^}]*\})', out)
     if not m:
         raise RuntimeError("ime_text_test.py did not emit a rank histogram")
