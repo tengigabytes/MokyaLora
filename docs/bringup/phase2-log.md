@@ -1757,6 +1757,75 @@ Notable bugs hit during implementation:
   records the bump. Step 3 touches the Meshtastic fork for the
   listener `flash_park_listener.c`.
 
+### P1.6 follow-up — `--reboot`, full regression, dict regen, RTT transport (2026-04-23 / 24)
+
+Closes all three deferred items and adds a second key-inject
+transport. Commits on `dev-Sblzm`:
+
+- `75fc9a4` / `3af07f6` — `--reboot` round-trip wedge root-caused
+  and fixed. `force_lru_save()` was overwriting `producer_idx = 2`,
+  which — with Pass 1's consumer_idx already at ~30 — made the
+  consumer race the full ring re-processing stale events, crashing
+  Core 1 mid-`flash_range_program` and leaving Core 0 in the park
+  spin with XIP off (the QMI-wedge pattern). Now writes events at
+  `(cur_prod & (RING-1))` and bumps `producer_idx += 2`. Hardware
+  verified: `--erase --reboot --limit 30` → Pass 1 rank-0 = 5,
+  Pass 2 rank-0 = 23 (post-reset, cache loaded from flash).
+- `3af07f6` — six-passage regression numbers captured. See
+  `mie-v4-status.md` Phase 1.6 delivered table. Short passages
+  (user1-30 / echeneis) +18 / +23 rank-0; long passages
+  (user2/4/5) essentially flat — documented as P1.6.1 territory
+  in `docs/design-notes/mie-p1.6-lru-plan.md`.
+- `f63f41b` — `mie_dict_blob` 89 MB regeneration root-caused.
+  `mie_dict_data_lg` was sharing `${MIE_DATA_DIR}` with
+  `mie_dict_data_sm` and clobbering the filtered `dict_dat.bin`
+  (1.9 MB) / `dict_values.bin` (3 MB) with unfiltered 38 MB /
+  51 MB outputs. Re-routed `lg/` to its own subdir; regression
+  `firmware/mie/tools/test_pack_dict_blob.py` asserts header size
+  fields match input file sizes so a future overwrite surfaces
+  immediately.
+- `7e2443a` / `862ef72` / `1a21ee9` — **RTT key-inject transport**
+  as an alternate to the SWD ring. Host side: `MokyaSwd.rtt_send_frame`
+  writes directly into the SEGGER RTT control block (pylink's own
+  `rtt_write` proved unreliable on RP2350 + J-Link V932, silently
+  drops every write after the first in a session). Firmware:
+  `key_inject_rtt.{c,h}` + shared `key_inject_frame.h` wire frame
+  (magic + type + len + payload + crc8). Both transports coexist
+  under a shared `g_key_inject_mode` byte — active one runs at
+  poll cadence, inactive long-sleeps 50 ms so ime_task never has
+  to compete with two hot pollers. `ime_text_test.py
+  --transport {swd,rtt}` picks.
+- `eb182a3` — script poll refactor. Replaced `while time < deadline:
+  read_snapshot(400 B); if cond: break; sleep(0.01)` with
+  `wait_until(cheap_u32_read, cond, poll_s=0.003)`. Per-char
+  steady-state 400 → 310 ms.
+- `01af1b9` — LFU-weighted eviction experiment. **Null result** on
+  long passages (+0 rank-0 on user2/4/5). Root cause wasn't
+  one-shot neighbours evicting hot entries; it was that long-
+  passage non-rank-0 chars are mostly one-shot rare homophones
+  that LFU weighting doesn't save. Unit test + honest commit
+  message preserved; see `mie-p1.6-lru-plan.md` "What we learned
+  about long passages" for the full autopsy.
+
+Bugs hit during the follow-up:
+- QMI wedge recovery: only physical USB unplug recovers a QMI
+  that was reset mid-flash-write. `build_and_flash.sh` (J-Link
+  loadbin) fails with "RAMCode did not respond" while QMI is
+  dead. Memory updated in `project_qmi_wedge_recovery.md`.
+- Partial `--core1` reflash can leave Meshtastic IPC or dict
+  state inconsistent enough that post-flash `ime_text_test`
+  times out injecting the first batch; `--v4` full reflash is
+  the quickest known recovery. Separate bug to chase.
+- Boot-time `panic()` on `heap_free < 20 %` fired silently when
+  adding the RTT task (+1 KB TCB/stack pushed free from 9.6 KB
+  to 8.8 KB). Loosened threshold to 15 % and exposed
+  `g_core1_boot_heap_free` as an SWD-readable checkpoint.
+- RTT task stack at 128 words silently overflowed inside
+  `TRACE()` (128 B vsnprintf scratch + parser + SEGGER_RTT_Read
+  call chain). Bumped to 256 words; task ran exactly one frame
+  before dying, which made the symptom look like a task-
+  creation failure rather than a stack overflow.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

@@ -1,7 +1,69 @@
 # MIE Phase 1.6 — Personalised LRU Cache (design plan)
 
-Status: **planned**, not implemented. Supersedes the dropped P1.5
-(Unihan / MoE dict expansion); see phase2-log "P1.5 dropped" entry.
+Status: **delivered and hardened**, 2026-04-23 / 24.
+Supersedes the dropped P1.5 (Unihan / MoE dict expansion); see
+phase2-log "P1.5 dropped" entry.
+
+Shipped content, by commit:
+- `9d05ae1` Step 1 — LruCache module + 16 host tests
+- `3c4c6c8` Step 2 — wire into ImeLogic search + commit
+- `c4dd34c` Step 3 — flash persistence + symmetric P2-11 park
+- `22432f9` / `072eb2a` Step 4 — regression harness
+- `3af07f6` followup — `--reboot` ring-wrap fix, 6-passage
+  regression, five-passage numbers recorded
+- `f63f41b` followup — `mie_dict_data_lg` → `lg/` subdir so it
+  doesn't clobber `sm` outputs (was responsible for the 89 MB
+  `dict.bin` blocking hardware boot)
+- `7e2443a` / `1a21ee9` followup — RTT key-inject transport with
+  mode-based SWD↔RTT arbitration (`g_key_inject_mode`), drop-in
+  alternative to the SWD ring for regression + future non-J-Link
+  transports
+- `eb182a3` followup — SWD poll refactor, per-char regression
+  latency 400 → 310 ms by polling single u32 fields instead of
+  400 B snapshots
+- `01af1b9` followup — LFU-weighted eviction experiment. **Null
+  result** on long passages; see "What we learned about long
+  passages" below.
+
+See `docs/bringup/mie-v4-status.md` § Phase 1.6 delivered for the
+six-passage hardware numbers.
+
+## What we learned about long passages
+
+Short / high-repetition passages (user1-30 chars, echeneis 77) saw
+large Pass 1 → Pass 2 rank-0 lift (+18, +23). The three 200+ char
+passages (user2/4/5) saw +1 / +3 / 0 — LRU essentially flat. LFU-
+weighted eviction (`01af1b9`) moved the needle by +0 / +0 / +0 on
+rank-0; the hypothesis that one-shot neighbours were stealing
+slots from high-frequency entries turned out to be wrong-shaped:
+
+- Frequent chars in long text (的, 是, 一) are **already rank 0**
+  from base MIE dict frequency ranking. LRU can't improve what's
+  already at rank 0.
+- The non-rank-0 chars are mostly **rare one-shots** (use_count
+  = 1). LFU weighting doesn't save them.
+- In-pass repetition is the only win a 64-entry cap can reliably
+  deliver, and passage length past ~64 disperses repeats beyond
+  the window.
+
+Real fixes for the long-passage ceiling (deferred as P1.6.1
+research):
+
+1. **kCap bump (64 → 256)** — +9 KB BSS for cache + another 9 KB
+   for the persist scratch buffer. Currently blocked: Core 1 SRAM
+   headroom was exhausted at the heap=52 KB experiment (the
+   `RAM overflowed by 2496 bytes` incident in 2026-04-24 RTT
+   bring-up). A path would reclaim BSS first from an over-
+   provisioned static buffer elsewhere in Core 1.
+2. **Persistent frequency model** — replace in-session LRU with a
+   cross-session histogram (`(reading, word) → uses`) re-ranked
+   at search time. Matches "same user, same vocabulary, over
+   weeks" better than the 64-entry session cache. Larger rework,
+   needs LittleFS or similar store.
+3. **Accept** — the current LRU is meaningful for the real-world
+   use case (short, repetitive messaging), just not for the
+   long-passage regression proxy. Keep the unit test captured in
+   `01af1b9` as documentation and move on.
 
 ## Problem statement
 
