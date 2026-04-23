@@ -68,17 +68,35 @@ int LruCache::find_exact(const uint8_t* kbytes, int klen,
 }
 
 int LruCache::find_evict_victim() const {
-    // Minimum last_used_ms; ties broken by minimum use_count.
+    // LFU-weighted LRU eviction. Each entry's score is
+    //     last_used_ms + kReuseBonusMs * use_count
+    // and we evict the lowest. This preserves high-frequency entries
+    // past their pure-LRU expiry, which matters on long passages:
+    // the 2026-04-23 six-passage regression showed user2/4/5 (200+
+    // chars) hitting near-zero rank-0 lift from Pass 1 → Pass 2,
+    // because one-shot neighbours kept evicting the repeat-use
+    // entries before Pass 2 could consume them.
+    //
+    // kReuseBonusMs = 5000 treats each re-use as worth ~5 s of
+    // recency. A 2-use entry survives ~10 s of idle vs a 1-use entry,
+    // a 3-use entry ~15 s, etc. Pass 2 of a passage re-types the same
+    // phoneme sequences within seconds, well inside that window.
+    //
+    // uint64 arithmetic avoids overflow when last_used_ms (ms since
+    // FreeRTOS tick 0, wraps at 49 days) is near the top of its range.
+    // Within-session comparisons are still meaningful even past wrap,
+    // since all entries wrap together.
+    constexpr uint32_t kReuseBonusMs = 5000u;
     int victim = 0;
-    uint32_t v_ms = entries_[0].last_used_ms;
-    uint16_t v_uc = entries_[0].use_count;
+    uint64_t v_score = (uint64_t)entries_[0].last_used_ms +
+                       (uint64_t)kReuseBonusMs * entries_[0].use_count;
     for (int i = 1; i < count_; ++i) {
         const LruEntry& e = entries_[i];
-        if (e.last_used_ms < v_ms ||
-            (e.last_used_ms == v_ms && e.use_count < v_uc)) {
+        uint64_t score = (uint64_t)e.last_used_ms +
+                         (uint64_t)kReuseBonusMs * e.use_count;
+        if (score < v_score) {
             victim = i;
-            v_ms = e.last_used_ms;
-            v_uc = e.use_count;
+            v_score = score;
         }
     }
     return victim;

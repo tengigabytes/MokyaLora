@@ -132,6 +132,41 @@ TEST(LruCacheEviction, EvictsOldestWhenFull) {
     EXPECT_FALSE(saw_zero);
 }
 
+TEST(LruCacheEviction, HighUseEntrySurvivesOneShotNeighbours) {
+    // Regression for the long-passage problem: a repeatedly-used entry
+    // should not be evicted by a stream of one-shot entries arriving
+    // slightly later. Concretely, char typed 3 times at t=1000 must
+    // survive when 64 one-shot chars are added at t=2000..2063.
+    LruCache c;
+    Keys base{0x21, 0x28};
+    // Hot entry: 3 uses at t=1000.
+    upsert_any(c, base, "HOT", 1000);
+    upsert_any(c, base, "HOT", 1000);
+    upsert_any(c, base, "HOT", 1000);
+    // Fill the rest with one-shot entries at progressively later ts.
+    char buf[8];
+    for (int i = 0; i < LruCache::kCap - 1; ++i) {
+        snprintf(buf, sizeof(buf), "W%04d", i);
+        upsert_any(c, base, buf, 2000u + (uint32_t)i);
+    }
+    EXPECT_EQ(c.count(), LruCache::kCap);
+    // Push ONE more one-shot. Under pure LRU this would evict HOT
+    // (t=1000, oldest). Under LFU-weighted LRU the HOT entry's score
+    // = 1000 + 3*5000 = 16000 beats W0000's 2000 + 5000 = 7000 — so
+    // W0000 should go instead.
+    upsert_any(c, base, "NEW", 9999);
+
+    Candidate out[LruCache::kCap];
+    int n = c.lookup(base.bytes, base.len, g_any, out, LruCache::kCap);
+    bool saw_hot = false, saw_w0000 = false;
+    for (int i = 0; i < n; ++i) {
+        if (strcmp(out[i].word, "HOT")   == 0) saw_hot = true;
+        if (strcmp(out[i].word, "W0000") == 0) saw_w0000 = true;
+    }
+    EXPECT_TRUE(saw_hot);     // survived on frequency
+    EXPECT_FALSE(saw_w0000);  // evicted as lowest score
+}
+
 TEST(LruCachePrefix, PrefixMatchSurfacesShorterEntry) {
     LruCache c;
     Keys stored{0x21, 0x28};                    // 2-byte reading
