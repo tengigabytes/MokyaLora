@@ -563,7 +563,18 @@ int main(void)
      * the user's physical keypress always wins. Safe in production: if
      * nobody writes to the ring, the task just polls and sleeps. */
     key_inject_task_start();
-    key_inject_rtt_task_start();   /* Step C: 256-word stack, prio +2 */
+    /* RTT key-inject transport end-to-end works (see
+     * firmware/core1/src/keypad/key_inject_rtt.c + scripts/mokya_rtt.py)
+     * but activating it alongside the SWD ring consumer introduces
+     * scheduler contention: per-char typing latency jumps from ~400 ms
+     * to ~3.5 s under the --user-sim regression, IME candidate list
+     * stays empty or shows compound-word bleed-over between chars.
+     *
+     * Host-side plumbing remains live (ime_text_test.py --transport rtt,
+     * MokyaSwd.rtt_send_frame); firmware plumbing is linked but not
+     * started. Re-enable once task-priority design accounts for two
+     * injection backends plus ime + LVGL at the same tier. */
+    /* key_inject_rtt_task_start();                                    */
 
     #undef TASK_START_OR_PANIC
 

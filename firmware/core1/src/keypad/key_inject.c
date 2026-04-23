@@ -59,10 +59,11 @@ void key_inject_task_start(void)
     if (s_task) return;
     /* Small stack — the task loops on a tight poll and calls the queue
      * push helper (tiny footprint). 256 words = 1 KB. */
-    /* Priority matches the other app tasks so this task gets scheduled
-     * under the round-robin time-slicer. +1 was too low — tskIDLE_PRIORITY+1
-     * is below the other app tasks at +2/+3 and never got CPU time on a
-     * busy system, so the buffer magic stayed zero. */
+    /* Priority +2. Originally +1 (starved by every app task), bumped
+     * to +2. +3 matches ime but starves ime when both RTT + SWD
+     * inject tasks also sit at +3 — ime then can't generate candidates
+     * fast enough. +2 is the sweet spot: lower than ime, but ime's
+     * blocking waits give us enough time.                              */
     xTaskCreate(key_inject_task_fn, "key_inject",
                 256, NULL, tskIDLE_PRIORITY + 2, &s_task);
 }

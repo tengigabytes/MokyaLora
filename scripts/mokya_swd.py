@@ -30,6 +30,11 @@ class MokyaSwd:
         self.elf    = elf
         self._jl    = None
         self._sym_cache = {}
+        # RTT down-buffer cache (populated on first rtt_send_frame).
+        self._rtt_buf_ptr   = None
+        self._rtt_buf_size  = None
+        self._rtt_wroff_addr = None
+        self._rtt_rdoff_addr = None
 
     def __enter__(self):
         self.open()
@@ -105,6 +110,68 @@ class MokyaSwd:
                 self._jl.memory_write8(run_start, run_data)
                 run_start, run_data = addr, [byte & 0xFF]
         self._jl.memory_write8(run_start, run_data)
+
+    # ── RTT down-channel direct write ─────────────────────────────────
+    # Writes bytes straight into the SEGGER RTT down-buffer registered
+    # by firmware/core1/src/keypad/key_inject_rtt.c. Bypasses pylink's
+    # rtt_write(), which on RP2350 + J-Link V932 silently drops all but
+    # the first write per session. Safe to mix with normal SWD reads.
+
+    _RTT_HDR  = 24   # SEGGER CB: 16 B id + 4 B max_up + 4 B max_down
+    _RTT_DESC = 24   # per-buffer descriptor size
+    _KEYINJ_CHAN = 1
+
+    def _rtt_locate(self):
+        if self._rtt_buf_ptr is not None: return
+        cb = self.symbol("_SEGGER_RTT")
+        max_up = self._jl.memory_read32(cb + 16, 1)[0]
+        d_off = cb + self._RTT_HDR + max_up * self._RTT_DESC \
+                + self._KEYINJ_CHAN * self._RTT_DESC
+        d = self._jl.memory_read32(d_off, 6)
+        _, buf_ptr, size, _, _, _ = d
+        if size == 0 or buf_ptr == 0:
+            raise RuntimeError(
+                f"RTT down-buffer {self._KEYINJ_CHAN} not configured — "
+                "firmware key_inject_rtt task not started?")
+        self._rtt_buf_ptr   = buf_ptr
+        self._rtt_buf_size  = size
+        self._rtt_wroff_addr = d_off + 12
+        self._rtt_rdoff_addr = d_off + 16
+
+    def rtt_send_frame(self, frame, timeout_s=1.0):
+        """Write a single framed byte sequence into the RTT down-ring.
+        Blocks up to timeout_s for ring space. Raises on timeout."""
+        self._rtt_locate()
+        n = len(frame)
+        if n == 0: return 0
+        import time as _t
+        deadline = _t.time() + timeout_s
+        while True:
+            wr = self._jl.memory_read32(self._rtt_wroff_addr, 1)[0]
+            rd = self._jl.memory_read32(self._rtt_rdoff_addr, 1)[0]
+            free = (rd - wr - 1) % self._rtt_buf_size
+            if free >= n: break
+            if _t.time() > deadline:
+                raise RuntimeError(
+                    f"RTT ring full for {timeout_s}s (wr={wr} rd={rd})")
+            _t.sleep(0.002)
+        end = wr + n
+        if end <= self._rtt_buf_size:
+            self._jl.memory_write8(self._rtt_buf_ptr + wr, list(frame))
+        else:
+            first = self._rtt_buf_size - wr
+            self._jl.memory_write8(self._rtt_buf_ptr + wr, list(frame[:first]))
+            self._jl.memory_write8(self._rtt_buf_ptr, list(frame[first:]))
+        self._jl.memory_write32(self._rtt_wroff_addr,
+                                [end % self._rtt_buf_size])
+        return n
+
+    def rtt_ring_empty(self):
+        """True if the firmware has drained everything the host pushed."""
+        self._rtt_locate()
+        wr = self._jl.memory_read32(self._rtt_wroff_addr, 1)[0]
+        rd = self._jl.memory_read32(self._rtt_rdoff_addr, 1)[0]
+        return wr == rd
 
     # ── ELF symbol lookup (one-off, cached) ──────────────────────────
 
