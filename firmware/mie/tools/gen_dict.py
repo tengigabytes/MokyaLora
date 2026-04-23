@@ -1146,9 +1146,17 @@ def serialize_key_to_char_idx_v4(char_table: list) -> bytes:
 
 
 def build_mied_v4(raw_entries: list,
-                  unihan_readings: dict = None) -> tuple:
+                  unihan_readings: dict = None,
+                  en_dat_bytes: bytes = None,
+                  en_val_bytes: bytes = None) -> tuple:
     """Build a complete MIED v4 binary blob from raw (word, freq, reading)
     entries. Returns (bytes, stats_dict).
+
+    Optional en_dat_bytes / en_val_bytes embed the English MDBL-format
+    trie + value pool inside the v4 blob so SmartEn has a dict to query
+    when v4 is the only partition flashed. Backwards compatible: old
+    loaders that only read 0x30 bytes of header ignore the added
+    English metadata and serve only Chinese.
 
     The v4 binary embeds char_offsets and word_offsets sections so the
     runtime CompositionSearcher does NOT need heap allocations for them
@@ -1175,8 +1183,12 @@ def build_mied_v4(raw_entries: list,
         prefixes = build_syllable_prefix_set_from_char_table(char_table)
     prefix_section = serialize_syllable_prefix_table_v4(prefixes)
 
-    # Header is 0x30 = 48 bytes
-    HEADER_SIZE = 0x30
+    # Header is 0x40 = 64 bytes (was 0x30, grown 2026-04-24 for embedded
+    # English sections at 0x30..0x3F). Old loaders that stop reading at
+    # 0x30 still work — they just don't discover the English offsets,
+    # and serve Chinese only. char_table_off etc. remain authoritative,
+    # so the grown header is fully backward-compatible.
+    HEADER_SIZE = 0x40
     char_off       = HEADER_SIZE
     word_off       = char_off + len(char_section)
     first_off      = word_off + len(word_section)
@@ -1184,7 +1196,15 @@ def build_mied_v4(raw_entries: list,
     char_offs_off  = key_off + len(key_idx)
     word_offs_off  = char_offs_off + len(char_off_section)
     prefix_off     = word_offs_off + len(word_off_section)
-    total_size     = prefix_off + len(prefix_section)
+    zh_end         = prefix_off + len(prefix_section)
+
+    en_dat_bytes = en_dat_bytes or b''
+    en_val_bytes = en_val_bytes or b''
+    en_dat_off     = zh_end if en_dat_bytes else 0
+    en_dat_size    = len(en_dat_bytes)
+    en_val_off     = (en_dat_off + en_dat_size) if en_val_bytes else 0
+    en_val_size    = len(en_val_bytes)
+    total_size     = zh_end + en_dat_size + en_val_size
 
     # Header flags:
     #   bit 0  = per-reading phoneme_pos byte present (Phase 1.4 long-press
@@ -1202,7 +1222,9 @@ def build_mied_v4(raw_entries: list,
     header += struct.pack('<I', total_size)         # offset 0x20
     header += struct.pack('<I', char_offs_off)      # offset 0x24
     header += struct.pack('<I', word_offs_off)      # offset 0x28
-    header += struct.pack('<I', prefix_off)         # offset 0x2C (NEW)
+    header += struct.pack('<I', prefix_off)         # offset 0x2C
+    header += struct.pack('<II', en_dat_off, en_dat_size)  # 0x30, 0x34
+    header += struct.pack('<II', en_val_off, en_val_size)  # 0x38, 0x3C
     header += b'\x00' * (HEADER_SIZE - len(header))
     assert len(header) == HEADER_SIZE
 
@@ -1210,7 +1232,8 @@ def build_mied_v4(raw_entries: list,
             + char_section + word_section
             + first_idx + key_idx
             + char_off_section + word_off_section
-            + prefix_section)
+            + prefix_section
+            + en_dat_bytes + en_val_bytes)
     assert len(blob) == total_size
 
     # Stats
@@ -1239,6 +1262,9 @@ def build_mied_v4(raw_entries: list,
         'key_to_char_idx_bytes':   len(key_idx),
         'char_offsets_bytes':      len(char_off_section),
         'word_offsets_bytes':      len(word_off_section),
+        'prefix_bytes':            len(prefix_section),
+        'en_dat_bytes':            en_dat_size,
+        'en_val_bytes':            en_val_size,
         'total_bytes':             len(blob),
     }
     return blob, stats
@@ -1354,15 +1380,15 @@ def main():
         print(f'  ZH total        : {total_zh:>9,} bytes  '
               f'({budget_mb:.2f} MB / 3.00 MB budget)  {budget_ok}')
 
-    # ── MIED v4 build (Composition Architecture) ──────────────────────────
-    # Built from the SAME Chinese source files (libchewing, MoE) but using
-    # the raw word/freq/reading triples (no pre-computed abbreviation keys).
-    # Search-time composition derives readings dynamically from char_table.
+    # v4 build is deferred until AFTER the English dict is assembled so
+    # the v4 blob can embed en_dat / en_val directly — SmartEn then
+    # works against the --v4-flashed partition without needing the
+    # legacy MDBL dict alongside.
+    v4_defer_args = None
     if args.v4_output and (args.libchewing or args.moe_csv):
-        v4_path = Path(args.v4_output)
-        v4_path.parent.mkdir(parents=True, exist_ok=True)
-
-        print(f'\nBuilding MIED v4 (Composition Architecture) ...')
+        v4_defer_args = {'v4_path': Path(args.v4_output)}
+        v4_defer_args['v4_path'].parent.mkdir(parents=True, exist_ok=True)
+        print(f'\nPreparing MIED v4 (Composition Architecture) ...')
         raw_v4 = []
         if args.libchewing:
             r = load_libchewing_v4(args.libchewing,
@@ -1374,31 +1400,7 @@ def main():
                                 min_freq=args.zh_min_freq)
             raw_v4.extend(r)
             print(f'  v4 raw MoE entries:        {len(r):,}')
-
-        v4_blob, v4_stats = build_mied_v4(raw_v4, unihan_readings=None)
-        v4_path.write_bytes(v4_blob)
-
-        v4_mb = len(v4_blob) / (1024 * 1024)
-        print(f'  v4 char_table:             {v4_stats["char_table_bytes"]:>9,} bytes  '
-              f'({v4_stats["char_count"]:,} unique chars, '
-              f'avg {v4_stats["avg_readings_per_char"]:.2f} readings/char)')
-        print(f'  v4 word_table:             {v4_stats["word_table_bytes"]:>9,} bytes  '
-              f'({v4_stats["word_count"]:,} multi-char words, '
-              f'{v4_stats["words_with_reading_overrides"]:,} with reading overrides)')
-        print(f'  v4 first_char_idx:         {v4_stats["first_char_idx_bytes"]:>9,} bytes')
-        print(f'  v4 key_to_char_idx:        {v4_stats["key_to_char_idx_bytes"]:>9,} bytes')
-        print(f'  v4 char_offsets:           {v4_stats["char_offsets_bytes"]:>9,} bytes')
-        print(f'  v4 word_offsets:           {v4_stats["word_offsets_bytes"]:>9,} bytes')
-        print(f'  v4 TOTAL                   {v4_stats["total_bytes"]:>9,} bytes  '
-              f'({v4_mb:.2f} MB)  -> {v4_path}')
-
-        # Word size distribution
-        sz_dist = v4_stats['word_count_by_size']
-        if sz_dist:
-            print(f'  v4 word_count_by_size:')
-            for n in sorted(sz_dist):
-                label = f'{n}-char' if n < 8 else '8+ char'
-                print(f'    {label}: {sz_dist[n]:,}')
+        v4_defer_args['raw_v4'] = raw_v4
 
     # ── Charlist emit (small font variant) ────────────────────────────────
     if args.emit_charlist and zh_key_to_words:
@@ -1443,6 +1445,42 @@ def main():
               f'({en_stats["entry_count"]:,} words stored{pruned_note})')
         print(f'  EN total        : {total_en:>9,} bytes  '
               f'({budget_mb:.2f} MB / 1.00 MB budget)  {budget_ok}')
+
+    # ── MIED v4 build (deferred from above so English can be embedded) ────
+    if v4_defer_args is not None:
+        print(f'\nBuilding MIED v4 (Composition Architecture) ...')
+        en_dat_emb = None
+        en_val_emb = None
+        if args.en_wordlist:
+            en_dat_emb = (output_dir / 'en_dat.bin').read_bytes()
+            en_val_emb = (output_dir / 'en_values.bin').read_bytes()
+            print(f'  embedding English: en_dat={len(en_dat_emb):,} B, '
+                  f'en_val={len(en_val_emb):,} B')
+        else:
+            print(f'  no --en-wordlist, SmartEn will be unavailable with this v4 blob')
+
+        v4_blob, v4_stats = build_mied_v4(v4_defer_args['raw_v4'],
+                                          unihan_readings=None,
+                                          en_dat_bytes=en_dat_emb,
+                                          en_val_bytes=en_val_emb)
+        v4_path = v4_defer_args['v4_path']
+        v4_path.write_bytes(v4_blob)
+        v4_mb = len(v4_blob) / (1024 * 1024)
+        print(f'  v4 char_table:             {v4_stats["char_table_bytes"]:>9,} bytes  '
+              f'({v4_stats["char_count"]:,} unique chars, '
+              f'avg {v4_stats["avg_readings_per_char"]:.2f} readings/char)')
+        print(f'  v4 word_table:             {v4_stats["word_table_bytes"]:>9,} bytes  '
+              f'({v4_stats["word_count"]:,} multi-char words, '
+              f'{v4_stats["words_with_reading_overrides"]:,} with reading overrides)')
+        print(f'  v4 first_char_idx:         {v4_stats["first_char_idx_bytes"]:>9,} bytes')
+        print(f'  v4 key_to_char_idx:        {v4_stats["key_to_char_idx_bytes"]:>9,} bytes')
+        print(f'  v4 char_offsets:           {v4_stats["char_offsets_bytes"]:>9,} bytes')
+        print(f'  v4 word_offsets:           {v4_stats["word_offsets_bytes"]:>9,} bytes')
+        print(f'  v4 prefix_table:           {v4_stats["prefix_bytes"]:>9,} bytes')
+        print(f'  v4 en_dat (embedded):      {v4_stats["en_dat_bytes"]:>9,} bytes')
+        print(f'  v4 en_val (embedded):      {v4_stats["en_val_bytes"]:>9,} bytes')
+        print(f'  v4 TOTAL                   {v4_stats["total_bytes"]:>9,} bytes  '
+              f'({v4_mb:.2f} MB)  -> {v4_path}')
 
     # ── Metadata ──────────────────────────────────────────────────────────
     meta = {

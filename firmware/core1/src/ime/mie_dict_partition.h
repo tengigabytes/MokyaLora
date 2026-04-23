@@ -39,10 +39,17 @@ extern "C" {
 #define MIE_MDBL_HEADER_SIZE     0x28u
 
 /* MIED v4 (composition dict) magic. Single binary with header.total_size
- * at offset 0x20 (see firmware/mie/include/mie/composition_searcher.h). */
-#define MIE_MIE4_MAGIC           0x3445494Du  /* "MIE4" as u32 LE */
-#define MIE_MIE4_HEADER_SIZE     0x30u
-#define MIE_MIE4_TOTAL_SIZE_OFF  0x20u
+ * at offset 0x20 (see firmware/mie/include/mie/composition_searcher.h).
+ * Header grown 0x30 -> 0x40 on 2026-04-24 to carry embedded English
+ * dict offsets (en_dat/en_val). Old loaders that only touch bytes
+ * below 0x30 keep working — char_table_off etc. stay authoritative. */
+#define MIE_MIE4_MAGIC            0x3445494Du  /* "MIE4" as u32 LE */
+#define MIE_MIE4_HEADER_SIZE      0x40u
+#define MIE_MIE4_TOTAL_SIZE_OFF   0x20u
+#define MIE_MIE4_EN_DAT_OFF_OFF   0x30u
+#define MIE_MIE4_EN_DAT_SIZE_OFF  0x34u
+#define MIE_MIE4_EN_VAL_OFF_OFF   0x38u
+#define MIE_MIE4_EN_VAL_SIZE_OFF  0x3Cu
 
 typedef struct {
     uint32_t magic;        /* MIE_MDBL_MAGIC */

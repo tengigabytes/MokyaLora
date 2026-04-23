@@ -19,7 +19,9 @@
 //
 // ── v4 binary file layout (see firmware/mie/tools/gen_dict.py for builder) ──
 //
-//  Header (0x30 bytes, little-endian):
+//  Header (0x40 bytes, little-endian; grown from 0x30 on 2026-04-24 to
+//  carry embedded English sections — old loaders that stop at 0x30 still
+//  work for Chinese, they just miss the SmartEn dict):
 //    Offset  Size  Field
 //     0x00     4   magic = "MIE4"
 //     0x04     2   version u16 = 4
@@ -33,7 +35,11 @@
 //     0x20     4   total_size u32  (whole file including header)
 //     0x24     4   char_offsets_off u32  (pre-computed u32[char_count+1])
 //     0x28     4   word_offsets_off u32  (pre-computed u32[word_count+1])
-//     0x2C     4   reserved (zero)
+//     0x2C     4   syllable_prefix_table_off u32  (Phase 1.4)
+//     0x30     4   en_dat_off u32   (0 = no English)
+//     0x34     4   en_dat_size u32
+//     0x38     4   en_val_off u32
+//     0x3C     4   en_val_size u32
 //
 //  char_table (sorted by char_id 0..char_count-1):
 //    Per char:  utf8_len(u8) | utf8 bytes | reading_count(u8)
