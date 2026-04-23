@@ -253,6 +253,39 @@ class ImeDriver:
         if m != KEYI_MAGIC:
             raise RuntimeError(f"inject magic 0x{m:08X} ≠ 0x{KEYI_MAGIC:08X}")
 
+    # ── Fast field pokers — read one u32 from ime_view_debug instead of
+    # the full 400-byte snapshot. Polling on a single field is ~20x
+    # cheaper (0.28 ms vs 5.6 ms per read) so we can poll tighter.
+    _TEXT_LEN_ADDR = IME_DBG_ADDR + OFF_TEXT_LEN
+    _PEND_LEN_ADDR = IME_DBG_ADDR + OFF_PEND_LEN
+    _MODE_ADDR     = IME_DBG_ADDR + OFF_MODE        # byte field, use u32 read
+
+    def read_text_len(self):
+        return self.swd.read_u32(self._TEXT_LEN_ADDR)
+
+    def read_pend_len(self):
+        return self.swd.read_u32(self._PEND_LEN_ADDR)
+
+    def read_mode_byte(self):
+        return self.swd.read_u32(self._MODE_ADDR & ~3) >> ((self._MODE_ADDR & 3) * 8) & 0xFF
+
+    def read_cand_seq(self):
+        return self.swd.read_u32(self.a_cand_full + 4)
+
+    def wait_until(self, read_fn, condition, timeout_s=0.4, poll_s=0.003):
+        """Poll a cheap reader until `condition(value)` returns True or
+        timeout. Returns the last observed value (regardless of match).
+        poll_s defaults to 3 ms — the Core 1 key_inject task's 5 ms
+        cadence sets the true reaction floor, anything finer just
+        spends extra SWD round-trips."""
+        deadline = time.time() + timeout_s
+        v = read_fn()
+        while time.time() < deadline:
+            if condition(v): return v
+            time.sleep(poll_s)
+            v = read_fn()
+        return v
+
     def read_all_candidates(self):
         """Return the full 100-candidate word list (seq-locked read)."""
         for _ in range(8):
@@ -419,13 +452,9 @@ class ImeDriver:
             if attempts >= max_retries * VIEW_COUNT:
                 raise RuntimeError(f"view stuck at {cur}, target {target}")
             self.inject_keycodes([self.KC_FUNC])
-            # Wait until s_active advances by exactly 1 (or wraps).
-            deadline = time.time() + 0.3
             expected = (cur + 1) % VIEW_COUNT
-            while time.time() < deadline:
-                new = self.swd.read_u32(self.a_active)
-                if new == expected: break
-                time.sleep(0.01)
+            self.wait_until(lambda: self.swd.read_u32(self.a_active),
+                            lambda v: v == expected, timeout_s=0.3)
             attempts += 1
 
     def ensure_view(self, target):
@@ -440,20 +469,15 @@ class ImeDriver:
         """Cycle KEY_MODE until the engine reports the requested input
         mode (0=SmartZh, 1=SmartEn, 2=Direct). MODE auto-commits pending
         state, so call this BEFORE typing a new-mode char."""
-        snap = self.read_snapshot()
-        cur = snap['mode']
+        cur = self.read_mode_byte()
         if cur == target_mode: return
-        # (1 - 0) mod 3 = 1 press. (0 - 2) mod 3 = 1. Always (target - cur) % 3.
         steps = (target_mode - cur) % 3
         for _ in range(steps):
             self.inject_keycodes([self.KC_MODE])
-        # Verify.
-        deadline = time.time() + 0.2
-        while time.time() < deadline:
-            snap = self.read_snapshot()
-            if snap['mode'] == target_mode: return
-            time.sleep(0.01)
-        raise RuntimeError(f"mode stuck at {snap['mode']}, target {target_mode}")
+        got = self.wait_until(self.read_mode_byte,
+                              lambda v: v == target_mode, timeout_s=0.2)
+        if got != target_mode:
+            raise RuntimeError(f"mode stuck at {got}, target {target_mode}")
 
     def inject_direct_char(self, ch):
         """Type one ASCII letter / digit in Direct mode via multitap + OK.
@@ -463,29 +487,22 @@ class ImeDriver:
         if plan is None: return False
         key_name, idx = plan
         kc = self.km[key_name]
-        pre = self.read_snapshot()
-        pre_len = pre['text_len']
+        pre_len = self.read_text_len()
         # Press the key (idx+1) times then OK to commit the multitap
         # phoneme without waiting for the 800 ms timeout.
         self.inject_keycodes([kc] * (idx + 1) + [self.KC_OK])
         # Wait for text_buf to grow by len(ch.encode('utf-8')).
-        deadline = time.time() + 0.4
-        while time.time() < deadline:
-            snap = self.read_snapshot()
-            if snap['text_len'] != pre_len: break
-            time.sleep(0.01)
-        return snap['text_len'] - pre_len == len(ch.encode('utf-8'))
+        got = self.wait_until(self.read_text_len,
+                              lambda v: v != pre_len, timeout_s=0.4)
+        return got - pre_len == len(ch.encode('utf-8'))
 
     def inject_space(self):
         """Commit a single space char via SPACE in Direct mode."""
-        pre_len = self.read_snapshot()['text_len']
+        pre_len = self.read_text_len()
         self.inject_keycodes([self.KC_SPACE])
-        deadline = time.time() + 0.3
-        while time.time() < deadline:
-            snap = self.read_snapshot()
-            if snap['text_len'] != pre_len: return True
-            time.sleep(0.01)
-        return False
+        got = self.wait_until(self.read_text_len,
+                              lambda v: v != pre_len, timeout_s=0.3)
+        return got != pre_len
 
     def reset_text(self, batch=20, max_rounds=200):
         """Clear committed text + pending. The engine keeps a ~2 KB g_text
@@ -503,14 +520,11 @@ class ImeDriver:
         """Press OK once when the engine is idle (no candidates / no
         multitap pending) → emit "\\n" (Phase 1.4 Task C, mirrors SPACE-
         when-idle behaviour)."""
-        pre_len = self.read_snapshot()['text_len']
+        pre_len = self.read_text_len()
         self.inject_keycodes([self.KC_OK])
-        deadline = time.time() + 0.4
-        while time.time() < deadline:
-            snap = self.read_snapshot()
-            if snap['text_len'] != pre_len: break
-            time.sleep(0.01)
-        return snap['text_len'] - pre_len == 1
+        got = self.wait_until(self.read_text_len,
+                              lambda v: v != pre_len, timeout_s=0.4)
+        return got - pre_len == 1
 
     def inject_picker_char(self, ch):
         """Type one Traditional-Chinese punctuation char via the SYM1
@@ -519,26 +533,19 @@ class ImeDriver:
         when text_buf grows by len(ch.encode('utf-8'))."""
         idx = PICKER_INDEX.get(ch)
         if idx is None: return False
-        pre_len = self.read_snapshot()['text_len']
-        # Press SYM1 (no flag — SYM1 has its own engine-side long-press
-        # timer driven by now_ms deltas; the keypad scan deferred-press
-        # FSM does NOT apply to SYM1 by design).
+        pre_len = self.read_text_len()
         kc_sym1 = self.km['KEY_SYM1']
         self.queue_events([(0x80 | kc_sym1, 0)])
         time.sleep(0.6)   # > 500 ms so tick() opens the picker
         self.queue_events([(0x00 | kc_sym1, 0)])
-        # Navigate + commit.
         if idx > 0:
             self.queue_events(
                 [(0x80 | self.KC_RIGHT, 0), (0x00 | self.KC_RIGHT, 0)] * idx)
         self.queue_events(
             [(0x80 | self.KC_OK, 0), (0x00 | self.KC_OK, 0)])
-        deadline = time.time() + 0.4
-        while time.time() < deadline:
-            snap = self.read_snapshot()
-            if snap['text_len'] != pre_len: break
-            time.sleep(0.01)
-        return snap['text_len'] - pre_len == len(ch.encode('utf-8'))
+        got = self.wait_until(self.read_text_len,
+                              lambda v: v != pre_len, timeout_s=0.4)
+        return got - pre_len == len(ch.encode('utf-8'))
 
     def commit_rank(self, rank):
         """Navigate to `rank` and press OK. Batches RIGHT × rank + OK for
@@ -759,14 +766,14 @@ def main():
             # before_text_len without ferrying them through a class.
             def inject_and_locate(events):
                 """Inject one pass and return (rank, snapshot). Polls
-                until pending is non-empty (or 0.4 s timeout)."""
+                the cheap pend_len u32 (0.3 ms per read) rather than the
+                full 400 B snapshot, dropping the per-poll cost ~20x —
+                only does the full snapshot once pend_len flips nonzero
+                or we time out."""
                 drv.inject_events_pairs(events)
-                deadline = time.time() + 0.4
-                while True:
-                    s = drv.read_snapshot()
-                    if s['pending']: break
-                    if time.time() >= deadline: break
-                    time.sleep(0.01)
+                drv.wait_until(drv.read_pend_len,
+                               lambda v: v != 0, timeout_s=0.4)
+                s = drv.read_snapshot()
                 # Fast path: top-8 mirror in the small snapshot.
                 r = None
                 for i, w in enumerate(s['words']):
@@ -796,12 +803,8 @@ def main():
                     # presses) — so byte count = len(plans_short[ch]).
                     n_pending = len(short_events)
                     drv.inject_keycodes([drv.KC_DEL] * n_pending)
-                    # Wait for the IME task to fully drain its queue.
-                    wait_deadline = time.time() + 0.4
-                    while time.time() < wait_deadline:
-                        s = drv.read_snapshot()
-                        if s['pending'] == '': break
-                        time.sleep(0.01)
+                    drv.wait_until(drv.read_pend_len,
+                                   lambda v: v == 0, timeout_s=0.4)
                     rank_long, snap = inject_and_locate(plans[ch])
                     extra_ks = n_pending + len(plans[ch])
                     ks += extra_ks
@@ -837,12 +840,9 @@ def main():
                 if not args.no_commit:
                     pre_len = snap['text_len']
                     drv.commit_rank(rank)
-                    deadline = time.time() + 0.4
-                    snap2 = snap
-                    while time.time() < deadline:
-                        snap2 = drv.read_snapshot()
-                        if snap2['text_len'] != pre_len: break
-                        time.sleep(0.01)
+                    drv.wait_until(drv.read_text_len,
+                                   lambda v: v != pre_len, timeout_s=0.4)
+                    snap2 = drv.read_snapshot()
                     expected_accum += ch
                     # Compare text_len growth to the expected UTF-8 byte
                     # length of `ch`. The debug struct only mirrors the
@@ -869,11 +869,8 @@ def main():
                 if not args.no_commit and not args.user_sim:
                     pre_len = snap['text_len']
                     drv.commit_rank(0)
-                    deadline = time.time() + 0.4
-                    while time.time() < deadline:
-                        snap2 = drv.read_snapshot()
-                        if snap2['text_len'] != pre_len: break
-                        time.sleep(0.01)
+                    drv.wait_until(drv.read_text_len,
+                                   lambda v: v != pre_len, timeout_s=0.4)
                     expected_accum += ch
                 status = f"MISS cand={snap['cand']} top8={[w for w in snap['words'] if w][:4]}"
 
