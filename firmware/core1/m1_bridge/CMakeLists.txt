@@ -203,6 +203,9 @@ add_executable(core1_bridge
     ${MIE_SRC_DIR}/ime_commit.cpp
     ${MIE_SRC_DIR}/ime_smart.cpp
     ${MIE_SRC_DIR}/ime_direct.cpp
+    ${MIE_SRC_DIR}/lru_cache.cpp
+    ${IME_DIR}/flash_safety_wrap.c
+    ${IME_DIR}/lru_persist.cpp
 )
 
 # SEGGER_RTT.c triggers -Wcast-qual and -Wcast-align under our default
@@ -287,6 +290,14 @@ target_link_libraries(core1_bridge
     FreeRTOS-Kernel-Heap4
     lvgl
     lvgl_demos
+)
+
+# Phase 1.6 P2-11-mirror: wrap flash_range_erase/program so Core 1's own
+# flash writes (e.g. LRU persist) park Core 0 before disabling XIP. See
+# firmware/core1/src/ime/flash_safety_wrap.c for the protocol.
+target_link_options(core1_bridge PRIVATE
+    -Wl,--wrap=flash_range_erase
+    -Wl,--wrap=flash_range_program
 )
 
 # Override the SDK's default memmap with our own — this is what redirects

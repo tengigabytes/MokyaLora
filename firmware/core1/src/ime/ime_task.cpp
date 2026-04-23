@@ -14,6 +14,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ime_task.h"
+#include "lru_persist.h"
 #include "mokya_trace.h"
 
 #include <cstring>
@@ -142,6 +143,12 @@ void delete_before_cursor() {
  * don't need to re-take the mutex and can't deadlock against it. The
  * outer-scope lock also protects readers against torn reads of
  * candidates_[] while ImeLogic is rebuilding the pool. */
+/* Phase 1.6: commit counter drives LRU persist throttling. Incremented on
+ * every on_commit that actually inserts text (not cursor/delete events).
+ * Consumed by the throttle loop in ime_task_fn. */
+volatile uint32_t g_commit_count   = 0;
+volatile bool     g_lru_save_dirty = false;
+
 class IMEListener : public mie::IImeListener {
 public:
     mie::ImeLogic *ime = nullptr;       /* back-pointer for sync_text_context */
@@ -149,6 +156,9 @@ public:
     void on_commit(const char *utf8) override {
         if (!utf8 || !*utf8) return;
         insert_at_cursor(utf8, std::strlen(utf8));
+        /* Track commit count for LRU persist throttle. */
+        g_commit_count++;
+        g_lru_save_dirty = true;
     }
 
     void on_cursor_move(mie::NavDir d) override {
@@ -186,7 +196,18 @@ static inline uint32_t now_ms(void) {
     return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 }
 
+/* LRU persist throttle parameters. Plan: save every 50 commits, on mode
+ * cycle, or after 30 s of idle with pending dirty state. A save takes two
+ * 4 KB flash sector erases plus a ~6 KB page program — roughly 50 ms
+ * with Core 0 parked, well below keypress latency. */
+constexpr uint32_t kLruSaveEveryNCommits = 50u;
+constexpr uint32_t kLruSaveIdleMs        = 30u * 1000u;
+
 void ime_task_fn(void *) {
+    uint32_t last_committed_count  = 0;
+    uint32_t last_commit_ms        = now_ms();
+    uint8_t  last_mode_byte        = ime_view_mode_byte();
+
     for (;;) {
         key_event_t ev{};
         bool got_ev = key_event_pop(&ev, pdMS_TO_TICKS(kTickMs));
@@ -221,6 +242,43 @@ void ime_task_fn(void *) {
         if (got_ev) {
             __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
             TRACE_BARE("ime", "done");
+        }
+
+        /* ── Phase 1.6: LRU persist throttle ─────────────────────────── *
+         * Trigger a save on any of:
+         *   - kLruSaveEveryNCommits since the last save
+         *   - mode cycled (user made an explicit session change)
+         *   - kLruSaveIdleMs without new commits, with dirty state
+         *
+         * All three are quiet signals that the user is "between thoughts"
+         * so the 50-ish ms flash stall doesn't interrupt a typing burst.
+         * We take the snapshot mutex to keep ImeLogic state stable while
+         * serialise runs. */
+        uint32_t commits_now = g_commit_count;
+        uint32_t now         = now_ms();
+        uint8_t  mode_now    = ime_view_mode_byte();
+
+        if (commits_now != last_committed_count) {
+            last_commit_ms = now;
+        }
+        bool commit_tripwire   = (commits_now - last_committed_count) >= kLruSaveEveryNCommits;
+        bool mode_tripwire     = (mode_now != last_mode_byte);
+        bool idle_tripwire     = g_lru_save_dirty &&
+                                 (now - last_commit_ms) >= kLruSaveIdleMs;
+
+        if (commit_tripwire || mode_tripwire || idle_tripwire) {
+            TRACE("ime", "lru_save", "reason=%u,commits=%u",
+                  (unsigned)(commit_tripwire ? 0 : (mode_tripwire ? 1 : 2)),
+                  (unsigned)commits_now);
+            xSemaphoreTake(g_snapshot_mutex, portMAX_DELAY);
+            /* serialise + flash op happens here — Core 0 will be parked
+             * by flash_safety_wrap.c for the duration. */
+            (void)lru_persist_save(g_ime);
+            xSemaphoreGive(g_snapshot_mutex);
+            TRACE_BARE("ime", "lru_save_done");
+            last_committed_count = commits_now;
+            last_mode_byte       = mode_now;
+            g_lru_save_dirty     = false;
         }
     }
 }
@@ -285,6 +343,18 @@ bool ime_task_start(const mie_dict_pointers_t *dict, UBaseType_t priority) {
 
     g_listener.ime = g_ime;
     g_ime->set_listener(&g_listener);
+
+    /* Phase 1.6: allocate the save-path flash-page scratch buffer while
+     * the FreeRTOS heap is still contiguous; later throttled saves run at
+     * arbitrary times when fragmentation could starve the 6400 B request.
+     * The reserve is owned for the lifetime of the image — on a 48 KB heap
+     * this still leaves headroom well above the 20 % panic threshold. */
+    if (!lru_persist_init()) return false;
+
+    /* Best-effort restore of the personalised LRU cache from flash.
+     * An unprogrammed (all 0xFF) partition returns false here and the
+     * engine runs with an empty cache — same as first-boot behaviour. */
+    lru_persist_load(g_ime);
 
     g_snapshot_mutex = xSemaphoreCreateMutex();
     if (!g_snapshot_mutex) return false;
