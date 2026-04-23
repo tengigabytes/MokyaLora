@@ -78,7 +78,18 @@ static bool mie_dict_load_v4_to_psram(mie_dict_pointers_t *out,
     /* Read embedded English section pointers from the (possibly-grown)
      * header. Sections at offsets 0x30..0x3F were added 2026-04-24 so
      * v4 blobs can carry their own SmartEn dict — old v4 builds still
-     * have zeros here, which correctly degrades to "no English". */
+     * have zeros here, which correctly degrades to "no English".
+     *
+     * Note on budgets: the MDBL path checks en_* sizes against
+     * PSRAM_EN_{DAT,VAL}_BUDGET because MDBL copies English to a
+     * SEPARATE PSRAM region with those size caps. The v4 path embeds
+     * English INSIDE the v4 blob (ZH_DAT+ZH_VAL combined region, 5 MB
+     * total), so the only relevant constraint is that the declared
+     * offsets land inside total_size — the 5 MB combined check was
+     * already enforced above. Don't re-apply the 64/256 KB EN caps
+     * here; they'd reject otherwise-valid large English dicts (e.g.
+     * 50k wordlist → en_dat ~700 KB, en_val ~600 KB; both fit well
+     * under the blob total). */
     uint32_t en_dat_off = 0, en_dat_size = 0;
     uint32_t en_val_off = 0, en_val_size = 0;
     if (total_size >= MIE_MIE4_HEADER_SIZE) {
@@ -86,12 +97,7 @@ static bool mie_dict_load_v4_to_psram(mie_dict_pointers_t *out,
         memcpy(&en_dat_size, blob_base + MIE_MIE4_EN_DAT_SIZE_OFF, 4);
         memcpy(&en_val_off,  blob_base + MIE_MIE4_EN_VAL_OFF_OFF,  4);
         memcpy(&en_val_size, blob_base + MIE_MIE4_EN_VAL_SIZE_OFF, 4);
-        /* Bounds check: every declared section must fit within total_size
-         * and within the English-side PSRAM budget (same cap as the MDBL
-         * path so fragmented-heap dispatch is not possible). */
-        if (en_dat_size > PSRAM_EN_DAT_BUDGET ||
-            en_val_size > PSRAM_EN_VAL_BUDGET ||
-            (en_dat_size && (uint64_t)en_dat_off + en_dat_size > total_size) ||
+        if ((en_dat_size && (uint64_t)en_dat_off + en_dat_size > total_size) ||
             (en_val_size && (uint64_t)en_val_off + en_val_size > total_size)) {
             g_mie_dict_load_status = MIE_DICT_LOAD_ERR_GEOMETRY;
             return false;
