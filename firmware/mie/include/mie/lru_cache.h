@@ -54,7 +54,7 @@ static_assert(sizeof(LruEntry) == 48, "LruEntry must be 48 bytes for LittleFS pe
 
 class LruCache {
 public:
-    static constexpr int kCap = 128;
+    static constexpr int kCap = 64;
 
     LruCache() { reset(); }
 

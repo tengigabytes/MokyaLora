@@ -11,7 +11,8 @@
  *   0x10200000  Core 1 bridge image      (2 MB slot)
  *   0x10400000  MIE dict blob (MDBL)     (6 MB reserved)
  *   0x10A00000  MIE font blob (MIEF)     (2 MB reserved, this)
- *   0x10C00000  LittleFS / free          (4 MB)
+ *   0x10C00000  MIE LRU persist          (64 KB reserved, Phase 1.6)
+ *   0x10C10000  Free / future LittleFS   (~3.94 MB)
  *
  * SPDX-License-Identifier: MIT
  */
