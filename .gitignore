@@ -62,3 +62,12 @@ docs/pics/
 
 # Temporary debug scripts
 .tmp_*.ps1
+
+# CTest/CMake test output directory (root-level, not under build/)
+/Testing/
+
+# Ad-hoc dictionary / cache analysis scratch
+dict_analysis.json
+
+# MIE test-run temp output (test_pack_dict_blob etc.)
+firmware/mie/data/_test/
