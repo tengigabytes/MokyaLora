@@ -1687,6 +1687,58 @@ in one passage) is solved by **Phase 1.6 — personalised LRU cache**
 (~6 KB RAM + ~6 KB LittleFS; no dict bloat). See
 [mie-v4-status.md](mie-v4-status.md) "Phase 1.6 plan" for the spec.
 
+### P1.6 — Personalised LRU cache delivered (2026-04-23)
+
+Engine, flash persistence, and symmetric P2-11 park all landed in
+three commits on `dev-Sblzm`:
+
+- `9d05ae1` LruCache module + 16 host tests (kCap 64, 48 B per entry).
+- `3c4c6c8` Wire into `ImeLogic::run_search_v4` + `commit_partial`;
+  5 integration tests (171/171 total suite).
+- `c4dd34c` Core 1 flash partition at `0x10C00000` (64 KB reserved,
+  8 KB slot), symmetric `--wrap=flash_range_*` on Core 1 with a
+  mirror park listener in the Meshtastic variant dir; throttled
+  save on 50 commits / MODE / 30 s idle.
+
+Hardware verification (SWD-only, J-Link Commander):
+- Core 0 initVariant reaches phase 0x16 (`c0_ready` published). Core 1
+  boots cleanly, USB CDC enumerates, `ime_task_start` succeeds with
+  lru_persist pre-allocated in BSS.
+- Injecting a MODE key via `g_key_inject_buf` fires the
+  `mode_tripwire` → `lru_persist_save` → `flash_range_erase` +
+  `flash_range_program`. Flash at `0x10C00000` reads `0x3155524C`
+  ("LRU1") + version 1 + 0xFF tail immediately after. Survives SWD
+  reset without re-flashing the partition.
+- `0x2007FFE0` debug breadcrumbs (now removed) confirmed the
+  throttle loop fires exactly once per MODE cycle and returns ok.
+
+Two open items deferred to a follow-up session:
+1. Five-passage `test_lru_regression.py` end-to-end run —
+   `ime_text_test.py` currently fails on Meshtastic protobuf parse
+   over USB CDC (independent from this phase). Script is committed
+   and ready to run once the bridge issue clears.
+2. `mie_dict_blob` target regenerates a corrupt 89 MB `dict.bin`
+   from the local `tsi.csv`; ship-path uses the pre-built
+   `dict_mie_v4.bin` via `--v4` which is unaffected.
+
+Notable bugs hit during implementation:
+- `LruCache::kCap = 128` initially overflowed Core 1 RAM by 4280 B
+  (.bss push from the added 6 KB `LruCache` inside `ImeLogic`). Halved
+  `kCap` to 64 and shrank the flash-write scratch accordingly.
+- First lazy `pvPortMalloc(6400)` for the save-path scratch **never
+  succeeded at throttle time** — FreeRTOS heap was already fragmented
+  by the time the first save fired hours into runtime, even with
+  ~14 KB free in total. Switched to a static .bss scratch allocated
+  at image load.
+- `MOKYA_KEY_A` is slot 10 (ㄇㄋ), not 14 (ㄠㄤ) — Step 2 integration
+  tests initially failed because I assumed the key-map ordering
+  matched the keypad matrix order. Fixed by routing ㄠ through
+  `MOKYA_KEY_L`.
+- Core 0 and Core 1 are BOTH editable as the Meshtastic submodule —
+  remember to commit inside the submodule before the super-project
+  records the bump. Step 3 touches the Meshtastic fork for the
+  listener `flash_park_listener.c`.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

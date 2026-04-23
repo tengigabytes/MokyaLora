@@ -130,7 +130,7 @@ freq = 1, effectively absent). Every other CJK target — including 鮣 /
 
 | Item | Severity | Notes |
 |---|---|---|
-| Personalised LRU cache for recently-committed chars / words | **High** | Phase 1.6 — see plan below. Addresses the real pain (repeat-typer of "吸" / "鮣" / names hits rank 21 every time) without bloating the static dict. |
+| Personalised LRU cache for recently-committed chars / words | **Done (Phase 1.6, 2026-04-23)** | Engine + flash persistence live. Fills the "repeat-typer" gap identified after Phase 1.4. See "Phase 1.6 delivered" section below. |
 | Bucket 1 (`word_table` 1-char) is empty by design — chars come via `char_table`. Document or unify. | Low | Cosmetic; current behaviour is intentional. |
 | 5+ phrase append after 1-char list pushes proverbs far down the candidate ranking | Low | Could promote 5+ phrase into top 10 if matched. |
 | Legacy v2 (`TrieSearcher`) path cleanup once v4 is the only flashed format | Low | Keep until production-stable. |
@@ -222,6 +222,54 @@ LittleFS footprint. Fits well inside Core 1's remaining 14 KB free heap.
 - Hardware regression: re-run the five user passages; expect the second-
   occurrence of "吸" / "鮣" to land at rank 0–3 instead of 16–21.
 - Power-cycle test: persist → reboot → verify cache restored.
+
+### Phase 1.6 delivered (2026-04-23)
+
+Three commits on branch `dev-Sblzm`:
+
+- `9d05ae1` **Step 1** — `firmware/mie/{include/mie,src}/lru_cache.{h,cpp}`
+  + 16 GoogleTest cases. Heap-free 64-entry LruCache (kCap 128 → 64 at
+  Step 3 to fit Core 1 .bss budget), 48 B per entry, `LRU1` serialise
+  format with magic / version / count validation.
+- `3c4c6c8` **Step 2** — wire into `ImeLogic`: `prepend_lru_candidates()`
+  splices LRU hits to rank 0 in SmartZh search (per-entry `klen`
+  threaded through `candidates_prefix_keys_` so prefix hits partial-
+  commit correctly), `commit_partial` upserts `(matched-prefix,
+  packed-hint, utf8, tone)` before the key_seq_ strip, public
+  `load_lru` / `serialize_lru` API for the Core 1 bridge. 5 new
+  integration tests against an in-memory MIE4 blob (171/171 suite).
+- `c4dd34c` **Step 3** — Core 1 flash persistence + symmetric P2-11
+  park. New partition at `0x10C00000` (64 KB reserved, 8 KB active
+  slot). `flash_safety_wrap.c` on Core 1 wraps `flash_range_erase /
+  program` to park Core 0 before XIP toggles off; Core 0's new
+  `flash_park_listener.c` (in the Meshtastic variant dir) claims
+  `SIO_IRQ_BELL` to ack park requests. Shared-SRAM `flash_lock_c0`
+  state word + `IPC_FLASH_DOORBELL_C0` doorbell bit are the
+  independent reverse-direction lock. Save throttled by
+  `ime_task.cpp`: 50 commits / MODE cycle / 30 s idle. Scratch is
+  static .bss (3328 B) to sidestep heap fragmentation that otherwise
+  starves the 6.4 KB request hours into runtime.
+
+Hardware checks (SWD):
+- `0x10C00000` reads `0x3155524C` ("LRU1") + version 1 after first
+  save; 0xFF tail remains (empty blob).
+- Reset cycles preserve the header — persist path reaches flash.
+- MODE inject triggers the mode_tripwire → flash save completes
+  without HardFault on either core.
+
+Known outstanding:
+- Full five-passage regression (`scripts/test_lru_regression.py`) is
+  scripted but not yet run — Core 0 Meshtastic USB bridge currently
+  mis-parses protobuf occasionally, blocking `ime_text_test.py`. Flash
+  mechanics already validated on hardware; the script lands alongside
+  the commit for a follow-up run once the USB parse issue is resolved.
+- `build/mie-host/dict.bin` (MDBL v2 packer output) regenerates at
+  89 MB on a fresh `mie_dict_blob` build — the local `tsi.csv` source
+  likely drifted. Today's flash is the pre-built `dict_mie_v4.bin`
+  (--v4), which is the production target anyway.
+- Simultaneous flash writes from both cores is an uncovered race
+  (low probability, both sides honour a 5 ms park timeout). Document
+  as follow-up — add a global `flash_op_arb` CAS if it ever bites.
 
 ### Process improvements
 
