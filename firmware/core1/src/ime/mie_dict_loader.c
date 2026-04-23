@@ -75,6 +75,29 @@ static bool mie_dict_load_v4_to_psram(mie_dict_pointers_t *out,
         return false;
     }
 
+    /* Read embedded English section pointers from the (possibly-grown)
+     * header. Sections at offsets 0x30..0x3F were added 2026-04-24 so
+     * v4 blobs can carry their own SmartEn dict — old v4 builds still
+     * have zeros here, which correctly degrades to "no English". */
+    uint32_t en_dat_off = 0, en_dat_size = 0;
+    uint32_t en_val_off = 0, en_val_size = 0;
+    if (total_size >= MIE_MIE4_HEADER_SIZE) {
+        memcpy(&en_dat_off,  blob_base + MIE_MIE4_EN_DAT_OFF_OFF,  4);
+        memcpy(&en_dat_size, blob_base + MIE_MIE4_EN_DAT_SIZE_OFF, 4);
+        memcpy(&en_val_off,  blob_base + MIE_MIE4_EN_VAL_OFF_OFF,  4);
+        memcpy(&en_val_size, blob_base + MIE_MIE4_EN_VAL_SIZE_OFF, 4);
+        /* Bounds check: every declared section must fit within total_size
+         * and within the English-side PSRAM budget (same cap as the MDBL
+         * path so fragmented-heap dispatch is not possible). */
+        if (en_dat_size > PSRAM_EN_DAT_BUDGET ||
+            en_val_size > PSRAM_EN_VAL_BUDGET ||
+            (en_dat_size && (uint64_t)en_dat_off + en_dat_size > total_size) ||
+            (en_val_size && (uint64_t)en_val_off + en_val_size > total_size)) {
+            g_mie_dict_load_status = MIE_DICT_LOAD_ERR_GEOMETRY;
+            return false;
+        }
+    }
+
     /* Copy via UNCACHED alias (same rationale as MDBL path). */
     memcpy((void *)PSRAM_WRITE_ADDR(PSRAM_ZH_DAT_OFF), blob_base, total_size);
 
@@ -89,6 +112,17 @@ static bool mie_dict_load_v4_to_psram(mie_dict_pointers_t *out,
     if (out) {
         out->v4_blob      = (const uint8_t *)PSRAM_READ_ADDR(PSRAM_ZH_DAT_OFF);
         out->v4_blob_size = total_size;
+        /* English pointers alias INTO the v4 blob region — no separate
+         * PSRAM copy is needed. Size > 0 gates the en_searcher attach
+         * in ime_task.cpp. */
+        if (en_dat_size) {
+            out->en_dat      = out->v4_blob + en_dat_off;
+            out->en_dat_size = en_dat_size;
+        }
+        if (en_val_size) {
+            out->en_val      = out->v4_blob + en_val_off;
+            out->en_val_size = en_val_size;
+        }
     }
 
     g_mie_dict_load_status = MIE_DICT_LOAD_OK;
