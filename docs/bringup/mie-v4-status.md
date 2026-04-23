@@ -257,31 +257,51 @@ Hardware checks (SWD):
 - MODE inject triggers the mode_tripwire → flash save completes
   without HardFault on either core.
 
-Hardware regression — `scripts/test_lru_regression.py` on
-`ime_passage_user1.txt` (first 30 chars, erased partition):
+Hardware regression — `scripts/test_lru_regression.py` across the
+six reference passages (erased partition, full passages, cold → warm
+within one boot session; user1 also validated `--reboot` round-trip):
 
-    Pass 1 (cold): rank 0 = 5 / rank ≤ 3 = 16 / rank ≥ 8 = 1
-    Pass 2 (warm): rank 0 = 22 / rank ≤ 3 = 24 / rank ≥ 8 = 0
+| Passage  | Chars | Pass 1 rank-0 | Pass 2 rank-0 | Δrank-0 | Accept |
+|----------|-------|---------------|---------------|---------|--------|
+| user1-30 |  24   |  5  (21 %)    | 23  (96 %)    | **+18** | PASS   |
+| user1    | 217   | 110 (51 %)    | 122 (56 %)    |  +12    | PASS   |
+| user2    | 258   | 134 (52 %)    | 135 (52 %)    |   +1    | FAIL*  |
+| user3    | 264   | 138 (52 %)    | 140 (53 %)    |   +2    | PASS   |
+| user4    | 252   | 109 (43 %)    | 112 (44 %)    |   +3    | FAIL*  |
+| user5    | 182   |  58 (32 %)    |  58 (32 %)    |   0     | FAIL*  |
+| echeneis |  77   |  46 (60 %)    |  69 (90 %)    | **+23** | PASS   |
 
-17 of the 22 rank-0 hits on Pass 2 are LRU promotions — every char
-committed on Pass 1 re-surfaces at the top of the candidate list on
-Pass 2 without any DPAD navigation.
+*FAIL = script's three-part acceptance (rank≤3 must not regress; ≥10
+chars must promote out of rank≥8 tail) not met — not a crash or
+persistence failure.
+
+Cross-reboot persistence (user1 30-char, `--erase --reboot --limit 30`):
+Pass 1 rank-0 = 5 → Pass 2 rank-0 = 23, delta +18. Flash `LRU1` magic
+survives the SYSRESETREQ and Core 1 relaunch, cache re-hydrates
+without any warm pass since power-on.
+
+Shape of the data: the LRU materially moves the needle on short /
+repetitive passages (user1-30, echeneis — +18 / +23 rank-0) but
+flattens out on the 200+ char passages. Almost certainly a **64-entry
+LRU cap vs passage size** ceiling — by the time Pass 2 starts,
+early-passage chars have been evicted in Pass 1's own tail. Future
+P1.6.1 could raise kCap, add frequency weighting, or spill eviction
+to a second-chance tier. Out of scope for the initial P1.6 land.
 
 Known outstanding:
-- `--reboot` variant (flash-persistence round-trip inside the test)
-  tripped a Core 1-stuck-in-bootrom edge case after multiple erase-
-  and-reset cycles in the same debug session. Flash content was
-  verified (`mem32 0x10C00000` → "LRU1" + ver 1) but the end-to-end
-  pass 2-post-reboot case needs a clean follow-up session.
-- Five-passage regression across user{1..5}+echeneis awaits; script
-  is shipped with the commit.
-- `build/mie-host/dict.bin` (MDBL v2 packer output) regenerates at
-  89 MB on a fresh `mie_dict_blob` build — the local `tsi.csv` source
-  likely drifted. Today's flash is the pre-built `dict_mie_v4.bin`
-  (--v4), which is the production target anyway.
-- Simultaneous flash writes from both cores is an uncovered race
-  (low probability, both sides honour a 5 ms park timeout). Document
-  as follow-up — add a global `flash_op_arb` CAS if it ever bites.
+- `--reboot` round-trip fix: `force_lru_save()` was resetting
+  `producer_idx` to 2, which wrapped the key-inject ring past its
+  (stale-from-Pass-1) consumer position and re-replayed ~30 garbage
+  events into IME, crashing Core 1 mid-flash-write. Commit `f63f41b`
+  appends events at `cur_prod & (RING-1)` and bumps `producer_idx`
+  by +2 instead — confirmed with live SWD reproduction.
+- `build/mie-host/dict.bin` 89 MB regeneration fixed by CMake change
+  to route `mie_dict_data_lg` to `${MIE_DATA_DIR}/lg/` so it no
+  longer clobbers the `sm` variant outputs (commit `f63f41b`).
+- Simultaneous flash writes from both cores is still an uncovered
+  race (low probability, both sides honour a 5 ms park timeout).
+  Document as follow-up — add a global `flash_op_arb` CAS if it
+  ever bites.
 
 ### Process improvements
 
