@@ -193,6 +193,22 @@ public:
     bool        has_pending()    const { return display_len_ > 0; }
     bool        has_candidates() const { return cand_count_ > 0; }
 
+    // ── Symbol picker (Phase 1.4 Task B) ─────────────────────────────────
+    /// True when the SYM1 long-press picker overlay is active. While
+    /// active, DPAD navigates the picker grid, OK commits the selected
+    /// symbol, and a short SYM1 closes the picker without commit. All
+    /// other keys are blocked from the normal dispatch and close the
+    /// picker (no commit).
+    bool             picker_active()    const { return sym_picker_open_; }
+    /// Number of cells in the grid (currently kSymPickerCells = 16).
+    int              picker_cell_count() const;
+    /// Number of columns the grid is laid out in (currently 4).
+    int              picker_cols()       const;
+    /// UTF-8 string for cell idx; empty string if out of range.
+    const char*      picker_cell(int idx) const;
+    /// Index of the highlighted cell, 0..picker_cell_count()-1.
+    int              picker_selected()  const { return sym_picker_sel_; }
+
     /// Single-snapshot pending composition with style hint.
     PendingView pending_view()   const;
 

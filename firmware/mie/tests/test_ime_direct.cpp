@@ -189,6 +189,91 @@ TEST(Sym1, LongPressTickOpensPicker) {
     EXPECT_TRUE(L.committed.empty());
 }
 
+// ── SYM1 picker (Phase 1.4 Task B) ──────────────────────────────────────
+
+static void open_picker(ImeLogic& ime, uint32_t t0 = 0) {
+    ime.process_key(kev(MOKYA_KEY_SYM1, true, t0));
+    EXPECT_TRUE(ime.tick(t0 + 600));        // past 500 ms threshold
+    ime.process_key(kev(MOKYA_KEY_SYM1, false, t0 + 800));
+}
+
+TEST(Sym1Picker, OpensWith4x4Grid) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    open_picker(ime);
+    EXPECT_TRUE(ime.picker_active());
+    EXPECT_EQ(ime.picker_cell_count(), 16);
+    EXPECT_EQ(ime.picker_cols(), 4);
+    EXPECT_EQ(ime.picker_selected(), 0);
+    EXPECT_STREQ(ime.picker_cell(0),  "「");
+    EXPECT_STREQ(ime.picker_cell(15), "…");
+}
+
+TEST(Sym1Picker, RightAdvancesSelectionWraps) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    open_picker(ime);
+    for (int i = 1; i < 16; ++i) {
+        press(ime, MOKYA_KEY_RIGHT, 1000 + i);
+        EXPECT_EQ(ime.picker_selected(), i);
+    }
+    press(ime, MOKYA_KEY_RIGHT, 1100);
+    EXPECT_EQ(ime.picker_selected(), 0);   // wrap
+}
+
+TEST(Sym1Picker, LeftFromZeroWraps) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    open_picker(ime);
+    press(ime, MOKYA_KEY_LEFT, 900);
+    EXPECT_EQ(ime.picker_selected(), 15);
+}
+
+TEST(Sym1Picker, UpDownStepRows) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    open_picker(ime);
+    press(ime, MOKYA_KEY_DOWN, 900);
+    EXPECT_EQ(ime.picker_selected(), 4);    // row 1, col 0
+    press(ime, MOKYA_KEY_DOWN, 901);
+    EXPECT_EQ(ime.picker_selected(), 8);
+    press(ime, MOKYA_KEY_UP, 902);
+    EXPECT_EQ(ime.picker_selected(), 4);
+}
+
+TEST(Sym1Picker, OkCommitsAndCloses) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    open_picker(ime);
+    press(ime, MOKYA_KEY_RIGHT, 900);   // sel=1 → 」
+    press(ime, MOKYA_KEY_OK, 901);
+    EXPECT_EQ(L.committed, "」");
+    EXPECT_FALSE(ime.picker_active());
+}
+
+TEST(Sym1Picker, ShortPressSym1ClosesWithoutCommit) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    open_picker(ime);
+    // A second SYM1 short-press while picker open → close without commit.
+    ime.process_key(kev(MOKYA_KEY_SYM1, true, 900));
+    ime.process_key(kev(MOKYA_KEY_SYM1, false, 950));
+    EXPECT_FALSE(ime.picker_active());
+    EXPECT_TRUE(L.committed.empty());
+}
+
+TEST(Sym1Picker, OtherKeyClosesWithoutCommit) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+    open_picker(ime);
+    press(ime, MOKYA_KEY_A, 900);   // letter slot key
+    EXPECT_FALSE(ime.picker_active());
+    EXPECT_TRUE(L.committed.empty());
+}
+
 TEST(Sym1, ShortPressCommitsMultitapPending) {
     TrieSearcher ts;
     ImeLogic ime(ts);
