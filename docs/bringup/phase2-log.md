@@ -1586,6 +1586,107 @@ fixed and re-flashed successfully on the second pass.
 - Boot-time MIEF header corruption check surfaced via SWD
   breadcrumb — deferred to when a second font blob gets added.
 
+#### MIE Phase 1.4 — IME UX completion (Tasks A / B / C) ✅ (2026-04-24)
+
+Three input-UX gaps closed on top of the MIE v4 composition engine.
+
+**Task A — Long-press multitap for primary ↔ secondary phoneme**
+(commit `df226da`).
+
+Two-tier slot-key UX replacing v2's half-keyboard-only model:
+
+| operation | engine hint | display |
+|---|---|---|
+| short tap       | `ANY` (fuzzy)                 | compound (ㄅㄉ) |
+| 1st long press  | primary                       | single (ㄅ)       |
+| 2nd long press  | secondary                     | single (ㄉ)       |
+| 3rd long press  | tertiary (slot 4 only — ㄦ)   | single (ㄦ)       |
+| Nth long press  | cycles modulo phoneme_count   | –                 |
+
+Cycle window is `kMultiTapTimeoutMs = 800 ms`; any short tap / DEL /
+MODE / different-slot press locks the cycle.
+
+Implementation surface:
+- **Dict format**: header.flags bit 0 marks per-reading phoneme_pos
+  byte (packed 2-bit × klen). +26 KB on the 2.65 MB dict (+1 %).
+- **Searcher**: `CompositionSearcher::search(user_keys, user_phoneme_hints,
+  user_n, ...)` overload — each byte's hint in {0, 1, 2, 0xFF = any}
+  filters readings whose authored phoneme position doesn't match.
+- **Engine**: `ImeLogic.phoneme_hint_[kMaxKeySeq]` parallel array +
+  `lp_cycle_` FSM (byte_index / slot / phoneme_idx / last_ms).
+- **Wire**: `MOKYA_KEY_FLAG_LONG_PRESS` bit in `KeyEvent.flags`;
+  inject ring upgraded to 2-byte events (key_byte, flags_byte),
+  magic `KEYI` → `KEYJ`.
+- **Keypad scan**: 20 slot keys defer press emission; short tap fires
+  press(flags=0) on release, ≥ 500 ms hold fires press(LONG_PRESS)
+  at the threshold.
+
+**Task B — SYM1 long-press symbol picker** (commit `f3cc048`).
+
+4×4 grid of common Traditional-Chinese punctuation the half-keyboard
+can't type:
+
+    「」『』
+    （）【】
+    ，。、；
+    ：？！…
+
+UX:
+- Short-tap SYM1   → commit ，/, (unchanged).
+- Long-press SYM1  → open picker overlay (already wired in tick()).
+- DPAD in picker   → navigate (LR ±1, UD ±cols, mod cell_count).
+- OK in picker     → commit selected symbol, close picker.
+- SYM1 in picker   → close without commit.
+- Any other key    → close without commit; next press hits normal
+                     routing.
+
+View reuses the candidate flex-wrap renderer; data source swaps to
+picker cells when `ime_view_picker_active()`.
+
+**Task C — Space + Newline as first-class commits** (commit `7878f8c`).
+
+Unified "idle-commits-literal-char" convention on SPACE and OK:
+
+| short-tap | has candidates | multi-tap pending | picker open | idle |
+|---|---|---|---|---|
+| SPACE | `0x20` tone-1 (ZH) / commit word (EN) / " " (Direct) | commits it | — | commits " " |
+| OK    | commits selected candidate | commits it | commits symbol | emits "\n" |
+
+Both keys now work without a long-press hold — the existing "finish
+pending first, otherwise insert a literal" pattern extends from SPACE
+onto OK.
+
+**Validation.** 150 / 150 host unit tests pass (21 new: 7 for
+phoneme-pos searcher, 7 for long-press cycling + picker, 3 for
+idle-OK newline, 4 for view wiring). Hardware SWD regression across
+six passages totalling 1 416 CJK + 130 ASCII + 48 spaces + 21
+newlines + 136 picker punctuation = **1 751 characters, 0 failures**:
+
+| passage | CJK | top-8 | top-100 | picker | newline | space | ks/char |
+|---|---|---|---|---|---|---|---|
+| Echeneis intro | 243 | 93.8 % | 100 % | – | – | – | 7.49 |
+| 生態習性    | 217 | 96.8 % | 100 % | 24/24 | 5/5 | 3/3 | 6.72 |
+| 台灣生活   | 258 | 98.1 % | 100 % | 27/27 | 4/4 | – | 6.06 |
+| 硬體碎念    | 264 | 98.9 % | 100 % | 23/23 | 4/4 | 16/16 | 6.46 |
+| 終極難度    | 252 | 93.7 % | 100 % | 31/31 | 4/4 | 15/15 | 8.06 |
+| 文言文       | 182 | 87.9 % | 100 % | 31/31 | 4/4 | 14/14 | 10.01 |
+| **total**   | **1 416** | **94.6 %** | **100 %** | **136/136** | **21/21** | **48/48** | **7.16** |
+
+**P1.5 dropped (2026-04-24).** The original follow-up list included a
+Phase 1.5 for Unihan kHanyuPinlu + MoE 成語典 + CC-CEDICT compound
+import (~50 KB of dict growth). Post-P1.4 analysis shows:
+
+- No passage miss → demand for Unihan-only chars is vanishing.
+- Mid-range buckets (ㄧˋ = 215, ㄒㄧ¹ = 158 …) already saturate the
+  100-cap; enlarging them hurts UX for everyone.
+- 563 chars / 3 % of current dict already have *every* reading at
+  rank > 100 — a pruning candidate, not an expansion one.
+
+The real remaining pain (repeat-typer of "吸" hits rank 21 four times
+in one passage) is solved by **Phase 1.6 — personalised LRU cache**
+(~6 KB RAM + ~6 KB LittleFS; no dict bloat). See
+[mie-v4-status.md](mie-v4-status.md) "Phase 1.6 plan" for the spec.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
