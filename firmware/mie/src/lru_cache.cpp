@@ -119,7 +119,8 @@ void LruCache::upsert(const uint8_t* kbytes, int klen, uint8_t pos_packed,
 
 int LruCache::lookup(const uint8_t* user_keys, int user_n,
                      const uint8_t* user_phoneme_hints,
-                     Candidate* out, int max_results) const {
+                     Candidate* out, int max_results,
+                     uint8_t* out_prefix_keys) const {
     if (!user_keys || user_n <= 0 || !out || max_results <= 0) return 0;
 
     // Collect indices of matching entries. Capacity kCap is small so we
@@ -176,7 +177,7 @@ int LruCache::lookup(const uint8_t* user_keys, int user_n,
         }
         if (dup) continue;
 
-        Candidate& c = out[n_out++];
+        Candidate& c = out[n_out];
         memset(&c, 0, sizeof(c));
         int copy = e.utf8_len;
         if (copy >= kCandidateMaxBytes) copy = kCandidateMaxBytes - 1;
@@ -184,6 +185,8 @@ int LruCache::lookup(const uint8_t* user_keys, int user_n,
         c.word[copy] = '\0';
         c.freq = UINT16_MAX;   // promote above dict candidates
         c.tone = e.tone;
+        if (out_prefix_keys) out_prefix_keys[n_out] = e.klen;
+        ++n_out;
     }
     return n_out;
 }

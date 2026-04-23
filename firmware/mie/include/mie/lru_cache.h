@@ -87,9 +87,13 @@ public:
     ///             user_phoneme_hints[k] OR entry.pos(k) == 0xFF.
     ///
     /// user_phoneme_hints may be nullptr (equivalent to all-0xFF).
+    /// out_prefix_keys (optional) receives the matched klen per emitted
+    /// candidate; the caller uses it for ImeLogic::candidates_prefix_keys_
+    /// so a prefix-length LRU hit consumes only its own klen bytes on commit.
     int  lookup(const uint8_t* user_keys, int user_n,
                 const uint8_t* user_phoneme_hints,
-                Candidate* out, int max_results) const;
+                Candidate* out, int max_results,
+                uint8_t* out_prefix_keys = nullptr) const;
 
     // ── Persistence ──────────────────────────────────────────────────────
     // Binary layout:

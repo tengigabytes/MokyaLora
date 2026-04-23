@@ -41,6 +41,7 @@
 #include <stdint.h>
 #include <mie/hal_port.h>
 #include <mie/keycode.h>
+#include <mie/lru_cache.h>
 #include <mie/trie_searcher.h>
 
 namespace mie {
@@ -217,6 +218,23 @@ public:
     const Candidate& candidate(int i)  const { return candidates_[i]; }
     int              selected()        const { return selected_; }
 
+    // ── Personalised LRU cache (Phase 1.6) ───────────────────────────────
+    /// Load persisted LRU state from a byte buffer produced by
+    /// serialize_lru (typically read from LittleFS at boot). Silently
+    /// resets on magic / version / length mismatch; returns false in that
+    /// case so the caller can log but continues with an empty cache.
+    bool load_lru(const uint8_t* buf, int len);
+
+    /// Serialise current LRU state into buf. Returns bytes written, or -1
+    /// if cap is too small.
+    int  serialize_lru(uint8_t* buf, int cap) const;
+
+    /// Size required for a full serialize_lru output (header + entries).
+    int  lru_serialized_size() const { return lru_.serialized_size(); }
+
+    /// Number of LRU entries currently populated (for tests / telemetry).
+    int  lru_count() const { return lru_.count(); }
+
     /// Set the selected candidate index by global position (0..cand_count-1).
     /// Clamps out-of-range values, no-ops if the pool is empty, and fires
     /// on_composition_changed when the index actually moves. Intended for UIs
@@ -267,6 +285,9 @@ private:
     void run_search_v2_legacy();   ///< Former run_search body, TrieSearcher path.
     void run_search_v4();          ///< CompositionSearcher dispatch + fallback.
     void rebuild_display_smart();
+    /// SmartZh only: prepend LRU hits to candidates_ (rank 0..lru_n),
+    /// shifting dict results and deduping by utf8. No-op otherwise.
+    void prepend_lru_candidates();
 
     // ── Display helpers (ime_display.cpp) ────────────────────────────────
     void display_clear();
@@ -380,6 +401,16 @@ private:
     // , . ? !). Default-true so the very first word after construction
     // does NOT prepend (sentence-start).
     bool en_last_ended_with_space_ = true;
+
+    // Personalised LRU cache (Phase 1.6). Upserted on SmartZh candidate
+    // commits; queried at the top of run_search_v4 so recently committed
+    // rare readings surface at rank 0.
+    LruCache lru_;
+
+    // Most-recent now_ms from process_key/tick. Used as the LRU's
+    // last_used_ms on upsert so the cache learns monotonic time order
+    // without the engine owning a clock of its own.
+    uint32_t now_ms_cache_ = 0;
 };
 
 } // namespace mie

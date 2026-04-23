@@ -37,11 +37,13 @@ void ImeLogic::run_search() {
     if (composition_searcher_ && composition_searcher_->is_loaded() &&
         mode_ == InputMode::SmartZh) {
         run_search_v4();
+        prepend_lru_candidates();
         rebuild_display_smart();
         return;
     }
 
     run_search_v2_legacy();
+    prepend_lru_candidates();
 }
 
 // Legacy: original TrieSearcher path. Unchanged from the pre-v4 implementation
@@ -297,6 +299,68 @@ void ImeLogic::run_search_v4() {
 
     cand_count_ = n + phrase_n;
     matched_prefix_keys_ = (n > 0) ? 1 : (phrase_n > 0 ? key_seq_len_ : 0);
+}
+
+// ── LRU prepend (Phase 1.6) ──────────────────────────────────────────────
+// Query the personalised LRU cache with the current key_seq_ + phoneme
+// hints, then splice any hits to the front of candidates_. Dict results
+// that duplicate an LRU hit's utf8 are dropped so the user sees only one
+// row per word. SmartZh only — SmartEn and Direct have their own commit
+// semantics and no reading-keyed cache model.
+void ImeLogic::prepend_lru_candidates() {
+    if (mode_ != InputMode::SmartZh || key_seq_len_ == 0) return;
+
+    // Stack buffer of kMaxCandidates would push ~3.6 KB onto the IME task
+    // stack per call; run_search_v4 already uses a static tmp for the same
+    // reason. Reuse that pattern.
+    static Candidate lru_tmp[kMaxCandidates];
+    static uint8_t   lru_prefix[kMaxCandidates];
+
+    int lru_n = lru_.lookup(
+        reinterpret_cast<const uint8_t*>(key_seq_), key_seq_len_,
+        phoneme_hint_, lru_tmp, kMaxCandidates, lru_prefix);
+    if (lru_n == 0) return;
+
+    // Drop existing dict candidates whose word matches any LRU hit.
+    int dst = 0;
+    for (int i = 0; i < cand_count_; ++i) {
+        bool dup = false;
+        for (int j = 0; j < lru_n; ++j) {
+            if (std::strcmp(candidates_[i].word, lru_tmp[j].word) == 0) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) {
+            if (dst != i) {
+                candidates_[dst]             = candidates_[i];
+                candidates_prefix_keys_[dst] = candidates_prefix_keys_[i];
+            }
+            ++dst;
+        }
+    }
+    int dict_keep = dst;
+
+    // Shift the deduped dict tail down by lru_n, clamped so total stays
+    // <= kMaxCandidates.
+    int room = kMaxCandidates - lru_n;
+    if (room < 0) room = 0;
+    if (dict_keep > room) dict_keep = room;
+    for (int i = dict_keep - 1; i >= 0; --i) {
+        candidates_[lru_n + i]             = candidates_[i];
+        candidates_prefix_keys_[lru_n + i] = candidates_prefix_keys_[i];
+    }
+
+    // Write LRU hits at positions 0..lru_n-1 with their own per-entry
+    // prefix length (len of the stored reading, not the user's input).
+    // Selecting a prefix-length LRU hit correctly consumes only the
+    // matched bytes and leaves the remainder in key_seq_.
+    for (int i = 0; i < lru_n; ++i) {
+        candidates_[i]             = lru_tmp[i];
+        candidates_prefix_keys_[i] = lru_prefix[i];
+    }
+    cand_count_ = lru_n + dict_keep;
+    selected_   = 0;
 }
 
 // Rebuild display_ from key_seq_. Shared between SmartZh and SmartEn.
