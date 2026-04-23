@@ -75,11 +75,25 @@ void key_event_init(void);
  * subsequent INJECT for the same keycode is rejected per §9.1. */
 key_event_result_t key_event_push_hw(mokya_keycode_t keycode, bool pressed);
 
+/* Like key_event_push_hw but also carries the producer-side flag bits
+ * (bit 0 = long-press, bit 1 = long-long, etc — see mie/hal_port.h
+ * KEY_FLAG_*). Used by KeypadScan's deferred-press path so the IME can
+ * tell which phoneme of a half-key the user intended. The pressed/release
+ * arbitration semantics are identical to key_event_push_hw. */
+key_event_result_t key_event_push_hw_flags(mokya_keycode_t keycode,
+                                           bool pressed, uint8_t flags);
+
 /* Push from UsbCtrlTask (INJECT source).  Returns KEY_EVENT_ERR_BUSY
  * without touching the queue if KeypadScan currently holds `keycode`
  * physically pressed — the human user wins. Reserved for M9; provided
  * now so the queue's final shape is in place. */
 key_event_result_t key_event_push_inject(mokya_keycode_t keycode, bool pressed);
+
+/* Inject variant carrying flags (Phase 1.4 — lets SWD tooling and the
+ * USB Control Protocol simulate long-press intent). Same arbitration
+ * rules as key_event_push_inject. */
+key_event_result_t key_event_push_inject_flags(mokya_keycode_t keycode,
+                                                bool pressed, uint8_t flags);
 
 /* Consumer drain — waits up to `timeout_ticks` for an event to arrive.
  * Returns true if *out was populated.

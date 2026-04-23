@@ -24,7 +24,13 @@ def read_v4(blob: bytes) -> dict:
     """Parse a MIED v4 binary into Python dicts. Returns:
         {
           'version': int, 'flags': int,
-          'char_table': [(utf8_char, [(key_bytes, tone, freq), ...]), ...],
+          'has_phoneme_pos': bool,
+          'char_table': [(utf8_char,
+                          [(key_bytes, phoneme_pos, tone, freq), ...]),
+                         ...],
+            phoneme_pos is a tuple of per-byte position indices
+            (0 = primary, 1 = secondary, 2 = tertiary). Empty when the
+            dict was built without phoneme_pos (legacy MIE4).
           'word_table_groups': {char_count: [(char_ids, reading_idxs, freq), ...]},
           'first_char_idx': {char_id: [word_id, ...]},
           'key_to_char_idx': {key_byte: [char_id, ...]},
@@ -41,9 +47,12 @@ def read_v4(blob: bytes) -> dict:
     char_count, word_count = struct.unpack_from('<II', blob, 8)
     char_off, word_off, first_off, key_off = struct.unpack_from('<IIII', blob, 16)
 
+    has_phoneme_pos = (flags & 0x0001) != 0
+
     out = {
         'version': version,
         'flags': flags,
+        'has_phoneme_pos': has_phoneme_pos,
         'char_count': char_count,
         'word_count': word_count,
         'offsets': {
@@ -67,9 +76,14 @@ def read_v4(blob: bytes) -> dict:
         for _ in range(rcount):
             klen = blob[o]; o += 1
             kbytes = bytes(blob[o:o+klen]); o += klen
+            if has_phoneme_pos:
+                pos_packed = blob[o]; o += 1
+                pos = tuple((pos_packed >> (2 * i)) & 0x3 for i in range(klen))
+            else:
+                pos = ()
             tone = blob[o]; o += 1
             freq = struct.unpack_from('<H', blob, o)[0]; o += 2
-            readings.append((kbytes, tone, freq))
+            readings.append((kbytes, pos, tone, freq))
         char_table.append((ch, readings))
     out['char_table'] = char_table
 
@@ -192,7 +206,8 @@ def main():
     print("\n  Sample chars (first 3):")
     for cid in range(min(3, len(d['char_table']))):
         ch, readings = d['char_table'][cid]
-        rdesc = ', '.join(f'{r[0].hex()}/t{r[1]}/f{r[2]}' for r in readings[:3])
+        rdesc = ', '.join(
+            f'{r[0].hex()}/pos{list(r[1])}/t{r[2]}/f{r[3]}' for r in readings[:3])
         print(f"    cid={cid}  {ch}  readings=[{rdesc}]" + (' ...' if len(readings) > 3 else ''))
 
     print("\n  Sample words (first 5 from 2-char group):")

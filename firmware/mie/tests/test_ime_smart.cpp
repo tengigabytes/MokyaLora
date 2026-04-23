@@ -14,10 +14,15 @@ using mie::TrieSearcher;
 // SmartZh — compound display, key accumulation, dict search, commit
 // ══════════════════════════════════════════════════════════════════════════
 
+// Phase 1.4 (final two-state): short-tap = fuzzy half-keyboard (compound
+// phoneme display, all candidates of the slot); long-tap = strict
+// secondary phoneme (single-phoneme display). Slot 4 (ㄞ/ㄢ/ㄦ) keeps
+// all three phonemes on short-tap; tertiary ㄦ is reachable only via
+// fuzzy ranking.
 TEST(SmartZh, SingleKeyShowsCompound) {
     TrieSearcher ts;
     ImeLogic ime(ts);
-    press(ime, MOKYA_KEY_1);    // ㄅ/ㄉ key → compound "ㄅㄉ"
+    press(ime, MOKYA_KEY_1);    // ㄅ/ㄉ → fuzzy compound "ㄅㄉ"
     EXPECT_STREQ(pending_str(ime), "ㄅㄉ");
     EXPECT_EQ(pending_style(ime), PendingStyle::PrefixBold);
 }
@@ -25,11 +30,11 @@ TEST(SmartZh, SingleKeyShowsCompound) {
 TEST(SmartZh, ThreePhonemeKey) {
     TrieSearcher ts;
     ImeLogic ime(ts);
-    press(ime, MOKYA_KEY_9);    // ㄞ/ㄢ/ㄦ
+    press(ime, MOKYA_KEY_9);    // ㄞ/ㄢ/ㄦ → all three on short-tap
     EXPECT_STREQ(pending_str(ime), "ㄞㄢㄦ");
 }
 
-TEST(SmartZh, ToneKeyCompound) {
+TEST(SmartZh, ToneKeyShowsCompound) {
     TrieSearcher ts;
     ImeLogic ime(ts);
     press(ime, MOKYA_KEY_3);    // ˇ/ˋ
@@ -39,18 +44,18 @@ TEST(SmartZh, ToneKeyCompound) {
 TEST(SmartZh, MultipleKeysSeparatedByComma) {
     TrieSearcher ts;
     ImeLogic ime(ts);
-    press(ime, MOKYA_KEY_1);    // ㄅㄉ
-    press(ime, MOKYA_KEY_Q);    // ㄆㄊ
+    press(ime, MOKYA_KEY_1);
+    press(ime, MOKYA_KEY_Q);
     EXPECT_STREQ(pending_str(ime), "ㄅㄉ, ㄆㄊ");
 }
 
 TEST(SmartZh, FourKeysCompound) {
     TrieSearcher ts;
     ImeLogic ime(ts);
-    press(ime, MOKYA_KEY_1);    // ㄅㄉ
-    press(ime, MOKYA_KEY_Q);    // ㄆㄊ
-    press(ime, MOKYA_KEY_E);    // ㄍㄐ
-    press(ime, MOKYA_KEY_C);    // ㄏㄒ
+    press(ime, MOKYA_KEY_1);
+    press(ime, MOKYA_KEY_Q);
+    press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_C);
     EXPECT_STREQ(pending_str(ime), "ㄅㄉ, ㄆㄊ, ㄍㄐ, ㄏㄒ");
 }
 
@@ -61,6 +66,88 @@ TEST(SmartZh, DELRemovesLastKey) {
     press(ime, MOKYA_KEY_Q);
     press(ime, MOKYA_KEY_DEL);
     EXPECT_STREQ(pending_str(ime), "ㄅㄉ");
+}
+
+// Phase 1.4 — long-press semantics (multitap cycling):
+//   1 long-press  → primary phoneme
+//   2 long-presses → secondary
+//   3 long-presses → tertiary (slot 4 only) / wraps for 2-phoneme keys
+static inline mie::KeyEvent lpev(mokya_keycode_t kc, uint32_t now_ms = 0) {
+    mie::KeyEvent e;
+    e.keycode = kc;
+    e.pressed = true;
+    e.now_ms  = now_ms;
+    e.flags   = MOKYA_KEY_FLAG_LONG_PRESS;
+    return e;
+}
+
+TEST(SmartZh, LongTap_OnceShowsPrimary) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    ime.process_key(lpev(MOKYA_KEY_1, 100));   // ㄅ (primary)
+    EXPECT_STREQ(pending_str(ime), "ㄅ");
+}
+
+TEST(SmartZh, LongTap_TwiceCyclesToSecondary) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    ime.process_key(lpev(MOKYA_KEY_1, 100));   // primary ㄅ
+    ime.process_key(lpev(MOKYA_KEY_1, 200));   // cycle to ㄉ
+    EXPECT_STREQ(pending_str(ime), "ㄉ");
+}
+
+TEST(SmartZh, LongTap_ThriceWrapsTo2PhonemeSlot) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    ime.process_key(lpev(MOKYA_KEY_1, 100));   // ㄅ
+    ime.process_key(lpev(MOKYA_KEY_1, 200));   // ㄉ
+    ime.process_key(lpev(MOKYA_KEY_1, 300));   // wrap → ㄅ
+    EXPECT_STREQ(pending_str(ime), "ㄅ");
+}
+
+TEST(SmartZh, LongTap_Slot4CyclesAllThreePhonemes) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    ime.process_key(lpev(MOKYA_KEY_9, 100));   // ㄞ
+    EXPECT_STREQ(pending_str(ime), "ㄞ");
+    ime.process_key(lpev(MOKYA_KEY_9, 200));   // ㄢ
+    EXPECT_STREQ(pending_str(ime), "ㄢ");
+    ime.process_key(lpev(MOKYA_KEY_9, 300));   // ㄦ
+    EXPECT_STREQ(pending_str(ime), "ㄦ");
+    ime.process_key(lpev(MOKYA_KEY_9, 400));   // wrap → ㄞ
+    EXPECT_STREQ(pending_str(ime), "ㄞ");
+}
+
+TEST(SmartZh, LongTap_TimeoutBreaksCycle) {
+    // Two long-presses spaced beyond kMultiTapTimeoutMs (800ms) should
+    // start a NEW cycle (a new byte appended), not cycle the old byte.
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    ime.process_key(lpev(MOKYA_KEY_1, 0));     // byte 0: primary ㄅ
+    ime.tick(900);                              // timeout — locks cycle
+    ime.process_key(lpev(MOKYA_KEY_1, 1000));  // byte 1: primary ㄅ again
+    // Two bytes total, both rendered as their primary phoneme.
+    EXPECT_STREQ(pending_str(ime), "ㄅ, ㄅ");
+}
+
+TEST(SmartZh, LongTap_DifferentSlotBreaksCycle) {
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    ime.process_key(lpev(MOKYA_KEY_1, 100));   // byte 0: ㄅ
+    ime.process_key(lpev(MOKYA_KEY_Q, 200));   // byte 1: ㄆ (different slot)
+    ime.process_key(lpev(MOKYA_KEY_Q, 300));   // cycle byte 1 → ㄊ
+    EXPECT_STREQ(pending_str(ime), "ㄅ, ㄊ");
+}
+
+TEST(SmartZh, ShortTap_AfterLongLocksCycle) {
+    // A short-tap should commit the long-press cycle and append a new
+    // fuzzy byte; further long-presses then start a fresh cycle, not
+    // re-cycle the prior locked byte.
+    TrieSearcher ts;
+    ImeLogic ime(ts);
+    ime.process_key(lpev(MOKYA_KEY_1, 100));   // byte 0: ㄅ (locked-in)
+    press(ime, MOKYA_KEY_Q, 200);              // byte 1: fuzzy ㄆㄊ
+    EXPECT_STREQ(pending_str(ime), "ㄅ, ㄆㄊ");
 }
 
 TEST(SmartZh, SpaceIdleEmitsHalfWidth) {
@@ -133,7 +220,7 @@ TEST(SmartZh, PartialCommitKeepsUnmatchedTail) {
     ASSERT_GT(ime.candidate_count(), 0);
     press(ime, MOKYA_KEY_OK);
     EXPECT_EQ(L.committed, "\xe5\xb7\xb4");
-    // Second key (ㄆㄊ) should remain in pending.
+    // Second key (ㄆㄊ) remains in pending — fuzzy compound on short-tap.
     EXPECT_TRUE(ime.has_pending());
     EXPECT_STREQ(pending_str(ime), "ㄆㄊ");
 }
@@ -167,7 +254,7 @@ TEST(SmartZh, MatchedPrefixBytesSplitsDisplay) {
     press(ime, MOKYA_KEY_1);
     press(ime, MOKYA_KEY_Q);
     int m = matched_prefix_bytes(ime);
-    // "ㄅㄉ" is 6 UTF-8 bytes.
+    // Short-tap = fuzzy → "ㄅㄉ" is 6 UTF-8 bytes.
     EXPECT_EQ(m, 6);
     EXPECT_EQ(pending_style(ime), PendingStyle::PrefixBold);
 }

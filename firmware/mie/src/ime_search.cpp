@@ -207,7 +207,8 @@ void ImeLogic::run_search_v4() {
     if (positions <= 4) {
         // Main: search the matching word-length bucket with full user keys.
         n = composition_searcher_->search(
-            reinterpret_cast<const uint8_t*>(key_seq_), key_seq_len_,
+            reinterpret_cast<const uint8_t*>(key_seq_),
+            phoneme_hint_, key_seq_len_,
             positions, candidates_, kMaxCandidates);
 
         // Always augment with adjacent buckets (not only when n==0). The
@@ -229,7 +230,8 @@ void ImeLogic::run_search_v4() {
             int t = adj[k];
             if (t < 1 || t > 4) continue;
             int m = composition_searcher_->search(
-                reinterpret_cast<const uint8_t*>(key_seq_), key_seq_len_,
+                reinterpret_cast<const uint8_t*>(key_seq_),
+                phoneme_hint_, key_seq_len_,
                 t, tmp, kMaxCandidates);
             for (int i = 0; i < m && n < kMaxCandidates; ++i) {
                 bool dup = false;
@@ -267,10 +269,12 @@ void ImeLogic::run_search_v4() {
     // long phrase still surfaces it. The phrase candidates rank below the
     // 1-char ones because that matches the much-more-common usage pattern.
 
-    // Primary: 1-char candidates for first initial.
-    uint8_t first_byte = (uint8_t)key_seq_[0];
+    // Primary: 1-char candidates for first initial. Only the first byte's
+    // hint is relevant here (commit consumes exactly 1 byte).
+    uint8_t first_byte  = (uint8_t)key_seq_[0];
+    uint8_t first_hint  = phoneme_hint_[0];
     n = composition_searcher_->search(
-        &first_byte, 1, /*target=*/1, candidates_, kMaxCandidates);
+        &first_byte, &first_hint, 1, /*target=*/1, candidates_, kMaxCandidates);
     for (int i = 0; i < n; ++i) {
         candidates_prefix_keys_[i] = 1;  // commit consumes 1 byte
     }
@@ -280,7 +284,8 @@ void ImeLogic::run_search_v4() {
     int phrase_n = 0;
     if (phrase_capacity > 0) {
         phrase_n = composition_searcher_->search(
-            reinterpret_cast<const uint8_t*>(key_seq_), key_seq_len_,
+            reinterpret_cast<const uint8_t*>(key_seq_),
+            phoneme_hint_, key_seq_len_,
             /*target_char_count=*/ -1,
             candidates_ + n, phrase_capacity);
         for (int i = 0; i < phrase_n; ++i) {
@@ -337,8 +342,24 @@ void ImeLogic::rebuild_display_smart() {
 
         if (is_zh) {
             if (i > 0) append(", ");
-            for (int p = 0; p < 3 && e.phonemes[p]; ++p)
+            // Phase 1.4: when the user disambiguated this byte via long-
+            // press (hint = 1 secondary, 2 tertiary, 0 primary), render
+            // only the chosen phoneme so the pending row reflects what
+            // the engine is actually filtering on. Hint 0xFF (any) keeps
+            // the legacy compound-phoneme rendering — used for tone
+            // markers, the SPACE first-tone byte, and SmartEn.
+            uint8_t hint = phoneme_hint_[i];
+            if (hint <= 2) {
+                int p_count = 0;
+                for (int k = 0; k < 3 && e.phonemes[k]; ++k) ++p_count;
+                int p = (int)hint;
+                if (p >= p_count) p = p_count - 1;
+                if (p < 0) p = 0;
                 append(e.phonemes[p]);
+            } else {
+                for (int p = 0; p < 3 && e.phonemes[p]; ++p)
+                    append(e.phonemes[p]);
+            }
         } else {
             // SmartEn: primary lowercase letter (or primary digit for row 0).
             if (e.letter_slots[0])     append(e.letter_slots[0]);

@@ -126,7 +126,13 @@ bool CompositionSearcher::parse_header() {
     if (std::memcmp(buf_, kMagic, 4) != 0) return false;
     version_ = load_u16(buf_ + 4);
     if (version_ != kVersion) return false;
-    // flags at +6 (unused)
+    // flags at +6:
+    //   bit 0 — per-reading phoneme_pos byte present (Phase 1.4 long-press
+    //           disambiguation). When unset, the per-reading record has the
+    //           legacy layout (klen | kbytes | tone | freq) and search()
+    //           ignores all phoneme-hint arguments.
+    flags_           = load_u16(buf_ + 6);
+    has_phoneme_pos_ = (flags_ & 0x0001u) != 0;
     char_count_ = load_u32(buf_ + 8);
     word_count_ = load_u32(buf_ + 12);
 
@@ -196,7 +202,8 @@ const uint8_t* CompositionSearcher::char_data_at(
 bool CompositionSearcher::get_reading(uint32_t char_id, uint8_t reading_idx,
                                        const uint8_t** out_keyseq,
                                        uint8_t* out_klen,
-                                       uint8_t* out_tone) const {
+                                       uint8_t* out_tone,
+                                       uint8_t* out_phoneme_pos_packed) const {
     const uint8_t* utf8;
     uint8_t utf8_len, rcount;
     const uint8_t* p = char_data_at(char_id, &utf8, &utf8_len, &rcount);
@@ -205,16 +212,25 @@ bool CompositionSearcher::get_reading(uint32_t char_id, uint8_t reading_idx,
         uint8_t klen = *p++;
         const uint8_t* kbytes = p;
         p += klen;
+        uint8_t pos_packed = 0;
+        if (has_phoneme_pos_) pos_packed = *p++;
         uint8_t tone = *p++;
         p += 2;  // freq
         if (r == reading_idx) {
             *out_keyseq = kbytes;
             *out_klen   = klen;
             *out_tone   = tone;
+            if (out_phoneme_pos_packed) *out_phoneme_pos_packed = pos_packed;
             return true;
         }
     }
     return false;
+}
+
+// Helper: extract phoneme position (0..3) at byte index `i` from a packed
+// 2-bit-per-position byte. Position 0 is in the low bits.
+static inline uint8_t unpack_phoneme_pos(uint8_t packed, int i) {
+    return (uint8_t)((packed >> (2 * i)) & 0x3u);
 }
 
 bool CompositionSearcher::get_word(uint32_t word_id, WordView* out) const {
@@ -233,10 +249,17 @@ bool CompositionSearcher::get_word(uint32_t word_id, WordView* out) const {
 }
 
 // ── Composition matching (backtracking) ───────────────────────────────────
+//
+// phoneme-hint filter: when user_phoneme_hints is non-null AND the dict
+// carries phoneme_pos info, every byte we successfully consume must satisfy
+// hint[u] == kPhonemeHintAny || hint[u] == reading_pos_at_byte. The check
+// runs alongside the existing memcmp prefix match.
 bool CompositionSearcher::composition_recurse(
     const WordView& w,
     int char_idx, int key_idx,
-    const uint8_t* user_keys, int user_n) const
+    const uint8_t* user_keys,
+    const uint8_t* user_phoneme_hints,
+    int user_n) const
 {
     if (key_idx >= user_n) return true;            // user input fully consumed
     if (char_idx >= w.char_count) return false;    // no more chars
@@ -246,7 +269,13 @@ bool CompositionSearcher::composition_recurse(
 
     const uint8_t* keyseq;
     uint8_t klen, tone;
-    if (!get_reading(cid, ridx, &keyseq, &klen, &tone)) return false;
+    uint8_t pos_packed = 0;
+    if (!get_reading(cid, ridx, &keyseq, &klen, &tone,
+                     has_phoneme_pos_ ? &pos_packed : nullptr)) {
+        return false;
+    }
+
+    const bool check_pos = has_phoneme_pos_ && user_phoneme_hints != nullptr;
 
     int remaining = user_n - key_idx;
 
@@ -270,16 +299,30 @@ bool CompositionSearcher::composition_recurse(
     push_try(2);
     push_try(1);
 
+    // Phoneme-hint check: every reading byte at index k consumed by this
+    // step must satisfy hint[key_idx+k]; otherwise reject this prefix.
+    auto pos_ok = [&](int prefix_len) -> bool {
+        if (!check_pos) return true;
+        for (int k = 0; k < prefix_len; ++k) {
+            uint8_t hint = user_phoneme_hints[key_idx + k];
+            if (hint == 0xFFu) continue;
+            if (unpack_phoneme_pos(pos_packed, k) != hint) return false;
+        }
+        return true;
+    };
+
     for (int i = 0; i < n_try; ++i) {
         int plen = tried[i];
         if (plen > remaining) {
             // User input ends mid-reading: check user_keys[key_idx:] prefix of reading.
             if (std::memcmp(keyseq, user_keys + key_idx,
-                            (size_t)remaining) == 0) {
+                            (size_t)remaining) == 0 &&
+                pos_ok(remaining)) {
                 return true;
             }
         } else if (std::memcmp(keyseq, user_keys + key_idx,
-                                (size_t)plen) == 0) {
+                                (size_t)plen) == 0 &&
+                   pos_ok(plen)) {
             // Tone-1 explicit delimiter: if the full reading matched AND the
             // char's tone is 1 (no tone byte stored in keyseq) AND the user's
             // next byte is Space (0x20) — the user's tone-1 marker — consume
@@ -291,7 +334,8 @@ bool CompositionSearcher::composition_recurse(
                 ++consumed;
             }
             if (composition_recurse(w, char_idx + 1, key_idx + consumed,
-                                     user_keys, user_n)) {
+                                     user_keys, user_phoneme_hints,
+                                     user_n)) {
                 return true;
             }
         }
@@ -301,9 +345,12 @@ bool CompositionSearcher::composition_recurse(
 
 bool CompositionSearcher::composition_matches(
     const WordView& w,
-    const uint8_t* user_keys, int user_n) const
+    const uint8_t* user_keys,
+    const uint8_t* user_phoneme_hints,
+    int user_n) const
 {
-    return composition_recurse(w, 0, 0, user_keys, user_n);
+    return composition_recurse(w, 0, 0, user_keys,
+                               user_phoneme_hints, user_n);
 }
 
 // ── Word -> Candidate string and tone ─────────────────────────────────────
@@ -335,11 +382,14 @@ uint8_t CompositionSearcher::get_word_tone(const WordView& w) const {
 // ── Single-char search (target_char_count == 1) ─────────────────────────
 // Walks char_table directly because word_table's char_count=1 group is
 // always empty (gen_dict.py only emits multi-char entries to word_table).
-int CompositionSearcher::search_chars(const uint8_t* user_keys, int user_n,
+int CompositionSearcher::search_chars(const uint8_t* user_keys,
+                                       const uint8_t* user_phoneme_hints,
+                                       int user_n,
                                        Candidate* out, int max_results) const
 {
     uint8_t first_byte = user_keys[0];
     if (first_byte < kKeyByteMin || first_byte >= kKeyByteMax) return 0;
+    const bool check_pos = has_phoneme_pos_ && user_phoneme_hints != nullptr;
     int slot = first_byte - kKeyByteMin;
     uint32_t cs = load_u32(key_to_char_idx_ + 4 * slot);
     uint32_t ce = load_u32(key_to_char_idx_ + 4 * (slot + 1));
@@ -401,12 +451,26 @@ int CompositionSearcher::search_chars(const uint8_t* user_keys, int user_n,
             uint8_t klen = *p++;
             const uint8_t* kbytes = p;
             p += klen;
+            uint8_t pos_packed = 0;
+            if (has_phoneme_pos_) pos_packed = *p++;
             uint8_t tone = *p++;
             uint16_t freq = load_u16(p); p += 2;
 
             if (require_tone_1 && tone != 1) continue;
             if (klen >= eff_n &&
                 std::memcmp(kbytes, user_keys, (size_t)eff_n) == 0) {
+                if (check_pos) {
+                    bool ok = true;
+                    for (int k = 0; k < eff_n; ++k) {
+                        uint8_t hint = user_phoneme_hints[k];
+                        if (hint == 0xFFu) continue;
+                        if (unpack_phoneme_pos(pos_packed, k) != hint) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) continue;
+                }
                 emit(cid, r, freq, tone);
                 break;  // one entry per char
             }
@@ -435,13 +499,24 @@ int CompositionSearcher::search(const uint8_t* user_keys, int user_n,
                                 int target_char_count,
                                 Candidate* out, int max_results) const
 {
+    return search(user_keys, /*hints=*/nullptr, user_n, target_char_count,
+                  out, max_results);
+}
+
+int CompositionSearcher::search(const uint8_t* user_keys,
+                                const uint8_t* user_phoneme_hints,
+                                int user_n,
+                                int target_char_count,
+                                Candidate* out, int max_results) const
+{
     if (!loaded_ || !user_keys || user_n <= 0 ||
         !out || max_results <= 0) return 0;
 
     // target == 1: chars come from char_table, not word_table group 1
     // (which is always empty by design).
     if (target_char_count == 1) {
-        return search_chars(user_keys, user_n, out, max_results);
+        return search_chars(user_keys, user_phoneme_hints, user_n,
+                            out, max_results);
     }
 
     // Phase 1: candidate first-chars whose first reading begins with user_keys[0].
@@ -519,7 +594,8 @@ int CompositionSearcher::search(const uint8_t* user_keys, int user_n,
             WordView w;
             if (!get_word(wid, &w)) continue;
 
-            if (composition_matches(w, user_keys, user_n)) {
+            if (composition_matches(w, user_keys,
+                                    user_phoneme_hints, user_n)) {
                 emit_match(w);
             }
         }

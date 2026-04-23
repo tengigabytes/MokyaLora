@@ -76,6 +76,11 @@ public:
     /// and unmodified for the lifetime of this object; no internal copy is made.
     bool load_from_memory(const uint8_t* buf, size_t size);
 
+    /// Long-press disambiguation hint sentinel: matches any phoneme
+    /// position. Pass 0xFF for bytes the user typed without long-press
+    /// intent (or where the engine should not filter on phoneme position).
+    static constexpr uint8_t kPhonemeHintAny = 0xFF;
+
     /// Search for words matching the given user phoneme key sequence,
     /// optionally filtered by char_count.
     ///
@@ -93,6 +98,23 @@ public:
     int search(const uint8_t* user_keys, int user_n,
                int target_char_count,
                Candidate* out, int max_results) const;
+
+    /// Variant that accepts a per-byte phoneme-position hint array used
+    /// by Phase 1.4 long-press disambiguation. user_phoneme_hints[i]
+    /// values: 0 = primary, 1 = secondary, 2 = tertiary, 0xFF = any
+    /// (no filter for that byte). nullptr (or all 0xFF) is equivalent to
+    /// the no-hint search() above. Hints are ignored when the dict
+    /// header.flags bit 0 is unset (legacy MIE4 dict).
+    int search(const uint8_t* user_keys,
+               const uint8_t* user_phoneme_hints,
+               int user_n,
+               int target_char_count,
+               Candidate* out, int max_results) const;
+
+    /// True if the loaded dict carries per-reading phoneme_pos bytes
+    /// (header.flags bit 0). When false, all search() phoneme-hint
+    /// arguments are silently ignored.
+    bool has_phoneme_pos() const { return has_phoneme_pos_; }
 
     bool     is_loaded()  const { return loaded_; }
     uint32_t char_count() const { return char_count_; }
@@ -118,6 +140,8 @@ private:
 
     // Header fields cached after load.
     uint16_t version_    = 0;
+    uint16_t flags_      = 0;
+    bool     has_phoneme_pos_ = false;   ///< mirrors flags_ bit 0
     uint32_t char_count_ = 0;
     uint32_t word_count_ = 0;
 
@@ -175,11 +199,16 @@ private:
                                 uint8_t* out_reading_count) const;
 
     /// Get the keyseq pointer + length + tone for a specific reading of a char.
+    /// When the dict carries phoneme_pos bytes (has_phoneme_pos()), also
+    /// fills *out_phoneme_pos_packed with the packed byte (2 bits per kbyte
+    /// position, LSB = byte 0). Otherwise *out_phoneme_pos_packed is set
+    /// to 0. Pass nullptr to skip.
     /// Returns false if reading_idx is out of range.
     bool get_reading(uint32_t char_id, uint8_t reading_idx,
                      const uint8_t** out_keyseq,
                      uint8_t* out_klen,
-                     uint8_t* out_tone) const;
+                     uint8_t* out_tone,
+                     uint8_t* out_phoneme_pos_packed = nullptr) const;
 
     /// Decode a word record. Sets fields from the v4 format. char_ids and
     /// reading_idxs (if any) point into buf_. reading_idxs may be nullptr
@@ -195,12 +224,20 @@ private:
 
     /// Composition match: check if the given word's chars can be composed
     /// into a key sequence whose prefix equals user_keys[0..user_n).
+    /// When user_phoneme_hints is non-null, also requires each consumed
+    /// reading byte's phoneme position to match the hint at the same user
+    /// offset (or kPhonemeHintAny=0xFF to skip that byte). Hints are
+    /// silently ignored when the dict has no phoneme_pos section.
     bool composition_matches(const WordView& w,
-                             const uint8_t* user_keys, int user_n) const;
+                             const uint8_t* user_keys,
+                             const uint8_t* user_phoneme_hints,
+                             int user_n) const;
 
     bool composition_recurse(const WordView& w,
                              int char_idx, int key_idx,
-                             const uint8_t* user_keys, int user_n) const;
+                             const uint8_t* user_keys,
+                             const uint8_t* user_phoneme_hints,
+                             int user_n) const;
 
     /// Build the UTF-8 word string from char_ids into Candidate.word.
     /// Truncates if total UTF-8 length would exceed kCandidateMaxBytes-1.
@@ -215,7 +252,9 @@ private:
     /// path. Walks key_to_char_idx + each char's readings, collects matches
     /// (user_keys is a prefix of any of the char's reading's key sequence),
     /// sorts by per-reading freq desc.
-    int search_chars(const uint8_t* user_keys, int user_n,
+    int search_chars(const uint8_t* user_keys,
+                     const uint8_t* user_phoneme_hints,
+                     int user_n,
                      Candidate* out, int max_results) const;
 };
 

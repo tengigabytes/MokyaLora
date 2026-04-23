@@ -23,6 +23,11 @@ struct TinyV4Builder {
         std::vector<uint8_t> keyseq;
         uint8_t              tone;
         uint16_t             freq;
+        // Phase 1.4 long-press filtering: per-byte phoneme position
+        // (0 = primary, 1 = secondary, 2 = tertiary). Only emitted when
+        // TinyV4Builder::include_phoneme_pos is true. Leave empty for the
+        // legacy (bit0=0) code path.
+        std::vector<uint8_t> phoneme_pos;
     };
     struct CharEntry {
         std::string          utf8;
@@ -36,6 +41,7 @@ struct TinyV4Builder {
 
     std::vector<CharEntry> chars;
     std::vector<WordEntry> words;
+    bool include_phoneme_pos = false;   // emit header.flags bit 0 + extra byte
 
     // Serialise to MIED v4 binary.
     std::vector<uint8_t> build() {
@@ -72,6 +78,12 @@ struct TinyV4Builder {
             for (const auto& r : ch.readings) {
                 char_section.push_back((uint8_t)r.keyseq.size());
                 for (uint8_t b : r.keyseq) char_section.push_back(b);
+                if (include_phoneme_pos) {
+                    uint8_t packed = 0;
+                    for (int i = 0; i < (int)r.phoneme_pos.size() && i < 4; ++i)
+                        packed |= (uint8_t)((r.phoneme_pos[i] & 0x3) << (2 * i));
+                    char_section.push_back(packed);
+                }
                 char_section.push_back(r.tone);
                 char_section.push_back((uint8_t)(r.freq & 0xFF));
                 char_section.push_back((uint8_t)(r.freq >> 8));
@@ -191,7 +203,8 @@ struct TinyV4Builder {
         std::vector<uint8_t> header(kHeaderSize, 0);
         const char* magic = "MIE4";
         std::memcpy(header.data(), magic, 4);
-        uint16_t ver = 4, flg = 0;
+        uint16_t ver = 4;
+        uint16_t flg = include_phoneme_pos ? 0x0001 : 0;
         std::memcpy(header.data() + 4, &ver, 2);
         std::memcpy(header.data() + 6, &flg, 2);
         uint32_t C32 = C, W32 = (uint32_t)flat_order.size();
@@ -482,4 +495,156 @@ TEST(CompositionSearcher, ReadingOverride_PolyphonicChar) {
     for (int i = 0; i < n; ++i)
         if (std::strcmp(out[i].word, "銀行") == 0) found_yinhang = true;
     EXPECT_TRUE(found_yinhang);
+}
+
+// ── Phase 1.4 long-press phoneme-position filter tests ──────────────────
+//
+// The dict now carries a per-byte "which phoneme of the half-key produced
+// this byte" index. User input can pair each byte with a hint (0 = primary
+// only, 1 = secondary only, 0xFF = any) and the searcher rejects readings
+// whose authored phoneme doesn't match. Expected outcome: on a key that
+// collides two phonemes (e.g. slot 0 = ㄅ/ㄉ), typing with hint=1 prunes
+// all primary matches; with hint=0 prunes all secondary.
+
+TEST(CompositionSearcher, PhonemePos_HasPhonemePosFlagWhenFlagSet) {
+    TinyV4Builder b;
+    b.include_phoneme_pos = true;
+    // 八 (ㄅㄚ tone 1) → kbytes [0x21, 0x24], pos [0, 1]
+    b.chars.push_back({"八",
+                       {{{0x21, 0x24}, 1, 500, {0, 1}}}});
+    auto blob = b.build();
+
+    mie::CompositionSearcher cs;
+    ASSERT_TRUE(cs.load_from_memory(blob.data(), blob.size()));
+    EXPECT_TRUE(cs.has_phoneme_pos());
+}
+
+TEST(CompositionSearcher, PhonemePos_NoFlagWhenLegacyBlob) {
+    TinyV4Builder b;
+    // include_phoneme_pos stays false (default)
+    b.chars.push_back({"八", {make_reading({0, 3}, 1, 500)}});
+    auto blob = b.build();
+
+    mie::CompositionSearcher cs;
+    ASSERT_TRUE(cs.load_from_memory(blob.data(), blob.size()));
+    EXPECT_FALSE(cs.has_phoneme_pos());
+
+    // Hints on a legacy blob are silently ignored — the search returns the
+    // same results as the no-hint path.
+    mie::Candidate out[5];
+    uint8_t user_keys[]  = {key_b(0), key_b(3)};
+    uint8_t bad_hints[]  = {1, 1};   // demand ㄉ + ㄢ (neither produced 八)
+    int n_no_hint = cs.search(user_keys, nullptr, 2, /*target=*/1, out, 5);
+    int n_hints   = cs.search(user_keys, bad_hints, 2, /*target=*/1, out, 5);
+    EXPECT_EQ(n_no_hint, 1);
+    EXPECT_EQ(n_hints,   1);   // legacy blob: hints ignored
+}
+
+TEST(CompositionSearcher, PhonemePos_FilterSingleCharByPrimary) {
+    // 八 (ㄅㄚ) → byte [0x21, 0x24], phoneme_pos [0, 1]
+    //   ㄅ is primary of slot 0, ㄚ is secondary of slot 3.
+    // 搭 (ㄉㄚ) → same bytes, phoneme_pos [1, 1]
+    //   ㄉ is secondary of slot 0, ㄚ is secondary of slot 3.
+    TinyV4Builder b;
+    b.include_phoneme_pos = true;
+    b.chars.push_back({"八",
+                       {{{0x21, 0x24}, 1, 500, {0, 1}}}});
+    b.chars.push_back({"搭",
+                       {{{0x21, 0x24}, 1, 300, {1, 1}}}});
+    auto blob = b.build();
+
+    mie::CompositionSearcher cs;
+    ASSERT_TRUE(cs.load_from_memory(blob.data(), blob.size()));
+
+    mie::Candidate out[5];
+    uint8_t keys[]       = {0x21, 0x24};
+
+    // No hints: both chars match.
+    int n = cs.search(keys, nullptr, 2, /*target=*/1, out, 5);
+    EXPECT_EQ(n, 2);
+
+    // Primary-only on byte 0 (ㄅ): only 八 remains.
+    uint8_t hint_primary[]   = {0, 0xFFu};
+    n = cs.search(keys, hint_primary, 2, /*target=*/1, out, 5);
+    EXPECT_EQ(n, 1);
+    EXPECT_STREQ(out[0].word, "八");
+
+    // Secondary-only on byte 0 (ㄉ): only 搭 remains.
+    uint8_t hint_secondary[] = {1, 0xFFu};
+    n = cs.search(keys, hint_secondary, 2, /*target=*/1, out, 5);
+    EXPECT_EQ(n, 1);
+    EXPECT_STREQ(out[0].word, "搭");
+}
+
+TEST(CompositionSearcher, PhonemePos_FilterMultiCharByPrimary) {
+    // Construct two 2-char words that collide on the same key bytes but
+    // were authored from different phonemes of slot 0.
+    //   八爸: 八 + 爸  (ㄅㄚ + ㄅㄚˋ)  both initials = ㄅ (primary)
+    //   大霸: 大 + 霸  (ㄉㄚˋ + ㄅㄚˋ)  slot-0 initial on first char = ㄉ (secondary)
+    // User types [0x21, 0x24, 0x21, 0x24]; hint requiring secondary on
+    // byte 0 and primary on byte 2 should drop 八爸 and keep 大霸.
+    TinyV4Builder b;
+    b.include_phoneme_pos = true;
+    // 八  (ㄅㄚ tone1)   pos [0,1]
+    // 爸  (ㄅㄚˋ tone4)  pos [0,1,1]
+    // 大  (ㄉㄚˋ tone4)  pos [1,1,1]
+    // 霸  (ㄅㄚˋ tone4)  pos [0,1,1]
+    b.chars.push_back({"八",
+                       {{{0x21, 0x24}, 1, 500, {0, 1}}}});
+    b.chars.push_back({"爸",
+                       {{{0x21, 0x24, 0x22}, 4, 400, {0, 1, 1}}}});
+    b.chars.push_back({"大",
+                       {{{0x21, 0x24, 0x22}, 4, 700, {1, 1, 1}}}});
+    b.chars.push_back({"霸",
+                       {{{0x21, 0x24, 0x22}, 4, 350, {0, 1, 1}}}});
+    // 2-char words (full-key match, not abbreviation).
+    // 八爸: char_ids [0,1], full keyseq = [0x21,0x24]+[0x21,0x24,0x22]
+    // 大霸: char_ids [2,3], full keyseq = [0x21,0x24,0x22]+[0x21,0x24,0x22]
+    b.words.push_back({{0, 1}, {0, 0}, 600});   // 八爸
+    b.words.push_back({{2, 3}, {0, 0}, 650});   // 大霸
+    auto blob = b.build();
+
+    mie::CompositionSearcher cs;
+    ASSERT_TRUE(cs.load_from_memory(blob.data(), blob.size()));
+
+    mie::Candidate out[5];
+
+    // No-hint abbreviated search on ㄅ+ㄅ-like initials: matches first two
+    // bytes of each char's full reading, which for 大 is ㄉㄚ — same byte
+    // pattern [0x21,0x24]. Both words surface.
+    uint8_t keys[]    = {0x21, 0x24, 0x21, 0x24};
+    int n = cs.search(keys, nullptr, 4, /*target=*/2, out, 5);
+    EXPECT_EQ(n, 2);
+
+    // Demand ㄉ on byte 0 (secondary), ㄅ on byte 2 (primary) — 大霸 only.
+    uint8_t hint[]    = {1, 0xFFu, 0, 0xFFu};
+    n = cs.search(keys, hint, 4, /*target=*/2, out, 5);
+    ASSERT_EQ(n, 1);
+    EXPECT_STREQ(out[0].word, "大霸");
+
+    // Demand ㄅ on byte 0 (primary) — 八爸 only.
+    uint8_t hint2[]   = {0, 0xFFu, 0xFFu, 0xFFu};
+    n = cs.search(keys, hint2, 4, /*target=*/2, out, 5);
+    ASSERT_EQ(n, 1);
+    EXPECT_STREQ(out[0].word, "八爸");
+}
+
+TEST(CompositionSearcher, PhonemePos_AnySentinelEquivalentToNoHints) {
+    TinyV4Builder b;
+    b.include_phoneme_pos = true;
+    b.chars.push_back({"八",
+                       {{{0x21, 0x24}, 1, 500, {0, 1}}}});
+    b.chars.push_back({"搭",
+                       {{{0x21, 0x24}, 1, 300, {1, 1}}}});
+    auto blob = b.build();
+    mie::CompositionSearcher cs;
+    ASSERT_TRUE(cs.load_from_memory(blob.data(), blob.size()));
+
+    mie::Candidate out[5];
+    uint8_t keys[]    = {0x21, 0x24};
+    uint8_t all_any[] = {0xFFu, 0xFFu};
+    int n_any = cs.search(keys, all_any, 2, /*target=*/1, out, 5);
+    int n_non = cs.search(keys, nullptr, 2, /*target=*/1, out, 5);
+    EXPECT_EQ(n_any, n_non);
+    EXPECT_EQ(n_any, 2);
 }
