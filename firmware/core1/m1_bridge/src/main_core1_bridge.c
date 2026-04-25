@@ -262,12 +262,16 @@ static void bridge_task(void *pv)
             if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u) {
                 uint16_t remaining = hdr.payload_len;
                 const uint8_t *p = scratch;
-                /* Bounded FIFO-full retries: if the host isn't actively
-                 * draining, give up after ~10 ms and drop the burst so the
-                 * c0_to_c1 ring keeps moving. Meshtastic's serial protocol
-                 * retransmits on demand, so burst loss while no client is
-                 * attached is benign. */
-                int stall_ticks = 0;
+                /* The data ring carries Meshtastic stream-protocol frames
+                 * (0x94 0xC3 LEN_HI LEN_LO header + LEN payload bytes).
+                 * The host's parser reads exactly LEN payload bytes after
+                 * the header; if we drop ANY byte mid-frame here, every
+                 * subsequent frame on the wire desynchronises (host reads
+                 * into the next frame's header, parse fails, alignment
+                 * lost). There is no frame-level retransmit. So when CDC
+                 * FIFO is full, keep yielding until the host drains it —
+                 * never abort mid-payload. The only legitimate way to
+                 * stop is if USB unmounts (host gone). */
                 while (remaining > 0u) {
                     if (!tud_mounted()) {
                         break;
@@ -275,13 +279,9 @@ static void bridge_task(void *pv)
                     uint32_t avail = tud_cdc_write_available();
                     if (avail == 0u) {
                         tud_cdc_write_flush();
-                        if (++stall_ticks >= 10) {
-                            break;
-                        }
-                        taskYIELD();  /* was vTaskDelay(1ms) — yield to usb_device_task for tud_task() processing, ~10µs vs 1ms */
+                        taskYIELD();  /* let usb_device_task run tud_task() */
                         continue;
                     }
-                    stall_ticks = 0;
                     uint32_t chunk = (remaining < avail) ? remaining : avail;
                     uint32_t wrote = tud_cdc_write(p, chunk);
                     p += wrote;
