@@ -77,7 +77,11 @@ if [ "$CORE1_ONLY" = false ] && [ "$DICT_ONLY" = false ] && [ "$FONT_ONLY" = fal
     echo "=== Building Core 0 (Meshtastic via PlatformIO) ==="
     python -m platformio run -e rp2350b-mokya \
         -d firmware/core0/meshtastic 2>&1
-    CORE0_ELF="$(ls firmware/core0/meshtastic/.pio/build/rp2350b-mokya/firmware*.elf 2>/dev/null | head -1)"
+    # -t sorts by mtime, newest first. PlatformIO emits a new ELF per
+    # commit-hash suffix without removing old ones, so plain `ls | head -1`
+    # picks the alphabetically-earliest (often the oldest) and silently
+    # flashes stale firmware.
+    CORE0_ELF="$(ls -t firmware/core0/meshtastic/.pio/build/rp2350b-mokya/firmware*.elf 2>/dev/null | head -1)"
     if [ -z "$CORE0_ELF" ]; then
         echo "ERROR: Core 0 .elf not found — PlatformIO build failed"
         exit 1
