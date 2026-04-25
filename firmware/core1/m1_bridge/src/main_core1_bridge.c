@@ -294,29 +294,42 @@ static void bridge_task(void *pv)
             did_work = true;
         }
 
-        /* ── c0_log_to_c1 LOG ring → CDC IN (low priority) ──────────
-         * Drain log slots only when the data ring is empty, so protobuf
-         * frames are never delayed by log forwarding. Log output is
-         * best-effort — if CDC FIFO is full, drop immediately. */
+        /* ── c0_log_to_c1 LOG ring → DROPPED (P2-19) ──────────────────
+         * Forwarding Meshtastic LOG output onto the same USB CDC IN
+         * endpoint as binary protobuf frames is unsafe even with the
+         * "data-ring-empty" gate above: between two ring-slot pushes
+         * for the same multi-chunk FromRadio frame, Core 0's chunking
+         * loop briefly leaves the data ring empty (gap is sub-µs but
+         * non-zero — Core 1 runs on its own clock and can iterate the
+         * bridge loop in that window). When that window happens to
+         * coincide with a `\n` flush of an accumulated log line, the
+         * else-if branch drains a log slot and writes its bytes
+         * mid-frame, breaking host stream alignment.
+         *
+         * Symptom: rare, traffic-pattern-dependent FromRadio parse
+         * errors. Settings-page entry on client.meshtastic.org
+         * triggers it reliably because the get_config sequence pairs
+         * a burst of admin protobuf frames with a burst of
+         * "Handle admin payload" / "Send config" log lines — UI
+         * spins waiting for a config response that gets corrupted.
+         *
+         * Drop log bytes here. Bridge task does NOT set did_work, so
+         * it sleeps on xTaskNotifyWait when only log work is present
+         * — this prevents the tight log-drain loop from starving the
+         * USB device task (`tud_task()` must run to actually push
+         * queued CDC IN bytes onto the wire).
+         *
+         * Logs are still available via SEGGER RTT (mokya_trace.h
+         * shares the same RTT control block). For Meshtastic LOG_*
+         * specifically, future M9 USB Control Interface (DEC-2) can
+         * carve out a separate CDC interface for log output. */
         else if (ipc_ring_pop(&g_ipc_shared.c0_log_to_c1_ctrl,
                                g_ipc_shared.c0_log_to_c1_slots,
                                IPC_LOG_RING_SLOT_COUNT,
                                &hdr,
                                scratch,
                                sizeof(scratch))) {
-            if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u
-                && tud_mounted()) {
-                uint32_t avail = tud_cdc_write_available();
-                uint32_t to_write = (hdr.payload_len < avail)
-                                        ? hdr.payload_len : avail;
-                if (to_write > 0u) {
-                    uint32_t wrote = tud_cdc_write(scratch, to_write);
-                    g_rx_total += wrote;
-                    tud_cdc_write_flush();
-                    dbg_u32(BRIDGE_RX_COUNT_ADDR, g_rx_total);
-                }
-            }
-            did_work = true;
+            (void)hdr;  /* drop silently; do NOT set did_work */
         }
 
         /* ── CDC OUT → c1_to_c0 CMD ring ──────────────────────────────── */
