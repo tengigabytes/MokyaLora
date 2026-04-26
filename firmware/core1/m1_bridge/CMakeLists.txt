@@ -47,6 +47,13 @@ project(core1_bridge C CXX ASM)
 set(CMAKE_C_STANDARD   11)
 set(CMAKE_CXX_STANDARD 17)
 
+# Dev-only: replace the Teseo NMEA source with a fixed-position dummy
+# injector that writes one $GPGGA per second into IpcGpsBuf. Lets the
+# IpcGpsBuf pipeline be exercised without sky view. Default OFF.
+option(MOKYA_GPS_DUMMY_NMEA
+    "Inject dummy fixed-position NMEA into IpcGpsBuf instead of running Teseo"
+    OFF)
+
 pico_sdk_init()
 
 # ── FreeRTOS RP2350_ARM_NTZ port ─────────────────────────────────────────────
@@ -176,6 +183,7 @@ add_executable(core1_bridge
     ${SENSOR_DIR}/lsm6dsv16x.c
     ${SENSOR_DIR}/teseo_liv3fl.c
     ${SENSOR_DIR}/gps_task.c
+    $<$<BOOL:${MOKYA_GPS_DUMMY_NMEA}>:${SENSOR_DIR}/gps_dummy.c>
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
@@ -273,6 +281,7 @@ target_compile_definitions(core1_bridge PRIVATE
     # Opt MIE source files into RTT perf trace (mie/src/ime_search.cpp etc.).
     # PC tests do not define this so MIE stays decoupled from mokya_trace.h.
     MOKYA_MIE_PERF_TRACE=1
+    $<$<BOOL:${MOKYA_GPS_DUMMY_NMEA}>:MOKYA_GPS_DUMMY_NMEA=1>
 )
 
 target_link_libraries(core1_bridge

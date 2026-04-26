@@ -164,8 +164,9 @@ typedef struct {
     uint8_t  buf[2][128];           ///< Double buffer: [0] and [1] slots
     uint8_t  write_idx;             ///< Index Core 1 is currently writing into (0 or 1)
     uint8_t  len[2];                ///< Valid byte count in each slot
-    uint8_t  _pad[2];
-} IpcGpsBuf;                        /* 260 bytes, place in shared SRAM */
+    uint8_t  _pad[1];               ///< Pads to 260 B to match shared-SRAM reservation
+} IpcGpsBuf;
+_Static_assert(sizeof(IpcGpsBuf) == 260, "IpcGpsBuf must be exactly 260 bytes");
 
 /* ── Config IPC (M1.2, for M4+ LVGL settings UI) ────────────────────────── */
 

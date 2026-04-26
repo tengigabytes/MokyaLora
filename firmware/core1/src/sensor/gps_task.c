@@ -10,7 +10,11 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#ifdef MOKYA_GPS_DUMMY_NMEA
+#include "gps_dummy.h"
+#else
 #include "teseo_liv3fl.h"
+#endif
 
 #define DRAIN_PERIOD_MS  100u
 #define INIT_RETRY_MS    500u
@@ -22,6 +26,7 @@
 volatile uint32_t g_rf_commission_rc;
 #endif
 
+#ifndef MOKYA_GPS_DUMMY_NMEA
 static void gps_task(void *pv)
 {
     (void)pv;
@@ -48,12 +53,18 @@ static void gps_task(void *pv)
         vTaskDelayUntil(&last, pdMS_TO_TICKS(DRAIN_PERIOD_MS));
     }
 }
+#endif /* !MOKYA_GPS_DUMMY_NMEA */
 
 bool gps_task_start(UBaseType_t priority)
 {
+#ifdef MOKYA_GPS_DUMMY_NMEA
+    /* Dev-only dummy NMEA injector — bypasses Teseo entirely. */
+    return gps_dummy_start(priority);
+#else
     /* 512 words (2 KB). Drain buffer and line accumulator are static
      * (no stack cost). NMEA parsing calls atof/strtoul which draw a
      * ~400-byte libc frame — still comfortably within budget. */
     BaseType_t rc = xTaskCreate(gps_task, "gps", 512, NULL, priority, NULL);
     return rc == pdPASS;
+#endif
 }
