@@ -1,0 +1,5 @@
+The microcontroller project is moving forward steadily. I have been testing the prototype board for the past week, and the GPIO pins all respond correctly. The next step is to integrate the SPI flash chip, which should give us enough storage for the firmware images and the configuration data.
+
+我也順便重新整理了開發環境，把 toolchain 和 build script 都更新到最新版本。Compilation 速度比之前快了不少，特別是當專案的源檔案數量增加之後。版本控制方面，我習慣使用 feature branch 開發，完成後再 merge 回主分支。
+
+The documentation needs more attention. Right now the API reference is auto-generated from the source comments, but the user-facing tutorial is still incomplete. I plan to write a few step-by-step guides over the weekend so that newcomers can get started without too much friction.
