@@ -2020,6 +2020,94 @@ confirmation), `IPC_CMD_SEND_TEXT` (Core 1 → Core 0 outbound from MIE),
 multi-message scrollback in `messages_inbox`, and the corresponding
 "compose / chat thread" LVGL views.
 
+#### M5 Phase 2 — multi-message inbox + outbound SEND_TEXT (reply flow) ✅ partial (2026-04-26)
+
+**Goal.** Promote messages_view from "show last RX" to a real chat
+panel: scroll back through recent peers, type with MIE, OK to reply.
+Closes the Core 1 → Core 0 outbound text path that's been a TODO since
+M1's byte-bridge first shipped. NODE_UPDATE and TX_ACK still deferred
+to a follow-up slice.
+
+**Pieces (committed 2026-04-26, super-project + submodule
+`50e8cd759`):**
+
+- **FIFO inbox** (`firmware/core1/src/messages/messages_inbox.{c,h}`).
+  Single-snapshot store grew into an 8-entry ring keyed by monotonic
+  `seq`; producer (`bridge_task` IPC dispatcher) appends and bumps
+  `seq` with `__ATOMIC_RELEASE`, consumer (`lvgl_task` via the view)
+  reads any entry by relative offset (0 = newest). The
+  seq-release / seq-acquire pair is sufficient for the SPSC layout —
+  no mutex. Eviction is FIFO once `count == capacity`.
+
+- **Scrollable view** (`firmware/core1/src/ui/messages_view.c`). UP /
+  DOWN walks older / newer; a third `msg N/M` footer label tracks
+  position. While `offset == 0` the view stays sticky-to-newest so a
+  fresh RX auto-displays; pressing UP breaks the sticky and the user
+  parks at their chosen offset until DOWN walks them back to 0.
+
+- **Outbound send** (`firmware/core1/src/messages/messages_send.{c,h}`).
+  `messages_send_text(to, channel, want_ack, text, len)` builds an
+  `IpcPayloadText` and `ipc_ring_push`es it onto `c1_to_c0` as
+  `IPC_CMD_SEND_TEXT`. Single-shot best-effort — caller decides what
+  to do on a full-ring push failure.
+
+- **Core 0 dispatcher** (submodule, `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/ipc_command_handler.cpp`).
+  `mokya_handle_ipc_command(msg_id, payload, len)` switches on
+  `msg_id`; `IPC_CMD_SEND_TEXT` decodes `IpcPayloadText`, allocates a
+  `meshtastic_MeshPacket` via `router->allocForSending()`, sets
+  `portnum = TEXT_MESSAGE_APP` plus `to / channel / want_ack`, copies
+  the UTF-8 payload, and dispatches `service->sendToMesh(p,
+  RX_SRC_LOCAL, /*ccToPhone=*/true)` — same call shape as
+  Meshtastic's canned-message path in InkHUD MenuApplet.
+  `ipc_serial_stub::refill_rx_` was previously dropping non-
+  `SERIAL_BYTES` slots with a "M4+ will route them" comment; now
+  routes them to this dispatcher. Unknown msg ids are silently
+  absorbed so a newer Core 1 can speak to an older Core 0 without
+  crashing it.
+
+- **IME glue** (`firmware/core1/src/ime/ime_task.{cpp,h}`). New
+  `ime_view_clear_text()` resets `g_text_len` / `g_cursor` /
+  `g_text[0]` under the snapshot mutex and bumps the dirty counter so
+  the IME view's gated refresh repaints. Called by messages_view
+  immediately after a successful push so the user gets a clean slate
+  for the next message.
+
+- **Reply UX** (messages_view OK key). On press, view snapshots
+  `ime_view_text()` under `ime_view_lock`, looks up the currently
+  displayed inbox entry, and sends the IME buffer to that entry's
+  `from_node_id` on the same `channel_index` as a DM with `want_ack
+  = true`. Empty IME or empty inbox is a no-op with a footer hint.
+  Footer changes to `sent → 0xNNNNNNNN` on success, or
+  `send failed (ring full)` on backpressure.
+
+**Verification.** Two end-to-end runs:
+
+1. **Outbound broadcast (initial cut):** OK on messages_view sent a
+   hardcoded `"ping from MokyaLora"` to `MESSAGES_SEND_BROADCAST`;
+   peer node TNGB-9c28 (Heltec) reported the message in the host
+   `meshtastic --info`. Confirmed `c1_to_c0` ring carries the new
+   msg id, Core 0 dispatcher picks it up, MeshService routes it, and
+   the LoRa tx path is intact.
+
+2. **Outbound reply (final shape):** typed a Traditional-Chinese
+   reply on Core 1's IME, FUNC-cycled to messages view, OK pushed
+   the IME buffer to TNGB-50ca's node id (the original peer who
+   sent us the test DM). Peer received it as a normal DM. IME
+   buffer cleared automatically; messages_view footer updated to
+   `sent → 0x58a750ca`.
+
+**Why two-stage UX (read in messages, type in IME).** The simplest
+"OK = send" wiring without a dedicated compose state. UP/DOWN already
+mean "scroll messages" on this view, so reusing them for a compose
+cursor would conflict. A future M6 slice can introduce a true compose
+overlay; for now the user mentally pairs "currently displayed = current
+recipient", which matches feature-phone reply UX.
+
+**Still deferred to M5 Phase 3+:** `IPC_MSG_NODE_UPDATE` (so a node
+list view reflects mesh activity), `IPC_MSG_TX_ACK` (delivery feedback
+overlaying the footer), `IpcPhoneAPI` subclass to fully replace the
+byte bridge, Core 0 selective reset on config change.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

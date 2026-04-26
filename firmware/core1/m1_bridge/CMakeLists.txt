@@ -221,6 +221,7 @@ add_executable(core1_bridge
     ${IME_DIR}/flash_safety_wrap.c
     ${IME_DIR}/lru_persist.cpp
     ${MESSAGES_DIR}/messages_inbox.c
+    ${MESSAGES_DIR}/messages_send.c
 )
 
 # SEGGER_RTT.c triggers -Wcast-qual and -Wcast-align under our default
