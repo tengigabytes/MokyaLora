@@ -2103,10 +2103,105 @@ cursor would conflict. A future M6 slice can introduce a true compose
 overlay; for now the user mentally pairs "currently displayed = current
 recipient", which matches feature-phone reply UX.
 
-**Still deferred to M5 Phase 3+:** `IPC_MSG_NODE_UPDATE` (so a node
-list view reflects mesh activity), `IPC_MSG_TX_ACK` (delivery feedback
-overlaying the footer), `IpcPhoneAPI` subclass to fully replace the
-byte bridge, Core 0 selective reset on config change.
+**Still deferred to M5 Phase 3+:** `IpcPhoneAPI` subclass to fully
+replace the byte bridge. (`IPC_MSG_NODE_UPDATE` and `IPC_MSG_TX_ACK`
+landed in M5 Phase 3; "Core 0 selective reset on config change" is
+resolved by the B2 soft-reload below — a hardware selective reset
+turned out to be infeasible on RP2350.)
+
+#### B2 — IPC config soft-reload (2026-04-26)
+
+**Goal.** Let Core 1 issue config changes without rebooting the chip.
+Originally framed as "selective reset of Core 0 only" (so USB CDC and
+the LVGL UI on Core 1 survive the modem-side restart). After a hardware
+POC closed off that direction, pivoted to a pure-software soft-reload
+through Meshtastic's existing `service->reloadConfig()` path.
+
+**POC: Core-0-only watchdog reset (dead end).** `variant.cpp` gained a
+warm-boot detect path (read `WATCHDOG_REASON` + `g_ipc_shared.c1_ready`
+before `ipc_shared_init` / `multicore_reset_core1` / `multicore_launch_core1_raw`)
+so a selective reset wouldn't trash the still-running Core 1.
+`poc_c0_reset.cpp` (gated `MOKYA_POC_C0_RESET=1`) armed a FreeRTOS task
+that, 30 s after boot, set `PSM_WDSEL = PROC0_BITS` and triggered
+watchdog. **Empirical result:** PSM did isolate the reset domain —
+post-trigger SWD probe shows `PSM_FRCE_OFF.PROC1=0`, `PSM_DONE.PROC1=1`,
+and shared SRAM (boot_magic, c0_ready, c1_ready) intact — but Core 1's
+PC ended up at `0x019E` in the bootrom mailbox FIFO handler and ime
+ticks stopped at exactly `t=30s`. Root cause: **RP2350 bootrom unconditionally
+calls `multicore_reset_core1` on every proc0 cold-boot**, regardless of
+WDSEL, regardless of whether Core 1 is already running. There is no SoC-
+level workaround that keeps Core 1 alive across a proc0 restart. POC
+files (`poc_c0_reset.cpp`, warm-boot detect in `variant.cpp`) are kept
+as documentation; build flag commented out so the trigger never fires
+in production.
+
+**Pivot: Meshtastic already has the soft-reload path.**
+`MeshService::reloadConfig(int saveWhat)` (`mesh/MeshService.cpp:134`)
+calls `nodeDB->resetRadioConfig()`, fires `configChanged.notifyObservers(NULL)`
+(which `RadioInterface::reconfigure()` listens to and uses to put the
+radio in standby + reprogram modem params + restart receive), and then
+`nodeDB->saveToDisk(saveWhat)`. AdminModule's `handleSetConfig`
+(`AdminModule.cpp:780`) explicitly marks LoRa config changes — including
+region — as `requiresReboot = false`: the same observer chain re-tunes
+the radio live. Validated upstream by sending `meshtastic --set
+lora.tx_power 27` over USB CDC: reply succeeded, `rebootCount` stayed at
+0, USB CDC stayed connected.
+
+**Step 1 implementation (`firmware/core0/.../variants/rp2350/rp2350b-mokya/ipc_config_handler.cpp`).**
+GET / SET / COMMIT for `IPC_CFG_LORA_REGION`, `IPC_CFG_LORA_TX_POWER`,
+and `IPC_CFG_LORA_HOP_LIMIT`. SET writes `config.lora.*` directly
+(matching AdminModule's in-memory pattern); COMMIT calls
+`mokya_meshservice_reload_config_segment_config()`, a thunk in
+`ipc_command_handler.cpp` that wraps `service->reloadConfig(SEGMENT_CONFIG)`
+— kept in the existing TU because that's where `MeshService.h` is
+already included, avoiding a second copy of the heavy header dep chain
+in `ipc_config_handler.cpp`. Other keys defined in `IpcConfigKey` return
+`UNKNOWN_KEY` until follow-up slices wire them up. Module-level
+`s_pending_lora_reload` flag lets COMMIT skip `reloadConfig` when no
+LoRa-touching SET happened since the last commit (so a future Owner-
+only SET batch won't bother re-tuning the radio).
+
+**Dispatcher** (`ipc_command_handler.cpp`): `mokya_handle_ipc_command`
+gains three new cases — `IPC_CMD_GET_CONFIG`, `IPC_CMD_SET_CONFIG`,
+`IPC_CMD_COMMIT_CONFIG` — each forwarded to the corresponding
+`mokya_handle_ipc_*_config` extern.
+
+**End-to-end verification** (`scripts/test_ipc_config.sh`). Reads
+`c1_to_c0_ctrl.head` from shared SRAM via J-Link, computes the next two
+slot addresses, writes an `IpcMsgHeader` + `IpcPayloadConfigValue` for
+SET and a header-only frame for COMMIT, advances head twice, then
+`meshtastic --get lora.tx_power` to confirm the change took. Three
+round-trips on real hardware (`22 → 17 → 25 → 22`) all read back the
+new value with `rebootCount` unchanged and CDC uninterrupted across the
+whole sequence. The full path Core 1 ring → Core 0 dispatcher → config
+handler → `reloadConfig` → `configChanged` observer → `RadioInterface`
+re-tune is live.
+
+**Why SWD-inject for the test rather than a Core 1 client.** Decoupling
+the protocol verification from the eventual UI lets the next slice add
+a settings view in LVGL without re-validating the IPC pipe. The script
+also doubles as a debugging tool when wiring real Core 1 clients (drops
+in to substitute for the UI when reproducing edge cases).
+
+**Submodule commit.** `ed6fa3ee5` on `tengigabytes/firmware
+feat/rp2350b-mokya`. Super-project bump in `9f19f39`.
+
+**Limitations / remaining work.**
+
+- LoRa subset only. Other categories (Device, Position, Power, Display,
+  Channel, Owner) need their handler cases filled in. Mostly mechanical;
+  Owner uses a different reload path (`reloadOwner` instead of
+  `reloadConfig`).
+- No reboot-required path yet. Some keys really do need a chip restart
+  (Device.role, rebroadcast_mode, most module configs). Their handlers
+  should set a separate flag and COMMIT should fall back to
+  `RebootNotifier` for those. Not implemented in step 1.
+- No Core 1 client UI. Validation goes via the SWD-inject script; the
+  LVGL settings view is a separate slice.
+- No batch-commit semantics surfaced to the protocol — multiple SETs
+  followed by one COMMIT already works (only the COMMIT triggers
+  reload), but there's no explicit ABORT to discard pending SETs. Add
+  if usage requires it.
 
 ---
 

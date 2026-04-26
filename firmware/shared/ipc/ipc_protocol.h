@@ -189,7 +189,11 @@ _Static_assert(sizeof(IpcGpsBuf) == 260, "IpcGpsBuf must be exactly 260 bytes");
  *             0x10–0x1F reserved for ModuleConfig.
  *
  * Core 0 GPL adapter translates between IpcConfigKey and Meshtastic's
- * AdminModule — implemented at M4, not M1.2.
+ * config globals.  B2 step 1 (2026-04-26) implements the LoRa subset
+ * (REGION / TX_POWER / HOP_LIMIT) in
+ * `firmware/core0/.../variants/rp2350/rp2350b-mokya/ipc_config_handler.cpp`
+ * with COMMIT routed through `service->reloadConfig(SEGMENT_CONFIG)`.
+ * Other categories return UNKNOWN_KEY until follow-up slices wire them up.
  */
 typedef enum {
     /* 0x01xx — Device */
