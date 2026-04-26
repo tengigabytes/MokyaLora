@@ -6,8 +6,10 @@
 #include <string.h>
 
 #include "messages_inbox.h"
+#include "messages_send.h"
 #include "mie_font.h"
 #include "mie/keycode.h"
+#include "ime_task.h"
 
 /* Three-line layout:
  *   header  (green)   — "From 0xNNNNNNNN  ch%d"   at y=0
@@ -101,6 +103,56 @@ void messages_view_init(lv_obj_t *panel)
 void messages_view_apply(const key_event_t *ev)
 {
     if (!ev || !ev->pressed) return;
+
+    /* OK on this view = reply to the sender of the currently-displayed
+     * message with whatever the IME has committed. The reply is a DM
+     * (to_node_id = sender's id, channel = original channel) so it
+     * doesn't broadcast on the mesh. Empty IME buffer or empty inbox
+     * is a no-op with a footer hint. */
+    if (ev->keycode == MOKYA_KEY_OK) {
+        messages_inbox_entry_t target;
+        if (!messages_inbox_take_at_offset(s_offset, &target)) {
+            lv_label_set_text(s_footer, "(no recipient — wait for a msg)");
+            return;
+        }
+
+        uint8_t  send_buf[MESSAGES_SEND_TEXT_MAX];
+        uint16_t send_len = 0;
+
+        if (ime_view_lock(pdMS_TO_TICKS(20))) {
+            int tlen = 0;
+            const char *t = ime_view_text(&tlen, NULL);
+            if (tlen < 0) tlen = 0;
+            if (tlen > (int)sizeof(send_buf)) tlen = (int)sizeof(send_buf);
+            if (t != NULL && tlen > 0) {
+                memcpy(send_buf, t, (size_t)tlen);
+                send_len = (uint16_t)tlen;
+            }
+            ime_view_unlock();
+        }
+
+        if (send_len == 0) {
+            lv_label_set_text(s_footer, "(IME empty — type first)");
+            return;
+        }
+
+        bool ok = messages_send_text(target.from_node_id,
+                                     target.channel_index,
+                                     /*want_ack=*/true,
+                                     send_buf,
+                                     send_len);
+        if (ok) {
+            ime_view_clear_text();
+            char foot[48];
+            snprintf(foot, sizeof(foot),
+                     "sent → 0x%08lx",
+                     (unsigned long)target.from_node_id);
+            lv_label_set_text(s_footer, foot);
+        } else {
+            lv_label_set_text(s_footer, "send failed (ring full)");
+        }
+        return;
+    }
 
     uint32_t total = messages_inbox_count();
     if (total == 0) return;

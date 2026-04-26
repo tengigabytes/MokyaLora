@@ -396,6 +396,17 @@ const char *ime_view_text(int *byte_len, int *cursor_bytes) {
     return g_text;
 }
 
+void ime_view_clear_text(void) {
+    if (!ime_view_lock(pdMS_TO_TICKS(20))) return;
+    g_text_len = 0;
+    g_cursor   = 0;
+    g_text[0]  = '\0';
+    ime_view_unlock();
+    /* Bump dirty so the IME view's gated refresh repaints the cleared
+     * commit buffer on its next tick. */
+    __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
+}
+
 const char *ime_view_mode_indicator(void) {
     return g_ime ? g_ime->mode_indicator() : "";
 }

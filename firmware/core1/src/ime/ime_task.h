@@ -71,6 +71,14 @@ const char *ime_view_pending(int *byte_len, int *matched_prefix, int *style);
  * *cursor_bytes is the byte offset of the insertion point. */
 const char *ime_view_text(int *byte_len, int *cursor_bytes);
 
+/* Discard the current committed text buffer (and reset cursor to 0).
+ * Used by the messages-send flow after a successful out-bound push so
+ * the user gets a clean slate for the next message. Bumps the dirty
+ * counter so the IME view repaints. Acquires the shared snapshot
+ * mutex internally; safe to call from any task that doesn't already
+ * hold ime_view_lock. */
+void ime_view_clear_text(void);
+
 /* One-char current mode tag ("中" / "EN" / "ABC"). */
 const char *ime_view_mode_indicator(void);
 
