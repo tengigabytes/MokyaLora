@@ -82,6 +82,7 @@
 #include "key_event.h"
 #include "key_inject.h"
 #include "key_inject_rtt.h"
+#include "messages_inbox.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -257,6 +258,30 @@ static void bridge_task(void *pv)
                 reboot_pending = true;
                 did_work = true;
                 continue;   /* skip the rest of this iteration */
+            }
+
+            if (hdr.msg_id == IPC_MSG_RX_TEXT &&
+                hdr.payload_len >= sizeof(IpcPayloadText)) {
+                /* Structured RX text from Core 0 — surface in LVGL inbox.
+                 * Snapshot stays valid only until the next RX_TEXT push,
+                 * which is fine for the current "show latest" view.
+                 * Multi-message backlog is M5 Phase 2 work. */
+                const IpcPayloadText *t =
+                    (const IpcPayloadText *)scratch;
+                uint16_t header_size = (uint16_t)offsetof(IpcPayloadText, text);
+                uint16_t text_in_payload =
+                    (hdr.payload_len > header_size)
+                        ? (uint16_t)(hdr.payload_len - header_size)
+                        : 0u;
+                uint16_t text_len = t->text_len;
+                if (text_len > text_in_payload) text_len = text_in_payload;
+                messages_inbox_publish(t->from_node_id,
+                                       t->to_node_id,
+                                       t->channel_index,
+                                       t->text,
+                                       text_len);
+                did_work = true;
+                continue;
             }
 
             if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u) {

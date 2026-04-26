@@ -114,6 +114,9 @@ set(UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui)
 # ── PSRAM driver (M4 Step 3) ─────────────────────────────────────────────────
 set(PSRAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/psram)
 
+# ── Messages inbox (M5 Phase 1) ──────────────────────────────────────────────
+set(MESSAGES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/messages)
+
 # ── IME module (M4 Step 3+) ──────────────────────────────────────────────────
 set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
 
@@ -197,6 +200,7 @@ add_executable(core1_bridge
     ${UI_DIR}/rf_debug_view.c
     ${UI_DIR}/font_test_view.c
     ${UI_DIR}/ime_view.c
+    ${UI_DIR}/messages_view.c
     ${UI_DIR}/view_router.c
     ${PSRAM_DIR}/psram.c
     ${IME_DIR}/mie_dict_loader.c
@@ -216,6 +220,7 @@ add_executable(core1_bridge
     ${MIE_SRC_DIR}/lru_cache.cpp
     ${IME_DIR}/flash_safety_wrap.c
     ${IME_DIR}/lru_persist.cpp
+    ${MESSAGES_DIR}/messages_inbox.c
 )
 
 # SEGGER_RTT.c triggers -Wcast-qual and -Wcast-align under our default
@@ -252,6 +257,7 @@ target_include_directories(core1_bridge PRIVATE
     ${UI_DIR}
     ${PSRAM_DIR}
     ${IME_DIR}
+    ${MESSAGES_DIR}
     ${DEBUG_DIR}
     ${SEGGER_DIR}/RTT
     ${SEGGER_DIR}/Config
