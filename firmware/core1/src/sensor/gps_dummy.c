@@ -9,6 +9,7 @@
 
 #include "gps_dummy.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,7 +20,7 @@
 #include "ipc_shared_layout.h"
 #include "ipc_protocol.h"
 
-#define DUMMY_PERIOD_MS 1000u
+#define DUMMY_PERIOD_MS 500u  /* Alternates GGA / RMC each tick → 1 Hz per type */
 
 /* Taipei fixed coordinates (user-supplied for M3.5 dummy validation). */
 #define DUMMY_LAT_DEG    25
@@ -42,17 +43,23 @@ static uint8_t nmea_checksum(const char *body, size_t len)
     return cs;
 }
 
-/* Format one GGA sentence into `out` (caller-sized ≥ 96 B).
- * Returns total byte length, including trailing CRLF. */
+/* Common helper: wrap body with leading '$' and trailing '*XX\r\n'. */
+static int finalize_nmea(char *out, size_t cap, const char *body, size_t body_len)
+{
+    uint8_t cs = nmea_checksum(body, body_len);
+    int total = snprintf(out, cap, "$%s*%02X\r\n", body, cs);
+    if (total <= 0 || (size_t)total >= cap) return -1;
+    return total;
+}
+
+/* GGA — position + fix quality + altitude. Time only (no date). */
 static int format_gga(char *out, size_t cap, uint32_t seconds_since_boot)
 {
-    /* Wrap to 24 h so the field never overflows. */
     uint32_t t = seconds_since_boot % 86400u;
     unsigned hh = (unsigned)(t / 3600u);
     unsigned mm = (unsigned)((t / 60u) % 60u);
     unsigned ss = (unsigned)(t % 60u);
 
-    /* GGA body without leading '$' and trailing '*XX\r\n'. */
     char body[96];
     int body_len = snprintf(body, sizeof(body),
         "GPGGA,%02u%02u%02u.00,"
@@ -74,17 +81,38 @@ static int format_gga(char *out, size_t cap, uint32_t seconds_since_boot)
         (int)(DUMMY_ALT_DM / 10),
         (int)(DUMMY_ALT_DM % 10));
 
-    if (body_len <= 0 || (size_t)body_len >= sizeof(body)) {
-        return -1;
-    }
+    if (body_len <= 0 || (size_t)body_len >= sizeof(body)) return -1;
+    return finalize_nmea(out, cap, body, (size_t)body_len);
+}
 
-    uint8_t cs = nmea_checksum(body, (size_t)body_len);
+/* RMC — recommended-minimum sentence with date. Meshtastic's lookForLocation
+ * rejects fixes whose `date` is too old (line 1772 of GPS.cpp), so we have
+ * to publish a date even though the dummy clock has no real wall time. Use
+ * a fixed 2026-04-26 — the date is just a TinyGPS validity gate, not a
+ * value that gets surfaced to the user. */
+static int format_rmc(char *out, size_t cap, uint32_t seconds_since_boot)
+{
+    uint32_t t = seconds_since_boot % 86400u;
+    unsigned hh = (unsigned)(t / 3600u);
+    unsigned mm = (unsigned)((t / 60u) % 60u);
+    unsigned ss = (unsigned)(t % 60u);
 
-    int total = snprintf(out, cap, "$%s*%02X\r\n", body, cs);
-    if (total <= 0 || (size_t)total >= cap) {
-        return -1;
-    }
-    return total;
+    char body[96];
+    int body_len = snprintf(body, sizeof(body),
+        "GPRMC,%02u%02u%02u.00,A,"
+        "%02u%02u.%05lu,N,"
+        "%03u%02u.%05lu,E,"
+        "0.00,0.00,260426,,,A",
+        hh, mm, ss,
+        (unsigned)DUMMY_LAT_DEG,
+        (unsigned)(DUMMY_LAT_MIN_X1E5 / 100000u),
+        (unsigned long)(DUMMY_LAT_MIN_X1E5 % 100000u),
+        (unsigned)DUMMY_LON_DEG,
+        (unsigned)(DUMMY_LON_MIN_X1E5 / 100000u),
+        (unsigned long)(DUMMY_LON_MIN_X1E5 % 100000u));
+
+    if (body_len <= 0 || (size_t)body_len >= sizeof(body)) return -1;
+    return finalize_nmea(out, cap, body, (size_t)body_len);
 }
 
 static void gps_dummy_task(void *pv)
@@ -100,15 +128,28 @@ static void gps_dummy_task(void *pv)
     gps->len[1] = 0;
 
     TickType_t last = xTaskGetTickCount();
+    bool send_rmc = false;
     for (;;) {
         char sentence[128];
-        int n = format_gga(sentence, sizeof(sentence), s_seconds++);
+        int n;
+        if (send_rmc) {
+            n = format_rmc(sentence, sizeof(sentence), s_seconds);
+        } else {
+            n = format_gga(sentence, sizeof(sentence), s_seconds);
+            ++s_seconds;  /* Bump the second once per GGA/RMC pair. */
+        }
+        send_rmc = !send_rmc;
 
         if (n > 0 && (size_t)n <= sizeof(gps->buf[0])) {
-            uint8_t next = (uint8_t)(gps->write_idx ^ 1u);
-            memcpy(gps->buf[next], sentence, (size_t)n);
-            gps->len[next] = (uint8_t)n;
-            __atomic_store_n(&gps->write_idx, next, __ATOMIC_RELEASE);
+            /* Per ipc_protocol.h IpcGpsBuf contract: write_idx is the slot
+             * Core 1 currently owns; reader (Core 0) reads buf[write_idx ^ 1].
+             * So we write into buf[write_idx], then flip write_idx — that
+             * makes the just-finished slot visible to the reader as
+             * buf[(new write_idx) ^ 1]. */
+            uint8_t cur = gps->write_idx;
+            memcpy(gps->buf[cur], sentence, (size_t)n);
+            gps->len[cur] = (uint8_t)n;
+            __atomic_store_n(&gps->write_idx, (uint8_t)(cur ^ 1u), __ATOMIC_RELEASE);
         }
 
         vTaskDelayUntil(&last, pdMS_TO_TICKS(DUMMY_PERIOD_MS));
