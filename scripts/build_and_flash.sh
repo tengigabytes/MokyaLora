@@ -5,29 +5,47 @@
 # Flash layout (W25Q128JW, 16 MB):
 #   0x10000000  Core 0 Meshtastic image   (2 MB slot)
 #   0x10200000  Core 1 bridge image       (2 MB slot)
-#   0x10400000  MIE dictionary (MDBL blob, 6 MB reserved, ~5 MB used)
+#   0x10400000  MIE dictionary (MIE4 blob, 6 MB reserved, ~4 MB used)
 #   0x10A00000  MIE font blob (MIEF, 2 MB reserved)
 #   0x10C00000  MIE LRU persist           (64 KB reserved, Phase 1.6)
 #   0x10C10000  Free / future LittleFS    (~3.94 MB)
 #
 # Run from project root:
-#   bash scripts/build_and_flash.sh          # build + flash everything (MDBL v2 dict)
+#   bash scripts/build_and_flash.sh          # build + flash everything (MIE4 v4 dict, default)
 #   bash scripts/build_and_flash.sh --core1  # build + flash ONLY Core 1 image —
 #                                            # preserves whatever dict/font are
 #                                            # already on the board (use this for
 #                                            # fast Core 1 iteration)
-#   bash scripts/build_and_flash.sh --dict   # flash dict blob only
+#   bash scripts/build_and_flash.sh --dict   # flash dict blob only (v4)
 #   bash scripts/build_and_flash.sh --font   # flash font blob only
-#   bash scripts/build_and_flash.sh --v4     # flash MIED v4 (composition) dict
-#                                            # in place of MDBL — Core 1 firmware
-#                                            # auto-detects via MIE4 magic
+#   bash scripts/build_and_flash.sh --v4     # NO-OP alias (v4 is now default;
+#                                            # kept for backward compat with
+#                                            # older muscle memory / docs)
+#   bash scripts/build_and_flash.sh --v2-deprecated [--dict]
+#                                            # Escape hatch: flash the legacy
+#                                            # MDBL v2 dict. RETIRED 2026-04-26
+#                                            # (P3-5) — opt-in only, prints a
+#                                            # loud warning. Reach for this
+#                                            # only when bisecting v4 vs v2
+#                                            # behaviour.
+#
+# v2 (MDBL) retirement notes:
+# - Default has been v4 (MIE4) since 2026-04-26. All performance baselines
+#   (~430 ms/char with --user-sim) are measured against v4 + the personalised
+#   LRU cache; v2 hits ~1700 ms/char and has different candidate rankings.
+# - The v2 generator (`firmware/mie/tools/gen_dict.py` --output-dir) is kept
+#   as archaeology; binaries at firmware/mie/data/dict_dat.bin and
+#   dict_values.bin are likewise kept (see README in that dir) but should
+#   not be flashed except via the explicit --v2-deprecated escape hatch.
+# - Core 1 still auto-detects MDBL vs MIE4 by magic, so the v2 path stays
+#   functional. ime_text_test.py refuses to run against an MDBL flash and
+#   will direct the user back here.
 #
 # IMPORTANT: --core1 used to ALSO reflash dict + font, which silently overwrote
-# a prior --v4 MIE4 dict with the default MDBL v2 build. Symptom was
-# ime_text_test timing out after a "quick Core 1 flash" because the v2 dict
-# has different candidate rankings than v4. Fixed 2026-04-24 to keep --core1
-# strictly Core-1-only; combine with --dict / --font / --v4 if you need
-# those partitions refreshed.
+# a prior --v4 MIE4 dict with the default MDBL v2 build (bug fixed 2026-04-24).
+# That bug was the original motivation for retiring v2 — even with --core1
+# tightened, having the no-flag default produce v2 made it too easy to
+# accidentally regress.
 #
 # Requires: PlatformIO, VS Build Tools 2019, ARM GCC, Ninja, Pico SDK,
 #           J-Link Ultra connected via SWD.
@@ -45,19 +63,37 @@ FONT_ADDR="0x10A00000"
 CORE1_ONLY=false
 DICT_ONLY=false
 FONT_ONLY=false
-USE_V4=false
+# v4 (MIE4) is now the default. --v4 is kept as a no-op alias; --v2-deprecated
+# is the only way to opt back into the retired MDBL v2 path.
+USE_V4=true
+V2_DEPRECATED_OPT_IN=false
 
 for arg in "$@"; do
     case "$arg" in
-        --core1) CORE1_ONLY=true ;;
-        --dict)  DICT_ONLY=true ;;
-        --font)  FONT_ONLY=true ;;
-        --v4)    USE_V4=true ;;
+        --core1)          CORE1_ONLY=true ;;
+        --dict)           DICT_ONLY=true ;;
+        --font)           FONT_ONLY=true ;;
+        --v4)             USE_V4=true ;;        # no-op, default
+        --v2-deprecated)  V2_DEPRECATED_OPT_IN=true ;;
     esac
 done
 
-# When --v4 is set, swap the dict source to the MIED v4 single binary.
-# Core 1's mie_dict_loader auto-detects by magic byte.
+if [ "$V2_DEPRECATED_OPT_IN" = true ]; then
+    USE_V4=false
+    cat >&2 <<'EOF'
+================================================================
+WARNING: --v2-deprecated selected. Flashing legacy MDBL v2 dict.
+  - v2 was retired 2026-04-26 (P3-5). All current perf baselines
+    are measured against v4. v2 ranks differently and benchmarks
+    on v2 will look ~4× slower than v4.
+  - ime_text_test.py refuses to run against an MDBL flash; if you
+    just want a working device, drop --v2-deprecated and rerun.
+  - Continuing in 3 s. Ctrl-C to abort.
+================================================================
+EOF
+    sleep 3
+fi
+
 if [ "$USE_V4" = true ]; then
     if [ ! -f "$DICT_BLOB_V4" ]; then
         echo "ERROR: $DICT_BLOB_V4 not found."
@@ -69,7 +105,9 @@ if [ "$USE_V4" = true ]; then
         exit 1
     fi
     DICT_BLOB="$DICT_BLOB_V4"
-    echo "=== --v4 mode: dict will be flashed from $DICT_BLOB ==="
+    echo "=== Dict source: MIE4 v4 (default) — $DICT_BLOB ==="
+else
+    echo "=== Dict source: MDBL v2 (DEPRECATED) — will rebuild via mie-host ==="
 fi
 
 # ── Core 0: PlatformIO build ────────────────────────────────────────────
@@ -111,7 +149,7 @@ if [ "$DICT_ONLY" = false ] && [ "$FONT_ONLY" = false ]; then
     fi
 fi
 
-# ── Dict blob: CMake/MSBuild via mie-host (MDBL v2) or pre-built v4 ────
+# ── Dict blob: pre-built v4 (default) or CMake/MSBuild MDBL v2 (deprecated) ────
 # --core1 skips this section entirely: the flash step below won't reflash
 # the dict partition either, so preserving whatever is already there wins
 # over wasted build time + the real footgun of downgrading a prior --v4
