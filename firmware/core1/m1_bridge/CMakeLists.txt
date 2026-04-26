@@ -201,6 +201,7 @@ add_executable(core1_bridge
     ${UI_DIR}/font_test_view.c
     ${UI_DIR}/ime_view.c
     ${UI_DIR}/messages_view.c
+    ${UI_DIR}/nodes_view.c
     ${UI_DIR}/view_router.c
     ${PSRAM_DIR}/psram.c
     ${IME_DIR}/mie_dict_loader.c
@@ -223,6 +224,7 @@ add_executable(core1_bridge
     ${MESSAGES_DIR}/messages_inbox.c
     ${MESSAGES_DIR}/messages_send.c
     ${MESSAGES_DIR}/messages_tx_status.c
+    ${MESSAGES_DIR}/nodes_db.c
 )
 
 # SEGGER_RTT.c triggers -Wcast-qual and -Wcast-align under our default

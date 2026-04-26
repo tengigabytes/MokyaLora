@@ -84,6 +84,7 @@
 #include "key_inject_rtt.h"
 #include "messages_inbox.h"
 #include "messages_tx_status.h"
+#include "nodes_db.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -259,6 +260,30 @@ static void bridge_task(void *pv)
                 reboot_pending = true;
                 did_work = true;
                 continue;   /* skip the rest of this iteration */
+            }
+
+            if (hdr.msg_id == IPC_MSG_NODE_UPDATE &&
+                hdr.payload_len >= sizeof(IpcPayloadNodeUpdate)) {
+                const IpcPayloadNodeUpdate *u =
+                    (const IpcPayloadNodeUpdate *)scratch;
+                uint16_t header_size =
+                    (uint16_t)offsetof(IpcPayloadNodeUpdate, alias);
+                uint8_t alias_len = u->alias_len;
+                if ((uint16_t)header_size + alias_len > hdr.payload_len) {
+                    /* defend against producer-side length lie */
+                    alias_len = (uint8_t)(hdr.payload_len - header_size);
+                }
+                nodes_db_upsert(u->node_id,
+                                u->rssi,
+                                u->snr_x4,
+                                u->hops_away,
+                                u->lat_e7,
+                                u->lon_e7,
+                                u->battery_mv,
+                                u->alias,
+                                alias_len);
+                did_work = true;
+                continue;
             }
 
             if (hdr.msg_id == IPC_MSG_TX_ACK &&

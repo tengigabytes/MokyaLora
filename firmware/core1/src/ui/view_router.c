@@ -8,6 +8,7 @@
 #include "font_test_view.h"
 #include "ime_view.h"
 #include "messages_view.h"
+#include "nodes_view.h"
 #include "mie/keycode.h"
 
 /* ── View table ──────────────────────────────────────────────────────── *
@@ -27,7 +28,7 @@ typedef struct {
     view_refresh_fn   refresh;
 } view_entry_t;
 
-#define VIEW_COUNT  5
+#define VIEW_COUNT  6
 static view_entry_t s_views[VIEW_COUNT];
 static int          s_view_router_active;
 
@@ -87,7 +88,13 @@ void view_router_init(lv_obj_t *screen)
     s_views[4].refresh = messages_view_refresh;
     messages_view_init(s_views[4].panel);
 
-    activate(0);   /* keypad_view visible at boot; FUNC cycles keypad → rf → font_test → ime → messages */
+    s_views[5].name    = "nodes";
+    s_views[5].panel   = make_panel(screen);
+    s_views[5].apply   = nodes_view_apply;
+    s_views[5].refresh = nodes_view_refresh;
+    nodes_view_init(s_views[5].panel);
+
+    activate(0);   /* keypad_view visible at boot; FUNC cycles keypad → rf → font_test → ime → messages → nodes */
 }
 
 void view_router_tick(void)

@@ -25,7 +25,7 @@
 #include <stdint.h>
 
 #define MESSAGES_INBOX_TEXT_MAX  200u
-#define MESSAGES_INBOX_CAPACITY    8u   /* FIFO depth — Phase 2 minimum */
+#define MESSAGES_INBOX_CAPACITY    4u   /* FIFO depth — Phase 2 minimum */
 
 #ifdef __cplusplus
 extern "C" {

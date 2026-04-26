@@ -56,7 +56,7 @@ IME_CAND_FULL_MAGIC = 0xECA11100
 IME_CAND_FULL_MAX   = 100
 IME_CAND_FULL_WLEN  = 24
 IME_CAND_FULL_SIZE  = 16 + IME_CAND_FULL_MAX * IME_CAND_FULL_WLEN  # 2416
-VIEW_COUNT      = 4
+VIEW_COUNT      = 6   # M5P2: keypad → rf → font_test → ime → messages → nodes
 IME_VIEW_INDEX  = 3
 
 # ime_view_debug_t v0003 offsets
