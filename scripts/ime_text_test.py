@@ -59,6 +59,14 @@ IME_CAND_FULL_SIZE  = 16 + IME_CAND_FULL_MAX * IME_CAND_FULL_WLEN  # 2416
 VIEW_COUNT      = 6   # M5P2: keypad → rf → font_test → ime → messages → nodes
 IME_VIEW_INDEX  = 3
 
+# Flash partition holding the dict blob. We probe the first 4 bytes via SWD
+# at startup so we can refuse to run against a stale MDBL v2 flash — v2 has
+# different candidate rankings, so passing a v4-built test passage against
+# v2 produces nonsense pass/fail noise. v2 was retired 2026-04-26 (P3-5).
+DICT_PARTITION_ADDR = 0x10400000
+MIE4_MAGIC          = 0x3445494D   # 'MIE4'
+MDBL_MAGIC          = 0x4C42444D   # 'MDBL' — retired
+
 # ime_view_debug_t v0003 offsets
 OFF_MAGIC, OFF_SEQ, OFF_REFRESH, OFF_CAND, OFF_SELECTED = 0,4,8,0xC,0x10
 OFF_WORDS = 0x14
@@ -591,7 +599,13 @@ def main():
                     'frames through the SEGGER RTT down-channel — same '
                     'debugger, but bypasses the ring (faster bursts, '
                     'avoids the ring-wrap pitfall).')
-    ap.add_argument('--dict', default='firmware/mie/data/dict_mie_v4.bin')
+    ap.add_argument('--dict', default='firmware/mie/data/dict_mie_v4.bin',
+                    help='Path to a MIE4 (v4) dict blob. The legacy MDBL v2 '
+                         'format is retired (P3-5, 2026-04-26) and rejected '
+                         'here — both for the host-side dict file and for '
+                         'whatever the device has on flash.')
+    ap.add_argument('--allow-mdbl-flash', action='store_true',
+                    help=argparse.SUPPRESS)  # diagnostic-only escape hatch
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--no-commit', action='store_true')
     ap.add_argument('--reset-every-n', type=int, default=0,
@@ -625,6 +639,26 @@ def main():
                          'when users have learned the new semantics.')
     args = ap.parse_args()
 
+    # Reject host-side MDBL before we even look at the passage — v2 is retired
+    # (P3-5, 2026-04-26) and read_v4 below would crash on its header.
+    dict_path = Path(args.dict)
+    if not dict_path.exists():
+        print(f"ERROR: dict not found: {dict_path}", file=sys.stderr); sys.exit(1)
+    head4 = dict_path.read_bytes()[:4]
+    if len(head4) < 4:
+        print(f"ERROR: {dict_path} shorter than 4 bytes", file=sys.stderr); sys.exit(1)
+    host_magic_pre = struct.unpack_from('<I', head4, 0)[0]
+    if host_magic_pre == MDBL_MAGIC:
+        print(f"ERROR: {dict_path} is a retired MDBL v2 dict.\n"
+              f"  Build a v4 blob (firmware/mie/data/dict_mie_v4.bin) and\n"
+              f"  retry. See scripts/build_and_flash.sh header for how to\n"
+              f"  regenerate via gen_dict.py --v4-output.", file=sys.stderr)
+        sys.exit(2)
+    if host_magic_pre != MIE4_MAGIC:
+        print(f"ERROR: {dict_path} has unknown magic 0x{host_magic_pre:08X} "
+              f"(expected MIE4 = 0x{MIE4_MAGIC:08X})", file=sys.stderr)
+        sys.exit(2)
+
     if args.stdin: text = sys.stdin.read()
     elif args.path: text = Path(args.path).read_text(encoding='utf-8')
     else: print("need path or --stdin", file=sys.stderr); sys.exit(1)
@@ -635,7 +669,7 @@ def main():
     if args.limit: chars = chars[:args.limit]
     if not chars: print("no testable chars"); return
 
-    d = read_v4(Path(args.dict).read_bytes())
+    d = read_v4(dict_path.read_bytes())
     ch_to_cid = {ch: cid for cid, (ch, _) in enumerate(d['char_table'])}
     keymap = load_keycode_map()
 
@@ -683,6 +717,25 @@ def main():
         print(f"CJK chars not in dict ({len(absent)}): " + ''.join(list(absent)[:40]))
 
     with MokyaSwd(elf=args.elf) as swd:
+        # Probe the dict partition magic via XIP read. If MDBL is on flash
+        # the engine is happily loading v2 candidates that won't match the
+        # host v4 dict's expected rankings — refuse rather than silently
+        # produce confusing miss/COMMIT-FAIL output.
+        flash_magic = swd.read_u32(DICT_PARTITION_ADDR)
+        if flash_magic == MDBL_MAGIC and not args.allow_mdbl_flash:
+            print(f"ERROR: device flash @ 0x{DICT_PARTITION_ADDR:08X} holds "
+                  f"a retired MDBL v2 dict.\n"
+                  f"  Reflash with: bash scripts/build_and_flash.sh --dict\n"
+                  f"  (default is now MIE4 v4 — no flag needed since 2026-04-26)",
+                  file=sys.stderr)
+            sys.exit(3)
+        if flash_magic != MIE4_MAGIC and not args.allow_mdbl_flash:
+            print(f"ERROR: device flash @ 0x{DICT_PARTITION_ADDR:08X} has "
+                  f"magic 0x{flash_magic:08X}, expected MIE4 "
+                  f"(0x{MIE4_MAGIC:08X}).\n"
+                  f"  Reflash with: bash scripts/build_and_flash.sh --dict",
+                  file=sys.stderr)
+            sys.exit(3)
         drv = ImeDriver(swd, keymap, transport=args.transport)
         drv.check_alive()
         drv.cycle_view_to(IME_VIEW_INDEX)

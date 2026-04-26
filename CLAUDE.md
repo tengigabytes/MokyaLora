@@ -195,8 +195,27 @@ PICO_SDK_PATH=/c/pico-sdk cmake -S firmware/core1/m1_bridge \
 
 # Data generation tools
 python firmware/mie/tools/gen_font.py   # produces font_glyphs.bin + font_index.bin
-python firmware/mie/tools/gen_dict.py   # produces dict_dat.bin + dict_values.bin
+# MIE4 v4 dict (default, what build_and_flash.sh consumes):
+python firmware/mie/tools/gen_dict.py \
+    --libchewing firmware/mie/data_sources/tsi.csv \
+    --zh-max-abbr-syls 4 \
+    --v4-output firmware/mie/data/dict_mie_v4.bin \
+    --output-dir /tmp/mie_v2_throwaway
+# Legacy MDBL v2 (RETIRED 2026-04-26, P3-5 — kept only for archaeology):
+# python firmware/mie/tools/gen_dict.py   # produces dict_dat.bin + dict_values.bin
 ```
+
+### Dict format
+
+The MIE dictionary is **MIE4 v4** (single blob, magic `MIE4`). v4 is the only
+format the default `bash scripts/build_and_flash.sh` produces and the only
+format `scripts/ime_text_test.py` accepts. The legacy MDBL v2 pack (four
+files: `dict_dat.bin`, `dict_values.bin`, `en_dat.bin`, `en_values.bin`)
+was **retired 2026-04-26 (P3-5)**. Core 1's `mie_dict_loader.c` still
+magic-dispatches to a v2 path so an out-of-date flash boots, but it sets
+`g_mie_dict_format = MIE_DICT_FMT_MDBL_DEPRECATED` so SWD inspection
+catches it. Do not reintroduce v2 as a default; the escape hatch is
+`bash scripts/build_and_flash.sh --v2-deprecated --dict` for bisecting only.
 
 ## Hardware Debug Toolchain
 

@@ -53,6 +53,7 @@
 #define PSRAM_EN_VAL_BUDGET 0x00040000u  /* 256 KB — current 36 KB + growth */
 
 volatile uint32_t g_mie_dict_load_status = MIE_DICT_LOAD_NONE;
+volatile uint32_t g_mie_dict_format      = MIE_DICT_FMT_NONE;
 
 /* v4 single-blob loader: copies the entire MIE4 binary to the start of
  * PSRAM and exposes a (ptr, size) pair via out->v4_blob.
@@ -149,7 +150,15 @@ bool mie_dict_load_to_psram(mie_dict_pointers_t *out)
     uint32_t magic = 0;
     memcpy(&magic, blob_base, sizeof(magic));
     if (magic == MIE_MIE4_MAGIC) {
+        g_mie_dict_format = MIE_DICT_FMT_MIE4;
         return mie_dict_load_v4_to_psram(out, blob_base);
+    }
+
+    /* MDBL path retired 2026-04-26 (P3-5). Still functional so a stale
+     * flash boots, but flag it so SWD inspectors and the IME view banner
+     * can prompt for a reflash. */
+    if (magic == MIE_MDBL_MAGIC) {
+        g_mie_dict_format = MIE_DICT_FMT_MDBL_DEPRECATED;
     }
 
     const mie_mdbl_header_t *hdr = (const mie_mdbl_header_t *)blob_base;

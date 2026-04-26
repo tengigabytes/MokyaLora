@@ -75,6 +75,20 @@ bool mie_dict_load_to_psram(mie_dict_pointers_t *out);
 /* SWD-observable load status (from the enum above). */
 extern volatile uint32_t g_mie_dict_load_status;
 
+/* SWD-observable dict format actually loaded. Set by mie_dict_load_to_psram
+ * after magic dispatch. The MDBL v2 path was retired 2026-04-26 (P3-5);
+ * if this reads MIE_DICT_FMT_MDBL_DEPRECATED at runtime, the device is
+ * running a retired blob and should be reflashed via
+ * `bash scripts/build_and_flash.sh --dict` (default is now v4). The IME
+ * view also surfaces this as a banner so it's not just SWD-only. */
+typedef enum {
+    MIE_DICT_FMT_NONE              = 0,
+    MIE_DICT_FMT_MIE4              = 1,
+    MIE_DICT_FMT_MDBL_DEPRECATED   = 2,
+} mie_dict_format_t;
+
+extern volatile uint32_t g_mie_dict_format;
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
