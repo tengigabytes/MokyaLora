@@ -7,10 +7,64 @@
 
 #include "messages_inbox.h"
 #include "mie_font.h"
+#include "mie/keycode.h"
 
+/* Three-line layout:
+ *   header  (green)   — "From 0xNNNNNNNN  ch%d"   at y=0
+ *   body    (white)   — wrapped UTF-8             at y=24, fills middle
+ *   footer  (gray)    — "msg N/M"                 at bottom
+ */
 static lv_obj_t *s_header;
 static lv_obj_t *s_body;
-static uint32_t  s_last_seen_seq;
+static lv_obj_t *s_footer;
+
+/* Browse offset — 0 = newest message; increments mean older.
+ * `s_sticky_to_newest` keeps offset pinned at 0 so a fresh arrival
+ * automatically displays. The user breaks stickiness by pressing UP. */
+static uint32_t s_offset;
+static bool     s_sticky_to_newest = true;
+
+/* Latest seq we've already rendered for the current offset, so we
+ * skip redundant lv_label_set_text calls. */
+static uint32_t s_displayed_seq;
+
+static void render_offset(uint32_t offset)
+{
+    messages_inbox_entry_t entry;
+    if (!messages_inbox_take_at_offset(offset, &entry)) {
+        lv_label_set_text(s_header, "(no messages yet)");
+        lv_label_set_text(s_body, "");
+        lv_label_set_text(s_footer, "msg 0/0");
+        s_displayed_seq = 0;
+        return;
+    }
+
+    char hdr[64];
+    snprintf(hdr, sizeof(hdr),
+             "From 0x%08lx  ch%u",
+             (unsigned long)entry.from_node_id,
+             (unsigned)entry.channel_index);
+    lv_label_set_text(s_header, hdr);
+
+    char body[MESSAGES_INBOX_TEXT_MAX + 1];
+    uint16_t n = entry.text_len;
+    if (n > MESSAGES_INBOX_TEXT_MAX) n = MESSAGES_INBOX_TEXT_MAX;
+    if (n > 0) memcpy(body, entry.text, n);
+    body[n] = '\0';
+    lv_label_set_text(s_body, body);
+
+    /* Footer: "msg N/M" where N is 1-indexed position from oldest, M is
+     * total count. So offset 0 (newest) = "msg M/M". */
+    uint32_t total = messages_inbox_count();
+    uint32_t shown = (total > offset) ? (total - offset) : 0u;
+    char foot[32];
+    snprintf(foot, sizeof(foot), "msg %lu/%lu",
+             (unsigned long)shown,
+             (unsigned long)total);
+    lv_label_set_text(s_footer, foot);
+
+    s_displayed_seq = entry.seq;
+}
 
 void messages_view_init(lv_obj_t *panel)
 {
@@ -34,37 +88,67 @@ void messages_view_init(lv_obj_t *panel)
     lv_obj_set_style_text_line_space(s_body, 4, 0);
     lv_label_set_text(s_body, "");
     lv_obj_set_pos(s_body, 0, 24);
-    lv_obj_set_size(s_body, 312, 240 - 24 - 8);
+    lv_obj_set_size(s_body, 312, 240 - 24 - 24);
+
+    s_footer = lv_label_create(panel);
+    if (f16) lv_obj_set_style_text_font(s_footer, f16, 0);
+    lv_obj_set_style_text_color(s_footer, lv_color_hex(0x808080), 0);
+    lv_label_set_text(s_footer, "msg 0/0");
+    lv_obj_set_pos(s_footer, 0, 240 - 24);
+    lv_obj_set_width(s_footer, 312);
 }
 
 void messages_view_apply(const key_event_t *ev)
 {
-    (void)ev;
-    /* Phase 1 has no scrolling / dismiss / reply yet. */
+    if (!ev || !ev->pressed) return;
+
+    uint32_t total = messages_inbox_count();
+    if (total == 0) return;
+
+    if (ev->keycode == MOKYA_KEY_UP) {
+        /* UP = older. Cap at the oldest available (offset = total-1). */
+        if (s_offset + 1u < total) {
+            s_offset++;
+        }
+        s_sticky_to_newest = false;
+        render_offset(s_offset);
+    } else if (ev->keycode == MOKYA_KEY_DOWN) {
+        /* DOWN = newer. Reaching offset 0 re-arms sticky-to-newest. */
+        if (s_offset > 0u) {
+            s_offset--;
+        }
+        if (s_offset == 0u) {
+            s_sticky_to_newest = true;
+        }
+        render_offset(s_offset);
+    }
 }
 
 void messages_view_refresh(void)
 {
-    messages_inbox_snapshot_t snap;
-    if (!messages_inbox_take_if_new(s_last_seen_seq, &snap)) {
+    uint32_t latest = messages_inbox_latest_seq();
+    if (latest == 0u) {
+        if (s_displayed_seq != 0u) {
+            render_offset(0);
+        }
         return;
     }
-    s_last_seen_seq = snap.seq;
 
-    char hdr[64];
-    /* Meshtastic node IDs are typically rendered as 0x________ (8 hex). */
-    snprintf(hdr, sizeof(hdr),
-             "From 0x%08lx  ch%u",
-             (unsigned long)snap.from_node_id,
-             (unsigned)snap.channel_index);
-    lv_label_set_text(s_header, hdr);
+    /* Sticky-to-newest: a fresh arrival re-renders at offset 0 even if
+     * the user is currently browsing — but only when sticky is set.
+     * If they pressed UP they get to stay at their offset until they
+     * either DOWN-back-to-0 or switch views. */
+    if (s_sticky_to_newest) {
+        s_offset = 0u;
+    }
 
-    /* Body — copy with explicit null termination since IpcPayloadText
-     * carries an explicit length and no terminator. */
-    char body[MESSAGES_INBOX_TEXT_MAX + 1];
-    uint16_t n = snap.text_len;
-    if (n > MESSAGES_INBOX_TEXT_MAX) n = MESSAGES_INBOX_TEXT_MAX;
-    if (n > 0) memcpy(body, snap.text, n);
-    body[n] = '\0';
-    lv_label_set_text(s_body, body);
+    /* Re-render if our cached seq for the current offset is stale.
+     * This catches both "new message arrived at sticky offset 0" and
+     * "ring buffer eviction shifted what offset N points at". */
+    messages_inbox_entry_t peek;
+    if (messages_inbox_take_at_offset(s_offset, &peek)) {
+        if (peek.seq != s_displayed_seq) {
+            render_offset(s_offset);
+        }
+    }
 }
