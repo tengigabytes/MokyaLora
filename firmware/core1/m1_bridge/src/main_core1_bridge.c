@@ -83,6 +83,7 @@
 #include "key_inject.h"
 #include "key_inject_rtt.h"
 #include "messages_inbox.h"
+#include "messages_tx_status.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -258,6 +259,18 @@ static void bridge_task(void *pv)
                 reboot_pending = true;
                 did_work = true;
                 continue;   /* skip the rest of this iteration */
+            }
+
+            if (hdr.msg_id == IPC_MSG_TX_ACK &&
+                hdr.payload_len >= sizeof(IpcPayloadTxAck)) {
+                const IpcPayloadTxAck *a =
+                    (const IpcPayloadTxAck *)scratch;
+                messages_tx_status_publish(a->seq,
+                                           a->result,
+                                           a->error_reason,
+                                           a->packet_id);
+                did_work = true;
+                continue;
             }
 
             if (hdr.msg_id == IPC_MSG_RX_TEXT &&

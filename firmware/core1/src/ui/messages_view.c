@@ -7,6 +7,7 @@
 
 #include "messages_inbox.h"
 #include "messages_send.h"
+#include "messages_tx_status.h"
 #include "mie_font.h"
 #include "mie/keycode.h"
 #include "ime_task.h"
@@ -29,6 +30,15 @@ static bool     s_sticky_to_newest = true;
 /* Latest seq we've already rendered for the current offset, so we
  * skip redundant lv_label_set_text calls. */
 static uint32_t s_displayed_seq;
+
+/* Outgoing-send tracking for footer overlay. While the user is waiting
+ * on TX_ACK feedback for their last send, the footer shows status
+ * instead of the "msg N/M" navigation indicator. UP/DOWN clears the
+ * pending state so navigation always wins back the footer. */
+static bool     s_pending_tx_active;
+static uint8_t  s_pending_tx_seq;
+static uint32_t s_pending_tx_target;
+static uint32_t s_last_tx_change_seq;
 
 static void render_offset(uint32_t offset)
 {
@@ -136,16 +146,21 @@ void messages_view_apply(const key_event_t *ev)
             return;
         }
 
+        uint8_t sent_seq = 0u;
         bool ok = messages_send_text(target.from_node_id,
                                      target.channel_index,
                                      /*want_ack=*/true,
                                      send_buf,
-                                     send_len);
+                                     send_len,
+                                     &sent_seq);
         if (ok) {
             ime_view_clear_text();
+            s_pending_tx_active = true;
+            s_pending_tx_seq    = sent_seq;
+            s_pending_tx_target = target.from_node_id;
             char foot[48];
             snprintf(foot, sizeof(foot),
-                     "sent → 0x%08lx",
+                     "sending → 0x%08lx",
                      (unsigned long)target.from_node_id);
             lv_label_set_text(s_footer, foot);
         } else {
@@ -163,6 +178,7 @@ void messages_view_apply(const key_event_t *ev)
             s_offset++;
         }
         s_sticky_to_newest = false;
+        s_pending_tx_active = false;   /* nav wins back the footer */
         render_offset(s_offset);
     } else if (ev->keycode == MOKYA_KEY_DOWN) {
         /* DOWN = newer. Reaching offset 0 re-arms sticky-to-newest. */
@@ -172,8 +188,59 @@ void messages_view_apply(const key_event_t *ev)
         if (s_offset == 0u) {
             s_sticky_to_newest = true;
         }
+        s_pending_tx_active = false;
         render_offset(s_offset);
     }
+}
+
+/* If a TX_ACK has arrived for our most recent send, repaint the footer
+ * with the new status. delivered/failed both stay until the user
+ * navigates (UP/DOWN) — gives them time to read the result.
+ * Returns true when the footer was overlaid (caller should skip the
+ * inbox-driven footer text for this tick). */
+static bool maybe_render_tx_status_footer(void)
+{
+    if (!s_pending_tx_active) return false;
+
+    messages_tx_status_t tx;
+    messages_tx_status_get(&tx);
+    if (tx.change_seq == s_last_tx_change_seq) {
+        /* Nothing new since the last refresh; keep whatever the footer
+         * currently shows ("sending → ..." or a previously rendered
+         * delivered/failed). */
+        return true;
+    }
+    s_last_tx_change_seq = tx.change_seq;
+
+    if (tx.ipc_seq != s_pending_tx_seq) {
+        /* TX status is for a different send (shouldn't happen with our
+         * single-message-at-a-time UX but be defensive). */
+        return true;
+    }
+
+    char foot[64];
+    switch (tx.result) {
+    case MESSAGES_TX_RESULT_SENDING:
+        snprintf(foot, sizeof(foot),
+                 "sending → 0x%08lx",
+                 (unsigned long)s_pending_tx_target);
+        break;
+    case MESSAGES_TX_RESULT_DELIVERED:
+        snprintf(foot, sizeof(foot),
+                 "delivered → 0x%08lx",
+                 (unsigned long)s_pending_tx_target);
+        break;
+    case MESSAGES_TX_RESULT_FAILED:
+        snprintf(foot, sizeof(foot),
+                 "failed (err %u) → 0x%08lx",
+                 (unsigned)tx.error_reason,
+                 (unsigned long)s_pending_tx_target);
+        break;
+    default:
+        return true;
+    }
+    lv_label_set_text(s_footer, foot);
+    return true;
 }
 
 void messages_view_refresh(void)
@@ -183,6 +250,7 @@ void messages_view_refresh(void)
         if (s_displayed_seq != 0u) {
             render_offset(0);
         }
+        (void)maybe_render_tx_status_footer();
         return;
     }
 
@@ -201,6 +269,11 @@ void messages_view_refresh(void)
     if (messages_inbox_take_at_offset(s_offset, &peek)) {
         if (peek.seq != s_displayed_seq) {
             render_offset(s_offset);
+            /* render_offset just rewrote the footer to "msg N/M".
+             * If a send is in-flight, replay the TX status overlay
+             * (next refresh will pick up any newer change_seq too). */
         }
     }
+
+    (void)maybe_render_tx_status_footer();
 }
