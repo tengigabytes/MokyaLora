@@ -361,12 +361,48 @@ void handle_command(const char *cmd) {
         psram_speed_test();
     } else if (strcmp(cmd, "flash_sweep") == 0) {
         flash_speed_test();
+    } else if (strcmp(cmd, "flash_bench") == 0) {
+        flash_bench();
+    } else if (strcmp(cmd, "flash_sweep2") == 0) {
+        flash_sweep2();
+    } else if (strcmp(cmd, "flash_reset") == 0) {
+        flash_reset();
+    } else if (strcmp(cmd, "flash_boost_pads") == 0) {
+        flash_boost_pads();
+    } else if (strcmp(cmd, "flash_pad_ablation") == 0) {
+        flash_pad_ablation();
+    } else if (strcmp(cmd, "flash_deep_scan") == 0) {
+        flash_deep_scan();
+    } else if (strcmp(cmd, "flash_deep_ablation") == 0) {
+        flash_deep_ablation();
+    } else if (strcmp(cmd, "flash_deep_scan_cached") == 0) {
+        flash_deep_scan_cached();
+    } else if (strcmp(cmd, "flash_deep_ablation_cached") == 0) {
+        flash_deep_ablation_cached();
+    } else if (strcmp(cmd, "flash_rand_scan_cached") == 0) {
+        flash_rand_scan_cached();
+    } else if (strcmp(cmd, "flash_rand_scan_long") == 0) {
+        flash_rand_scan_long();
     } else if (strcmp(cmd, "psram_jlink") == 0) {
         psram_jlink_prep();
     } else if (strcmp(cmd, "psram_diag") == 0) {
         psram_diag_test();
     } else if (strcmp(cmd, "psram_probe") == 0) {
         psram_probe();
+    } else if (strcmp(cmd, "qmi_diag") == 0) {
+        qmi_diag();
+    } else if (strcmp(cmd, "psram_verify") == 0) {
+        psram_verify_full();
+    } else if (strcmp(cmd, "psram_wthru") == 0) {
+        psram_wthru_test();
+    } else if (strncmp(cmd, "psram_at ", 9) == 0) {
+        int cd = 0, rd = 0;
+        if (sscanf(cmd + 9, "%d %d", &cd, &rd) == 2 &&
+            cd >= 1 && cd <= 7 && rd >= 0 && rd <= 7) {
+            psram_full_at((uint8_t)cd, (uint8_t)rd);
+        } else {
+            printf("Usage: psram_at <clkdiv 1..7> <rxdelay 0..7>\n");
+        }
     } else if (strcmp(cmd, "mem_diag") == 0) {
         cmd_memory_diag();
     } else if (strcmp(cmd, "psram_full_tft") == 0) {
@@ -534,9 +570,20 @@ static void bus_b_i2c_recovery(void) {
 static menu_ctx_t g_menu;
 
 void bringup_repl_init(void) {
-    // PSRAM init first — GPIO0 boots with pull-down (CE# LOW = bus contention).
+    // P2-13 port: re-enable XIP cache. RP2350 ROM (and/or our psram_init
+    // direct-mode toggling) clears XIP_CTRL EN_SECURE / EN_NONSECURE, so
+    // every instruction fetch hits QSPI at boot2 default timing. Write via
+    // the atomic SET alias (0x400CA000) to avoid disturbing WRITABLE_M1
+    // that psram_init will set. See variant.cpp:initVariant() in Core 0.
+    *(volatile uint32_t *)0x400CA000u = 0x00000003u;
+
+    // PSRAM init — GPIO0 boots with pull-down (CE# LOW = bus contention).
     // Must fix GPIO0 before any other peripheral touches the QSPI bus.
     psram_init();
+
+    // Re-enable XIP cache again — our psram_init direct-mode toggle may
+    // clear it (observed empirically in Core 1 bring-up).
+    *(volatile uint32_t *)0x400CA000u = 0x00000003u;
 
     // Immediately clear any I2C bus lockup on Bus B before anything else.
     // BQ27441 may have locked up if SDA/SCL glitched during cold boot

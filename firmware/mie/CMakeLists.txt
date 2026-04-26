@@ -14,11 +14,14 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-# Phase A refactor (dev-mie-v2-listener): mie_c_api.cpp is temporarily
-# excluded until Phase D rewrites it against the listener API.
+# src/mie_c_api.cpp is excluded until Phase D rewrites it against the
+# v2 listener API (set_listener / pending_view / candidate accessors).
+# Core 1 uses C++ ImeLogic directly via <mie/ime_logic.h>, so the C API
+# is only needed by external bindings (Android JNI, Windows TSF).
 add_library(mie STATIC
     src/mie_init.cpp
     src/trie_searcher.cpp
+    src/composition_searcher.cpp
     src/ime_logic.cpp
     src/ime_keys.cpp
     src/ime_search.cpp
@@ -26,6 +29,7 @@ add_library(mie STATIC
     src/ime_commit.cpp
     src/ime_smart.cpp
     src/ime_direct.cpp
+    src/lru_cache.cpp
 )
 
 target_include_directories(mie PUBLIC
@@ -79,8 +83,7 @@ if(NOT CMAKE_CROSSCOMPILING)
         set(MIE_TOOLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tools")
 
         set(MIE_DATA_SOURCES_DIR "" CACHE PATH
-            "Directory containing downloaded data sources (tsi.csv, en_words.txt, unifont.otf). "
-            "Run target mie_fetch_data to populate.")
+            "Directory containing downloaded data sources (tsi.csv, en_words.txt, unifont.otf). Run target mie_fetch_data to populate.")
         set(MIE_UNIFONT_OTF "" CACHE FILEPATH
             "Path to GNU Unifont .otf/.ttf file (required for font data targets)")
         set(MIE_MOE_CSV "" CACHE FILEPATH
@@ -100,10 +103,20 @@ if(NOT CMAKE_CROSSCOMPILING)
         # mie_dict_data_sm: Chinese + English (max 3000 words) + charlist
         # mie_font_data_sm: charlist-subset font (depends on mie_dict_data_sm)
         if(MIE_DATA_SOURCES_DIR)
+            # sm variant dictionary knobs — tuned 2026-04-19 to fit the
+            # ~5 MB PSRAM slot while keeping the most-used ZH vocabulary
+            # (freq>=5 covers 112k / 160k libchewing entries; per-key=5 prunes
+            # long-tail homophones; abbr<=2 keeps fast-typing for 2-syllable
+            # phrases). ZH total ~4.7 MB, EN total ~80 KB. See
+            # project_mie_dict_compression.md memory for future format-level
+            # compression that would shrink this further.
             set(_sm_dict_args
                 --libchewing  "${MIE_DATA_SOURCES_DIR}/tsi.csv"
                 --en-wordlist "${MIE_DATA_SOURCES_DIR}/google-10000-english-no-swears.txt"
                 --en-max-words 3000
+                --zh-min-freq 5
+                --zh-max-abbr-syls 2
+                --zh-max-per-key 5
                 --emit-charlist "${MIE_DATA_DIR}/charlist.txt"
                 --output-dir "${MIE_DATA_DIR}")
             set(_sm_dict_depends
@@ -122,7 +135,9 @@ if(NOT CMAKE_CROSSCOMPILING)
                         "${MIE_DATA_DIR}/en_values.bin"
                         "${MIE_DATA_DIR}/dict_meta.json"
                         "${MIE_DATA_DIR}/charlist.txt"
-                COMMAND ${Python3_EXECUTABLE} ${_sm_dict_args}
+                COMMAND ${Python3_EXECUTABLE}
+                        "${MIE_TOOLS_DIR}/gen_dict.py"
+                        ${_sm_dict_args}
                 DEPENDS ${_sm_dict_depends}
                 COMMENT "Generating small MIE dictionary + charlist"
                 VERBATIM)
@@ -147,6 +162,7 @@ if(NOT CMAKE_CROSSCOMPILING)
                         --unifont  "${MIE_UNIFONT_OTF}"
                         --charlist "${MIE_DATA_DIR}/charlist.txt"
                         --out      "${MIE_DATA_DIR}/mie_unifont_sm_16.bin"
+                        --no-subset
                 DEPENDS "${MIE_TOOLS_DIR}/gen_font.py"
                         "${MIE_UNIFONT_OTF}"
                         "${MIE_DATA_DIR}/charlist.txt"
@@ -166,18 +182,51 @@ if(NOT CMAKE_CROSSCOMPILING)
             add_custom_target(mie_font_data DEPENDS mie_font_data_sm)
         endif()
 
+        # MDBL blob: packs the four sm .bin sections into a single
+        # flash-resident image. Consumed by Core 1 at boot (copy to PSRAM
+        # → mie_dict_open_memory). Flashed as an independent partition
+        # by scripts/build_and_flash.sh at MIE_DICT_PARTITION_ADDR.
+        # J-Link's loadbin rejects unknown file extensions — keep .bin.
+        set(MIE_DICT_BLOB "${CMAKE_BINARY_DIR}/dict.bin")
+        add_custom_command(
+            OUTPUT  "${MIE_DICT_BLOB}"
+            COMMAND ${Python3_EXECUTABLE}
+                    "${MIE_TOOLS_DIR}/pack_dict_blob.py"
+                    --zh-dat "${MIE_DATA_DIR}/dict_dat.bin"
+                    --zh-val "${MIE_DATA_DIR}/dict_values.bin"
+                    --en-dat "${MIE_DATA_DIR}/en_dat.bin"
+                    --en-val "${MIE_DATA_DIR}/en_values.bin"
+                    --out    "${MIE_DICT_BLOB}"
+            DEPENDS "${MIE_TOOLS_DIR}/pack_dict_blob.py"
+                    "${MIE_DATA_DIR}/dict_dat.bin"
+                    "${MIE_DATA_DIR}/dict_values.bin"
+                    "${MIE_DATA_DIR}/en_dat.bin"
+                    "${MIE_DATA_DIR}/en_values.bin"
+            COMMENT "Packing MDBL dictionary blob for Core 1"
+            VERBATIM)
+        add_custom_target(mie_dict_blob
+            DEPENDS "${MIE_DICT_BLOB}")
+        add_dependencies(mie_dict_blob mie_dict_data_sm)
+
         add_custom_target(mie_data_sm
-            DEPENDS mie_dict_data_sm mie_font_data_sm
+            DEPENDS mie_dict_data_sm mie_font_data_sm mie_dict_blob
             COMMENT "Build small MIE data assets (embedded RP2350 variant)")
 
         # ── Large variant ─────────────────────────────────────────────────
         # mie_dict_data_lg: all English words, no charlist emit
         # mie_font_data_lg: full Unicode ranges (for PC testing)
+        #
+        # Outputs go to MIE_DATA_DIR/lg/ — NOT the top-level MIE_DATA_DIR.
+        # The `lg` variant emits identically-named files (dict_dat.bin,
+        # dict_values.bin) as `sm` but without the freq/per-key filtering
+        # knobs, so sharing the directory silently overwrites the sm
+        # outputs with 89 MB blobs. Root cause for MIE_DICT_LOAD_ERR_GEOMETRY
+        # bricks seen on-device before 2026-04-23.
         if(MIE_DATA_SOURCES_DIR)
             set(_lg_dict_args
                 --libchewing  "${MIE_DATA_SOURCES_DIR}/tsi.csv"
                 --en-wordlist "${MIE_DATA_SOURCES_DIR}/google-10000-english-no-swears.txt"
-                --output-dir  "${MIE_DATA_DIR}")
+                --output-dir  "${MIE_DATA_DIR}/lg")
             set(_lg_dict_depends
                 "${MIE_TOOLS_DIR}/gen_dict.py"
                 "${MIE_DATA_SOURCES_DIR}/tsi.csv"
@@ -188,7 +237,9 @@ if(NOT CMAKE_CROSSCOMPILING)
             endif()
 
             add_custom_target(mie_dict_data_lg
-                COMMAND ${Python3_EXECUTABLE} ${_lg_dict_args}
+                COMMAND ${Python3_EXECUTABLE}
+                        "${MIE_TOOLS_DIR}/gen_dict.py"
+                        ${_lg_dict_args}
                 DEPENDS ${_lg_dict_depends}
                 COMMENT "Generating large MIE dictionary (full English word list)"
                 VERBATIM)
@@ -200,17 +251,19 @@ if(NOT CMAKE_CROSSCOMPILING)
         endif()
 
         if(MIE_UNIFONT_OTF)
+            # lg font also lives under MIE_DATA_DIR/lg/ for parity with the
+            # lg dict (see note above about sm/lg filename collision).
             add_custom_command(
-                OUTPUT  "${MIE_DATA_DIR}/mie_unifont_16.bin"
+                OUTPUT  "${MIE_DATA_DIR}/lg/mie_unifont_16.bin"
                 COMMAND ${Python3_EXECUTABLE}
                         "${MIE_TOOLS_DIR}/gen_font.py"
                         --unifont "${MIE_UNIFONT_OTF}"
-                        --out     "${MIE_DATA_DIR}/mie_unifont_16.bin"
+                        --out     "${MIE_DATA_DIR}/lg/mie_unifont_16.bin"
                 DEPENDS "${MIE_TOOLS_DIR}/gen_font.py" "${MIE_UNIFONT_OTF}"
                 COMMENT "Generating large MIE font (full Unicode ranges)"
                 VERBATIM)
             add_custom_target(mie_font_data_lg
-                DEPENDS "${MIE_DATA_DIR}/mie_unifont_16.bin")
+                DEPENDS "${MIE_DATA_DIR}/lg/mie_unifont_16.bin")
         else()
             add_custom_target(mie_font_data_lg
                 COMMAND ${CMAKE_COMMAND} -E echo

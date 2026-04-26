@@ -75,15 +75,40 @@ void key_event_init(void);
  * subsequent INJECT for the same keycode is rejected per §9.1. */
 key_event_result_t key_event_push_hw(mokya_keycode_t keycode, bool pressed);
 
+/* Like key_event_push_hw but also carries the producer-side flag bits
+ * (bit 0 = long-press, bit 1 = long-long, etc — see mie/hal_port.h
+ * KEY_FLAG_*). Used by KeypadScan's deferred-press path so the IME can
+ * tell which phoneme of a half-key the user intended. The pressed/release
+ * arbitration semantics are identical to key_event_push_hw. */
+key_event_result_t key_event_push_hw_flags(mokya_keycode_t keycode,
+                                           bool pressed, uint8_t flags);
+
 /* Push from UsbCtrlTask (INJECT source).  Returns KEY_EVENT_ERR_BUSY
  * without touching the queue if KeypadScan currently holds `keycode`
  * physically pressed — the human user wins. Reserved for M9; provided
  * now so the queue's final shape is in place. */
 key_event_result_t key_event_push_inject(mokya_keycode_t keycode, bool pressed);
 
+/* Inject variant carrying flags (Phase 1.4 — lets SWD tooling and the
+ * USB Control Protocol simulate long-press intent). Same arbitration
+ * rules as key_event_push_inject. */
+key_event_result_t key_event_push_inject_flags(mokya_keycode_t keycode,
+                                                bool pressed, uint8_t flags);
+
 /* Consumer drain — waits up to `timeout_ticks` for an event to arrive.
- * Returns true if *out was populated. */
+ * Returns true if *out was populated.
+ *
+ * Primary consumer is the IME task. Every successful push_* call also
+ * fans the event out into an independent "view" queue so the LVGL view
+ * router can observe keystrokes (FUNC for panel switch, keypad_view
+ * cell highlight) without competing with the IME task for the main
+ * queue. Drain the view queue via key_event_view_pop(). */
 bool key_event_pop(key_event_t *out, uint32_t timeout_ticks);
+
+/* View-side observer drain. Non-blocking drops are acceptable — the
+ * view queue is a mirror for UI highlight/navigation, not a control
+ * path. Safe to poll from the LVGL task. */
+bool key_event_view_pop(key_event_t *out, uint32_t timeout_ticks);
 
 /* Snapshot of the HW-pressed bitmap — primarily for SWD diagnosis and
  * for future arbiter logic that wants to batch-check multiple keycodes.

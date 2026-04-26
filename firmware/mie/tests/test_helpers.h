@@ -47,9 +47,9 @@ static inline mie::KeyEvent kev(mokya_keycode_t kc, bool pressed = true, uint32_
     return e;
 }
 
-// "Press" helper: send a single key-down with the given timestamp. Returns
-// the process_key return value. For keys whose release behavior matters
-// (SYM1 long-press vs short-press), build key-up events explicitly.
+// "Press" helper: send a single key-down with the given timestamp.
+// SYM1 uses both edges (short vs long press); its dedicated tests
+// supply explicit press / release events.
 static inline bool press(mie::ImeLogic& ime, mokya_keycode_t kc, uint32_t now_ms = 0) {
     return ime.process_key(kev(kc, true, now_ms));
 }

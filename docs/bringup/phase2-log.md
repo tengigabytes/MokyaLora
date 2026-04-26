@@ -1516,6 +1516,598 @@ editing when adding any new task or queue.
   reserve assert.
 - `CLAUDE.md` — pointer to the new doc.
 
+#### M3.6 — MIEF font driver + Traditional Chinese LVGL rendering ✅ (2026-04-19)
+
+LVGL labels can now render Traditional Chinese, Bopomofo, Latin-1
+Supplement, and CJK punctuation from the MIEF v1 font blob compiled
+against GNU Unifont 17.0.04.
+
+**Deliverables:**
+- `firmware/core1/src/display/mie_font.{c,h}` — `lv_font_t` adapter
+  that parses the MIEF header, binary-searches the codepoint index,
+  and unpacks 1 bpp MSB-first bitmaps to A8 into the `lv_draw_buf_t`
+  LVGL hands to `get_glyph_bitmap_cb`. Zero runtime heap. Two
+  public views share the same blob:
+  `mie_font_unifont_sm_16()` (16 px native, 1:1) and
+  `mie_font_unifont_sm_32()` (32 px via 2× nearest-neighbor — each
+  source bit fills a 2×2 A8 block at draw time, so the 32 px variant
+  costs no extra flash and ~4× per-glyph unpack work). The `lv_font_t`
+  dsc holds a `mief_view_t { blob*, scale }` so a single callback
+  body serves both scales.
+- `firmware/core1/src/display/mie_font_blob.S` — `.incbin` stub that
+  embeds `mie_unifont_sm_16.bin` into `.rodata` with
+  `_mie_unifont_sm_16_{start,end,size}` symbols. Path passed via
+  `MIEF_BLOB_PATH` per-source compile definition.
+- `firmware/mie/tools/gen_font.py` — Latin-1 Supplement
+  (0x00A0..0x00FF) added to `MANDATORY_RANGES` so `°C × ÷ ± ©` etc
+  always ship regardless of charlist content. Also:
+  `fontTools` import case fix (previously lowercase), `cp950`
+  console-encoding fix (removed `©` from license notice so Windows
+  default console doesn't raise `UnicodeEncodeError`).
+- `firmware/core1/m1_bridge/CMakeLists.txt` — `add_custom_command`
+  regenerates the MIEF blob whenever `gen_font.py`, `charlist.txt`,
+  or the source OTF changes; `MIEF_BLOB_PATH` propagated to the
+  `.incbin` assembler via `set_source_files_properties`. Note:
+  `--no-subset` is used because fontTools' OS/2 unicode-range
+  writer rejects Unifont's bit-123 range as
+  `expected 0 <= int <= 122`.
+- `firmware/core1/src/ui/font_test_view.{c,h}` — a third view (panel
+  index 2). Renders the opening two paragraphs of 《桃花源記》
+  (陶淵明) with the 32 px title at the top and the 16 px body
+  wrap-laid-out underneath (4 px `text_line_space` — Unifont glyphs
+  fill most of the 16 px cell so line_space=0 bleeds adjacent rows
+  together). Mixed-scale rendering confirms both font views can be
+  active on the same screen without interfering. FUNC cycles
+  keypad → rf_debug → font_test.
+
+**Footprint:**
+- MIEF blob: 851 061 bytes (831 KB), 19 320 glyphs.
+- Core 1 `.bin`: 440 KB → 1.29 MB (~65 % of the 2 MB flash window).
+- No RAM cost at runtime — glyphs are binary-searched and unpacked
+  directly from flash-resident bytes; the only per-call allocation
+  is the LVGL-owned draw buffer (already sized for A8 glyphs).
+
+**Verification.** `build_and_flash.sh --core1`, visual inspection of
+all seven `font_test_view` rows. Latin-1 row rendered as tofu on the
+first pass (root cause: `MANDATORY_RANGES` omitted 0x00A0..0x00FF);
+fixed and re-flashed successfully on the second pass.
+
+**Follow-ups not in M3.6 scope:**
+- Full font variant (all CODEPOINT_RANGES) — deferred until a real
+  user flow demands it; the charlist-subset already covers all MoE
+  dict coverage + mandatory Unicode ranges.
+- RLE encoding path (`mie_font.c` currently rejects `flags & 0x01`).
+  No user demand; uncompressed random-access lookup is simpler and
+  already fits the flash budget.
+- `lv_font_t::fallback` chain — the `mie_font` is a superset of
+  what Montserrat 14 covers for ASCII, so there's no fallback need
+  for now. Revisit if we ever ship an emoji or symbol-extension
+  font alongside.
+- Boot-time MIEF header corruption check surfaced via SWD
+  breadcrumb — deferred to when a second font blob gets added.
+
+#### MIE Phase 1.4 — IME UX completion (Tasks A / B / C) ✅ (2026-04-24)
+
+Three input-UX gaps closed on top of the MIE v4 composition engine.
+
+**Task A — Long-press multitap for primary ↔ secondary phoneme**
+(commit `df226da`).
+
+Two-tier slot-key UX replacing v2's half-keyboard-only model:
+
+| operation | engine hint | display |
+|---|---|---|
+| short tap       | `ANY` (fuzzy)                 | compound (ㄅㄉ) |
+| 1st long press  | primary                       | single (ㄅ)       |
+| 2nd long press  | secondary                     | single (ㄉ)       |
+| 3rd long press  | tertiary (slot 4 only — ㄦ)   | single (ㄦ)       |
+| Nth long press  | cycles modulo phoneme_count   | –                 |
+
+Cycle window is `kMultiTapTimeoutMs = 800 ms`; any short tap / DEL /
+MODE / different-slot press locks the cycle.
+
+Implementation surface:
+- **Dict format**: header.flags bit 0 marks per-reading phoneme_pos
+  byte (packed 2-bit × klen). +26 KB on the 2.65 MB dict (+1 %).
+- **Searcher**: `CompositionSearcher::search(user_keys, user_phoneme_hints,
+  user_n, ...)` overload — each byte's hint in {0, 1, 2, 0xFF = any}
+  filters readings whose authored phoneme position doesn't match.
+- **Engine**: `ImeLogic.phoneme_hint_[kMaxKeySeq]` parallel array +
+  `lp_cycle_` FSM (byte_index / slot / phoneme_idx / last_ms).
+- **Wire**: `MOKYA_KEY_FLAG_LONG_PRESS` bit in `KeyEvent.flags`;
+  inject ring upgraded to 2-byte events (key_byte, flags_byte),
+  magic `KEYI` → `KEYJ`.
+- **Keypad scan**: 20 slot keys defer press emission; short tap fires
+  press(flags=0) on release, ≥ 500 ms hold fires press(LONG_PRESS)
+  at the threshold.
+
+**Task B — SYM1 long-press symbol picker** (commit `f3cc048`).
+
+4×4 grid of common Traditional-Chinese punctuation the half-keyboard
+can't type:
+
+    「」『』
+    （）【】
+    ，。、；
+    ：？！…
+
+UX:
+- Short-tap SYM1   → commit ，/, (unchanged).
+- Long-press SYM1  → open picker overlay (already wired in tick()).
+- DPAD in picker   → navigate (LR ±1, UD ±cols, mod cell_count).
+- OK in picker     → commit selected symbol, close picker.
+- SYM1 in picker   → close without commit.
+- Any other key    → close without commit; next press hits normal
+                     routing.
+
+View reuses the candidate flex-wrap renderer; data source swaps to
+picker cells when `ime_view_picker_active()`.
+
+**Task C — Space + Newline as first-class commits** (commit `7878f8c`).
+
+Unified "idle-commits-literal-char" convention on SPACE and OK:
+
+| short-tap | has candidates | multi-tap pending | picker open | idle |
+|---|---|---|---|---|
+| SPACE | `0x20` tone-1 (ZH) / commit word (EN) / " " (Direct) | commits it | — | commits " " |
+| OK    | commits selected candidate | commits it | commits symbol | emits "\n" |
+
+Both keys now work without a long-press hold — the existing "finish
+pending first, otherwise insert a literal" pattern extends from SPACE
+onto OK.
+
+**Validation.** 150 / 150 host unit tests pass (21 new: 7 for
+phoneme-pos searcher, 7 for long-press cycling + picker, 3 for
+idle-OK newline, 4 for view wiring). Hardware SWD regression across
+six passages totalling 1 416 CJK + 130 ASCII + 48 spaces + 21
+newlines + 136 picker punctuation = **1 751 characters, 0 failures**:
+
+| passage | CJK | top-8 | top-100 | picker | newline | space | ks/char |
+|---|---|---|---|---|---|---|---|
+| Echeneis intro | 243 | 93.8 % | 100 % | – | – | – | 7.49 |
+| 生態習性    | 217 | 96.8 % | 100 % | 24/24 | 5/5 | 3/3 | 6.72 |
+| 台灣生活   | 258 | 98.1 % | 100 % | 27/27 | 4/4 | – | 6.06 |
+| 硬體碎念    | 264 | 98.9 % | 100 % | 23/23 | 4/4 | 16/16 | 6.46 |
+| 終極難度    | 252 | 93.7 % | 100 % | 31/31 | 4/4 | 15/15 | 8.06 |
+| 文言文       | 182 | 87.9 % | 100 % | 31/31 | 4/4 | 14/14 | 10.01 |
+| **total**   | **1 416** | **94.6 %** | **100 %** | **136/136** | **21/21** | **48/48** | **7.16** |
+
+**P1.5 dropped (2026-04-24).** The original follow-up list included a
+Phase 1.5 for Unihan kHanyuPinlu + MoE 成語典 + CC-CEDICT compound
+import (~50 KB of dict growth). Post-P1.4 analysis shows:
+
+- No passage miss → demand for Unihan-only chars is vanishing.
+- Mid-range buckets (ㄧˋ = 215, ㄒㄧ¹ = 158 …) already saturate the
+  100-cap; enlarging them hurts UX for everyone.
+- 563 chars / 3 % of current dict already have *every* reading at
+  rank > 100 — a pruning candidate, not an expansion one.
+
+The real remaining pain (repeat-typer of "吸" hits rank 21 four times
+in one passage) is solved by **Phase 1.6 — personalised LRU cache**
+(~6 KB RAM + ~6 KB LittleFS; no dict bloat). See
+[mie-v4-status.md](mie-v4-status.md) "Phase 1.6 plan" for the spec.
+
+### P1.6 — Personalised LRU cache delivered (2026-04-23)
+
+Engine, flash persistence, and symmetric P2-11 park all landed in
+three commits on `dev-Sblzm`:
+
+- `9d05ae1` LruCache module + 16 host tests (kCap 64, 48 B per entry).
+- `3c4c6c8` Wire into `ImeLogic::run_search_v4` + `commit_partial`;
+  5 integration tests (171/171 total suite).
+- `c4dd34c` Core 1 flash partition at `0x10C00000` (64 KB reserved,
+  8 KB slot), symmetric `--wrap=flash_range_*` on Core 1 with a
+  mirror park listener in the Meshtastic variant dir; throttled
+  save on 50 commits / MODE / 30 s idle.
+
+Hardware verification (SWD-only, J-Link Commander):
+- Core 0 initVariant reaches phase 0x16 (`c0_ready` published). Core 1
+  boots cleanly, USB CDC enumerates, `ime_task_start` succeeds with
+  lru_persist pre-allocated in BSS.
+- Injecting a MODE key via `g_key_inject_buf` fires the
+  `mode_tripwire` → `lru_persist_save` → `flash_range_erase` +
+  `flash_range_program`. Flash at `0x10C00000` reads `0x3155524C`
+  ("LRU1") + version 1 + 0xFF tail immediately after. Survives SWD
+  reset without re-flashing the partition.
+- `0x2007FFE0` debug breadcrumbs (now removed) confirmed the
+  throttle loop fires exactly once per MODE cycle and returns ok.
+
+Hardware regression ran 2026-04-23 on `user1.txt` (first 30 chars,
+`--erase --limit 30`):
+
+    Pass 1 (cold cache): rank 0 = 5 / rank ≤ 3 = 16 / rank ≥ 8 = 1
+    Pass 2 (warm cache): rank 0 = 22 / rank ≤ 3 = 24 / rank ≥ 8 = 0
+    Δ rank 0 = +17, Δ rank ≤ 3 = +8, Δ rank ≥ 8 = −1
+
+The +17 bump at rank 0 is the LRU promoting the 17 chars that were
+committed on Pass 1. All 24 CJK chars in Pass 2 are visible in the
+top-3 candidate row without any DPAD navigation — exactly the
+"repeat-typer cost" win Phase 1.6 was built to deliver.
+
+Three items deferred to a follow-up session:
+1. `--reboot` path (flash-persistence across a SWD reset) is scripted
+   but hit a Core 1-stays-in-bootrom edge case after repeated
+   erase/reset cycles in the same session. The flash contents were
+   verified with `mem32 0x10C00000 4` → `0x3155524C` ("LRU1") after
+   a save; the load path ran on boot and returned success during
+   normal (non-erase) testing. Needs a clean session to reproduce
+   the failure shape and fix.
+2. Full five-passage regression run across user{1..5}.txt +
+   echeneis.txt. Script is ready; awaiting a session that isn't
+   already deep in debugging churn.
+3. `mie_dict_blob` target regenerates a corrupt 89 MB `dict.bin`
+   from the local `tsi.csv`; ship-path uses the pre-built
+   `dict_mie_v4.bin` via `--v4` which is unaffected.
+
+Notable bugs hit during implementation:
+- `LruCache::kCap = 128` initially overflowed Core 1 RAM by 4280 B
+  (.bss push from the added 6 KB `LruCache` inside `ImeLogic`). Halved
+  `kCap` to 64 and shrank the flash-write scratch accordingly.
+- First lazy `pvPortMalloc(6400)` for the save-path scratch **never
+  succeeded at throttle time** — FreeRTOS heap was already fragmented
+  by the time the first save fired hours into runtime, even with
+  ~14 KB free in total. Switched to a static .bss scratch allocated
+  at image load.
+- `MOKYA_KEY_A` is slot 10 (ㄇㄋ), not 14 (ㄠㄤ) — Step 2 integration
+  tests initially failed because I assumed the key-map ordering
+  matched the keypad matrix order. Fixed by routing ㄠ through
+  `MOKYA_KEY_L`.
+- Core 0 and Core 1 are BOTH editable as the Meshtastic submodule —
+  remember to commit inside the submodule before the super-project
+  records the bump. Step 3 touches the Meshtastic fork for the
+  listener `flash_park_listener.c`.
+
+### P1.6 follow-up — `--reboot`, full regression, dict regen, RTT transport (2026-04-23 / 24)
+
+Closes all three deferred items and adds a second key-inject
+transport. Commits on `dev-Sblzm`:
+
+- `75fc9a4` / `3af07f6` — `--reboot` round-trip wedge root-caused
+  and fixed. `force_lru_save()` was overwriting `producer_idx = 2`,
+  which — with Pass 1's consumer_idx already at ~30 — made the
+  consumer race the full ring re-processing stale events, crashing
+  Core 1 mid-`flash_range_program` and leaving Core 0 in the park
+  spin with XIP off (the QMI-wedge pattern). Now writes events at
+  `(cur_prod & (RING-1))` and bumps `producer_idx += 2`. Hardware
+  verified: `--erase --reboot --limit 30` → Pass 1 rank-0 = 5,
+  Pass 2 rank-0 = 23 (post-reset, cache loaded from flash).
+- `3af07f6` — six-passage regression numbers captured. See
+  `mie-v4-status.md` Phase 1.6 delivered table. Short passages
+  (user1-30 / echeneis) +18 / +23 rank-0; long passages
+  (user2/4/5) essentially flat — documented as P1.6.1 territory
+  in `docs/design-notes/mie-p1.6-lru-plan.md`.
+- `f63f41b` — `mie_dict_blob` 89 MB regeneration root-caused.
+  `mie_dict_data_lg` was sharing `${MIE_DATA_DIR}` with
+  `mie_dict_data_sm` and clobbering the filtered `dict_dat.bin`
+  (1.9 MB) / `dict_values.bin` (3 MB) with unfiltered 38 MB /
+  51 MB outputs. Re-routed `lg/` to its own subdir; regression
+  `firmware/mie/tools/test_pack_dict_blob.py` asserts header size
+  fields match input file sizes so a future overwrite surfaces
+  immediately.
+- `7e2443a` / `862ef72` / `1a21ee9` — **RTT key-inject transport**
+  as an alternate to the SWD ring. Host side: `MokyaSwd.rtt_send_frame`
+  writes directly into the SEGGER RTT control block (pylink's own
+  `rtt_write` proved unreliable on RP2350 + J-Link V932, silently
+  drops every write after the first in a session). Firmware:
+  `key_inject_rtt.{c,h}` + shared `key_inject_frame.h` wire frame
+  (magic + type + len + payload + crc8). Both transports coexist
+  under a shared `g_key_inject_mode` byte — active one runs at
+  poll cadence, inactive long-sleeps 50 ms so ime_task never has
+  to compete with two hot pollers. `ime_text_test.py
+  --transport {swd,rtt}` picks.
+- `eb182a3` — script poll refactor. Replaced `while time < deadline:
+  read_snapshot(400 B); if cond: break; sleep(0.01)` with
+  `wait_until(cheap_u32_read, cond, poll_s=0.003)`. Per-char
+  steady-state 400 → 310 ms.
+- `01af1b9` — LFU-weighted eviction experiment. **Null result** on
+  long passages (+0 rank-0 on user2/4/5). Root cause wasn't
+  one-shot neighbours evicting hot entries; it was that long-
+  passage non-rank-0 chars are mostly one-shot rare homophones
+  that LFU weighting doesn't save. Unit test + honest commit
+  message preserved; see `mie-p1.6-lru-plan.md` "What we learned
+  about long passages" for the full autopsy.
+
+Bugs hit during the follow-up:
+- QMI wedge recovery: only physical USB unplug recovers a QMI
+  that was reset mid-flash-write. `build_and_flash.sh` (J-Link
+  loadbin) fails with "RAMCode did not respond" while QMI is
+  dead. Memory updated in `project_qmi_wedge_recovery.md`.
+- Partial `--core1` reflash used to leave Meshtastic IPC or dict
+  state inconsistent enough that post-flash `ime_text_test` timed
+  out; `--v4` full reflash was the quickest known recovery. Root-
+  caused 2026-04-24: `--core1` was also re-running the
+  `mie_dict_blob` cmake target and flashing `build/mie-host/dict.bin`
+  (always MDBL v2) over any prior `--v4` MIE4 blob. v2 dict has
+  different candidate rankings than v4, so the test saw unexpected
+  top-8 and timed out trying to reach the target char. Fixed by
+  making `--core1` flash strictly the Core 1 image — dict/font
+  partitions must be refreshed with explicit `--dict` / `--font` /
+  `--v4` flags.
+- Boot-time `panic()` on `heap_free < 20 %` fired silently when
+  adding the RTT task (+1 KB TCB/stack pushed free from 9.6 KB
+  to 8.8 KB). Loosened threshold to 15 % and exposed
+  `g_core1_boot_heap_free` as an SWD-readable checkpoint.
+- RTT task stack at 128 words silently overflowed inside
+  `TRACE()` (128 B vsnprintf scratch + parser + SEGGER_RTT_Read
+  call chain). Bumped to 256 words; task ran exactly one frame
+  before dying, which made the symptom look like a task-
+  creation failure rather than a stack overflow.
+
+#### M3.5 — IpcGpsBuf bridge + dummy fixed-position pipeline ✅ (2026-04-26)
+
+**Goal.** Wire Core 1's GNSS path through the existing `IpcGpsBuf`
+shared-SRAM double-buffer to Core 0's Meshtastic `GPS` class, so
+`PositionModule` produces a position fix without requiring a real
+sky-view fix. Phase 1 of M3.5 ships behind a dev-only build flag and
+uses a fixed-position dummy NMEA injector; Phase 2 (later) will swap the
+producer to the real Teseo-LIV3FL parsed-fix path.
+
+**Phase 1 pieces (committed 2026-04-26):**
+
+- **Core 1 dummy NMEA producer** (`firmware/core1/src/sensor/gps_dummy.{c,h}`).
+  500 ms task that emits one `$GPGGA` and one `$GPRMC` per second (alternating)
+  at the user-supplied dummy coordinates `25.052103 N, 121.574039 E`, alt 50 m,
+  fix=1, 8 sats. Runtime-computed NMEA checksum so any string edit stays
+  consistent. Selected via CMake option `MOKYA_GPS_DUMMY_NMEA=ON` (default OFF);
+  `gps_task.c` `#ifdef`-switches between the dummy and the real Teseo task at
+  build time. Dummy-mode Teseo source is not compiled at all (full `#ifndef`
+  around `gps_task()` body).
+
+- **`IpcGpsBuf` typedef cleanup**. The struct was 261 B by `sizeof()` but the
+  shared-SRAM layout reserved 260 B (`_pad[2]` should have been `_pad[1]`).
+  Fixed and added `_Static_assert(sizeof(IpcGpsBuf) == 260)`. Replaced
+  `uint8_t gps_buf[260]` in `IpcSharedSram` with the typed `IpcGpsBuf gps_buf`,
+  updated the `_tail_pad` arithmetic to use `sizeof(IpcGpsBuf)`. No address
+  shift, all post-build `nm` symbol locations unchanged.
+
+- **Core 0 `IpcGpsStream` adapter** (`firmware/core0/meshtastic/variants/.../ipc_gps_stream.{h,cpp}`).
+  Arduino `Stream` subclass. `available()`/`read()`/`peek()` latch the
+  just-published slot (`buf[write_idx ^ 1]` per the
+  firmware-architecture.md §5.4 contract) on each refresh; bytes flow until
+  the buffer is drained, then the next Core 1 flip latches the new slot.
+  `write()` is a no-op (IpcGpsBuf is one-way).
+
+- **Meshtastic submodule patch** (commit `06c5f15a3` on
+  `tengigabytes/firmware feat/rp2350b-mokya`), all gated by
+  `MOKYA_IPC_GPS_STREAM`:
+  - `GPS.h` — `_serial_gps` typed as `Stream*` in this build; new
+    public `static void setExternalSerial(Stream *)` for variant injection.
+  - `GPS.cpp` — typed-init for the new arm, `setExternalSerial()` impl,
+    `createGps()` forces `tx_gpio = 0` so the chip-detect probe loop never
+    fires (the loop's gate is `if (tx_gpio && gnssModel == UNKNOWN)`).
+    `setup()` accepts `GNSS_MODEL_UNKNOWN` as a valid generic-NMEA chip
+    instead of returning false → looping every 2 s. The `probe()` case-0
+    block's SerialUART-only baud-rate path (`end()` / `setFIFOSize()` /
+    `baudRate()` / `updateBaudRate()`) is `#if`-gated out so the file still
+    compiles when `_serial_gps` is `Stream*`.
+  - `variants/.../variant.cpp` — `initVariant()` calls
+    `GPS::setExternalSerial(&IpcGpsStream::instance())` after IPC bring-up
+    but before main.cpp runs `GPS::createGps()`.
+  - `platformio.ini` — drop `MESHTASTIC_EXCLUDE_GPS=1`; add `HAS_GPS=1`,
+    `MOKYA_IPC_GPS_STREAM=1`, `GPS_RX_PIN=99` (any non-zero — guards the
+    early-return in `createGps()`); add `ipc_gps_stream.cpp` to
+    `build_src_filter`.
+
+**Verification.** `meshtastic --port COMxx --info` reports the local
+node's `position` populated with `latitude=25.052103`, `longitude=121.574039`,
+`altitude=50`, `locationSource=LOC_INTERNAL`. Independently confirmed via
+SWD that `IpcGpsStream::s_instance` latches each Core 1 flip and
+`read_pos` advances through the 72-byte sentence per refresh.
+
+**Two integration bugs hit during bring-up:**
+
+1. **`gps_dummy.c` wrote into the wrong slot**. First version did
+   `buf[write_idx ^ 1] = sentence; write_idx = old write_idx ^ 1`, so
+   `write_idx` ended pointing at the just-published slot. The architecture
+   spec (and the `IpcGpsStream` reader) follows the convention "writer
+   owns `buf[write_idx]`, reader reads `buf[write_idx ^ 1]`". Reader was
+   therefore always reading the empty/stale slot. Fixed by writing into
+   `buf[cur]` then flipping `write_idx = cur ^ 1`. The two conventions
+   are equivalent up to labelling; matching the spec is what mattered.
+
+2. **GGA-only never produces a Meshtastic position**. After clearing the
+   slot-order bug, SWD confirmed Core 0 was reading bytes — but
+   `lookForLocation()` still returned false. Cause: GPS.cpp:1772 requires
+   `reader.date.age() < GPS_SOL_EXPIRY_MS`, and `TinyGPSPlus::date` is
+   only populated by `$GPRMC` (or equivalent) — `$GPGGA` carries time
+   but no date. With only GGA, `date.age()` returns `ULONG_MAX` and the
+   freshness gate fails forever. Fixed by interleaving an `$GPRMC` per
+   GGA (500 ms period each, both carrying the same UTC second). RMC date
+   is hard-coded to `260426` since this is a dummy producer with no
+   real wall clock — the date field is just a TinyGPS validity gate.
+
+**Investigation pattern worth carrying forward.** The whole debug arc
+ran on SWD memory inspection. With `nm` to find
+`_ZZN12IpcGpsStream8instanceEvE10s_instance` and `gps`, sampling 8 bytes
+of the singleton (`last_seen_idx` / `read_pos` / `latched_idx`) across
+2-second windows isolated "Core 0 not consuming bytes" before any code
+patches. Without that, the failure (empty `position: {}` in `--info`)
+would have been ambiguous between five different layers. RTT was not
+needed for any of this; SWD `mem8` against a `nm`-resolved address was
+faster.
+
+**Phase 2 scope (deferred).** Real Teseo NMEA → IpcGpsBuf wiring on
+Core 1 (replace the dummy producer in normal builds). Phase 2 also
+needs a Core 0 sanity-check that `lookForLocation()`'s date check still
+passes when the Teseo wakes up before its first RMC — the current Teseo
+driver in M3.4.5d already parses RMC, so the real path should "just
+work" as long as both sentences are forwarded.
+
+#### M5 Phase 1 — RX_TEXT one-way (Core 0 → Core 1 LVGL) ✅ (2026-04-26)
+
+**Goal.** Stop using Core 1 as a dumb byte-bridge for received text. The
+M1 byte-bridge keeps the host CDC stream working (`meshtastic --info`
+etc.), but every received text message also needs to *land in Core 1's
+own LVGL UI* so the device can act as a feature-phone instead of just
+a USB modem. M5 is the milestone where Core 1 becomes a real
+PhoneAPI-style client; this Phase 1 slice covers only the simplest
+one-way case (incoming text), with NODE_UPDATE / TX_ACK /
+IPC_CMD_SEND_TEXT / Config IPC deferred.
+
+**Pieces (committed 2026-04-26):**
+
+- **Core 0 IPC observer** (`firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/ipc_text_observer.{h,cpp}`).
+  `IpcTextObserver` registers a `CallbackObserver<IpcTextObserver,
+  const meshtastic_MeshPacket *>` against
+  `textMessageModule->notifyObservers()` (TextMessageModule.cpp:44 —
+  same hook the InkHUD applets use). On each RX text, it builds an
+  `IpcPayloadText` (struct already defined in `ipc_protocol.h`:
+  `from_node_id`, `to_node_id`, `channel_index`, `want_ack`, `text_len`,
+  flexible `text[]`) and `ipc_ring_push`es it onto the `c0_to_c1` DATA
+  ring with `IPC_MSG_RX_TEXT`. Single-shot init via
+  `mokya_register_ipc_observers()`, called from `main.cpp` immediately
+  after `setupModules()` so `textMessageModule` is non-null. The hook
+  is gated on `MOKYA_IPC_GPS_STREAM` so the patch is invisible to
+  upstream arches.
+
+- **Core 1 dispatcher** (`firmware/core1/m1_bridge/src/main_core1_bridge.c`).
+  The existing `if (msg_id == IPC_MSG_SERIAL_BYTES)` chain grew an
+  earlier branch for `IPC_MSG_RX_TEXT`: cast `scratch` to
+  `IpcPayloadText`, clamp `text_len` against the actual payload bytes
+  (defends against a producer-side length mismatch), then call
+  `messages_inbox_publish()`.
+
+- **Inbox** (`firmware/core1/src/messages/messages_inbox.{c,h}`).
+  Single-snapshot store of the most recent message + a monotonic 32-bit
+  `seq`. Producer writes body fields, then bumps `seq` with
+  `__atomic_store_n(..., __ATOMIC_RELEASE)`; consumer reads `seq` with
+  `__ATOMIC_ACQUIRE`, copies the snapshot if `seq` differs from
+  `last_seen_seq`. No mutex — `bridge_task` is the sole producer and
+  `lvgl_task` (via `messages_view_refresh()`) is the sole consumer, so
+  the seq-release / seq-acquire pair is sufficient. Multi-message
+  scrollback is M5 Phase 2 work.
+
+- **LVGL view** (`firmware/core1/src/ui/messages_view.{c,h}` + view
+  router glue). Two labels: a green header line "From 0xNNNNNNNN  ch%d"
+  and a wrapped white body label, both using `mie_font_unifont_sm_16`
+  so Traditional-Chinese / Bopomofo / Latin-1 all render. Refresh polls
+  `messages_inbox_take_if_new(s_last_seen_seq, &snap)` and re-`set_text`s
+  on snapshot bump. Added as the 5th view in `view_router`
+  (`VIEW_COUNT 4 → 5`); FUNC cycles `keypad → rf → font_test → ime →
+  messages → keypad`.
+
+**Verification.** Layered test:
+
+1. **Display + inbox path (Layers 3+4)**: SWD-poked
+   `s_snap = {seq=1, from=0xDEADBEEF, text="Hello world!"}` directly,
+   `s_last_seen_seq` advanced from 0 → 1 within a refresh tick,
+   confirming `messages_view_refresh()` consumed the snapshot.
+
+2. **Full end-to-end (Layers 1–4)**: peer mesh node sent several real
+   `--sendtext` messages addressed to our node (`!b15db862`). SWD
+   readback after the user reported "messages sent":
+   `s_snap.seq = 5` (cumulative), `to_node_id = 0xB15DB862` (= our
+   node, so the wire-side flow is "real DM"), `text_len = 106`,
+   payload bytes decode to a complete 36-character Traditional-Chinese
+   sentence `「簡單說：那個警告是預留給未來功能的 UI 佔位符，對應的操作入口目前不存在。」`
+   byte-for-byte. UTF-8 boundary handling, fullwidth punctuation, and
+   space-mixed Latin all survived the round trip.
+
+**Why this slice was small.** `IPC_MSG_RX_TEXT`, `IpcPayloadText`, the
+`c0_to_c1` ring, and `ipc_ring_push` were already defined and exercised
+by M1's byte-bridge. The work was wiring an observer on the producer
+side and adding a typed dispatcher case on the consumer side. The big
+M5 questions (Core 0 selective reset, full PhoneAPI subclassing,
+structured config IPC) are deferred — this slice proves the typed-IPC
+pattern works end-to-end before we commit to the full architecture.
+
+**Submodule commit.** Lives on `tengigabytes/firmware feat/rp2350b-mokya`
+as `c3c7776c1`; super-project records the bump.
+
+**Phase 2 scope (deferred).** `IPC_MSG_NODE_UPDATE` (so node list view
+reflects mesh activity), `IPC_MSG_TX_ACK` (compose-side delivery
+confirmation), `IPC_CMD_SEND_TEXT` (Core 1 → Core 0 outbound from MIE),
+multi-message scrollback in `messages_inbox`, and the corresponding
+"compose / chat thread" LVGL views.
+
+#### M5 Phase 2 — multi-message inbox + outbound SEND_TEXT (reply flow) ✅ partial (2026-04-26)
+
+**Goal.** Promote messages_view from "show last RX" to a real chat
+panel: scroll back through recent peers, type with MIE, OK to reply.
+Closes the Core 1 → Core 0 outbound text path that's been a TODO since
+M1's byte-bridge first shipped. NODE_UPDATE and TX_ACK still deferred
+to a follow-up slice.
+
+**Pieces (committed 2026-04-26, super-project + submodule
+`50e8cd759`):**
+
+- **FIFO inbox** (`firmware/core1/src/messages/messages_inbox.{c,h}`).
+  Single-snapshot store grew into an 8-entry ring keyed by monotonic
+  `seq`; producer (`bridge_task` IPC dispatcher) appends and bumps
+  `seq` with `__ATOMIC_RELEASE`, consumer (`lvgl_task` via the view)
+  reads any entry by relative offset (0 = newest). The
+  seq-release / seq-acquire pair is sufficient for the SPSC layout —
+  no mutex. Eviction is FIFO once `count == capacity`.
+
+- **Scrollable view** (`firmware/core1/src/ui/messages_view.c`). UP /
+  DOWN walks older / newer; a third `msg N/M` footer label tracks
+  position. While `offset == 0` the view stays sticky-to-newest so a
+  fresh RX auto-displays; pressing UP breaks the sticky and the user
+  parks at their chosen offset until DOWN walks them back to 0.
+
+- **Outbound send** (`firmware/core1/src/messages/messages_send.{c,h}`).
+  `messages_send_text(to, channel, want_ack, text, len)` builds an
+  `IpcPayloadText` and `ipc_ring_push`es it onto `c1_to_c0` as
+  `IPC_CMD_SEND_TEXT`. Single-shot best-effort — caller decides what
+  to do on a full-ring push failure.
+
+- **Core 0 dispatcher** (submodule, `firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/ipc_command_handler.cpp`).
+  `mokya_handle_ipc_command(msg_id, payload, len)` switches on
+  `msg_id`; `IPC_CMD_SEND_TEXT` decodes `IpcPayloadText`, allocates a
+  `meshtastic_MeshPacket` via `router->allocForSending()`, sets
+  `portnum = TEXT_MESSAGE_APP` plus `to / channel / want_ack`, copies
+  the UTF-8 payload, and dispatches `service->sendToMesh(p,
+  RX_SRC_LOCAL, /*ccToPhone=*/true)` — same call shape as
+  Meshtastic's canned-message path in InkHUD MenuApplet.
+  `ipc_serial_stub::refill_rx_` was previously dropping non-
+  `SERIAL_BYTES` slots with a "M4+ will route them" comment; now
+  routes them to this dispatcher. Unknown msg ids are silently
+  absorbed so a newer Core 1 can speak to an older Core 0 without
+  crashing it.
+
+- **IME glue** (`firmware/core1/src/ime/ime_task.{cpp,h}`). New
+  `ime_view_clear_text()` resets `g_text_len` / `g_cursor` /
+  `g_text[0]` under the snapshot mutex and bumps the dirty counter so
+  the IME view's gated refresh repaints. Called by messages_view
+  immediately after a successful push so the user gets a clean slate
+  for the next message.
+
+- **Reply UX** (messages_view OK key). On press, view snapshots
+  `ime_view_text()` under `ime_view_lock`, looks up the currently
+  displayed inbox entry, and sends the IME buffer to that entry's
+  `from_node_id` on the same `channel_index` as a DM with `want_ack
+  = true`. Empty IME or empty inbox is a no-op with a footer hint.
+  Footer changes to `sent → 0xNNNNNNNN` on success, or
+  `send failed (ring full)` on backpressure.
+
+**Verification.** Two end-to-end runs:
+
+1. **Outbound broadcast (initial cut):** OK on messages_view sent a
+   hardcoded `"ping from MokyaLora"` to `MESSAGES_SEND_BROADCAST`;
+   peer node TNGB-9c28 (Heltec) reported the message in the host
+   `meshtastic --info`. Confirmed `c1_to_c0` ring carries the new
+   msg id, Core 0 dispatcher picks it up, MeshService routes it, and
+   the LoRa tx path is intact.
+
+2. **Outbound reply (final shape):** typed a Traditional-Chinese
+   reply on Core 1's IME, FUNC-cycled to messages view, OK pushed
+   the IME buffer to TNGB-50ca's node id (the original peer who
+   sent us the test DM). Peer received it as a normal DM. IME
+   buffer cleared automatically; messages_view footer updated to
+   `sent → 0x58a750ca`.
+
+**Why two-stage UX (read in messages, type in IME).** The simplest
+"OK = send" wiring without a dedicated compose state. UP/DOWN already
+mean "scroll messages" on this view, so reusing them for a compose
+cursor would conflict. A future M6 slice can introduce a true compose
+overlay; for now the user mentally pairs "currently displayed = current
+recipient", which matches feature-phone reply UX.
+
+**Still deferred to M5 Phase 3+:** `IPC_MSG_NODE_UPDATE` (so a node
+list view reflects mesh activity), `IPC_MSG_TX_ACK` (delivery feedback
+overlaying the footer), `IpcPhoneAPI` subclass to fully replace the
+byte bridge, Core 0 selective reset on config change.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
@@ -1586,6 +2178,7 @@ Python enums are generated from the C headers to prevent drift.
 
 | # | Date | Area | Issue | Resolution |
 |---|------|------|-------|-----------|
+| P3-5 | 2026-04-26 | Build/test flow — MDBL v2 dict was the default flash output even though all of M5 / Phase 1.6 baselines run on MIE4 v4 | **Symptom:** Recurring footgun: a "fresh" `bash scripts/build_and_flash.sh` (no flag) silently wrote MDBL v2 over the flash dict partition, and any subsequent `ime_text_test` measured ~1700 ms/char — an apparent ~4× regression that was actually just v2 ranking the candidates differently from v4. Already partly mitigated by P2-15 follow-up (--core1 no longer touches the dict partition) and the 2026-04-24 `--core1` tightening, but the no-flag default kept producing the wrong format every time the dict was deliberately reflashed. Most recently bit the M5P3 benchmark run, where a 1700 ms/char measurement masked the real ~430 ms/char baseline until it was traced back to the dict format on flash. | **Fixed (2026-04-26).** Default flipped to MIE4 v4: `scripts/build_and_flash.sh` now sets `USE_V4=true` unconditionally, `--v4` is a kept-for-compat no-op, and the only way back to v2 is the explicit `--v2-deprecated` flag (which prints a 3-second loud warning before flashing). `scripts/ime_text_test.py` rejects MDBL on both the host-side dict file AND on the device flash (probes `0x10400000` magic via SWD before running) — bench runs against a stale v2 flash now exit with a clear "reflash via build_and_flash.sh --dict" message instead of producing nonsense numbers. Core 1's `mie_dict_loader.c` exports `g_mie_dict_format` (MIE4 / MDBL_DEPRECATED / NONE) for SWD inspection. v2 binaries in `firmware/mie/data/` (`dict_dat.bin`, `dict_values.bin`, `en_*.bin`) and the v2 generator path in `gen_dict.py` are kept as archaeology with a `firmware/mie/data/README.md` note marking them retired. |
 | P2-1 | 2026-04-11 | Meshtastic `AddI2CSensorTemplate.h` | Latent upstream bug — non-dependent `ScanI2CTwoWire` name fails to resolve under `MESHTASTIC_EXCLUDE_I2C=1` due to two-phase template lookup | Workaround: `-DMESHTASTIC_EXCLUDE_AIR_QUALITY_SENSOR=1` in Core 0 variant. Upstream fix would be to also guard the `ScanI2CTwoWire*` parameter declaration under `#if !MESHTASTIC_EXCLUDE_I2C`. |
 | P2-2 | 2026-04-11 | Arduino-Pico 5.4.4 FreeRTOS SMP on RP2350 | Core 1's passive-idle task HardFaults in `vStartFirstTask` the instant `xPortStartScheduler` launches it, blocking Core 0 from ever reaching `setup()`. CFSR=0x101 (IACCVIOL+IBUSERR), MMFAR=BFAR=0x2000C5AC (inside Core 1's own PSP region). Independent of `-DNO_USB` — architecture change, not a stub bug. | Switched to single-core FreeRTOS (`-DconfigNUMBER_OF_CORES=1`). Requires guarding the SMP-only framework code (`vTaskCoreAffinitySet`, `vTaskPreemptionDisable/Enable`, IdleCoreN task creation) in `freertos-main.cpp` / `freertos-lwip.cpp` and fixing the missing `extern` decl of `ulCriticalNesting` in the port — all done idempotently by `patch_arduinopico.py`. Core 1 is now left under Pico SDK reset and will be launched separately by the M1.0b Apache-2.0 boot image. Upstream fix would be to (a) provide an `extern` decl of `ulCriticalNesting` in single-core mode in `portmacro.h`, (b) drop `static` from `ulCriticalNesting` in `port.c`, and (c) either make `freertos-main.cpp`/`freertos-lwip.cpp` compile under `configNUMBER_OF_CORES==1` or gate the SMP-only bits. |
 | P2-3 | 2026-04-11 | `multicore_launch_core1_raw` in `initVariant()` | On cold reset, by the time Core 0 reaches `initVariant()` Core 1 is **not** in the clean bootrom FIFO handler that `multicore_launch_core1_raw` expects — the four-word launch handshake never completes and Core 0 hangs inside `_raw` (debug breadcrumb stuck at phase `0x12`). Candidates for the disturbance: Arduino-Pico's early `rp2040.fifo.begin(2)`, `multicore_doorbell_claim_unused`, or Pico SDK `runtime_init_per_core_bootrom_reset`. Not yet isolated. | Workaround: call `multicore_reset_core1()` immediately before `multicore_launch_core1_raw()` in `initVariant()`. This asserts `PSM_FRCE_OFF_PROC1` and returns Core 1 to the bootrom handler (same mechanism as Arduino-Pico's `restartCore1()`), after which the handshake completes instantly and Core 1 starts executing our Apache-2.0 bootspike image at `0x10200000`. Safe — mirrors an existing framework path — but root cause investigation deferred to M1.1 when the Core 0 boot path is fully instrumented. |
@@ -1600,3 +2193,8 @@ Python enums are generated from the C headers to prevent drift.
 | P2-13 | 2026-04-13 | XIP cache disabled — 30–85× slowdown on Core 0 instruction fetch | **Symptom:** 12–50 ms frame-to-frame gaps during `want_config_id` → `FromRadio` burst. Stock Pico2 (native SerialUSB) achieves 0–3 ms. DWT CYCCNT profiling showed `getFromRadio()` consuming 750K–5.8M cycles per frame (5–39 ms at 150 MHz). Calibration loop: ~690 cycles/iter vs expected ~7 → ~100× instruction fetch slowdown. **Root cause:** XIP_CTRL register at 0x400C8000 reads 0x00000000 — both EN_SECURE (bit 0) and EN_NONSECURE (bit 1) are cleared, disabling the RP2350's 4 KB XIP cache. All instruction fetches go to QSPI flash at 37.5 MHz (QMI CLKDIV=2, sys_clk=150 MHz). The cache is cleared during boot by the PSRAM detection flow and/or ROM functions — `psram_detect()` enters QMI direct mode which resets XIP_CTRL, and Pico SDK boot2 only restores QMI configuration (M0_TIMING, M0_RCMD, M0_RFMT), never XIP_CTRL. Additionally, every `flash_range_erase/program` call goes through ROM `flash_exit_xip()` which clears XIP_CTRL, and `flash_enable_xip_via_boot2()` (boot2 copyout) does not restore the cache enable bits. This is a Pico SDK gap — boot2 should restore XIP_CTRL but doesn't. Stock Pico2 boards are less affected because native SerialUSB masks the latency. **Investigation steps:** (1) DWT CYCCNT v1/v2 profiling of `writeStream()` loop confirmed 98.5% of time in `getFromRadio()`, 1.5% in `emitTxBuffer()`; (2) `-DDEBUG_MUTE` (compile-time LOG suppression) gave ~45% improvement but early frames still 10–40 ms; (3) FreeRTOS task analysis ruled out preemption — only CORE0(pri 4), Timer Svc(7), Idle(0); (4) SWD register reads: PLL confirmed 150 MHz, QMI at 37.5 MHz, XIP_CTRL=0x00000000. | **Fixed (2026-04-13).** Two-site fix: (1) `variant.cpp:initVariant()` — unconditionally sets EN_SECURE + EN_NONSECURE via XIP_CTRL SET alias (0x400CA000) at boot, before any Meshtastic code runs. (2) `flash_safety_wrap.c` — after each `__real_flash_range_erase/program` call, re-enables cache via `MOKYA_XIP_CTRL_SET = 0x03`. **Results (LOG enabled, no DEBUG_MUTE):** XIP_CTRL=0x00000003, calibration 7.2 cycles/iter (96× better), per-frame gap 0–1.6 ms (was 12–50 ms), burst 37 ms / 47 frm (2.5× faster than stock Pico2), `--info` 15.0 s → 4.5 s. Behavior now matches stock Pico2 including ~20 ms tail-frame LOG spikes. |
 | P2-14 | 2026-04-18 | Core 1 `i2c_set_baudrate_core1()` — FS counters + `sda_hold` uninitialised | **Symptom:** All four sensor-bus devices (LIS2MDL 0x1E, Teseo-LIV3FL 0x3A, LPS22HH 0x5D, LSM6DSV16X 0x6A) NACK from cold on Core 1, even though the same i2c1 peripheral reaches 0x36 + 0x6B on the power bus. User-confirmed hardware works with the Core 0 bringup firmware. **Root cause:** Our manual override only wrote the standard-speed counters (`ss_scl_hcnt/lcnt`) and set `IC_CON.SPEED=STANDARD`, leaving `fs_scl_hcnt/lcnt` and `sda_hold` at whatever `i2c_init()` computed with `clock_get_hz(clk_peri)=0` on Core 1 (garbage — both 0, sda_hold min 1 cycle). Power bus tolerated the marginal timing (short traces, few devices); sensor bus did not. A power-first scan also corrupted the peripheral so that a subsequent sensor scan never recovered — confirmed by reversing order (both buses then 0 ACK). | Rewrote `i2c_set_baudrate_core1()` to mirror the SDK: populate both FS and SS counters for the chosen period, compute `sda_tx_hold_count` from the fixed 150 MHz, pick `SPEED=FAST` for any baud > 100 kHz. Added full `i2c_init()` + baud re-apply inside `switch_pinmux()` so pinmux changes never leave i2c1 in a half-configured state. Default baud lifted 100 kHz → 400 kHz (matches bringup). Scan now finds all six devices; LPS22HH reports 1008 hPa / 31.9 °C. |
 | P2-6 | 2026-04-12 | M1.1-B USB CDC bridge — slow Meshtastic web console initial handshake | **Symptom:** When the Meshtastic web console attaches to COM16 (MokyaLora via Core 1 bridge), the initial device-configuration handshake (`want_config_id` → full `FromRadio` stream: MyNodeInfo, Metadata, Channel×8, Config×, ModuleConfig×, NodeInfo×86) takes **noticeably longer** than the same firmware build running with Arduino-Pico's native `SerialUSB` (no bridge). One-shot `meshtastic --info` via `pyserial` also feels slower than a reference Meshtastic device but is tolerable; web console's dozens of small-packet exchanges amplify the per-round-trip penalty. **Hypotheses (ranked):** (1) **`usb_device_task` 1-tick yield (`vTaskDelay(pdMS_TO_TICKS(1))`) at `main_core1_bridge.c:97`** — between every `tud_task()` poll. Full-speed USB bulk-IN polling interval is 125 µs, so a 1 ms quantum means the TX endpoint only has ~8 opportunities/ms to push out data, and every request→response round trip eats at least 1 ms on the USB side. (2) **`bridge_task` idle 1-tick yield at `main_core1_bridge.c:192`** — when both directions drain empty, we sleep 1 ms before re-checking. Web console's synchronous request/response protocol means every host→device→host round trip adds 1–2 ms of bridge latency on top of the USB wire time. (3) **No FreeRTOS task notification on ring push** — Core 0's `ipc_ring_push` writes the slot then releases `head`, but does not wake Core 1's `bridge_task`. Core 1 only sees the new slot on its next idle-yield wake-up. Similarly, CDC OUT data only triggers `bridge_task` wake-up 1 ms later. A cross-core sev / FIFO doorbell + `xTaskNotifyFromISR` would let the bridge react within tens of µs. (4) **`tud_cdc_write` micro-chunking** — the `bridge_task` splits each ring slot across `tud_cdc_write_available()` chunks; if avail is small and we re-loop with a 1-tick yield, a single 256 B ring slot can cost multiple ms. **Verification plan:** Measure end-to-end handshake time with `meshtastic --port COMxx --info` scripted against (a) native `SerialUSB` reference build on the same board, (b) current M1.1-B bridge, (c) M1.1-B bridge with `usb_device_task` switched to `taskYIELD()` instead of `vTaskDelay(1)`, (d) M1.1-B bridge with FreeRTOS task-notify on ring push (requires cross-core notify via RP2350 SIO FIFO IRQ). Pick the minimal change that matches (a). **Status:** Confirmed by benchmark (2026-04-12). With correct CLI (2.7.8): bridge ~0.50 KB/s vs native ~12.6 KB/s (**~25× slower per-KB**). Zero drops. Root cause is dual 1 ms vTaskDelay, not the bridge protocol itself. M1.2 Part B (`taskYIELD()` replacement) is the next fix. Cross-core notification deferred to M2. |
+| P2-16 | 2026-04-22 | Flash CLKDIV=1 (75 MHz) has ~10⁻⁵ transient cache-fill error rate on W25Q128JW 1.8 V + this Rev A routing — ship at CLKDIV=2 (37.5 MHz) | **Symptom:** `flash_bench` at bootrom-default M0 (CLKDIV=3 / RXDELAY=2) gives ~20.5 MB/s uncached & cached (cache barely helps at 25 MHz because cmd+addr overhead dominates). `flash_sweep2` at CLKDIV=1 (75 MHz) FAILs across all 8 RXDELAY values with deterministic nibble-shifted reads. PSRAM on the same QMI bus (shared SCK / SD[3:0]) runs fine at 75 MHz (P2-15) — flash is specifically the problem. **Investigation in three passes on 2026-04-22:** **Morning — register + pad sweeps:** (1) 36-combo `flash_sweep2` (DUMMY 16/20/24/28 × SUFFIX none/0xA0/0xF0 × RXDELAY 1/2/3) all FAIL → not a register-level timing issue. (2) W25Q128JW non-DTR does NOT support full QPI (4-4-4). Opcode 0x35 is "Read Status Register-2" on W25Q, not "Enter QPI" (APS6404L conventions ≠ W25Q). (3) 1-1-4 mode (6Bh) at 75 MHz: same shift signature. (4) Flash SR3 DRV 25 %→100 %: no effect. (5) RP2350 QSPI pad defaults (DRIVE=4 mA, SLEWFAST=0, SCHMITT=1) aren't optimised for 75 MHz — boot2 doesn't run on RP2350. First `flash_pad_ablation` (2³ factorial, one-word sentinel) reported "SLEWFAST=1 alone is enough". Shipping that HardFaulted production in vStartFirstTask. (6) `flash_deep_scan` (full 16 MB block-XOR uncached): SLEWFAST-only = 120/256 bad → one-word check was a false positive. (7) `flash_deep_ablation` across 4 pad combos: **SLEWFAST + DRIVE=8 mA = 0/256 (both SCHMITT on and off); SLEWFAST alone = 120**. (8) Production with DRIVE=8 mA + SLEWFAST + CLKDIV=1 + RXDELAY=2 still HardFaulted in vStartFirstTask, despite bringup reporting 0 errors at the same register state. **Afternoon — cached-burst oracle + 2×2 factorial:** Added `flash_deep_scan_cached` / `flash_deep_ablation_cached`: mirror the uncached versions but read through `XIP_BASE` with per-64 KB-block `xip_cache_invalidate_range()`, so every word cold-misses and triggers a fresh 8-byte cache-line burst fill at the candidate timing. (Gotcha: the first implementation self-destructed by calling `to_ms_since_boot(get_absolute_time())` inside the CLKDIV=1 window — `timer_time_us_64` at flash offset `0x18940` lived in a block we'd just invalidated and re-filled with CLKDIV=1-corrupted data; the next call fetched poisoned instruction bytes and crashed with IACCVIOL. Rewrote both `*_cached_run` functions to use `timer_hw->timerawl` directly and avoid all flash-resident calls between the M0 switch and the post-restore `xip_cache_invalidate_all()`. Reusable lesson: poisoned cache lines from bad-timing fills persist until explicit invalidation.) Cached ablation reports **identical bad-block counts to the uncached ablation** — cached-vs-uncached oracle gap hypothesis refuted. Completed CLKDIV × pad 2×2 factorial on production: CLKDIV=2 + default pad ✓, CLKDIV=2 + 8 mA+SLEWFAST ✓, CLKDIV=1 + default pad ✗ (CFSR=`0x00018201` = IACCVIOL+UNDEFINSTR+PRECISERR), CLKDIV=1 + 8 mA+SLEWFAST ✗ (CFSR=`0x00008200` precise data-bus fault; SWD-verified cache line `0x1002AEA8` poisoned — CPU's cached `ldr r3,[pc,#80]` returned `0xF3EFB943`, direct SWD read gives `0x2000D81C`). Pad boost reduces corruption severity (fewer downstream faults) but doesn't eliminate it. Ran CLKDIV=1 + 8 mA+SLEWFAST **single-core** (Core 1 launch suppressed) — still HardFaults, refuting dual-core concurrent fetch as the cause. **Night — transient-error-rate measurement in bringup:** Added `flash_rand_scan_cached` (100 k random-address LCG, per-sample cache invalidate, IRQ-off). At CLKDIV=1 + 8 mA+SLEWFAST: **0/100 mismatch buckets**. Extended to `flash_rand_scan_long` (1 M samples, same config): **7–9 / 100 mismatch buckets, first-bad at bucket #37–38 across 4 repeat runs with the same seed**. Count drifts slightly (7, 8, 8, 9) with identical address sequence → errors are semi-deterministic: part stable margin violation on specific address transitions, part sporadic transient. **Quantified error rate ≈ 10⁻⁵ per cache-line burst fill.** Bringup's previous oracles never exposed this because 16 MB linear scan = 2 M fills and 100 k random = 10⁵ fills — both below / right at detection threshold for this rate. Production boot + FreeRTOS setup does ~10⁵–10⁶ fills within seconds, guaranteeing a hit; the vStartFirstTask HardFault is exactly that rate's expected value. **Device context:** W25Q128JW is the 1.8 V variant; Pico 2 stock uses 3.3 V W25Q32RV, Pimoroni Pico Plus 2 uses 3.3 V W25Q128JV — both CLKDIV=2 / 75 MHz reliably. The 1.8 V + trace-length + pad-drive combination on this Rev A sits at the setup/hold margin at 75 MHz. | **Shipped (2026-04-22): CLKDIV=2 / 37.5 MHz via `flash_retime_m0()` in `variant.cpp`.** +50 % over bootrom raw SCK, `meshtastic --info` ~4.5 s (unchanged — CDC-bound, not flash-bound), both cores IPSR=000 persistently across repeated CDC interaction. Pads left at bootrom defaults (4 mA) — 2×2 factorial confirmed pad boost is unnecessary at 37.5 MHz. Helper runs from RAM with direct-mode bracket + RAM-only `mokya_xip_cache_invalidate_all()` (open-coded since `hardware/xip_cache.h` isn't on Arduino-Pico's variant include path). **Bringup tooling landed:** `flash_bench`, `flash_sweep2`, `flash_pad_ablation`, `flash_deep_scan`, `flash_deep_ablation`, `flash_deep_scan_cached`, `flash_deep_ablation_cached`, `flash_rand_scan_cached`, `flash_rand_scan_long`, `flash_reset`, `flash_boost_pads`, `qmi_diag`. **Key test-infrastructure lesson (carry forward):** oracle sample count must dominate (worst-acceptable error rate × safety factor). A ~10⁻⁵ defect rate needs ≥ 10⁶ samples (ideally 10⁷) to detect reliably; smaller runs produce false-clean results that look like green lights. **Rev B recommendations:** (a) switch to 3.3 V W25Q128JV if pin-compatible, or (b) shorten QSPI traces + improve return-path grounding. Either path should unlock the +117 % cached flash read gain (20.5 → ~44 MB/s) that bringup proved is register-reachable. **Rev B validation gate:** `flash_rand_scan_long` must report 0 mismatches over 1 M samples on the new board (multiple runs, multiple seeds) before enabling CLKDIV=1 in production. |
+| P2-19 | 2026-04-25 | Meshtastic `PhoneAPI::getFromRadio()` heartbeat path corrupts every reply — `LOG_DEBUG` between encode and return clobbers the encoded payload via the shared `txBuf`/`fromRadioScratch` | **Symptom:** After P2-17 (IPC truncation) and P2-18 (RTC epoch clobber) were fixed, `client.meshtastic.org` Settings panel still spun forever (config never finished loading). Reproduced via `python -m meshtastic --port COMxx --info` — 4 `Error parsing message with type 'meshtastic.protobuf.FromRadio'` per session, deterministic across runs. **Investigation:** Captured raw COM stream during `--info`, walked `0x94 0xC3 LEN_HI LEN_LO`-framed packets, found one bad frame per run with declared `LEN=6` and payload `32 40 0A 2D 46 72`. Decoded as FromRadio, this is field 6 (`log_record`) wire-2 length 64 — but only 4 payload bytes follow, so protobuf parse fails. Looked at the preceding good frame: a 66-byte `log_record` with message `"FromRadio=STATE_SEND_QUEUE_STATUS, numbytes=6"`. Searched the source: `firmware/core0/meshtastic/src/mesh/PhoneAPI.cpp:226–237`, the heartbeat fast-path: `pb_encode_to_bytes(buf, ...); LOG_DEBUG("FromRadio=STATE_SEND_QUEUE_STATUS, numbytes=%u", numbytes); return numbytes;`. **Root cause:** When the StreamAPI subclass has switched to protobuf log encapsulation (`SerialConsole::usingProtobufs == true` after `want_config`), `LOG_DEBUG` re-enters `StreamAPI::emitLogRecord` (`SerialConsole.cpp:142–149`). `emitLogRecord` shares `txBuf` and `fromRadioScratch` with the very `getFromRadio` flow above it: it `memset`s `fromRadioScratch`, encodes a 66-byte `log_record` over the same `txBuf+HEADER_LEN` that just held the queue_status, and emits a clean log_record frame. Control returns to `writeStream()` (`StreamAPI.cpp:53–54`), which then calls `emitTxBuffer(numbytes)` with the original `numbytes=6` and the now-clobbered `txBuf` — emitting `0x94 0xC3 0x00 0x06` followed by the first 6 bytes of the leftover log_record encoding (`32 40 0A 2D 46 72`). Wire pattern: clean log_record + corrupted-trailer queue_status, with 4 different bad-frame sites visible per session because heartbeat exchanges happen multiple times during config sync. **Why upstream knows but missed it:** the same file has an explicit comment at line ~584 ("VERY IMPORTANT to not print debug messages while writing to fromRadioScratch — because we use that same buffer for logging when we are encapsulating with protobufs"). The switch-statement path obeys the rule; the heartbeat fast-path was added later and didn't. **Why the settings page spins specifically:** `client.meshtastic.org` enters Settings by issuing a sequence of `get_config` admin requests that each pair a heartbeat with a config response. Every heartbeat triggers a corrupted queue_status frame; the host parser drops the bad frame and waits for missing config segments that already left the wire as part of a corrupted-then-discarded frame. UI never gets a complete config tree. **Diagnostic dead ends ruled out:** (a) Log-ring → CDC interleaving (the original suspect for the same symptom): tested by dropping log ring forwarding entirely on Core 1 — corruption persisted, so the byte-by-byte log path was not the source. (b) An attempted fix that gave `emitLogRecord` its own static `logScratch` + `logTxBuf` regressed Core 0 to RX=6 bytes total (Core 0 stopped sending most data) — root cause not investigated; reverted in favour of the simpler upstream-spirit fix below. | **Patched (2026-04-25)** in `firmware/core0/meshtastic` submodule: move `LOG_DEBUG` to before `pb_encode_to_bytes` in `PhoneAPI::getFromRadio()`'s heartbeat path; drop the `numbytes` value from the message text (cosmetic loss). The reordering means any re-entrant `emitLogRecord` clobbers `txBuf`/`fromRadioScratch` *before* the queue_status encode, which then writes its own bytes cleanly and `writeStream()` emits the correct payload. **Defense in depth:** kept the Core 1 log-ring → CDC drop from the earlier diagnostic round (`main_core1_bridge.c`). Original architecture forwarded byte-by-byte log text alongside protobuf frames on the same CDC IN endpoint; with `usingProtobufs == true` (the post-`want_config` default) the byte-by-byte path is dead, so the drop is functionally a no-op today, but it eliminates a future re-introduction risk and forces all log output onto the structured `log_record` channel. **Verification:** 3 consecutive `--info` runs reported `errors=0 size=68 lines` (versus 4 errors / 85 lines before), nodedbCount populated, no parse failures in the captured raw stream. Settings-page spin should now resolve — needs user-side confirmation in the browser. |
+| P2-18 | 2026-04-25 | Meshtastic `perhapsSetRTC()` self-clobbers freshly-set epoch on platforms with no RTC chip and no `settimeofday()` (e.g. RP2350) | **Symptom:** After confirming P2-17's stream-corruption fix, the Meshtastic web console (`client.meshtastic.org`) still showed every neighbour node's `last_heard` and message timestamps stuck at 1970 (epoch 0/small uptime values). Sending an explicit setTime via `python -m meshtastic` likewise had no lasting effect — `getValidTime()` returned ~boot uptime instead of the host wall clock. **Investigation:** SWD readback of static globals in `gps/RTC.cpp` after a successful Python `iface.localNode.setTime(int(time.time()))`: `currentQuality = 0x03` (NTP, set correctly), but `zeroOffsetSecs = 575` and `timeStartMsec = 575618 ms` — both ≈ uptime since boot, **not** the 1.77 G epoch the host pushed. Symbol addresses were verified via `arm-none-eabi-nm` (`_ZL14zeroOffsetSecs` at `0x20001858`, `_ZL13timeStartMsec` at `0x20008B00`, `_ZL14currentQuality` at `0x2000D5A3`). **Root cause:** `perhapsSetRTC()` (RTC.cpp:171) writes `currentQuality`, `timeStartMsec`, `zeroOffsetSecs = tv->tv_sec` correctly, then unconditionally calls `readFromRTC()` at the end of its success path. `readFromRTC()` walks a chain of `#ifdef RV3028_RTC / PCF8563_RTC / PCF85063_RTC / RX8130CE_RTC` branches; none match on RP2350, so control falls into the `#else` branch (RTC.cpp:149-157) which calls `gettimeofday()` and overwrites `timeStartMsec`/`zeroOffsetSecs` with whatever it returns. Pico SDK's `gettimeofday()` (newlib stub) returns boot uptime, not wall clock — there is no `settimeofday()` shim wired up on Arduino-Pico, so the AON timer / external RTC infrastructure that the rest of `perhapsSetRTC` assumes simply isn't there. Net effect: every successful set is immediately undone, leaving the device permanently at "uptime epoch" while pretending `currentQuality == NTP`. The other RTC-chip branches don't have this bug because they re-read the wall clock from chip and fall through `if (currentQuality == RTCQualityNone)` guards (RTC.cpp:63, 107, 141) before assigning — only the no-RTC `#else` branch was missing the guard. **Why this matters:** without valid `getValidTime()`, every received MeshPacket gets `rx_time = 0` stamped on it (Router.cpp:217, 737, 843, 848), so phone/web clients render every message and every node's last-heard field as Jan 1 1970. Position data also fails to render because Position protobuf is gated on a non-zero `time` field. **Why client.meshtastic.org doesn't auto-fix:** the official phone/Python clients send `AdminMessage.set_time_only` on connect, but `client.meshtastic.org` (at least the version in production on 2026-04-25) does **not** — it only sends time on an explicit user-triggered "Sync" action. So even with this bug fixed, web users will still need either a manual sync, the Python CLI, or GPS-derived time (M5). **Diagnostic dead ends ruled out:** (a) `MESHTASTIC_EXCLUDE_GPS=1` excluding the GPS module — irrelevant, time can come from any quality source. (b) Admin auth (`is_managed`/PKI) blocking the set — confirmed not the cause: `mp.from == 0` local USB admin path is taken, no auth required. (c) `BUILD_EPOCH` rejecting the time — confirmed not the cause; `currentQuality` was successfully upgraded to NTP, only the offset got clobbered after. | **Patched (2026-04-25)** in `firmware/core0/meshtastic` submodule: `gps/RTC.cpp` no-RTC `#else` branch now guards the `timeStartMsec`/`zeroOffsetSecs` assignment with `if (currentQuality == RTCQualityNone)`, matching the pattern of the four RTC-chip branches above it. The function still returns `RTCSetResultSuccess` so callers behave identically, but the fresh higher-quality value set by `perhapsSetRTC()` is no longer overwritten. **Verification:** flashed, connected via Python lib, sent setTime — SWD readback `zeroOffsetSecs = 0x69EC582F = 1777096751` exactly matching the host epoch, `currentQuality = 0x03` (NTP) preserved. **Build-script bug surfaced during verification:** `scripts/build_and_flash.sh` selected the Core 0 ELF via `ls firmware*.elf | head -1`, which is alphabetical and picks the oldest commit-hash suffix (`0ab5ef2` vs current `bf7bb81`) — silently flashed stale firmware for the first verification round and made it look like the patch wasn't taking effect. Fixed by switching to `ls -t` (mtime newest-first). **Status of full UX fix:** time now sticks within a session, but RP2350 has no battery-backed RTC so reboots reset to uptime-zero. Until M5 GPS time integration (`IpcGpsBuf` writer Core 1 → Core 0) lands, web users must manually sync after each reboot — `client.meshtastic.org` does not do this automatically. |
+| P2-17 | 2026-04-25 | IPC byte bridge — both directions silently truncated stream-protocol frames mid-payload, desyncing host parser permanently | **Symptom:** Meshtastic web console (`client.meshtastic.org`) showed neighbour nodes' `last_heard` times as garbage and **never displayed remote node positions**. Reproduced with `python -m meshtastic --info`: ~30+ `Error parsing message with type 'meshtastic.protobuf.FromRadio'` per session, but enough frames decoded to populate basic NodeDB fields — explains why some node info shows but PositionInfo / time-related fields are missing. **Investigation:** Captured raw COM bytes after `want_config_id`, walked `0x94 0xC3 LEN_HI LEN_LO`-framed packets, decoded each as `FromRadio` protobuf. Of 134 frames, 9 failed parse — every failed frame contained an **embedded `\x94\xc3` magic header partway through its declared payload**, e.g. frame@2420 declared LEN=136 but had next frame's `\x94\xc3\x00\x62` at offset ~120. Pattern means: declared header LEN > actual bytes on the wire → host reads LEN bytes, gobbles into next frame, alignment lost. **Root cause:** Both directions of the IPC byte bridge had a "give up after timeout, return early" path that aborted **mid-frame**: (1) `firmware/core0/.../ipc_serial_stub.cpp` — `IpcSerialStream::write(buf,len)` chunked into ≤256 B ring slots and `break`ed out of the chunk loop after a 50 ms `ipc_ring_push` timeout, leaving the 4-byte stream-protocol header already in the wire even though the rest of the payload was dropped. (2) `firmware/core1/.../main_core1_bridge.c` — data-ring → CDC IN forwarder `break`ed out of the chunked write after 10 stall_ticks of `tud_cdc_write_available()==0`, dropping the remainder of the current ring slot but having already shipped earlier chunks of the same FromRadio frame. Both paths' comments asserted "Meshtastic retransmits on demand" — that is **wrong** for the stream-protocol layer; there is no frame-level retransmit, only opportunistic application-level resend on missing ACKs. Any mid-frame byte drop permanently desyncs every subsequent FromRadio. The corruption was traffic-dependent: the 100-node DB `want_config` reply pushed enough chunks that backpressure timeouts hit; smaller exchanges (`--noproto`, basic config probes) escaped. **Why it surfaced now:** earlier `--info` smoke tests at M1.2 / M2 had `nodedbCount` of 1–10 and never sustained enough chunked traffic to hit the timeout windows. After Meshtastic accumulated 100 nodes, the want_config reply reliably triggers backpressure on the host CDC FIFO during the burst, exposing the latent drop. **Diagnostic dead ends ruled out:** (a) Core 0 has no time source → benign, web client `set_time_only` admin message would have synced fine if it had reached AdminModule. (b) Log-ring → CDC interleaving on Core 1 → not the cause; corruption persists with log forwarding disabled. (c) Initial `did_work=true` removal experiment starved `usb_device_task` and reduced TX throughput to 6 bytes total — a side-quest; reverted. | **Fixed (2026-04-25).** Both directions changed to never abort mid-frame: (1) `IpcSerialStream::write(buf,len)` — removed 50 ms deadline, now `yield()` until each chunk is pushed; only exit is full success. (2) Core 1 bridge `c0_to_c1` → CDC IN — removed 10-tick stall budget, now `taskYIELD()` until CDC FIFO has room; only exit is `!tud_mounted()` (host gone). **Verification:** raw stream capture: 144/144 frames parse cleanly, 0 embedded magic markers, `nodedbCount=100` `--info` returns full output (1814 lines, 0 parse errors vs 36 before). User can now reconnect web console and confirm timestamps + positions render correctly. **Backpressure rationale:** stream protocol is byte-exact framing; correct response to backpressure is to slow the producer, not to drop bytes. Both bridges run in FreeRTOS context where blocking-with-yield is cheap; the only previous concern was deadlock if the host vanished, which `tud_mounted()` already guards against. |
+| P2-15 | 2026-04-20 | Core 1 `psram.c` — PSRAM bit errors from MAX_SELECT=0 (DRAM refresh starvation) | **Symptom:** IME candidate lookup returned wrong suggestions for `ㄅㄆ` / `ㄅㄉ` (shape bytes `\x21\x26` / `\x21\x25`) on device, while host `dict_probe` returned correct candidates from the same MDBL dict. Escalated to a full PSRAM sweep under FreeRTOS: 8 MB uncached round-trip test reports **93.75 % word errors** (1,965,135 / 2,097,152) with consistent signature — byte 0 upper-nibble random bit-flips (e.g. wrote `0xA5000002`, CPU reads back `0xA5000022`, SWD via NOTRANSLATE reads back `0xA5000002` correctly). **Investigation steps:** (1) Isolated Core 1 task concurrency — disabled USB/LVGL/keypad/sensors/GPS, only `ptst` task runs — **still 93.75 %**, ruling out task/DMA interference. (2) Halted Core 0 via J-Link after boot — **still 93.75 %**, ruling out Core 0 M0 flash traffic. (3) Compared cached (0x11xxxxxx) vs uncached (0x15xxxxxx) paths at production default: cached **46.81 %**, uncached 93.75 % — different error rates imply different access patterns matter. (4) Swept QMI CLKDIV × RXDELAY at runtime (via `psram_set_timing_rt` in RAM): only CLKDIV=2/RXDELAY=0 (production default) produced the "least-bad" 93.75 %; all other combos were 100 %. CLKDIV=1 at runtime wedges QMI into direct-mode-stuck state that survives `SYSRESETREQ` + chip erase + `r`-reset — **only USB power cycle recovers**; binary with CLKDIV=1 in the sweep array was enough to trigger the wedge even before the test task ran. **Root cause:** `psram.c`'s `psram_init_run` sets M1.timing as `(m[0].timing & ~(COOLDOWN|RXDELAY|CLKDIV)) | <new bits>`, inheriting `MAX_SELECT`, `MIN_DESELECT`, `PAGEBREAK`, `SELECT_HOLD`, `SELECT_SETUP` from M0 (flash). Arduino-Pico / Pico SDK boot2 leaves `MAX_SELECT = 0` on M0 because NOR flash has no refresh requirement. When inherited onto M1, `MAX_SELECT = 0` lets QMI keep CS asserted indefinitely when servicing back-to-back M1 accesses. APS6404L-SQN-ZR is pseudo-SRAM with DRAM cells and self-managed refresh that only runs while CS is HIGH — datasheet `tCEM = 8 µs` (standard grade) is the max CS-low window; violating it starves the DRAM cells. RP2350 SVD explicitly flags MAX_SELECT as "required to meet timing constraints of PSRAM devices". Bringup standalone firmware passed the same 8 MB test because its access pattern (printf + 4 KB ring) never kept CS low long enough for refresh starvation to manifest; production's tight access loops under XIP cache fill + QMI prefetch do. **Fix:** add `MAX_SELECT = 1` (2-bit field in M1.timing, 1 × 64 sys_clk = 427 ns trigger) to `psram.c` `psram_init_run`. Worst-case CS-low = 256 + 316 (one cache-line burst) ≈ 3.81 µs ≪ 8 µs tCEM. **Validation (2026-04-20):** SWD M1.timing = `0xA0027002` with MAX_SELECT=1 bit set. Full 8 MB sweep at fix: **cached = 0 / 2,097,152 errors across 2 passes (0.00 %)**, uncached = 983,340 / 2,097,152 (46.89 %, tight-loop CPU read pattern). First `first_bad_idx` for cached = `0xFFFFFFFF` (no errors). MIN_DESELECT sweep (7/15/31 at MS=1) had zero effect; only MAX_SELECT matters. **Follow-up fix:** `mie_dict_loader.c` PSRAM_READ_ADDR macro had regressed to `MOKYA_PSRAM_UNCACHED_BASE`, so dict `s_mie_dict` pointers landed at 0x15xxxxxx instead of 0x11xxxxxx — trie tight-loop reads + font glyph lookups hit the 47% uncached error. Restored READ via cached alias (WRITE stays uncached for correct write-through), per the intent already documented in the file header comment. Dict pointers readback after fix: `0x11000000 / 0x11200000 / 0x11500000 / 0x11510000`. |

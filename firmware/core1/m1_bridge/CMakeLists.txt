@@ -47,6 +47,13 @@ project(core1_bridge C CXX ASM)
 set(CMAKE_C_STANDARD   11)
 set(CMAKE_CXX_STANDARD 17)
 
+# Dev-only: replace the Teseo NMEA source with a fixed-position dummy
+# injector that writes one $GPGGA per second into IpcGpsBuf. Lets the
+# IpcGpsBuf pipeline be exercised without sky view. Default OFF.
+option(MOKYA_GPS_DUMMY_NMEA
+    "Inject dummy fixed-position NMEA into IpcGpsBuf instead of running Teseo"
+    OFF)
+
 pico_sdk_init()
 
 # ── FreeRTOS RP2350_ARM_NTZ port ─────────────────────────────────────────────
@@ -104,6 +111,60 @@ set(KEYPAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/keypad)
 # ── UI diagnostic views (M3.3 Phase C) ───────────────────────────────────────
 set(UI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui)
 
+# ── PSRAM driver (M4 Step 3) ─────────────────────────────────────────────────
+set(PSRAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/psram)
+
+# ── Messages inbox (M5 Phase 1) ──────────────────────────────────────────────
+set(MESSAGES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/messages)
+
+# ── IME module (M4 Step 3+) ──────────────────────────────────────────────────
+set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
+
+# ── Debug / RTT trace ────────────────────────────────────────────────────────
+# Reuse the SEGGER RTT C source bundled with pico-sdk (same file pico_stdio_rtt
+# uses internally) but DO NOT enable pico_stdio_rtt — Core 1 doesn't use the
+# pico_stdio framework. We call SEGGER_RTT_Write / SEGGER_RTT_printf directly
+# from our own TRACE() macro so we can run multi-channel structured trace.
+# Host: J-Link, OpenOCD, pyOCD and probe-rs all read the same _SEGGER_RTT
+# control block, so this stays vendor-neutral.
+set(DEBUG_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/../src/debug)
+set(SEGGER_DIR ${PICO_SDK_PATH}/src/rp2_common/pico_stdio_rtt/SEGGER)
+
+# ── MIE library sources (compiled directly into core1_bridge) ────────────────
+# Building MIE as an independent static library would require replicating the
+# Pico SDK cross-compile toolchain state. Compiling straight into the Core 1
+# executable avoids that and keeps the source-of-truth headers under
+# firmware/mie/include. The C API (src/mie_c_api.cpp) is intentionally NOT
+# compiled here — Core 1 uses C++ ImeLogic directly.
+set(MIE_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/src)
+
+# ── MIEF font blob (Phase F — Traditional Chinese rendering) ─────────────────
+# Produces firmware/mie/data/mie_unifont_sm_16.bin, flashed as an
+# independent partition at 0x10A00000 by scripts/build_and_flash.sh.
+# Font glyphs stay XIP — Core 1's driver reads from the flash XIP
+# address rather than copying to PSRAM (see mie_font_partition.h).
+# gen_font.py is invoked automatically whenever the charlist, source
+# OTF, or the generator script itself changes.
+set(MIE_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/../../mie)
+set(MIEF_BLOB ${MIE_DIR}/data/mie_unifont_sm_16.bin)
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+add_custom_command(
+    OUTPUT  ${MIEF_BLOB}
+    COMMAND ${Python3_EXECUTABLE} ${MIE_DIR}/tools/gen_font.py
+            --unifont  ${MIE_DIR}/data_sources/unifont-17.0.04.otf
+            --charlist ${MIE_DIR}/data/charlist.txt
+            --out      ${MIEF_BLOB}
+            --no-subset
+    DEPENDS ${MIE_DIR}/tools/gen_font.py
+            ${MIE_DIR}/data/charlist.txt
+            ${MIE_DIR}/data_sources/unifont-17.0.04.otf
+    COMMENT "Compiling MIEF font blob -> ${MIEF_BLOB}"
+    VERBATIM
+)
+add_custom_target(mie_font_data DEPENDS ${MIEF_BLOB})
+
 # ── Executable ───────────────────────────────────────────────────────────────
 # core1_reset.S MUST be the first source so its .vectors input section lands
 # at offset 0 of the final .text output (i.e. flash 0x10200000). The SDK
@@ -125,15 +186,57 @@ add_executable(core1_bridge
     ${SENSOR_DIR}/lsm6dsv16x.c
     ${SENSOR_DIR}/teseo_liv3fl.c
     ${SENSOR_DIR}/gps_task.c
+    $<$<BOOL:${MOKYA_GPS_DUMMY_NMEA}>:${SENSOR_DIR}/gps_dummy.c>
     ${DISPLAY_DIR}/display.c
     ${DISPLAY_DIR}/st7789vi.c
     ${DISPLAY_DIR}/lvgl_glue.c
+    ${DISPLAY_DIR}/mie_font.c
     ${KEYPAD_DIR}/keypad_scan.c
     ${KEYPAD_DIR}/key_event.c
+    ${KEYPAD_DIR}/key_inject.c
+    ${KEYPAD_DIR}/key_inject_frame.c
+    ${KEYPAD_DIR}/key_inject_rtt.c
     ${UI_DIR}/keypad_view.c
     ${UI_DIR}/rf_debug_view.c
+    ${UI_DIR}/font_test_view.c
+    ${UI_DIR}/ime_view.c
+    ${UI_DIR}/messages_view.c
+    ${UI_DIR}/nodes_view.c
     ${UI_DIR}/view_router.c
+    ${PSRAM_DIR}/psram.c
+    ${IME_DIR}/mie_dict_loader.c
+    ${IME_DIR}/ime_task.cpp
+    ${SEGGER_DIR}/RTT/SEGGER_RTT.c
+    ${DEBUG_DIR}/mokya_trace.c
+    ${MIE_SRC_DIR}/mie_init.cpp
+    ${MIE_SRC_DIR}/trie_searcher.cpp
+    ${MIE_SRC_DIR}/composition_searcher.cpp
+    ${MIE_SRC_DIR}/ime_logic.cpp
+    ${MIE_SRC_DIR}/ime_keys.cpp
+    ${MIE_SRC_DIR}/ime_search.cpp
+    ${MIE_SRC_DIR}/ime_display.cpp
+    ${MIE_SRC_DIR}/ime_commit.cpp
+    ${MIE_SRC_DIR}/ime_smart.cpp
+    ${MIE_SRC_DIR}/ime_direct.cpp
+    ${MIE_SRC_DIR}/lru_cache.cpp
+    ${IME_DIR}/flash_safety_wrap.c
+    ${IME_DIR}/lru_persist.cpp
+    ${MESSAGES_DIR}/messages_inbox.c
+    ${MESSAGES_DIR}/messages_send.c
+    ${MESSAGES_DIR}/messages_tx_status.c
+    ${MESSAGES_DIR}/nodes_db.c
 )
+
+# SEGGER_RTT.c triggers -Wcast-qual and -Wcast-align under our default
+# warning flags. pico_stdio_rtt's CMakeLists silences the same two warnings
+# locally — we match that.
+set_source_files_properties(${SEGGER_DIR}/RTT/SEGGER_RTT.c
+    PROPERTIES COMPILE_OPTIONS "-Wno-cast-qual;-Wno-cast-align")
+
+# Font .bin is a flashable partition, not embedded in Core 1 image.
+# Build-time dep so the blob is regenerated when charlist.txt changes
+# — scripts/build_and_flash.sh then loadbin's it to 0x10A00000.
+add_dependencies(core1_bridge mie_font_data)
 
 # Generate tft_8080.pio.h next to the .pio source via pioasm.
 pico_generate_pio_header(core1_bridge
@@ -156,6 +259,12 @@ target_include_directories(core1_bridge PRIVATE
     ${DISPLAY_DIR}
     ${KEYPAD_DIR}
     ${UI_DIR}
+    ${PSRAM_DIR}
+    ${IME_DIR}
+    ${MESSAGES_DIR}
+    ${DEBUG_DIR}
+    ${SEGGER_DIR}/RTT
+    ${SEGGER_DIR}/Config
     ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/include
 )
 
@@ -179,6 +288,10 @@ target_compile_definitions(core1_bridge PRIVATE
     PICO_NO_PROGRAM_VERSION_STRING=1
     # FreeRTOS single core
     configNUMBER_OF_CORES=1
+    # Opt MIE source files into RTT perf trace (mie/src/ime_search.cpp etc.).
+    # PC tests do not define this so MIE stays decoupled from mokya_trace.h.
+    MOKYA_MIE_PERF_TRACE=1
+    $<$<BOOL:${MOKYA_GPS_DUMMY_NMEA}>:MOKYA_GPS_DUMMY_NMEA=1>
 )
 
 target_link_libraries(core1_bridge
@@ -198,6 +311,14 @@ target_link_libraries(core1_bridge
     FreeRTOS-Kernel-Heap4
     lvgl
     lvgl_demos
+)
+
+# Phase 1.6 P2-11-mirror: wrap flash_range_erase/program so Core 1's own
+# flash writes (e.g. LRU persist) park Core 0 before disabling XIP. See
+# firmware/core1/src/ime/flash_safety_wrap.c for the protocol.
+target_link_options(core1_bridge PRIVATE
+    -Wl,--wrap=flash_range_erase
+    -Wl,--wrap=flash_range_program
 )
 
 # Override the SDK's default memmap with our own — this is what redirects

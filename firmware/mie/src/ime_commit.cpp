@@ -48,16 +48,37 @@ void ImeLogic::commit_selected_candidate() {
 
 void ImeLogic::commit_partial(const char* utf8, int prefix_keys) {
     if (utf8 && *utf8) {
+        // Phase 1.6: teach the LRU cache from this commit. Runs before the
+        // key_seq_ strip so we can record (matched_prefix, utf8) accurately.
+        // SmartZh only — SmartEn words are not reading-keyed and Direct has
+        // no candidate selection. prefix_keys>0 excludes standalone-space
+        // commits and other zero-prefix emissions.
+        if (mode_ == InputMode::SmartZh && prefix_keys > 0 &&
+            prefix_keys <= key_seq_len_) {
+            uint8_t tone = 0;
+            if (cand_count_ > 0) {
+                int sel = (selected_ < cand_count_) ? selected_ : 0;
+                tone = candidates_[sel].tone;
+            }
+            uint8_t pos_packed = lru_pack_phoneme_hints(phoneme_hint_, prefix_keys);
+            lru_.upsert(
+                reinterpret_cast<const uint8_t*>(key_seq_),
+                prefix_keys, pos_packed, tone, utf8, now_ms_cache_);
+        }
+
         did_commit(utf8);
         if (listener_) listener_->on_commit(utf8);
     }
 
-    // Remove the matched prefix bytes from key_seq_.
+    // Remove the matched prefix bytes from key_seq_ and the parallel
+    // phoneme_hint_ array (same index space).
     int remove = (prefix_keys > 0 && prefix_keys <= key_seq_len_)
                  ? prefix_keys : key_seq_len_;
     if (remove > 0) {
         std::memmove(key_seq_, key_seq_ + remove,
                      (size_t)(key_seq_len_ - remove + 1));
+        std::memmove(phoneme_hint_, phoneme_hint_ + remove,
+                     (size_t)(key_seq_len_ - remove));
         key_seq_len_ -= remove;
     }
 
@@ -67,6 +88,8 @@ void ImeLogic::commit_partial(const char* utf8, int prefix_keys) {
     while (key_seq_len_ > 0 &&
            ((uint8_t)key_seq_[0] == 0x20 || (uint8_t)key_seq_[0] == 0x22)) {
         std::memmove(key_seq_, key_seq_ + 1, (size_t)key_seq_len_);
+        std::memmove(phoneme_hint_, phoneme_hint_ + 1,
+                     (size_t)(key_seq_len_ - 1));
         --key_seq_len_;
     }
     key_seq_[key_seq_len_] = '\0';
@@ -75,6 +98,9 @@ void ImeLogic::commit_partial(const char* utf8, int prefix_keys) {
     selected_             = 0;
     matched_prefix_bytes_ = 0;
     matched_prefix_keys_  = 0;
+    // Any active long-press cycle was indexed against pre-shift bytes;
+    // commit invalidates that, so reset.
+    lp_cycle_             = {};
 
     // Re-run search on the remainder (populates display_ via rebuild).
     run_search();

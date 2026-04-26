@@ -141,7 +141,7 @@ distribution rules in firmware-architecture.md §1 and §11.
 - Goal: turn bring-up architecture into dual-core production firmware — Core 0 Meshtastic LoRa modem, Core 1 FreeRTOS + LVGL + MIE UI, shared-SRAM SPSC ring IPC.
 - Tracked by milestone (M1.0, M1.0b, M1.1, ...) in `docs/bringup/phase2-log.md`.
 - Plan: `~/.claude/plans/groovy-petting-alpaca.md`.
-- Current status: **M1 ✅ + M2 ✅ complete (2026-04-13).** M1 delivered IPC byte bridge (staged-delivery, taskYIELD + TX accumulation, Config IPC definition). M2 delivered doorbell-driven IPC (SIO doorbell + `xTaskNotifyFromISR`, Part A), graceful reboot via `RebootNotifier` + `tud_disconnect()` (Part B, fixes P2-10), and flash write safety via linker `--wrap` + Core 1 parking (fixes P2-11). **P2-13 fix (XIP cache was disabled since boot) eliminated the 16× throughput gap.** CLI `--info`: 15.0 s → 5.9 s → 4.5 s (parity with stock Pico2); burst rate 2.5× faster than stock. IPC handshake v2 deferred to M5. **IMPORTANT: always use `python -m meshtastic` (v2.7.8), never bare `meshtastic` command.** **M3.1/M3.2 ✅ display + LVGL, M3.3 ✅ keypad (Phase A PIO+DMA scan, Phase B 20 ms debounce + keymap→KeyEvent queue, Phase C LVGL consumer + landscape 320×240 view mirroring physical PCB). M3.4.1 ✅ shared I2C bus module (time-muxed `i2c1` between GPIO 6/7 and GPIO 34/35 — both pairs are I2C1-only on RP2350; Rev B will reroute sensor bus to free `i2c0`). M3.4.2 ✅ BQ25622 charger driver (datasheet-accurate, VREG/ICHG/IINDPM configurable, WATCHDOG 50 s + 1 Hz kick, auto re-init on WD expiry, TS/TDIE ADC, HIZ + BATFET ship/shutdown APIs). M3.4.3 ✅ LM27965 3-bank LED driver (TFT BL / keypad BL / red + green indicators / all-off; GP cache for partial updates). M3.4.4 ✅ BQ27441 fuel gauge stub. M3.4.5a ✅ LPS22HH barometer + sensor-bus I2C baudrate fix (P2-14). M3.4.5b ✅ LIS2MDL magnetometer driver (mag X/Y/Z in µT×10 + internal temp, with mag/temp split read due to auto-increment wrap quirk at 0x6D → 0x68). M3.4.5c ✅ LSM6DSV16X 6-axis IMU driver (accel ±2 g, gyro ±250 dps, internal temp; single 14-byte burst from OUT_TEMP_L covers T+G+A under BDU; 30 Hz HP ODR polled at 10 Hz). M3.4.5d ✅ Teseo-LIV3FL GNSS driver — streaming NMEA parser (GGA+RMC+GSV) on its own `gps_task` (100 ms drain, 1 KB burst, 48 KB heap), parsed fix state + 32-sat pooled view, runtime `teseo_set_fix_rate(OFF/1/2/5/10Hz)` API via `$PSTMSETPAR,1303` + `$PSTMSAVEPAR` + `$PSTMSRR` sequence (tested 1/2 Hz match request exactly, 5/10 Hz clamp to Teseo's ~3 Hz ceiling for 4-constellation config), `send_await` helper + reply dispatch (`$PSTMSETPAROK/ERROR`, `$PSTMSAVEPAROK/ERROR`) reusable for future ST commands. Not called automatically on boot so NVM wear is non-issue. Not in scope: `IpcGpsBuf` writer (Core 0 consumer M5). Part C ✅ RF diagnostics: `teseo_rf_state_t` snapshot (noise floor / ANF status / CPU / per-sat C/N0), parsers for `$PSTMRF/NOISE/NOTCHSTATUS/CPU`, `teseo_enable_rf_debug_messages()` commission API (CDB 231 mask 0x408000A8, SETPAR+SAVEPAR+SRR once, NVM persists), LVGL `rf_debug_view` selectable via `MOKYA_BOOT_VIEW_RF_DEBUG=1`. Next: M3.5 or IpcGpsBuf wiring.**
+- Current status: **M1 ✅ + M2 ✅ complete (2026-04-13).** M1 delivered IPC byte bridge (staged-delivery, taskYIELD + TX accumulation, Config IPC definition). M2 delivered doorbell-driven IPC (SIO doorbell + `xTaskNotifyFromISR`, Part A), graceful reboot via `RebootNotifier` + `tud_disconnect()` (Part B, fixes P2-10), and flash write safety via linker `--wrap` + Core 1 parking (fixes P2-11). **P2-13 fix (XIP cache was disabled since boot) eliminated the 16× throughput gap.** CLI `--info`: 15.0 s → 5.9 s → 4.5 s (parity with stock Pico2); burst rate 2.5× faster than stock. IPC handshake v2 deferred to M5. **IMPORTANT: always use `python -m meshtastic` (v2.7.8), never bare `meshtastic` command.** **M3.1/M3.2 ✅ display + LVGL, M3.3 ✅ keypad (Phase A PIO+DMA scan, Phase B 20 ms debounce + keymap→KeyEvent queue, Phase C LVGL consumer + landscape 320×240 view mirroring physical PCB). M3.4.1 ✅ shared I2C bus module (time-muxed `i2c1` between GPIO 6/7 and GPIO 34/35 — both pairs are I2C1-only on RP2350; Rev B will reroute sensor bus to free `i2c0`). M3.4.2 ✅ BQ25622 charger driver (datasheet-accurate, VREG/ICHG/IINDPM configurable, WATCHDOG 50 s + 1 Hz kick, auto re-init on WD expiry, TS/TDIE ADC, HIZ + BATFET ship/shutdown APIs). M3.4.3 ✅ LM27965 3-bank LED driver (TFT BL / keypad BL / red + green indicators / all-off; GP cache for partial updates). M3.4.4 ✅ BQ27441 fuel gauge stub. M3.4.5a ✅ LPS22HH barometer + sensor-bus I2C baudrate fix (P2-14). M3.4.5b ✅ LIS2MDL magnetometer driver (mag X/Y/Z in µT×10 + internal temp, with mag/temp split read due to auto-increment wrap quirk at 0x6D → 0x68). M3.4.5c ✅ LSM6DSV16X 6-axis IMU driver (accel ±2 g, gyro ±250 dps, internal temp; single 14-byte burst from OUT_TEMP_L covers T+G+A under BDU; 30 Hz HP ODR polled at 10 Hz). M3.4.5d ✅ Teseo-LIV3FL GNSS driver — streaming NMEA parser (GGA+RMC+GSV) on its own `gps_task` (100 ms drain, 1 KB burst, 48 KB heap), parsed fix state + 32-sat pooled view, runtime `teseo_set_fix_rate(OFF/1/2/5/10Hz)` API via `$PSTMSETPAR,1303` + `$PSTMSAVEPAR` + `$PSTMSRR` sequence (tested 1/2 Hz match request exactly, 5/10 Hz clamp to Teseo's ~3 Hz ceiling for 4-constellation config), `send_await` helper + reply dispatch (`$PSTMSETPAROK/ERROR`, `$PSTMSAVEPAROK/ERROR`) reusable for future ST commands. Not called automatically on boot so NVM wear is non-issue. Not in scope: `IpcGpsBuf` writer (Core 0 consumer M5). Part C ✅ RF diagnostics: `teseo_rf_state_t` snapshot (noise floor / ANF status / CPU / per-sat C/N0), parsers for `$PSTMRF/NOISE/NOTCHSTATUS/CPU`, `teseo_enable_rf_debug_messages()` commission API (CDB 231 mask 0x408000A8, SETPAR+SAVEPAR+SRR once, NVM persists), LVGL `rf_debug_view` selectable via `MOKYA_BOOT_VIEW_RF_DEBUG=1`. **M3.6 ✅ (2026-04-19) MIEF font driver** — `firmware/core1/src/display/mie_font.{c,h}` implements LVGL v9 `lv_font_t` callbacks against the MIEF v1 binary format; `.incbin` embeds `mie_unifont_sm_16.bin` (~831 KB, 19 320 glyphs incl. Traditional CJK + Bopomofo + Latin-1) into `.rodata`; CMake auto-regens the blob from `gen_font.py` + `charlist.txt`. `font_test_view` (FUNC cycles to it) validated ASCII / CJK / Latin-1. LVGL ASCII-only restriction lifted. **Phase 1.6 ✅ (2026-04-24) personalised LRU cache + follow-up** — 64-entry LRU promotes repeat-typed chars to rank 0, flash-persisted at `0x10C00000` with symmetric P2-11 park. Six-passage hardware regression: short/repetitive content sees +18 / +23 rank-0 lift; long passages flat due to 64-entry cap (tracked as P1.6.1). Follow-up delivered: `--reboot` ring-wrap fix, dict-blob regen fix (`sm`/`lg` collision), **RTT key-inject transport** alongside SWD with mode-based arbitration (`g_key_inject_mode`), SWD-poll refactor (per-char 400→310 ms). See `docs/bringup/mie-v4-status.md` + `docs/design-notes/mie-p1.6-lru-plan.md`. **Phase 1.6.1 ✅ (2026-04-26) kCap 64 → 128 LRU bump.** `s_scratch` moved off BSS onto FreeRTOS heap (allocate-on-save inside `lru_persist_save`, freed on return) so the LruEntry array could double without overflowing Core 1's tight RAM budget; net BSS −256 B. user1.txt 228-CJK regression: cold pass rank-0 = 54.4 %, warm pass rank-0 = **64.1 % (+9.7 pp)**, in-top-8 = 99.1 %, 5.54 keystrokes/char — the long-passage Pass 1 → Pass 2 lift that 64-entry could not deliver. **M3.5 Phase 1 ✅ (2026-04-26) IpcGpsBuf bridge end-to-end with dummy fixed-position injector** — Core 1 dummy NMEA producer (`gps_dummy.c`, GGA+RMC at 25.052103 N / 121.574039 E, build flag `MOKYA_GPS_DUMMY_NMEA=ON`, default OFF), `IpcGpsBuf` typedef sizeof bug fixed (was 261 vs reserved 260), Core 0 `IpcGpsStream` Arduino Stream adapter (`firmware/core0/.../ipc_gps_stream.{h,cpp}`), Meshtastic submodule patched (commit `06c5f15a3`) so `GPS::_serial_gps` accepts `Stream*` under `MOKYA_IPC_GPS_STREAM`, probe is skipped (`tx_gpio=0`), `setup()` accepts `GNSS_MODEL_UNKNOWN`. Verified `meshtastic --info` reports the local node at the dummy coordinates with `locationSource=LOC_INTERNAL`. Phase 2 = wire the real Teseo NMEA into `IpcGpsBuf` (deferred). **M5 Phase 1 minimal slice ✅ (2026-04-26) RX_TEXT one-way Core 0 → Core 1 → LVGL** — `IpcTextObserver` on Core 0 listens to `textMessageModule->notifyObservers` and pushes `IpcPayloadText` onto `c0_to_c1` DATA ring with `IPC_MSG_RX_TEXT`; Core 1 dispatcher decodes into `messages_inbox` (single-snapshot + seq gate, no mutex needed for SPSC); new LVGL `messages_view` (5th in view router, FUNC cycles to it) renders sender ID + UTF-8 body. Verified end-to-end with peer-node `--sendtext`: 106-byte Traditional-Chinese DM round-trips byte-perfect through Router→TextMessageModule→IPC ring→inbox→LVGL. Submodule commit `c3c7776c1`. **M5 Phase 2 ✅ partial (2026-04-26) FIFO-of-8 inbox + scrollable view + outbound `IPC_CMD_SEND_TEXT` reply flow** — `messages_inbox` upgraded to 8-entry ring keyed by monotonic seq (single-snapshot replaced); `messages_view` UP/DOWN navigates older/newer with `msg N/M` footer and sticky-to-newest auto-jump on RX; OK key now reads MIE-committed text via `ime_view_text()` (new `ime_view_clear_text()` API resets the buffer post-send), builds `IpcPayloadText` via new `messages_send.{c,h}`, pushes `IPC_CMD_SEND_TEXT` onto `c1_to_c0`. Core 0 side: `ipc_serial_stub::refill_rx_` no longer drops non-SERIAL_BYTES — calls new `mokya_handle_ipc_command` (variant `ipc_command_handler.cpp`) which builds a `meshtastic_MeshPacket` (portnum `TEXT_MESSAGE_APP`, configurable to/channel/want_ack) and dispatches via `service->sendToMesh(p, RX_SRC_LOCAL, true)`. Send target = currently-displayed message's `from_node_id` (UP/DOWN picks the recipient), so OK is "reply to peer". Verified end-to-end: typed Traditional Chinese on Core 1, FUNC-cycled to messages view, OK reliably DM'd peers TNGB-50ca and the Heltec gateway. Submodule commit `50e8cd759`. Still TODO in M5: `IPC_MSG_NODE_UPDATE` (NodeDB observer + node list view), `IPC_MSG_TX_ACK` (delivery feedback), Core 0 selective reset, full IPCPhoneAPI subclassing.**
 
 ### Known Phase 2 constraints
 
@@ -195,8 +195,27 @@ PICO_SDK_PATH=/c/pico-sdk cmake -S firmware/core1/m1_bridge \
 
 # Data generation tools
 python firmware/mie/tools/gen_font.py   # produces font_glyphs.bin + font_index.bin
-python firmware/mie/tools/gen_dict.py   # produces dict_dat.bin + dict_values.bin
+# MIE4 v4 dict (default, what build_and_flash.sh consumes):
+python firmware/mie/tools/gen_dict.py \
+    --libchewing firmware/mie/data_sources/tsi.csv \
+    --zh-max-abbr-syls 4 \
+    --v4-output firmware/mie/data/dict_mie_v4.bin \
+    --output-dir /tmp/mie_v2_throwaway
+# Legacy MDBL v2 (RETIRED 2026-04-26, P3-5 — kept only for archaeology):
+# python firmware/mie/tools/gen_dict.py   # produces dict_dat.bin + dict_values.bin
 ```
+
+### Dict format
+
+The MIE dictionary is **MIE4 v4** (single blob, magic `MIE4`). v4 is the only
+format the default `bash scripts/build_and_flash.sh` produces and the only
+format `scripts/ime_text_test.py` accepts. The legacy MDBL v2 pack (four
+files: `dict_dat.bin`, `dict_values.bin`, `en_dat.bin`, `en_values.bin`)
+was **retired 2026-04-26 (P3-5)**. Core 1's `mie_dict_loader.c` still
+magic-dispatches to a v2 path so an out-of-date flash boots, but it sets
+`g_mie_dict_format = MIE_DICT_FMT_MDBL_DEPRECATED` so SWD inspection
+catches it. Do not reintroduce v2 as a default; the escape hatch is
+`bash scripts/build_and_flash.sh --v2-deprecated --dict` for bisecting only.
 
 ## Hardware Debug Toolchain
 
@@ -284,6 +303,107 @@ EOF
 - After J-Link flash, USB may need 2–3 s to re-enumerate before serial is available.
 - **COM port stuck/busy:** If serial open fails (`UnauthorizedAccessException`), re-flash via J-Link — this resets the MCU and forces USB CDC re-enumeration, releasing the port. Always flash before retrying serial.
 - `scripts/bringup_run.ps1` handles build+flash+serial in one step with `-Flash` flag.
+
+## Default Debug Methodology — SWD + RTT
+
+**SWD + SEGGER RTT is the FIRST tool to reach for** when debugging Core 1
+behavioural problems (latency, hangs, wrong output, crashes). Don't start
+with breadcrumbs, `printf`-over-CDC, or LED toggles — RTT is faster to set
+up, faster to read, and far less invasive.
+
+### Why RTT first
+
+| Mechanism | Setup | Live read | Per-event cost | Cross-task picture |
+|---|---|---|---|---|
+| SWD breadcrumb | low | requires halt | ~5 cycles | one point per slot |
+| `printf` over USB CDC | medium | yes (CDC stack) | ~50 µs (USB) | text only |
+| **SWD + RTT** | **medium (one-time)** | **yes (no halt)** | **~50 ns** | **CSV with µs timestamps** |
+| GPIO toggle + scope | trivial | yes (scope) | ns | needs hardware |
+
+RTT writes to a SRAM ring buffer; J-Link drains it via background DAP
+transactions without halting the CPU. **Multi-task latency profiling is
+essentially impossible without it** — breadcrumbs only capture point-in-time
+state, USB CDC is too slow and noisy.
+
+### Trace infrastructure (already wired into Core 1)
+
+- `firmware/core1/src/debug/mokya_trace.h` — `TRACE(src, ev, fmt, ...)` and
+  `TRACE_BARE(src, ev)` macros emit one CSV line per event:
+  `<us_timestamp>,<source>,<event>[,<key=val>...]`
+- Backed by SEGGER `SEGGER_RTT.c` bundled in `pico-sdk/src/rp2_common/pico_stdio_rtt/SEGGER/`
+- Initialised once via `SEGGER_RTT_Init()` near the top of
+  `main_core1_bridge.c`. Available immediately, even before USB / FreeRTOS.
+- `MOKYA_MIE_PERF_TRACE=1` compile flag (set in Core 1 CMakeLists) enables
+  optional `MIE_TRACE` macros inside `firmware/mie/src/` so MIE stays
+  decoupled from `mokya_trace.h` on PC builds.
+
+### Adding a trace point
+
+```c
+#include "mokya_trace.h"
+
+// With payload fields:
+TRACE("ime", "key_pop", "kc=0x%02x,p=%u",
+      (unsigned)ev.keycode, (unsigned)ev.pressed);
+
+// Without payload:
+TRACE_BARE("ime", "done");
+```
+
+The first column is always a microsecond timestamp from `timer_hw->timerawl`
+(no syscall, single MMIO load). `src` and `ev` together form the event tag.
+
+### Capturing a trace
+
+```sh
+# Run logger in background
+"C:/Program Files/SEGGER/JLink_V932/JLinkRTTLogger.exe" \
+    -Device RP2350_M33_1 -If SWD -Speed 4000 \
+    -RTTSearchRanges "0x20000000 0x80000" \
+    -RTTChannel 0 /tmp/rtt.log
+
+# Reproduce the issue on hardware (press keys, type, etc.)
+
+# Stop logger and analyze
+taskkill //IM JLinkRTTLogger.exe //F
+python scripts/analyze_rtt_latency.py /tmp/rtt.log
+```
+
+Notes:
+- Output may end up at the Windows-native path `C:/Users/<u>/AppData/Local/Temp/rtt.log`
+  even when `/tmp/rtt.log` was given on the command line. Read both if one is empty.
+- The 1 KB up-buffer can drop events under heavy bursts. If important events
+  are missing, raise `BUFFER_SIZE_UP` in
+  `pico-sdk/src/rp2_common/pico_stdio_rtt/SEGGER/Config/SEGGER_RTT_Conf.h`
+  (or override locally) before rebuilding.
+- The same RTT control block can be read by OpenOCD (raspberrypi fork) and
+  pyOCD — use J-Link for everyday work, fall back to those for CI / vendor
+  neutrality.
+
+### Analysing a trace
+
+`scripts/analyze_rtt_latency.py` parses CSV events and matches them up into
+per-keystroke pipeline rows (`ime,key_pop` → `ime,done` → `lvgl,render_*` →
+`lvgl,flush_done`) with p50 / p90 / max stats per segment. Use it to compare
+"before" vs "after" of any optimisation that touches the input pipeline.
+
+For ad-hoc analysis use Python directly:
+
+```python
+events = [(int(p[0]), p[1], p[2], p[3:])
+          for line in open('/tmp/rtt.log')
+          for p in [line.strip().split(',')] if len(p) >= 3]
+# pair proc_start/proc_end, group by keycode, etc.
+```
+
+### When NOT to use RTT
+
+- Hard fault / pre-`SEGGER_RTT_Init` boot crashes — RTT control block isn't
+  set up yet, so use SWD memory inspection (`mem32` of stack/PC/sentinel
+  addresses) instead.
+- Non-Core-1 contexts (Core 0 Meshtastic) — RTT is wired into Core 1 only.
+- Production firmware (RTT consumes ~6 KB code + 1 KB SRAM); compile out
+  via `#ifdef DEBUG_RTT` if shipping size is tight.
 
 ## IPC Protocol
 

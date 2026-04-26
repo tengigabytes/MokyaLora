@@ -13,10 +13,15 @@ FetchContent_MakeAvailable(googletest)
 add_executable(mie_tests
     test_trie_stub.cpp
     test_trie_searcher.cpp
+    test_composition_searcher.cpp
+    test_position_counter.cpp
+    test_ime_v4_dispatch.cpp
     test_ime_core.cpp
     test_ime_smart.cpp
     test_ime_direct.cpp
     test_ime_timer.cpp
+    test_lru_cache.cpp
+    test_ime_lru.cpp
     # test_mie_c_api.cpp — deferred to Phase D (C API rewrite)
 )
 

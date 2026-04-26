@@ -1,6 +1,7 @@
 #include "bringup.h"
 #include "bringup_menu.h"
 #include "hardware/clocks.h"
+#include "hardware/xip_cache.h"
 
 // ---------------------------------------------------------------------------
 // PSRAM test (APS6404L, 8 MB, CS = GPIO 0 / QMI CS1n)
@@ -280,29 +281,59 @@ static void __no_inline_not_in_flash_func(psram_init_run)(
     CS_INIT_LOW(); ok = cs1_tx(0x35); CS_INIT_HIGH();
     if (!ok) { r->busy_timeout = true; goto exit; }
 
-    // Phase 2: configure M1 for QPI at 75 MHz (CLKDIV=1, RXDELAY=0, COOLDOWN=2)
-    // Board #2 validated: CLKDIV=1 passes 256 KB sweep, 10+10+5 run stability
-    // diagnostic, and full 8 MB write+verify at zero errors. Board #1 required
-    // CLKDIV=2; the difference is attributed to per-unit APS6404L timing margin.
-    // COOLDOWN=2 meets tCPH≥18 ns.
+    // Phase 2: configure M1 for QPI at 75 MHz (CLKDIV=1, RXDELAY=2,
+    // COOLDOWN=2, MAX_SELECT=1, DUMMY_LEN=24 bits / 6 clocks).
+    //
+    // CLKDIV=1 (75 MHz) is proven clean on this board when combined with
+    // RXDELAY=CLKDIV: 6-pattern x 8 MB stress (ADDR / ~ADDR / ALL-FF /
+    // ALL-00 / WALKING-1 / CHECKER) across 3 runs = 0 errors, 1.7x
+    // throughput vs CLKDIV=2. The legacy note that "board #1 needs
+    // CLKDIV=2" was a wrong-RXDELAY symptom, not per-unit APS6404L
+    // variance — at RXDELAY=0 the sampling instant falls on the data
+    // edge and one extra dummy cycle was masking the real problem.
+    //
+    // RXDELAY=CLKDIV: APS6404L tACLK + PCB trace delay shifts data valid
+    // past the first rising edge after the dummy phase. QMI waits
+    // `divisor` sys_clk cycles before sampling. Mirrors Arduino-Pico's
+    // rp2040/psram.cpp formula (rxdelay = divisor).
+    //
+    // MAX_SELECT=1 (P2-15): required for APS6404L DRAM self-refresh.
+    // Inheriting M0's MAX_SELECT=0 lets QMI hold CS asserted indefinitely
+    // across back-to-back M1 accesses, starving the pseudo-SRAM refresh
+    // (datasheet tCEM=8us standard grade). MAX_SELECT=1 triggers CS
+    // deassertion every 64 sys_clk (~427ns) + <=316 cycle burst ~= 3.8us
+    // total, well under tCEM. See docs/bringup/phase2-log.md P2-15.
+    /* RXDELAY = CLKDIV. APS6404L tACLK (CLK-to-data-valid) + PCB trace
+     * delay means sampling at the first rising edge after dummy phase
+     * is too early — data is still transitioning. Arduino-Pico's PSRAM
+     * init sets RXDELAY = divisor (+1 if SCK > 100 MHz) for this reason.
+     * With RXDELAY=CLKDIV, the QMI waits `divisor` sys_clk cycles after
+     * the clock edge before sampling. Pairs with DUMMY_LEN=6 (datasheet
+     * §9.5). Using RXDELAY=0 + DUMMY_LEN=7 is the wrong way to
+     * compensate — wastes a clock cycle AND narrows the sampling margin
+     * for burst transfers. */
     qmi_hw->m[1].timing = (qmi_hw->m[0].timing &
-                            ~(QMI_M1_TIMING_COOLDOWN_BITS |
-                              QMI_M1_TIMING_RXDELAY_BITS  |
+                            ~(QMI_M1_TIMING_COOLDOWN_BITS   |
+                              QMI_M1_TIMING_MAX_SELECT_BITS |
+                              QMI_M1_TIMING_RXDELAY_BITS    |
                               QMI_M1_TIMING_CLKDIV_BITS))
                          | (2u << QMI_M1_TIMING_COOLDOWN_LSB)
-                         | (0u << QMI_M1_TIMING_RXDELAY_LSB)
+                         | (1u << QMI_M1_TIMING_MAX_SELECT_LSB)
+                         | (2u << QMI_M1_TIMING_RXDELAY_LSB)
                          | (1u << QMI_M1_TIMING_CLKDIV_LSB);
 
-    // rfmt: cmd=Q/8b, addr=Q, dummy=Q/28bits (7 quad clocks), data=Q
-    // APS6404L 0xEB QPI: 6 wait cycles spec; empirically requires 7 QPI clocks
-    // (likely because mode byte M[7:0] occupies 2 of the 6 wait slots in SPI mode,
-    // leaving 4+1 dummy clocks needed for QPI XIP without mode byte).
+    // rfmt: cmd=Q/8b, addr=Q, dummy=Q/24bits (6 quad clocks), data=Q.
+    // APS6404L datasheet v4.0 §9.5 specifies 6 wait cycles for QPI Fast
+    // Read 0xEB (up to 144 MHz). QPI mode has NO continuous-read mode byte
+    // (that is only for SPI-mode 0xEB), so 6 clocks is correct. Using 7
+    // clocks is a legacy mis-setting — costs ~4.5% read bandwidth and
+    // narrows the RX-sampling window for burst reads at high SCK.
     qmi_hw->m[1].rfmt = (QMI_M1_RFMT_PREFIX_LEN_VALUE_8  << QMI_M1_RFMT_PREFIX_LEN_LSB)  |
                         (QMI_M1_RFMT_PREFIX_WIDTH_VALUE_Q << QMI_M1_RFMT_PREFIX_WIDTH_LSB) |
                         (QMI_M1_RFMT_ADDR_WIDTH_VALUE_Q   << QMI_M1_RFMT_ADDR_WIDTH_LSB)   |
                         (QMI_M1_RFMT_DUMMY_WIDTH_VALUE_Q  << QMI_M1_RFMT_DUMMY_WIDTH_LSB)  |
                         (QMI_M1_RFMT_DATA_WIDTH_VALUE_Q   << QMI_M1_RFMT_DATA_WIDTH_LSB)   |
-                        (QMI_M1_RFMT_DUMMY_LEN_VALUE_28   << QMI_M1_RFMT_DUMMY_LEN_LSB);
+                        (QMI_M1_RFMT_DUMMY_LEN_VALUE_24   << QMI_M1_RFMT_DUMMY_LEN_LSB);
     qmi_hw->m[1].rcmd = 0xEBu;  // QPI Fast Read
 
     // wfmt: cmd=Q/8b, addr=Q, no dummy, data=Q
@@ -462,6 +493,329 @@ exit:
 // ---------------------------------------------------------------------------
 
 
+/* One write+read pass. `wr_base` is the ALIAS used to write (must be
+ * uncached 0x15xxxxxx — RP2350 XIP cache is not write-through for PSRAM,
+ * so writes via cached alias are lost on eviction). `rd_base` is the
+ * alias used to read (cached 0x11xxxxxx exercises the real production
+ * path; uncached tests raw QMI single-beat bandwidth).
+ *
+ * Invalidates the XIP cache by range between write and read so reads
+ * through the cached alias see PSRAM, not stale cache lines. See
+ * firmware/core1/src/ime/mie_dict_loader.c for the same pattern. */
+static void psram_pass_measure(volatile uint32_t *wr_base,
+                               volatile uint32_t *rd_base,
+                               const char *tag,
+                               uint32_t *out_wr_ms, uint32_t *out_rd_ms,
+                               uint32_t *out_errors) {
+    uint32_t t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+        wr_base[i] = 0xA5000000u | i;
+    uint32_t wr_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    /* Flush any cache lines that might alias what we just wrote. The
+     * cached XIP window lives at XIP_BASE + 0x01000000, so the xip_cache
+     * API (which takes offsets from XIP_BASE) wants 0x01000000 +
+     * PSRAM_size. `xip_cache_invalidate_all()` is known-broken on RP2350
+     * for PSRAM — see mie_dict_loader.c comment. Address-range form
+     * empirically clears the lines. */
+    xip_cache_invalidate_range(0x01000000u,
+                               PSRAM_SIZE_MB * 1024u * 1024u);
+
+    uint32_t errors = 0;
+    uint32_t first_bad = 0xFFFFFFFFu;
+    t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
+        uint32_t expected = 0xA5000000u | i;
+        uint32_t actual   = rd_base[i];
+        if (actual != expected) {
+            if (first_bad == 0xFFFFFFFFu) first_bad = i;
+            errors++;
+        }
+    }
+    uint32_t rd_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    uint32_t wr_kbps = wr_ms ? (8u * 1024u * 1000u / wr_ms) : 0;
+    uint32_t rd_kbps = rd_ms ? (8u * 1024u * 1000u / rd_ms) : 0;
+
+    printf("  [%s] Wr 8MB %u ms (%u KB/s)  Rd 8MB %u ms (%u KB/s)  err=%u%s\n",
+           tag,
+           (unsigned)wr_ms, (unsigned)wr_kbps,
+           (unsigned)rd_ms, (unsigned)rd_kbps,
+           (unsigned)errors,
+           errors == 0 ? "  PASS" : "  FAIL");
+    if (errors && first_bad != 0xFFFFFFFFu) {
+        uint32_t expected = 0xA5000000u | first_bad;
+        printf("  [%s] first bad @ +0x%06X: wr=0x%08X rd=0x%08X\n",
+               tag, (unsigned)(first_bad * 4u), (unsigned)expected,
+               (unsigned)rd_base[first_bad]);
+    }
+    *out_wr_ms = wr_ms;
+    *out_rd_ms = rd_ms;
+    *out_errors = errors;
+}
+
+/* Multi-pattern stress: write + read-verify 8 MB with the given pattern
+ * generator. Returns error count + first-bad offset. Uses production
+ * pattern: write UNCACHED, invalidate cache, read CACHED. */
+typedef uint32_t (*psram_pattern_fn_t)(uint32_t word_index);
+
+static uint32_t psram_stress_pass(psram_pattern_fn_t pat,
+                                  const char *name,
+                                  uint32_t *wr_ms_out,
+                                  uint32_t *rd_ms_out) {
+    volatile uint32_t *wr = (volatile uint32_t *)PSRAM_NOCACHE;
+    volatile uint32_t *rd = (volatile uint32_t *)PSRAM_CACHED;
+
+    uint32_t t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+        wr[i] = pat(i);
+    uint32_t wr_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    xip_cache_invalidate_range(0x01000000u,
+                               PSRAM_SIZE_MB * 1024u * 1024u);
+
+    uint32_t errors = 0;
+    uint32_t first_bad = 0xFFFFFFFFu;
+    t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
+        uint32_t expected = pat(i);
+        uint32_t actual   = rd[i];
+        if (actual != expected) {
+            if (first_bad == 0xFFFFFFFFu) first_bad = i;
+            errors++;
+        }
+    }
+    uint32_t rd_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    uint32_t wr_kbps = wr_ms ? (8u * 1024u * 1000u / wr_ms) : 0;
+    uint32_t rd_kbps = rd_ms ? (8u * 1024u * 1000u / rd_ms) : 0;
+    printf("  [%-9s] wr %4u ms %5u KB/s  rd %4u ms %5u KB/s  err=%u%s\n",
+           name,
+           (unsigned)wr_ms, (unsigned)wr_kbps,
+           (unsigned)rd_ms, (unsigned)rd_kbps,
+           (unsigned)errors,
+           errors == 0 ? "  OK" : "  FAIL");
+    if (errors && first_bad != 0xFFFFFFFFu) {
+        printf("    first bad @ +0x%06X: wr=0x%08X rd=0x%08X\n",
+               (unsigned)(first_bad * 4u),
+               (unsigned)pat(first_bad),
+               (unsigned)rd[first_bad]);
+    }
+    *wr_ms_out = wr_ms;
+    *rd_ms_out = rd_ms;
+    return errors;
+}
+
+static uint32_t pat_addr(uint32_t i)      { return 0xA5000000u | i; }
+static uint32_t pat_addr_inv(uint32_t i)  { return ~(0xA5000000u | i); }
+static uint32_t pat_all_ff(uint32_t i)    { (void)i; return 0xFFFFFFFFu; }
+static uint32_t pat_all_00(uint32_t i)    { (void)i; return 0x00000000u; }
+static uint32_t pat_walking(uint32_t i)   { return 1u << (i & 31u); }
+static uint32_t pat_checker(uint32_t i)   { return (i & 1u) ? 0x5A5A5A5Au : 0xA5A5A5A5u; }
+
+void psram_verify_full(void) {
+    printf("\n--- PSRAM multi-pattern stress (6 patterns x 8 MB) ---\n");
+
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    if ((gpio0_ctrl & 0x1Fu) != 9) {
+        printf("  PSRAM not initialized. Run 'psram' first.\n");
+        return;
+    }
+
+    printf("  M1.timing = 0x%08X  XIP_CTRL = 0x%08X\n",
+           (unsigned)qmi_hw->m[1].timing,
+           (unsigned)xip_ctrl_hw->ctrl);
+
+    uint32_t wr_ms, rd_ms;
+    uint32_t total_err = 0;
+    total_err += psram_stress_pass(pat_addr,     "ADDR",      &wr_ms, &rd_ms);
+    total_err += psram_stress_pass(pat_addr_inv, "~ADDR",     &wr_ms, &rd_ms);
+    total_err += psram_stress_pass(pat_all_ff,   "ALL-FF",    &wr_ms, &rd_ms);
+    total_err += psram_stress_pass(pat_all_00,   "ALL-00",    &wr_ms, &rd_ms);
+    total_err += psram_stress_pass(pat_walking,  "WALKING-1", &wr_ms, &rd_ms);
+    total_err += psram_stress_pass(pat_checker,  "CHECKER",   &wr_ms, &rd_ms);
+
+    printf("  --- Overall: %s (total err=%u across 6 patterns x 2M words)\n",
+           total_err == 0 ? "PASS" : "FAIL", (unsigned)total_err);
+}
+
+/* ---------------------------------------------------------------------
+ * psram_wthru — definitive write-through test.
+ *
+ * Tests all 4 (wr_alias, rd_alias) combinations on 8 MB. The key one
+ * is (wr=C, rd=U): if after writing via cached alias we read CORRECT
+ * data via the uncached alias (bypassing cache entirely), then the
+ * RP2350 XIP cache IS write-through for PSRAM when WRITABLE_M1=1.
+ *
+ * Cache is 4 KB; 8 MB sequential write evicts ~2046× lines. If cache
+ * is NOT write-through, only the last ~4 KB would remain in cache and
+ * PSRAM would hold pre-write content; rd=U would fail on most addresses.
+ *
+ * Between write and read, we always invalidate the XIP cache by address
+ * range so reads actually reach either the PSRAM (rd=U) or the
+ * newly-filled cache (rd=C).
+ * ------------------------------------------------------------------- */
+static void psram_alias_pass(const char *tag,
+                             volatile uint32_t *wr_base,
+                             volatile uint32_t *rd_base) {
+    uint32_t t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+        wr_base[i] = 0xA5000000u | i;
+    uint32_t wr_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    xip_cache_invalidate_range(0x01000000u,
+                               PSRAM_SIZE_MB * 1024u * 1024u);
+
+    uint32_t errors = 0;
+    uint32_t first_bad = 0xFFFFFFFFu;
+    uint32_t last_bad  = 0;
+    uint32_t per_mb[8] = {0};
+    t0 = to_ms_since_boot(get_absolute_time());
+    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
+        uint32_t actual = rd_base[i];
+        if (actual != (0xA5000000u | i)) {
+            if (first_bad == 0xFFFFFFFFu) first_bad = i;
+            last_bad = i;
+            per_mb[(i * 4u) >> 20]++;
+            errors++;
+        }
+    }
+    uint32_t rd_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+    uint32_t wr_kbps = wr_ms ? (8u * 1024u * 1000u / wr_ms) : 0;
+    uint32_t rd_kbps = rd_ms ? (8u * 1024u * 1000u / rd_ms) : 0;
+    printf("  [%s] wr %4u ms %5u KB/s  rd %4u ms %5u KB/s  err=%u / %u (%.2f%%)%s\n",
+           tag,
+           (unsigned)wr_ms, (unsigned)wr_kbps,
+           (unsigned)rd_ms, (unsigned)rd_kbps,
+           (unsigned)errors, (unsigned)PSRAM_FULL_WORDS,
+           (double)errors * 100.0 / (double)PSRAM_FULL_WORDS,
+           errors == 0 ? "  PASS" : "  FAIL");
+    if (errors) {
+        printf("    first bad @ +0x%06X  last bad @ +0x%06X\n",
+               (unsigned)(first_bad * 4u), (unsigned)(last_bad * 4u));
+        printf("    per-MB: ");
+        for (int mb = 0; mb < 8; mb++)
+            printf("[%dMB:%u] ", mb, (unsigned)per_mb[mb]);
+        printf("\n");
+        printf("    first bad word: expected=0x%08X rd=0x%08X  re-read=0x%08X\n",
+               (unsigned)(0xA5000000u | first_bad),
+               (unsigned)rd_base[first_bad],
+               (unsigned)rd_base[first_bad]);
+    }
+}
+
+void psram_wthru_test(void) {
+    printf("\n--- PSRAM alias cross-product (write-through probe) ---\n");
+    uint32_t gpio0_ctrl = *(volatile uint32_t *)0x40028004u;
+    if ((gpio0_ctrl & 0x1Fu) != 9) {
+        printf("  PSRAM not initialized. Run 'psram' first.\n");
+        return;
+    }
+    printf("  M1.timing = 0x%08X  XIP_CTRL = 0x%08X\n",
+           (unsigned)qmi_hw->m[1].timing,
+           (unsigned)xip_ctrl_hw->ctrl);
+    printf("  U=0x%08X (uncached)  C=0x%08X (cached)\n",
+           (unsigned)PSRAM_NOCACHE, (unsigned)PSRAM_CACHED);
+
+    /* Seed PSRAM with a distinct pattern via UNCACHED so a subsequent
+     * cached write that fails to write-through leaves the seed visible
+     * (first bad word's rd= value tells us what did propagate). */
+    {
+        volatile uint32_t *u = (volatile uint32_t *)PSRAM_NOCACHE;
+        for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+            u[i] = 0xDEAD0000u | i;
+    }
+
+    psram_alias_pass("wr=C rd=U  write-through probe   ",
+                     (volatile uint32_t *)PSRAM_CACHED,
+                     (volatile uint32_t *)PSRAM_NOCACHE);
+
+    /* Same test but CLEAN cache between write and invalidate/read.
+     * xip_cache_clean_range flushes dirty lines to PSRAM — if this
+     * combo passes cleanly, RP2350 cache for PSRAM is write-back
+     * (deferred flush) and cached writes become safe *with* an explicit
+     * clean step. */
+    {
+        /* Re-seed so we can distinguish clean-helped writes from residue. */
+        volatile uint32_t *u = (volatile uint32_t *)PSRAM_NOCACHE;
+        for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+            u[i] = 0xBEEF0000u | i;
+
+        volatile uint32_t *c = (volatile uint32_t *)PSRAM_CACHED;
+        uint32_t t0 = to_ms_since_boot(get_absolute_time());
+        for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++)
+            c[i] = 0xA5000000u | i;
+        uint32_t wr_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+        xip_cache_clean_range(0x01000000u,
+                              PSRAM_SIZE_MB * 1024u * 1024u);
+        xip_cache_invalidate_range(0x01000000u,
+                                   PSRAM_SIZE_MB * 1024u * 1024u);
+
+        volatile uint32_t *r = (volatile uint32_t *)PSRAM_NOCACHE;
+        uint32_t errors = 0, first_bad = 0xFFFFFFFFu, last_bad = 0;
+        uint32_t per_mb[8] = {0};
+        t0 = to_ms_since_boot(get_absolute_time());
+        for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
+            if (r[i] != (0xA5000000u | i)) {
+                if (first_bad == 0xFFFFFFFFu) first_bad = i;
+                last_bad = i;
+                per_mb[(i * 4u) >> 20]++;
+                errors++;
+            }
+        }
+        uint32_t rd_ms = to_ms_since_boot(get_absolute_time()) - t0;
+        uint32_t wr_kbps = wr_ms ? (8u * 1024u * 1000u / wr_ms) : 0;
+        uint32_t rd_kbps = rd_ms ? (8u * 1024u * 1000u / rd_ms) : 0;
+        printf("  [%s] wr %4u ms %5u KB/s  rd %4u ms %5u KB/s  err=%u / %u (%.2f%%)%s\n",
+               "wr=C CLEAN+INV rd=U             ",
+               (unsigned)wr_ms, (unsigned)wr_kbps,
+               (unsigned)rd_ms, (unsigned)rd_kbps,
+               (unsigned)errors, (unsigned)PSRAM_FULL_WORDS,
+               (double)errors * 100.0 / (double)PSRAM_FULL_WORDS,
+               errors == 0 ? "  PASS" : "  FAIL");
+        if (errors) {
+            printf("    first bad @ +0x%06X  last bad @ +0x%06X  per-MB: ",
+                   (unsigned)(first_bad * 4u), (unsigned)(last_bad * 4u));
+            for (int mb = 0; mb < 8; mb++)
+                printf("[%dMB:%u] ", mb, (unsigned)per_mb[mb]);
+            printf("\n");
+            printf("    first bad word: expected=0x%08X rd=0x%08X\n",
+                   (unsigned)(0xA5000000u | first_bad),
+                   (unsigned)r[first_bad]);
+        }
+    }
+
+    psram_alias_pass("wr=C rd=C  cache round-trip      ",
+                     (volatile uint32_t *)PSRAM_CACHED,
+                     (volatile uint32_t *)PSRAM_CACHED);
+    psram_alias_pass("wr=U rd=C  production pattern    ",
+                     (volatile uint32_t *)PSRAM_NOCACHE,
+                     (volatile uint32_t *)PSRAM_CACHED);
+    psram_alias_pass("wr=U rd=U  raw QMI bandwidth     ",
+                     (volatile uint32_t *)PSRAM_NOCACHE,
+                     (volatile uint32_t *)PSRAM_NOCACHE);
+
+    printf("\n  Interpretation:\n");
+    printf("    * wr=C rd=U FAIL + wr=C CLEAN+INV rd=U PASS ->\n");
+    printf("      cache is WRITE-BACK; cached writes need xip_cache_clean_range()\n");
+    printf("      before reads via other alias can see them.\n");
+    printf("    * wr=U rd=C PASS -> current loader rule is safe as-is\n");
+    printf("      (simpler than clean+invalidate, same correctness).\n");
+}
+
+/* Run `psram_full_test` at an arbitrary CLKDIV/RXDELAY, then restore. */
+void psram_full_at(uint8_t cd, uint8_t rd) {
+    uint32_t orig = qmi_hw->m[1].timing;
+    printf("\n--- PSRAM full test at CLKDIV=%u RXDELAY=%u ---\n", cd, rd);
+    psram_set_timing(cd, rd);
+    printf("  M1.timing = 0x%08X\n", (unsigned)qmi_hw->m[1].timing);
+    psram_verify_full();
+    psram_set_full_timing(orig);
+    printf("  M1.timing restored to 0x%08X\n", (unsigned)orig);
+}
+
 void psram_full_test(void) {
     printf("\n--- PSRAM Full Capacity Test (APS6404L, 8 MB) ---\n");
 
@@ -473,41 +827,37 @@ void psram_full_test(void) {
         return;
     }
 
-    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
+    uint32_t xc_boot = xip_ctrl_hw->ctrl;
+    bool cache_on = (xc_boot & 0x3u) != 0;
+    printf("  M1.timing = 0x%08X   XIP_CTRL = 0x%08X  cache=%s\n",
+           (unsigned)qmi_hw->m[1].timing, (unsigned)xc_boot,
+           cache_on ? "ON" : "OFF");
 
-    // Pass 1: write address-based pattern across all 8 MB
-    printf("  Pass 1 — Write (8 MB):\n");
-    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
-        psram[i] = 0xA5000000u | i;
-        if ((i & (PSRAM_STEP_WORDS - 1u)) == 0u)
-            printf("    %u / 8 MB written\n", (unsigned)(i / PSRAM_STEP_WORDS));
-    }
-    printf("    8 / 8 MB written\n");
+    /* Pass 1: write + read via UNCACHED alias.
+     * Measures raw QMI single-beat bus bandwidth. CPU tight-loop reads
+     * from uncached alias are the worst case for APS6404L refresh — see
+     * P2-15 and mie_dict_loader.c comment. */
+    uint32_t wr_u, rd_u, err_u;
+    psram_pass_measure((volatile uint32_t *)PSRAM_NOCACHE,
+                       (volatile uint32_t *)PSRAM_NOCACHE,
+                       "wr=U rd=U", &wr_u, &rd_u, &err_u);
 
-    // Pass 2: verify all 8 MB
-    printf("  Pass 2 — Verify (8 MB):\n");
-    uint32_t errors = 0;
-    for (uint32_t i = 0; i < PSRAM_FULL_WORDS; i++) {
-        uint32_t expected = 0xA5000000u | i;
-        uint32_t actual   = psram[i];
-        if (actual != expected) {
-            if (errors < 4)
-                printf("  ERR @ +0x%06X: wr=0x%08X rd=0x%08X\n",
-                       (unsigned)(i * 4u), (unsigned)expected, (unsigned)actual);
-            errors++;
-        }
-        if ((i & (PSRAM_STEP_WORDS - 1u)) == 0u)
-            printf("    %u / 8 MB verified  errors=%u\n",
-                   (unsigned)(i / PSRAM_STEP_WORDS), (unsigned)errors);
-    }
-    printf("    8 / 8 MB verified  errors=%u\n", (unsigned)errors);
+    /* Pass 2: write UNCACHED, read CACHED — production pattern.
+     * This is how Core 1's mie_dict_loader writes dict data then reads
+     * it back: writes go to 0x15xxxxxx (write-through to PSRAM), reads
+     * go to 0x11xxxxxx (32-byte cache-line bursts). If cache is off at
+     * boot we enable it for this pass and restore afterwards. */
+    if (!cache_on)
+        *(volatile uint32_t *)0x400CA000u = 0x00000003u;
+    uint32_t wr_p, rd_p, err_p;
+    psram_pass_measure((volatile uint32_t *)PSRAM_NOCACHE,
+                       (volatile uint32_t *)PSRAM_CACHED,
+                       "wr=U rd=C", &wr_p, &rd_p, &err_p);
+    if (!cache_on)
+        *(volatile uint32_t *)0x400CB000u = 0x00000003u;  /* CLR alias */
 
-    printf("\n  Capacity: %u MB (%u words)\n",
-           (unsigned)PSRAM_SIZE_MB, (unsigned)PSRAM_FULL_WORDS);
-    printf("  Errors  : %u\n", (unsigned)errors);
-    printf("  Result  : %s\n",
-           errors == 0 ? "PASS — full 8 MB accessible and data-correct"
-                       : "FAIL — data errors detected");
+    (void)wr_u; (void)rd_u; (void)err_u;
+    (void)wr_p; (void)rd_p; (void)err_p;
 }
 
 // Full 8 MB test at CLKDIV=1 (75 MHz). Saves and restores M1.timing so
@@ -585,6 +935,21 @@ uint32_t psram_verify_pass(void) {
     return errors;
 }
 
+// Verify via the CACHED alias (cache must be enabled). This is how real
+// firmware reads PSRAM — 32-byte cache-line bursts that give APS6404L
+// enough CS-HIGH time for refresh. Invalidate the cache first so we
+// actually read PSRAM instead of stale lines left by a previous pass.
+uint32_t psram_verify_pass_cached(void) {
+    xip_cache_invalidate_range(0x01000000u, SWEEP_WORDS * 4u);
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_CACHED;
+    uint32_t errors = 0;
+    for (uint32_t i = 0; i < SWEEP_WORDS; i++) {
+        if (psram[i] != (0xA5000000u | i))
+            errors++;
+    }
+    return errors;
+}
+
 void psram_speed_test(void) {
     printf("\n--- PSRAM QPI Speed Sweep (256 KB per test) ---\n");
 
@@ -606,13 +971,18 @@ void psram_speed_test(void) {
     printf("  M1.rfmt = 0x%08X  M1.rcmd = 0x%02X\n\n",
            (unsigned)qmi_hw->m[1].rfmt, (unsigned)qmi_hw->m[1].rcmd);
 
-    printf("  CLKDIV  RXDELAY  SCK_MHz  M1.timing   word0_rd    wr+rd_err  rdonly_err  result\n");
-    printf("  ------  -------  -------  ----------  ----------  ---------  ----------  ------\n");
+    // Ensure XIP cache is enabled for the cached-read pass (prod pattern).
+    *(volatile uint32_t *)0x400CA000u = 0x00000003u;
+
+    printf("  U=uncached alias, C=cached alias (prod: write U, read C)\n");
+    printf("  CLKDIV  RXDELAY  SCK_MHz  M1.timing   wrU_ms rdU_ms rdC_ms wrU_KBps rdU_KBps rdC_KBps errU errC result\n");
+    printf("  ------  -------  -------  ----------  ------ ------ ------ -------- -------- -------- ---- ---- ------\n");
 
     static const uint8_t clkdivs[]  = {3, 2, 1};
     static const uint8_t rxdelays[] = {0, 1, 2, 3, 4, 5, 6, 7};
 
     uint32_t orig_timing = qmi_hw->m[1].timing;
+    volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
 
     for (int c = 0; c < 3; c++) {
         for (int r = 0; r < 8; r++) {
@@ -620,26 +990,38 @@ void psram_speed_test(void) {
             uint8_t rd = rxdelays[r];
             uint32_t sck_mhz = sys_hz / (2u * cd) / 1000000u;
 
-            // (a) write+read at candidate speed
             psram_set_timing(cd, rd);
             uint32_t tim_val = qmi_hw->m[1].timing;
-            volatile uint32_t *psram = (volatile uint32_t *)PSRAM_NOCACHE;
-            psram[0] = 0xDEADBEEFu;
-            uint32_t word0 = psram[0];
-            uint32_t wr_err = psram_sweep_pass();
 
-            // (b) write at safe speed, read at candidate speed
-            psram_set_timing(2, 0);                   // safe: 37.5 MHz, RXDELAY=0
+            /* Write via UNCACHED alias (write-through to PSRAM). Timed. */
+            uint32_t t0 = to_ms_since_boot(get_absolute_time());
             for (uint32_t i = 0; i < SWEEP_WORDS; i++)
                 psram[i] = 0xA5000000u | i;
-            psram_set_timing(cd, rd);                  // switch to candidate
-            uint32_t rd_err = psram_verify_pass();
+            uint32_t wr_ms = to_ms_since_boot(get_absolute_time()) - t0;
 
-            bool pass = (wr_err == 0) && (rd_err == 0);
-            printf("  %6u  %7u  %7u  0x%08X  0x%08X  %9u  %10u  %s\n",
-                   cd, rd, sck_mhz, (unsigned)tim_val, (unsigned)word0,
-                   (unsigned)wr_err, (unsigned)rd_err,
-                   pass ? "PASS" : "FAIL");
+            /* Read via UNCACHED alias (raw QMI per-beat). Timed. */
+            t0 = to_ms_since_boot(get_absolute_time());
+            uint32_t rd_u_err = psram_verify_pass();
+            uint32_t rd_u_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+            /* Read via CACHED alias (production path — 32-byte burst). */
+            t0 = to_ms_since_boot(get_absolute_time());
+            uint32_t rd_c_err = psram_verify_pass_cached();
+            uint32_t rd_c_ms = to_ms_since_boot(get_absolute_time()) - t0;
+
+            uint32_t bytes = SWEEP_WORDS * 4u;
+            uint32_t wr_kbps   = wr_ms   ? (bytes / wr_ms)   : 0;
+            uint32_t rd_u_kbps = rd_u_ms ? (bytes / rd_u_ms) : 0;
+            uint32_t rd_c_kbps = rd_c_ms ? (bytes / rd_c_ms) : 0;
+
+            const char *verdict = (rd_c_err == 0) ? "PASS" :
+                                  (rd_u_err == 0) ? "CACHEFAIL" : "FAIL";
+            printf("  %6u  %7u  %7u  0x%08X  %6u %6u %6u %8u %8u %8u %4u %4u %s\n",
+                   cd, rd, sck_mhz, (unsigned)tim_val,
+                   (unsigned)wr_ms, (unsigned)rd_u_ms, (unsigned)rd_c_ms,
+                   (unsigned)wr_kbps, (unsigned)rd_u_kbps, (unsigned)rd_c_kbps,
+                   (unsigned)rd_u_err, (unsigned)rd_c_err,
+                   verdict);
         }
     }
 
@@ -738,6 +1120,63 @@ void psram_diag_test(void) {
 // J-Link Commander commands needed to verify PSRAM is accessible via SWD
 // while the MCU is halted.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// qmi_diag — dump QMI M0/M1 + XIP_CTRL cache state. Read-only.
+// ---------------------------------------------------------------------------
+void qmi_diag(void) {
+    printf("\n--- QMI / XIP diagnostic ---\n");
+
+    uint32_t xc = xip_ctrl_hw->ctrl;
+    printf("  XIP_CTRL         = 0x%08X\n", (unsigned)xc);
+    printf("    EN_SECURE      = %u\n", (unsigned)((xc >> 0) & 1u));
+    printf("    EN_NONSECURE   = %u\n", (unsigned)((xc >> 1) & 1u));
+    printf("    WRITABLE_M1    = %u\n",
+           (xc & XIP_CTRL_WRITABLE_M1_BITS) ? 1 : 0);
+    printf("  XIP_STAT         = 0x%08X\n", (unsigned)xip_ctrl_hw->stat);
+
+    printf("  M0.timing        = 0x%08X\n", (unsigned)qmi_hw->m[0].timing);
+    printf("    CLKDIV         = %u (SCK %u MHz)\n",
+           (unsigned)(qmi_hw->m[0].timing & 0xFFu),
+           (unsigned)(clock_get_hz(clk_sys) /
+                      (2u * (qmi_hw->m[0].timing & 0xFFu)) / 1000000u));
+    printf("    RXDELAY        = %u\n",
+           (unsigned)((qmi_hw->m[0].timing >> 8) & 0x7u));
+    printf("    MAX_SELECT     = %u\n",
+           (unsigned)((qmi_hw->m[0].timing & QMI_M0_TIMING_MAX_SELECT_BITS)
+                      >> QMI_M0_TIMING_MAX_SELECT_LSB));
+    printf("    COOLDOWN       = %u\n",
+           (unsigned)((qmi_hw->m[0].timing >> 30) & 0x3u));
+    printf("  M0.rfmt          = 0x%08X  rcmd=0x%02X\n",
+           (unsigned)qmi_hw->m[0].rfmt, (unsigned)qmi_hw->m[0].rcmd);
+    printf("    PREFIX_WIDTH   = %u (0=S 2=Q)\n",
+           (unsigned)((qmi_hw->m[0].rfmt >> 0) & 0x3u));
+    printf("    ADDR_WIDTH     = %u\n",
+           (unsigned)((qmi_hw->m[0].rfmt >> 2) & 0x3u));
+    printf("    DUMMY_WIDTH    = %u\n",
+           (unsigned)((qmi_hw->m[0].rfmt >> 6) & 0x3u));
+    printf("    DATA_WIDTH     = %u\n",
+           (unsigned)((qmi_hw->m[0].rfmt >> 8) & 0x3u));
+    printf("    DUMMY_LEN      = %u bits\n",
+           (unsigned)((qmi_hw->m[0].rfmt >> 16) & 0x7u) * 4u);
+
+    printf("  M1.timing        = 0x%08X\n", (unsigned)qmi_hw->m[1].timing);
+    printf("    CLKDIV         = %u (SCK %u MHz)\n",
+           (unsigned)(qmi_hw->m[1].timing & 0xFFu),
+           (unsigned)(clock_get_hz(clk_sys) /
+                      (2u * (qmi_hw->m[1].timing & 0xFFu)) / 1000000u));
+    printf("    RXDELAY        = %u\n",
+           (unsigned)((qmi_hw->m[1].timing >> 8) & 0x7u));
+    printf("    MAX_SELECT     = %u\n",
+           (unsigned)((qmi_hw->m[1].timing & QMI_M1_TIMING_MAX_SELECT_BITS)
+                      >> QMI_M1_TIMING_MAX_SELECT_LSB));
+    printf("    COOLDOWN       = %u\n",
+           (unsigned)((qmi_hw->m[1].timing >> 30) & 0x3u));
+    printf("  M1.rfmt          = 0x%08X  rcmd=0x%02X\n",
+           (unsigned)qmi_hw->m[1].rfmt, (unsigned)qmi_hw->m[1].rcmd);
+    printf("  M1.wfmt          = 0x%08X  wcmd=0x%02X\n",
+           (unsigned)qmi_hw->m[1].wfmt, (unsigned)qmi_hw->m[1].wcmd);
+}
 
 void psram_jlink_prep(void) {
     printf("\n--- PSRAM J-Link access probe ---\n");

@@ -41,9 +41,13 @@
 #include <stdint.h>
 #include <mie/hal_port.h>
 #include <mie/keycode.h>
+#include <mie/lru_cache.h>
 #include <mie/trie_searcher.h>
 
 namespace mie {
+
+class CompositionSearcher;  // forward decl; see mie/composition_searcher.h
+
 
 // ── Input modes ──────────────────────────────────────────────────────────────
 enum class InputMode : uint8_t {
@@ -114,7 +118,14 @@ public:
 
     // Candidate display.
     static constexpr int      kPageSize          = 5;
-    static constexpr int      kMaxCandidates     = 50;
+    // Half-keyboard single-syllable searches routinely surface 70–200+
+    // matches (each slot byte conflates 2 phonemes — e.g. ㄅ/ㄉ on slot 0,
+    // so byte 0x21+ㄧ+ˋ resolves to 229 distinct chars). At 50 the user
+    // couldn't reach mid-rank chars like 滷 (rank 46) or rare chars like
+    // 丼 (rank 71). 100 covers ≥ 90 % of (byte_seq, tone) buckets in the
+    // current dict; cost = +1.8 KB per ImeLogic + ~3.6 KB stack per
+    // nested search.
+    static constexpr int      kMaxCandidates     = 100;
 
     // Internal buffer limits.
     static constexpr int      kMaxKeySeq         = 64;
@@ -125,6 +136,17 @@ public:
     ///                     mode). nullptr disables English prediction but
     ///                     leaves SmartEn digit multi-tap working.
     explicit ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher = nullptr);
+
+    /// Attach a MIED v4 CompositionSearcher. When attached AND is_loaded(),
+    /// SmartZh's run_search() uses the composition engine (position-based
+    /// dispatch + 0-result fallback + 5+ truncated prefix chain) instead of
+    /// the v2 TrieSearcher. Pass nullptr to revert to v2 behaviour.
+    ///
+    /// Rationale: enables incremental rollout; existing tests and callers
+    /// that use only the v2 constructor keep working unchanged. Once
+    /// Core 1 firmware switches to v4 (Phase 5), this becomes the default
+    /// and the legacy v2 path can be removed.
+    void attach_composition_searcher(CompositionSearcher* cs);
 
     /// Attach the event listener. Single slot; nullptr detaches.
     void set_listener(IImeListener* listener);
@@ -172,6 +194,22 @@ public:
     bool        has_pending()    const { return display_len_ > 0; }
     bool        has_candidates() const { return cand_count_ > 0; }
 
+    // ── Symbol picker (Phase 1.4 Task B) ─────────────────────────────────
+    /// True when the SYM1 long-press picker overlay is active. While
+    /// active, DPAD navigates the picker grid, OK commits the selected
+    /// symbol, and a short SYM1 closes the picker without commit. All
+    /// other keys are blocked from the normal dispatch and close the
+    /// picker (no commit).
+    bool             picker_active()    const { return sym_picker_open_; }
+    /// Number of cells in the grid (currently kSymPickerCells = 16).
+    int              picker_cell_count() const;
+    /// Number of columns the grid is laid out in (currently 4).
+    int              picker_cols()       const;
+    /// UTF-8 string for cell idx; empty string if out of range.
+    const char*      picker_cell(int idx) const;
+    /// Index of the highlighted cell, 0..picker_cell_count()-1.
+    int              picker_selected()  const { return sym_picker_sel_; }
+
     /// Single-snapshot pending composition with style hint.
     PendingView pending_view()   const;
 
@@ -180,12 +218,47 @@ public:
     const Candidate& candidate(int i)  const { return candidates_[i]; }
     int              selected()        const { return selected_; }
 
+    // ── Personalised LRU cache (Phase 1.6) ───────────────────────────────
+    /// Load persisted LRU state from a byte buffer produced by
+    /// serialize_lru (typically read from LittleFS at boot). Silently
+    /// resets on magic / version / length mismatch; returns false in that
+    /// case so the caller can log but continues with an empty cache.
+    bool load_lru(const uint8_t* buf, int len);
+
+    /// Serialise current LRU state into buf. Returns bytes written, or -1
+    /// if cap is too small.
+    int  serialize_lru(uint8_t* buf, int cap) const;
+
+    /// Size required for a full serialize_lru output (header + entries).
+    int  lru_serialized_size() const { return lru_.serialized_size(); }
+
+    /// Number of LRU entries currently populated (for tests / telemetry).
+    int  lru_count() const { return lru_.count(); }
+
+    /// Set the selected candidate index by global position (0..cand_count-1).
+    /// Clamps out-of-range values, no-ops if the pool is empty, and fires
+    /// on_composition_changed when the index actually moves. Intended for UIs
+    /// that want to override the engine's page-sized Up/Down behaviour with
+    /// their own row-based navigation (see firmware/core1/src/ui/ime_view.c).
+    void             set_selected(int idx);
+
     // Pagination (page size is kPageSize).
     int page()            const { return cand_count_ ? selected_ / kPageSize : 0; }
     int page_count()      const { return (cand_count_ + kPageSize - 1) / kPageSize; }
     int page_cand_count() const;
     const Candidate& page_cand(int i) const;
     int page_sel()        const { return cand_count_ ? selected_ % kPageSize : 0; }
+
+    // ── Position counter (public so unit tests + UI can call) ────────────
+    /// Count distinct syllable positions in a key-sequence byte string.
+    /// See ime_keys.cpp for the role classification and heuristic rationale.
+    /// Used by run_search_v4() to dispatch to the matching word-length bucket.
+    static int count_positions(const char* seq, int len);
+
+    /// Return the byte offset covering the first `n_positions` syllable
+    /// positions in the key sequence. Used by 5+ truncated fallback chain.
+    static int first_n_positions_bytes(const char* seq, int len,
+                                       int n_positions);
 
 private:
     // ── Mode handlers (ime_smart.cpp / ime_direct.cpp) ───────────────────
@@ -209,7 +282,12 @@ private:
 
     // ── Search helpers (ime_search.cpp) ──────────────────────────────────
     void run_search();
+    void run_search_v2_legacy();   ///< Former run_search body, TrieSearcher path.
+    void run_search_v4();          ///< CompositionSearcher dispatch + fallback.
     void rebuild_display_smart();
+    /// SmartZh only: prepend LRU hits to candidates_ (rank 0..lru_n),
+    /// shifting dict results and deduping by utf8. No-op otherwise.
+    void prepend_lru_candidates();
 
     // ── Display helpers (ime_display.cpp) ────────────────────────────────
     void display_clear();
@@ -219,9 +297,10 @@ private:
     void notify_changed();
 
     // ── State data ───────────────────────────────────────────────────────
-    TrieSearcher&  zh_searcher_;
-    TrieSearcher*  en_searcher_;
-    IImeListener*  listener_ = nullptr;
+    TrieSearcher&         zh_searcher_;
+    TrieSearcher*         en_searcher_;
+    CompositionSearcher*  composition_searcher_ = nullptr;  ///< v4 opt-in (Phase 3)
+    IImeListener*         listener_ = nullptr;
 
     InputMode      mode_ = InputMode::SmartZh;
 
@@ -229,6 +308,18 @@ private:
     // first-tone marker, 0x22 for the ˇ/ˋ tone key).
     char           key_seq_[kMaxKeySeq + 1] = {0};
     int            key_seq_len_ = 0;
+
+    // Parallel phoneme-position hint per key_seq_ byte. Values:
+    //   0     = user demands the primary phoneme of this key.
+    //   1     = secondary (long-press).
+    //   2     = tertiary (slot 4 only).
+    //   0xFF  = no demand (e.g. the byte is a tone marker like ˊ or
+    //           a space — both phoneme positions of the slot would be
+    //           equally valid).
+    // When the v4 dict was built with header.flags bit 0, the searcher
+    // filters candidates against these hints; for legacy dicts the
+    // hints are silently ignored.
+    uint8_t        phoneme_hint_[kMaxKeySeq] = {0};
 
     // Display buffer backing pending_view().str. Contents depend on mode:
     //   SmartZh — compound "ㄅㄉ, ㄆㄊ" (grouped phonemes per key).
@@ -273,6 +364,28 @@ private:
     bool sym_picker_open_ = false;
     int  sym_picker_sel_  = 0;
 
+    // Long-press cycling state (Phase 1.4 final design).
+    //
+    // Two-tier input model:
+    //   short tap of a slot key  → append byte with hint = ANY (fuzzy
+    //                              half-keyboard match)
+    //   long  tap of a slot key  → enter precise mode for THIS byte
+    //                              (hint = primary phoneme of the slot);
+    //                              every subsequent long-press of the
+    //                              SAME slot within kMultiTapTimeoutMs
+    //                              cycles the hint through primary →
+    //                              secondary → tertiary → primary.
+    // Any short-tap, key on a different slot, DEL, OK, MODE, or tick
+    // timeout locks the cycle (the last cycled phoneme stays in
+    // phoneme_hint_; we just stop further long-presses from re-cycling
+    // the same byte).
+    struct LpCycleState {
+        int      byte_index  = -1;   ///< index into key_seq_; -1 = idle
+        int      slot        = -1;
+        int      phoneme_idx = 0;
+        uint32_t last_ms     = 0;
+    } lp_cycle_;
+
     // SmartEn auto-capitalize after sentence-ending punctuation.
     // Default-true so the very first SmartEn word after construction
     // (or abort) is capitalised — treats "fresh ImeLogic" as a sentence
@@ -288,6 +401,16 @@ private:
     // , . ? !). Default-true so the very first word after construction
     // does NOT prepend (sentence-start).
     bool en_last_ended_with_space_ = true;
+
+    // Personalised LRU cache (Phase 1.6). Upserted on SmartZh candidate
+    // commits; queried at the top of run_search_v4 so recently committed
+    // rare readings surface at rank 0.
+    LruCache lru_;
+
+    // Most-recent now_ms from process_key/tick. Used as the LRU's
+    // last_used_ms on upsert so the cache learns monotonic time order
+    // without the engine owning a clock of its own.
+    uint32_t now_ms_cache_ = 0;
 };
 
 } // namespace mie

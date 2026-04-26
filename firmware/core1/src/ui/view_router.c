@@ -5,6 +5,10 @@
 #include "key_event.h"
 #include "keypad_view.h"
 #include "rf_debug_view.h"
+#include "font_test_view.h"
+#include "ime_view.h"
+#include "messages_view.h"
+#include "nodes_view.h"
 #include "mie/keycode.h"
 
 /* ── View table ──────────────────────────────────────────────────────── *
@@ -24,9 +28,9 @@ typedef struct {
     view_refresh_fn   refresh;
 } view_entry_t;
 
-#define VIEW_COUNT  2
+#define VIEW_COUNT  6
 static view_entry_t s_views[VIEW_COUNT];
-static int          s_active;
+static int          s_view_router_active;
 
 /* Optional helper: create a full-screen container with no padding /
  * border / scroll so init'd views paint pixel-perfect at (0,0). */
@@ -48,7 +52,7 @@ static void activate(int idx)
         if (i == idx) lv_obj_clear_flag(s_views[i].panel, LV_OBJ_FLAG_HIDDEN);
         else          lv_obj_add_flag  (s_views[i].panel, LV_OBJ_FLAG_HIDDEN);
     }
-    s_active = idx;
+    s_view_router_active = idx;
 }
 
 void view_router_init(lv_obj_t *screen)
@@ -66,22 +70,48 @@ void view_router_init(lv_obj_t *screen)
     s_views[1].refresh = rf_debug_view_refresh;
     rf_debug_view_init(s_views[1].panel);
 
-    activate(0);   /* keypad_view visible at boot */
+    s_views[2].name    = "font_test";
+    s_views[2].panel   = make_panel(screen);
+    s_views[2].apply   = font_test_view_apply;
+    s_views[2].refresh = NULL;
+    font_test_view_init(s_views[2].panel);
+
+    s_views[3].name    = "ime";
+    s_views[3].panel   = make_panel(screen);
+    s_views[3].apply   = ime_view_apply;
+    s_views[3].refresh = ime_view_refresh;
+    ime_view_init(s_views[3].panel);
+
+    s_views[4].name    = "messages";
+    s_views[4].panel   = make_panel(screen);
+    s_views[4].apply   = messages_view_apply;
+    s_views[4].refresh = messages_view_refresh;
+    messages_view_init(s_views[4].panel);
+
+    s_views[5].name    = "nodes";
+    s_views[5].panel   = make_panel(screen);
+    s_views[5].apply   = nodes_view_apply;
+    s_views[5].refresh = nodes_view_refresh;
+    nodes_view_init(s_views[5].panel);
+
+    activate(0);   /* keypad_view visible at boot; FUNC cycles keypad → rf → font_test → ime → messages → nodes */
 }
 
 void view_router_tick(void)
 {
+    /* Drain the view-observer mirror queue (see key_event.c). The IME
+     * task owns the primary queue; popping it here would race. */
     key_event_t ev;
-    while (key_event_pop(&ev, 0)) {
+    while (key_event_view_pop(&ev, 0)) {
         /* FUNC press edge cycles views. Release is intentionally
          * forwarded to the active view so it can clear its "pressed"
          * highlight for FUNC if the user held it. */
         if (ev.keycode == MOKYA_KEY_FUNC && ev.pressed) {
-            activate((s_active + 1) % VIEW_COUNT);
+            activate((s_view_router_active + 1) % VIEW_COUNT);
             continue;
         }
-        if (s_views[s_active].apply) {
-            s_views[s_active].apply(&ev);
+        if (s_views[s_view_router_active].apply) {
+            s_views[s_view_router_active].apply(&ev);
         }
     }
 

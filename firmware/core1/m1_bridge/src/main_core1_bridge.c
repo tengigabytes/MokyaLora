@@ -80,6 +80,21 @@
 #include "lvgl_glue.h"
 #include "keypad_scan.h"
 #include "key_event.h"
+#include "key_inject.h"
+#include "key_inject_rtt.h"
+#include "messages_inbox.h"
+#include "messages_tx_status.h"
+#include "nodes_db.h"
+
+volatile uint32_t g_core1_boot_heap_free = 0;
+#include "psram.h"
+#include "mie_dict_loader.h"
+#include "ime_task.h"
+
+#include "mokya_trace.h"
+
+/* Dict pointers stay file-scope; ime_task_start takes a pointer to it. */
+static mie_dict_pointers_t s_mie_dict = {0};
 
 /* ── Doorbell IPC notification (M2) ─────────────────────────────────────── *
  * We use raw SIO register writes instead of pico_multicore API to avoid
@@ -247,15 +262,79 @@ static void bridge_task(void *pv)
                 continue;   /* skip the rest of this iteration */
             }
 
+            if (hdr.msg_id == IPC_MSG_NODE_UPDATE &&
+                hdr.payload_len >= sizeof(IpcPayloadNodeUpdate)) {
+                const IpcPayloadNodeUpdate *u =
+                    (const IpcPayloadNodeUpdate *)scratch;
+                uint16_t header_size =
+                    (uint16_t)offsetof(IpcPayloadNodeUpdate, alias);
+                uint8_t alias_len = u->alias_len;
+                if ((uint16_t)header_size + alias_len > hdr.payload_len) {
+                    /* defend against producer-side length lie */
+                    alias_len = (uint8_t)(hdr.payload_len - header_size);
+                }
+                nodes_db_upsert(u->node_id,
+                                u->rssi,
+                                u->snr_x4,
+                                u->hops_away,
+                                u->lat_e7,
+                                u->lon_e7,
+                                u->battery_mv,
+                                u->alias,
+                                alias_len);
+                did_work = true;
+                continue;
+            }
+
+            if (hdr.msg_id == IPC_MSG_TX_ACK &&
+                hdr.payload_len >= sizeof(IpcPayloadTxAck)) {
+                const IpcPayloadTxAck *a =
+                    (const IpcPayloadTxAck *)scratch;
+                messages_tx_status_publish(a->seq,
+                                           a->result,
+                                           a->error_reason,
+                                           a->packet_id);
+                did_work = true;
+                continue;
+            }
+
+            if (hdr.msg_id == IPC_MSG_RX_TEXT &&
+                hdr.payload_len >= sizeof(IpcPayloadText)) {
+                /* Structured RX text from Core 0 — surface in LVGL inbox.
+                 * Snapshot stays valid only until the next RX_TEXT push,
+                 * which is fine for the current "show latest" view.
+                 * Multi-message backlog is M5 Phase 2 work. */
+                const IpcPayloadText *t =
+                    (const IpcPayloadText *)scratch;
+                uint16_t header_size = (uint16_t)offsetof(IpcPayloadText, text);
+                uint16_t text_in_payload =
+                    (hdr.payload_len > header_size)
+                        ? (uint16_t)(hdr.payload_len - header_size)
+                        : 0u;
+                uint16_t text_len = t->text_len;
+                if (text_len > text_in_payload) text_len = text_in_payload;
+                messages_inbox_publish(t->from_node_id,
+                                       t->to_node_id,
+                                       t->channel_index,
+                                       t->text,
+                                       text_len);
+                did_work = true;
+                continue;
+            }
+
             if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u) {
                 uint16_t remaining = hdr.payload_len;
                 const uint8_t *p = scratch;
-                /* Bounded FIFO-full retries: if the host isn't actively
-                 * draining, give up after ~10 ms and drop the burst so the
-                 * c0_to_c1 ring keeps moving. Meshtastic's serial protocol
-                 * retransmits on demand, so burst loss while no client is
-                 * attached is benign. */
-                int stall_ticks = 0;
+                /* The data ring carries Meshtastic stream-protocol frames
+                 * (0x94 0xC3 LEN_HI LEN_LO header + LEN payload bytes).
+                 * The host's parser reads exactly LEN payload bytes after
+                 * the header; if we drop ANY byte mid-frame here, every
+                 * subsequent frame on the wire desynchronises (host reads
+                 * into the next frame's header, parse fails, alignment
+                 * lost). There is no frame-level retransmit. So when CDC
+                 * FIFO is full, keep yielding until the host drains it —
+                 * never abort mid-payload. The only legitimate way to
+                 * stop is if USB unmounts (host gone). */
                 while (remaining > 0u) {
                     if (!tud_mounted()) {
                         break;
@@ -263,13 +342,9 @@ static void bridge_task(void *pv)
                     uint32_t avail = tud_cdc_write_available();
                     if (avail == 0u) {
                         tud_cdc_write_flush();
-                        if (++stall_ticks >= 10) {
-                            break;
-                        }
-                        taskYIELD();  /* was vTaskDelay(1ms) — yield to usb_device_task for tud_task() processing, ~10µs vs 1ms */
+                        taskYIELD();  /* let usb_device_task run tud_task() */
                         continue;
                     }
-                    stall_ticks = 0;
                     uint32_t chunk = (remaining < avail) ? remaining : avail;
                     uint32_t wrote = tud_cdc_write(p, chunk);
                     p += wrote;
@@ -282,29 +357,42 @@ static void bridge_task(void *pv)
             did_work = true;
         }
 
-        /* ── c0_log_to_c1 LOG ring → CDC IN (low priority) ──────────
-         * Drain log slots only when the data ring is empty, so protobuf
-         * frames are never delayed by log forwarding. Log output is
-         * best-effort — if CDC FIFO is full, drop immediately. */
+        /* ── c0_log_to_c1 LOG ring → DROPPED (P2-19) ──────────────────
+         * Forwarding Meshtastic LOG output onto the same USB CDC IN
+         * endpoint as binary protobuf frames is unsafe even with the
+         * "data-ring-empty" gate above: between two ring-slot pushes
+         * for the same multi-chunk FromRadio frame, Core 0's chunking
+         * loop briefly leaves the data ring empty (gap is sub-µs but
+         * non-zero — Core 1 runs on its own clock and can iterate the
+         * bridge loop in that window). When that window happens to
+         * coincide with a `\n` flush of an accumulated log line, the
+         * else-if branch drains a log slot and writes its bytes
+         * mid-frame, breaking host stream alignment.
+         *
+         * Symptom: rare, traffic-pattern-dependent FromRadio parse
+         * errors. Settings-page entry on client.meshtastic.org
+         * triggers it reliably because the get_config sequence pairs
+         * a burst of admin protobuf frames with a burst of
+         * "Handle admin payload" / "Send config" log lines — UI
+         * spins waiting for a config response that gets corrupted.
+         *
+         * Drop log bytes here. Bridge task does NOT set did_work, so
+         * it sleeps on xTaskNotifyWait when only log work is present
+         * — this prevents the tight log-drain loop from starving the
+         * USB device task (`tud_task()` must run to actually push
+         * queued CDC IN bytes onto the wire).
+         *
+         * Logs are still available via SEGGER RTT (mokya_trace.h
+         * shares the same RTT control block). For Meshtastic LOG_*
+         * specifically, future M9 USB Control Interface (DEC-2) can
+         * carve out a separate CDC interface for log output. */
         else if (ipc_ring_pop(&g_ipc_shared.c0_log_to_c1_ctrl,
                                g_ipc_shared.c0_log_to_c1_slots,
                                IPC_LOG_RING_SLOT_COUNT,
                                &hdr,
                                scratch,
                                sizeof(scratch))) {
-            if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u
-                && tud_mounted()) {
-                uint32_t avail = tud_cdc_write_available();
-                uint32_t to_write = (hdr.payload_len < avail)
-                                        ? hdr.payload_len : avail;
-                if (to_write > 0u) {
-                    uint32_t wrote = tud_cdc_write(scratch, to_write);
-                    g_rx_total += wrote;
-                    tud_cdc_write_flush();
-                    dbg_u32(BRIDGE_RX_COUNT_ADDR, g_rx_total);
-                }
-            }
-            did_work = true;
+            (void)hdr;  /* drop silently; do NOT set did_work */
         }
 
         /* ── CDC OUT → c1_to_c0 CMD ring ──────────────────────────────── */
@@ -381,6 +469,13 @@ int main(void)
     dbg_u32(BRIDGE_USB_STATE_ADDR,  0u);
     __dmb();
 
+    /* RTT trace transport up — see mokya_trace.h. The control block lives
+     * at &_SEGGER_RTT in BSS; J-Link / OpenOCD / pyOCD all auto-discover it.
+     * Init must run before any TRACE() call. Cheap (~50 instructions),
+     * does not touch hardware, safe to call before the boot_magic spin. */
+    SEGGER_RTT_Init();
+    TRACE_BARE("core1", "boot");
+
     /* 2. Wait for Core 0's shared-SRAM publication. Core 0 writes
      * IPC_BOOT_MAGIC before it launches us, so this should observe the
      * ready value on the very first load — but we spin defensively in
@@ -439,8 +534,26 @@ int main(void)
 
     __atomic_store_n(&g_ipc_shared.c1_ready, 1u, __ATOMIC_RELEASE);
 
-    /* Bring up both I2C buses before any driver starts. display_init()'s
-     * backlight setup and future power/sensor drivers all depend on this. */
+    /* PSRAM (APS6404L, 8 MB at 0x11000000). Done before any driver so
+     * allocations that want PSRAM can succeed from task-start. Core 0
+     * does not initialise PSRAM (Arduino-Pico's psram.cpp is gated on
+     * RP2350_PSRAM_CS which we do not define), so Core 1 owns it. The
+     * read-ID result lands in g_psram_read_id[] for SWD inspection;
+     * failure here is logged but non-fatal (IME will panic later when
+     * it tries to copy the dict blob). */
+    (void)psram_init();
+
+    /* Copy the MDBL dict blob from flash partition (0x10400000) to
+     * PSRAM. Status in g_mie_dict_load_status; on failure s_mie_dict
+     * is zeroed and the future ime_task will refuse to start. */
+    (void)mie_dict_load_to_psram(&s_mie_dict);
+
+
+    /* Shared I2C bus (time-muxed i2c1). Creates s_bus_mutex and sets
+     * the default pinmux to the POWER pair. MUST run before any task
+     * that calls i2c_bus_acquire(): lvgl_task (lm27965 backlight),
+     * charger_task, sensor_task, gps_task. The call was accidentally
+     * dropped in M4 Step 3 when PSRAM init was added — restored here. */
     i2c_bus_init_all();
 
     /* 7. Register doorbell ISR but do NOT enable yet — enabling before the
@@ -510,14 +623,45 @@ int main(void)
      * line-accumulator parser carries state between ticks. */
     TASK_START_OR_PANIC(gps_task_start(tskIDLE_PRIORITY + 2), "gps");
 
+    /* IME task (M4). Consumes the KeyEvent queue, drives mie::ImeLogic,
+     * and exposes composition / candidate / commit state for the LVGL
+     * view via the ime_view_* getter API. Priority +3 one notch above
+     * the other app tasks so keystrokes get processed before the next
+     * LVGL frame. If the dict copy-at-boot failed the pointers are
+     * zeroed and ime_task_start returns false → panic, which is the
+     * right behaviour (IME unusable means nothing to do). */
+    TASK_START_OR_PANIC(ime_task_start(&s_mie_dict, tskIDLE_PRIORITY + 3),
+                        "ime");
+
+    /* SWD key-injection task — lets a J-Link-equipped host write virtual
+     * keypress events into g_key_inject_buf so the IME can be driven
+     * programmatically without a human at the keypad. Arbitration ensures
+     * the user's physical keypress always wins. Safe in production: if
+     * nobody writes to the ring, the task just polls and sleeps. */
+    key_inject_task_start();
+    /* RTT alternate transport. Both inject tasks coexist but only the
+     * one selected by g_key_inject_mode actively polls — the other
+     * long-sleeps (50 ms) so ime_task doesn't compete with two hot
+     * pollers. Host flips the mode byte via SWD for the duration of
+     * a RTT burst and flips it back when done. Default = SWD.        */
+    key_inject_rtt_task_start();
+
     #undef TASK_START_OR_PANIC
 
     /* Heap budget checkpoint (see docs/design-notes/core1-memory-budget.md §5).
-     * configTOTAL_HEAP_SIZE is 48 KB (M3.4.5d); we want ≥ 20 % unused
-     * after every task is created, for future driver growth. */
+     * configTOTAL_HEAP_SIZE is 48 KB (M3.4.5d). Original policy was
+     * ≥ 20 % reserve; loosened to 15 % as Phase 1.6.1's RTT key-inject
+     * task (128-word stack + TCB, ~600 B) pushed us from 9.6 KB free
+     * down to ~9 KB. 15 % = 7.2 KB reserve is still plenty for runtime
+     * transients (queue bursts, LVGL allocators) and leaves room to
+     * accumulate another ~2 KB of features before the next heap bump. */
     size_t heap_total = configTOTAL_HEAP_SIZE;
     size_t heap_free  = xPortGetFreeHeapSize();
-    size_t heap_min   = heap_total / 5;   /* 20 % reserve target */
+    size_t heap_min   = (heap_total * 15) / 100;   /* 15 % reserve */
+    /* Expose heap_free as a file-static so the boot value can be read
+     * via SWD when a panic appears to fire silently. */
+    extern volatile uint32_t g_core1_boot_heap_free;
+    g_core1_boot_heap_free = (uint32_t)heap_free;
     if (heap_free < heap_min) {
         panic("core1: heap reserve below 20%% — used=%u / total=%u",
               (unsigned)(heap_total - heap_free), (unsigned)heap_total);

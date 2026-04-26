@@ -169,6 +169,16 @@ bool ImeLogic::handle_sym1(bool pressed, uint32_t now_ms) {
         return true;
     }
 
+    // Short-press while the picker is already open from a PRIOR long-press
+    // → user wants to dismiss the picker without committing a symbol. Just
+    // close and exit.
+    if (sym_picker_open_) {
+        sym_picker_open_ = false;
+        sym_picker_sel_  = 0;
+        notify_changed();
+        return true;
+    }
+
     // Short-press: commit any multi-tap pending, then emit ，/, for current
     // mode. SmartEn appends a trailing space so the punctuation follows
     // the English sentence convention ("Apple, World.").

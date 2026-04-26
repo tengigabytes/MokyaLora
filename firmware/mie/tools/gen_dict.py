@@ -94,6 +94,18 @@ OUTPUT_DIR = Path(__file__).parent.parent / "data"
 MAGIC      = b"MIED"
 VERSION    = 2   # v2 adds tone:u8 per word in ValueRecord
 
+# MIED v4 — Composition Architecture (single combined dict file).
+# Structure:
+#   char_table:      unique CJK chars + their (key, tone, freq) readings
+#   word_table:      multi-char words as char_id sequences + reading_idx[N]
+#   first_char_idx:  per char_id -> sorted list of word_ids (freq desc)
+#   key_to_char_idx: per phoneme key byte -> char_ids whose first reading
+#                    starts with that byte
+# Search composes user keys against char readings dynamically; abbreviation
+# variants are NOT pre-computed.
+MAGIC_V4   = b"MIE4"
+VERSION_V4 = 4
+
 # ── 5×5 KEYMAP ────────────────────────────────────────────────────────────
 # key_index (0–19) → list of Bopomofo phonemes on that physical key.
 # Constructed as (row, col) pairs where key_index = row*5+col.
@@ -124,10 +136,18 @@ _BPMF_KEYMAP_RAW = [
 
 # Reverse map: phoneme → key_index
 PHONEME_TO_KEY: dict = {}
+# Reverse map: phoneme → (key_index, position_within_key 0..2). Phase 1.4
+# long-press disambiguation needs to know which phoneme of a half-key the
+# user typed (primary / secondary / tertiary), so the engine can reject
+# matches whose dict reading was actually authored from a different
+# phoneme of the same key. Slot 4 (ㄞ/ㄢ/ㄦ) is the only key with a
+# tertiary phoneme; everything else maxes at 2.
+PHONEME_TO_KEY_POS: dict = {}
 for _entry in _BPMF_KEYMAP_RAW:
     _idx = _entry[0]
-    for _ph in _entry[1:]:
+    for _pos, _ph in enumerate(_entry[1:]):
         PHONEME_TO_KEY[_ph] = _idx
+        PHONEME_TO_KEY_POS[_ph] = (_idx, _pos)
 
 # English letter → key_index (rows 1–3 of the input grid)
 _ENG_KEYMAP_RAW = [
@@ -168,6 +188,40 @@ def phonemes_to_keyseq(phoneme_list: list) -> bytes:
         if ph in PHONEME_TO_KEY:
             seq.append(PHONEME_TO_KEY[ph] + KEY_OFFSET)
     return bytes(seq)
+
+
+def phonemes_to_keyseq_with_pos(phoneme_list: list) -> tuple:
+    """
+    Like phonemes_to_keyseq but also returns the per-byte phoneme-position
+    indices (0 = primary, 1 = secondary, 2 = tertiary) for the resulting
+    bytes. Used by the v4/v5 builder to record long-press disambiguation
+    metadata in the dict's reading entries.
+
+    Returns (key_bytes, pos_list) where len(pos_list) == len(key_bytes).
+    """
+    seq = bytearray()
+    pos = []
+    for ph in phoneme_list:
+        info = PHONEME_TO_KEY_POS.get(ph)
+        if info is None:
+            continue
+        idx, p = info
+        seq.append(idx + KEY_OFFSET)
+        pos.append(p)
+    return bytes(seq), pos
+
+
+def pack_phoneme_pos(pos_list: list) -> int:
+    """Pack up to 4 phoneme-position values (0..3) into a single byte,
+    2 bits per position, position 0 in the low bits. Bopomofo syllables
+    are bounded at 4 keys (initial + medial + final + tone). Values >3
+    are clamped to 3 (reserved sentinel)."""
+    v = 0
+    for i, p in enumerate(pos_list[:4]):
+        if p < 0:    p = 0
+        if p > 3:    p = 3
+        v |= (p & 0x3) << (2 * i)
+    return v
 
 
 def word_to_eng_keyseq(word: str) -> bytes:
@@ -325,25 +379,27 @@ def abbreviated_keyseqs(reading: str, full_keyseq: bytes) -> list:
 # ── libchewing tsi.csv loader ─────────────────────────────────────────────
 
 def load_libchewing(path: str,
-                    min_freq_for_abbr: int = 0,
+                    min_freq: int = 0,
                     max_abbr_syls: int = 4) -> list:
     """
     Parse libchewing tsi.csv (comma-separated: word, freq, reading).
 
-    tsi.csv column order: word, freq (0 or 1), reading
-    freq is a binary flag: 1 = common word, 0 = rare character.
-    Common words (freq=1) sort above rare characters (freq=0) in the candidate list.
+    tsi.csv column order: word, freq, reading
+    freq is a numeric usage count (not a binary flag); typical distribution
+    covers 0, 1, 2..10, ..., up to several thousand for very common words.
+    Higher-freq words sort above lower-freq entries in the candidate list.
 
-    min_freq_for_abbr: only generate abbreviated variants when freq >= this value
-                       (0 = no filter).
-    max_abbr_syls:     only generate abbreviated variants for words with at most this
-                       many syllables (0 = no limit).
+    min_freq:      drop both base entries AND abbreviation variants whose
+                   freq < this value (0 = no filter, keep all).
+    max_abbr_syls: only generate abbreviated variants for words with at most
+                   this many syllables (0 = no limit; default 4).
 
-    Returns list of (keyseq: bytes, word: str, freq: int).
-    Lines starting with '#' are treated as comments.
+    Returns list of (keyseq, word, freq, tone).  Lines starting with '#' are
+    treated as comments.
     """
     entries = []
     skipped = 0
+    dropped_freq = 0
     with open(path, newline='', encoding='utf-8', errors='strict') as f:
         reader = csv.reader(f)
         for lineno, row in enumerate(reader, 1):
@@ -352,12 +408,15 @@ def load_libchewing(path: str,
             if len(row) < 3:
                 continue
             word    = row[0].strip()
-            # tsi.csv columns: word, freq (binary 0/1), reading
             reading = row[2].strip()
             try:
                 freq = int(row[1].strip())
             except (ValueError, IndexError):
                 freq = 0
+
+            if min_freq > 0 and freq < min_freq:
+                dropped_freq += 1
+                continue
 
             phonemes = parse_reading(reading)
             keyseq   = phonemes_to_keyseq(phonemes)
@@ -365,15 +424,15 @@ def load_libchewing(path: str,
                 tone = reading_to_tone(reading)
                 entries.append((keyseq, word, freq, tone))
                 n_syls = len(parse_reading_syllables(reading))
-                emit_abbr = (
-                    (min_freq_for_abbr == 0 or freq >= min_freq_for_abbr) and
-                    (max_abbr_syls == 0 or n_syls <= max_abbr_syls)
-                )
-                if emit_abbr:
+                if max_abbr_syls == 0 or n_syls <= max_abbr_syls:
                     for abbr in abbreviated_keyseqs(reading, keyseq):
                         entries.append((abbr, word, freq, tone))
             else:
                 skipped += 1
+
+    if dropped_freq:
+        print(f"  libchewing: {dropped_freq:,} entries dropped (freq < {min_freq})",
+              file=sys.stderr)
 
     if skipped:
         print(f"  libchewing: {skipped:,} entries skipped (unmappable phonemes)",
@@ -383,21 +442,22 @@ def load_libchewing(path: str,
 # ── MoE CSV loader ────────────────────────────────────────────────────────
 
 def load_moe_csv(path: str,
-                 min_freq_for_abbr: int = 0,
+                 min_freq: int = 0,
                  max_abbr_syls: int = 4) -> list:
     """
     Parse MoE dictionary CSV (UTF-8 with BOM).
     Expected columns: 注音 / 詞語 / 頻率
 
-    min_freq_for_abbr: only generate abbreviated variants when freq >= this value
-                       (0 = no filter).
-    max_abbr_syls:     only generate abbreviated variants for words with at most this
-                       many syllables (0 = no limit).
+    min_freq:      drop both base entries AND abbreviation variants whose
+                   freq < this value (0 = no filter, keep all).
+    max_abbr_syls: only generate abbreviated variants for words with at most
+                   this many syllables (0 = no limit; default 4).
 
-    Returns list of (keyseq: bytes, word: str, freq: int).
+    Returns list of (keyseq, word, freq, tone).
     """
     entries = []
     skipped = 0
+    dropped_freq = 0
     with open(path, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -411,21 +471,25 @@ def load_moe_csv(path: str,
             if not reading or not word:
                 continue
 
+            if min_freq > 0 and freq < min_freq:
+                dropped_freq += 1
+                continue
+
             phonemes = parse_reading(reading)
             keyseq   = phonemes_to_keyseq(phonemes)
             if keyseq:
                 tone = reading_to_tone(reading)
                 entries.append((keyseq, word, freq, tone))
                 n_syls = len(parse_reading_syllables(reading))
-                emit_abbr = (
-                    (min_freq_for_abbr == 0 or freq >= min_freq_for_abbr) and
-                    (max_abbr_syls == 0 or n_syls <= max_abbr_syls)
-                )
-                if emit_abbr:
+                if max_abbr_syls == 0 or n_syls <= max_abbr_syls:
                     for abbr in abbreviated_keyseqs(reading, keyseq):
                         entries.append((abbr, word, freq, tone))
             else:
                 skipped += 1
+
+    if dropped_freq:
+        print(f"  MoE CSV: {dropped_freq:,} entries dropped (freq < {min_freq})",
+              file=sys.stderr)
 
     if skipped:
         print(f"  MoE CSV: {skipped:,} entries skipped (unmappable phonemes)",
@@ -596,6 +660,616 @@ def build_mied(entries: list, max_per_key: int = 0) -> tuple:
     }
     return bytes(dat_bytes), bytes(val_data), stats, dict(key_to_words)
 
+# ── MIED v4 (Composition Architecture) ───────────────────────────────────
+
+# v4 file layout (single binary, all little-endian):
+#   header (0x30 bytes):
+#     magic                  4 B    "MIE4"
+#     version                2 B    u16 = 4
+#     flags                  2 B    u16
+#                                     bit 0 = per-reading phoneme_pos byte
+#                                              present (Phase 1.4)
+#     char_count             4 B    u32
+#     word_count             4 B    u32
+#     char_table_off         4 B    u32 (offset from file start)
+#     word_table_off         4 B    u32
+#     first_char_idx_off     4 B    u32
+#     key_to_char_idx_off    4 B    u32
+#     reserved               16 B   (zero)
+#
+#   char_table:                     (sorted by char_id 0..char_count-1)
+#     per char:
+#       utf8_len             1 B    u8
+#       utf8_bytes           N B    UTF-8 (typically 3 for CJK)
+#       reading_count        1 B    u8
+#       per reading (when header.flags bit 0 = 1):
+#         key_len            1 B    u8
+#         key_bytes          M B    phoneme key sequence
+#         phoneme_pos        1 B    packed 2-bit-per-byte position index
+#                                    (LSB = byte 0; 0=primary 1=secondary
+#                                     2=tertiary). Slot 4 (ㄞ/ㄢ/ㄦ) is
+#                                    the only key with tertiary; everything
+#                                    else maxes at 1. Bopomofo syllables
+#                                    are bounded at 4 keys so 1 byte is
+#                                    enough.
+#         tone               1 B    u8 (1-5, 0 = unspecified)
+#         base_freq          2 B    u16
+#       per reading (legacy, header.flags bit 0 = 0):
+#         key_len            1 B    u8
+#         key_bytes          M B    phoneme key sequence
+#         tone               1 B    u8
+#         base_freq          2 B    u16
+#
+#   word_table:                     (grouped by char_count for O(1) filter)
+#     8 group headers (for char_count 1..8+):
+#       group_word_count     4 B    u32  (number of words in this group)
+#       group_start_word_id  4 B    u32  (first word_id in this group)
+#     per word (in group order):
+#       char_count           1 B    u8
+#       flags                1 B    u8 (bit 0 = has_reading_overrides)
+#       freq                 2 B    u16
+#       char_id[N]           2N B   u16 each
+#       if flags & 1:
+#         reading_idx[N]     N B    u8 each (else implicit 0)
+#
+#   first_char_idx:
+#     offsets[char_count+1]  4 * (char_count+1) B   u32 prefix sum
+#     word_ids[total]        4 * total B            u32 (sorted by word.freq desc)
+#
+#   key_to_char_idx:
+#     offsets[24]            4 * 24 B               u32 prefix sum (one slot
+#                                                   per phoneme key byte 0x20-0x37)
+#     char_ids[total]        2 * total B            u16
+
+
+def syllable_tone(syllable_phonemes):
+    """Extract tone (1-5) from a syllable's phoneme list."""
+    for ph in syllable_phonemes:
+        if ph == 'ˊ': return 2
+        if ph == 'ˇ': return 3
+        if ph == 'ˋ': return 4
+        if ph == '˙': return 5
+    return 1  # implicit tone 1 (no mark)
+
+
+def load_libchewing_v4(path: str, min_freq: int = 0) -> list:
+    """Load libchewing tsi.csv preserving the raw reading string per entry.
+
+    Returns list of (word, freq, reading_string). No abbreviation expansion
+    here -- v4 builder derives readings per char from the reading string.
+    """
+    out = []
+    with open(path, newline='', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row or row[0].startswith('#') or len(row) < 3:
+                continue
+            word = row[0].strip()
+            reading = row[2].strip()
+            try:
+                freq = int(row[1].strip())
+            except (ValueError, IndexError):
+                freq = 0
+            if min_freq > 0 and freq < min_freq:
+                continue
+            if word and reading:
+                out.append((word, freq, reading))
+    return out
+
+
+def load_moe_csv_v4(path: str, min_freq: int = 0) -> list:
+    """Load MoE CSV preserving reading. Returns (word, freq, reading)."""
+    out = []
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            reading = row.get('注音', '').strip()
+            word    = row.get('詞語', '').strip()
+            try:
+                freq = max(1, int(row.get('頻率', 1)))
+            except (ValueError, TypeError):
+                freq = 1
+            if min_freq > 0 and freq < min_freq:
+                continue
+            if word and reading:
+                out.append((word, freq, reading))
+    return out
+
+
+def _is_cjk(ch: str) -> bool:
+    cp = ord(ch)
+    return 0x3400 <= cp <= 0x9FFF or 0x20000 <= cp <= 0x2FFFF
+
+
+def build_char_table_v4(raw_entries: list,
+                        unihan_readings: dict = None) -> tuple:
+    """Build char_table from raw (word, freq, reading) entries.
+
+    For each char in each word, parse the corresponding syllable and record
+    (key_bytes, phoneme_pos, tone, freq) as one of the char's readings.
+    Aggregate freq via max across all sightings. The phoneme_pos list runs
+    parallel to key_bytes and records which phoneme of each half-key the
+    syllable was authored from (0 = primary, 1 = secondary, 2 = tertiary).
+    The runtime uses it to filter long-press-disambiguated user input.
+
+    unihan_readings: optional {char: [(key_bytes, tone)]} dict to seed
+    chars not present in raw_entries (low base_freq for rarity). Unihan
+    readings have no phoneme_pos info; the loader assumes primary (0) for
+    every byte — Unihan is a fallback for rare chars and the user is
+    unlikely to long-press for them anyway.
+
+    Returns (char_to_id, char_table) where char_table is a list ordered by
+    char_id, each entry = (utf8_char, sorted_readings_freq_desc) and each
+    reading is (key_bytes, phoneme_pos_tuple, tone, freq).
+    """
+    # char -> {(key_bytes, phoneme_pos_tuple, tone): max_freq_seen}
+    # phoneme_pos is part of the dict key so two readings that differ only
+    # in which half-key phoneme produced them are kept distinct (e.g. ㄍ
+    # vs ㄐ both encode to byte 0x28 but pos differs).
+    accum = {}
+
+    for word, freq, reading in raw_entries:
+        chars = list(word)
+        if not all(_is_cjk(c) for c in chars):
+            continue  # skip non-CJK words (rare in MIE corpus)
+        sylls = parse_reading_syllables(reading)
+        if len(sylls) != len(chars):
+            # Reading/word mismatch -- could be erhua, foreign loanwords, etc.
+            # Skip per-char inference but the WORD itself might still go to
+            # word_table later (it'll be skipped if any char missing).
+            continue
+        # libchewing assigns freq=0 to many low-usage entries; treat as 1 so
+        # the reading is still recorded with a minimum-rank base_freq.
+        eff_freq = max(freq, 1)
+        for ch, syl in zip(chars, sylls):
+            keyseq, pos = phonemes_to_keyseq_with_pos(syl)
+            tone = syllable_tone(syl)
+            if not keyseq:
+                continue
+            key = (keyseq, tuple(pos), tone)
+            ch_dict = accum.setdefault(ch, {})
+            existing = ch_dict.get(key, 0)
+            if eff_freq > existing:
+                ch_dict[key] = eff_freq
+
+    # Optionally seed from Unihan for chars never seen in raw entries.
+    # Unihan entries don't carry phoneme-position metadata; assume primary
+    # (0) for every byte.
+    DEFAULT_RARE_FREQ = 5
+    if unihan_readings:
+        for ch, readings in unihan_readings.items():
+            if ch not in accum:
+                for keyseq, tone in readings:
+                    pos = tuple(0 for _ in keyseq)
+                    accum.setdefault(ch, {})[(keyseq, pos, tone)] = DEFAULT_RARE_FREQ
+
+    # Build sorted char_table: ascending by codepoint for stable char_ids
+    char_to_id = {}
+    char_table = []
+    for cid, ch in enumerate(sorted(accum.keys())):
+        char_to_id[ch] = cid
+        # Sort readings: most-frequent first (so reading[0] is the default)
+        sorted_readings = sorted(
+            ((k, p, t, f) for (k, p, t), f in accum[ch].items()),
+            key=lambda r: -r[3]
+        )
+        char_table.append((ch, sorted_readings))
+
+    return char_to_id, char_table
+
+
+def build_word_table_v4(raw_entries: list,
+                        char_to_id: dict, char_table: list) -> list:
+    """Build word_table from raw entries.
+
+    For each multi-char word with a parseable reading whose syllable count
+    matches char count: derive reading_idx[i] for each char by finding
+    which char_table reading matches the word's syllable for that position.
+
+    Skips words where any char is missing from char_to_id (i.e., chars
+    that didn't make it into char_table). This shouldn't happen if char_table
+    was built from the same raw_entries.
+
+    Words are deduped; max freq wins.
+
+    Returns list of (word_str, char_ids, reading_idxs, freq, tone).
+    """
+    # First pass: dedup by word, keep max-freq entry's reading
+    best = {}
+    for word, freq, reading in raw_entries:
+        if len(word) < 2:
+            continue
+        if not all(_is_cjk(c) for c in word):
+            continue
+        if not all(c in char_to_id for c in word):
+            continue
+        sylls = parse_reading_syllables(reading)
+        if len(sylls) != len(word):
+            continue
+        prev = best.get(word)
+        if prev is None or freq > prev[0]:
+            best[word] = (freq, reading, sylls)
+
+    # Second pass: for each best entry, derive reading_idx per char
+    word_table = []
+    for word, (freq, reading, sylls) in best.items():
+        char_ids = [char_to_id[c] for c in word]
+        reading_idxs = []
+        for ch_idx, (ch, syl) in enumerate(zip(word, sylls)):
+            keyseq, pos = phonemes_to_keyseq_with_pos(syl)
+            tone = syllable_tone(syl)
+            pos_tuple = tuple(pos)
+            cid = char_to_id[ch]
+            readings = char_table[cid][1]
+            # Prefer an exact (keyseq, pos, tone) match so the chosen
+            # reading_idx encodes the right phoneme positions for long-press
+            # filtering. Fall back to (keyseq, tone) ignoring pos if no
+            # exact reading exists (Unihan-only chars, etc.) — picks the
+            # first match deterministically.
+            idx = 0
+            found_exact = False
+            for i, (rk, rp, rt, _rf) in enumerate(readings):
+                if rk == keyseq and rp == pos_tuple and rt == tone:
+                    idx = i
+                    found_exact = True
+                    break
+            if not found_exact:
+                for i, (rk, _rp, rt, _rf) in enumerate(readings):
+                    if rk == keyseq and rt == tone:
+                        idx = i
+                        break
+            reading_idxs.append(idx)
+        last_tone = syllable_tone(sylls[-1]) if sylls else 0
+        word_table.append((word, char_ids, reading_idxs, freq, last_tone))
+
+    return word_table
+
+
+def serialize_char_table_v4(char_table: list,
+                            include_phoneme_pos: bool = True) -> tuple:
+    """Per char: utf8_len + utf8 + reading_count + per reading.
+
+    Per reading layout (with include_phoneme_pos=True, header.flags bit 0):
+        klen | kbytes | phoneme_pos_packed (1B) | tone | freq
+
+    Without phoneme_pos (legacy MIE4): klen | kbytes | tone | freq
+
+    Returns (bytes, offsets_list) where offsets_list[i] is the byte offset
+    of char_id i from char_table start. offsets_list has char_count + 1
+    entries (last entry = total bytes, useful as a sentinel).
+    """
+    buf = bytearray()
+    offsets = []
+    for ch, readings in char_table:
+        offsets.append(len(buf))
+        utf8 = ch.encode('utf-8')
+        buf.append(len(utf8))
+        buf += utf8
+        buf.append(len(readings))
+        for keyseq, pos, tone, freq in readings:
+            buf.append(len(keyseq))
+            buf += keyseq
+            if include_phoneme_pos:
+                buf.append(pack_phoneme_pos(list(pos)))
+            buf.append(tone)
+            buf += struct.pack('<H', min(freq, 0xFFFF))
+    offsets.append(len(buf))
+    return bytes(buf), offsets
+
+
+def serialize_word_table_v4(word_table: list) -> tuple:
+    """Group words by char_count (1..8+, 8 groups) so the runtime can
+    seek directly to a target_char_count's word_id range without scanning.
+
+    Within each group, words are sorted by freq desc (so first_char_index
+    can reference word_ids in freq order naturally).
+
+    Returns (bytes, group_ranges, flat, offsets) where:
+      group_ranges: {char_count_bucket -> (start_word_id, count)}
+      flat:         list of word entries in word_id order
+      offsets:      list of word_count + 1 byte offsets within word_table
+                    (each word_id's start; last entry = total bytes)
+    """
+    MAX_GROUP = 8  # bucket >=8 chars together
+    grouped = defaultdict(list)
+    for word, char_ids, reading_idxs, freq, tone in word_table:
+        n = len(char_ids)
+        bucket = n if n < MAX_GROUP else MAX_GROUP
+        grouped[bucket].append((word, char_ids, reading_idxs, freq, tone))
+
+    # Sort each group by freq desc
+    for bucket in grouped:
+        grouped[bucket].sort(key=lambda w: -w[3])
+
+    # Assign word_ids in group order: bucket 1 first, then 2, ..., then 8+
+    flat = []
+    group_ranges = {}
+    for bucket in range(1, MAX_GROUP + 1):
+        wlist = grouped.get(bucket, [])
+        group_ranges[bucket] = (len(flat), len(wlist))
+        flat.extend(wlist)
+
+    # Group headers: per bucket 1..8 -> u32 count + u32 start_word_id.
+    # NOTE: word_offsets are measured from the START of the FIRST WORD RECORD,
+    # i.e. AFTER the 8 group headers (8*8 = 64 bytes). This matches the
+    # CompositionSearcher::build_offset_indexes loop which steps `w` past
+    # the 64-byte group-headers prelude before recording the first offset.
+    buf = bytearray()
+    for bucket in range(1, MAX_GROUP + 1):
+        start, count = group_ranges[bucket]
+        buf += struct.pack('<II', count, start)
+
+    headers_size = len(buf)
+    offsets = []  # offsets relative to the WHOLE word_table section start
+
+    # Word records
+    for word, char_ids, reading_idxs, freq, tone in flat:
+        offsets.append(len(buf))
+        n = len(char_ids)
+        # Decide whether reading_idx is all-zero (omit it then)
+        has_overrides = any(r != 0 for r in reading_idxs)
+        flags = 1 if has_overrides else 0
+        buf.append(n)
+        buf.append(flags)
+        buf += struct.pack('<H', min(freq, 0xFFFF))
+        for cid in char_ids:
+            buf += struct.pack('<H', cid)
+        if has_overrides:
+            for r in reading_idxs:
+                buf.append(r)
+    offsets.append(len(buf))
+
+    return bytes(buf), group_ranges, flat, offsets
+
+
+def build_syllable_prefix_set(raw_entries: list) -> list:
+    """Extract every distinct Bopomofo syllable prefix (1..4 key bytes) from
+    the raw libchewing/pj-data entries — the canonical phonetic source.
+    Ships with the v4 file so the runtime never needs to re-derive rules
+    from char_table.
+    Returns a sorted list of uint64-packed prefixes ready to serialize.
+    """
+    prefixes = set()
+    for word, _freq, reading in raw_entries:
+        sylls = parse_reading_syllables(reading) if reading else []
+        for syl in sylls:
+            kb = phonemes_to_keyseq(syl)
+            if not kb:
+                continue
+            max_len = min(len(kb), 4)
+            for L in range(1, max_len + 1):
+                prefix = kb[:L]
+                v = L << 32
+                for i, b in enumerate(prefix):
+                    v |= b << (i * 8)
+                prefixes.add(v)
+    return sorted(prefixes)
+
+
+def serialize_syllable_prefix_table_v4(prefixes: list) -> bytes:
+    """Serialize the sorted prefix list as: u32 count | count * u64 entries."""
+    out = bytearray()
+    out += struct.pack('<I', len(prefixes))
+    for v in prefixes:
+        out += struct.pack('<Q', v)
+    return bytes(out)
+
+
+def build_syllable_prefix_set_from_char_table(char_table: list) -> list:
+    """Fallback: extract prefixes from the already-built char_table. Used
+    when raw_entries don't carry per-char reading lists (e.g. Unihan-only
+    chars that were injected after char_table assembly)."""
+    prefixes = set()
+    for _ch, readings in char_table:
+        for r in readings:
+            kb = r[0]
+            if not kb:
+                continue
+            max_len = min(len(kb), 4)
+            for L in range(1, max_len + 1):
+                prefix = kb[:L]
+                v = L << 32
+                for i, b in enumerate(prefix):
+                    v |= b << (i * 8)
+                prefixes.add(v)
+    return sorted(prefixes)
+
+
+def serialize_offsets_v4(offsets: list) -> bytes:
+    """Pack a list of u32 byte offsets little-endian."""
+    return b''.join(struct.pack('<I', o) for o in offsets)
+
+
+def serialize_first_char_idx_v4(flat_word_table: list, char_count: int) -> bytes:
+    """For each char_id, list of word_ids whose first char is that char_id,
+    sorted by freq desc. Layout: u32 offsets[char_count+1] + u32 word_ids[total].
+    """
+    by_first_char = defaultdict(list)
+    for wid, (word, char_ids, reading_idxs, freq, tone) in enumerate(flat_word_table):
+        if char_ids:
+            by_first_char[char_ids[0]].append((freq, wid))
+    for cid in by_first_char:
+        by_first_char[cid].sort(key=lambda x: -x[0])  # freq desc
+
+    # Offsets
+    offsets = [0] * (char_count + 1)
+    for cid in range(char_count):
+        offsets[cid + 1] = offsets[cid] + len(by_first_char.get(cid, []))
+
+    buf = bytearray()
+    for off in offsets:
+        buf += struct.pack('<I', off)
+    for cid in range(char_count):
+        for _freq, wid in by_first_char.get(cid, []):
+            buf += struct.pack('<I', wid)
+    return bytes(buf)
+
+
+def serialize_key_to_char_idx_v4(char_table: list) -> bytes:
+    """For each phoneme key byte (0x20..0x37), list of char_ids whose first
+    reading's first byte matches. Layout: u32 offsets[25] + u16 char_ids[total].
+    Slot 0 -> key byte 0x20, slot 24 -> key byte 0x38 (exclusive).
+    """
+    KEY_MIN = 0x20
+    KEY_MAX = 0x38  # exclusive
+    NUM_SLOTS = KEY_MAX - KEY_MIN  # 24
+
+    by_key = defaultdict(list)
+    for cid, (ch, readings) in enumerate(char_table):
+        # Each char contributes one entry per unique first-byte across its readings.
+        # The runtime uses this to find candidate first-chars matching user_keys[0].
+        seen_first = set()
+        for r in readings:
+            keyseq = r[0]
+            if keyseq:
+                fb = keyseq[0]
+                if fb not in seen_first:
+                    seen_first.add(fb)
+                    if KEY_MIN <= fb < KEY_MAX:
+                        by_key[fb].append(cid)
+    for fb in by_key:
+        by_key[fb].sort()  # ascending char_id (deterministic order)
+
+    offsets = [0] * (NUM_SLOTS + 1)
+    for slot in range(NUM_SLOTS):
+        fb = KEY_MIN + slot
+        offsets[slot + 1] = offsets[slot] + len(by_key.get(fb, []))
+
+    buf = bytearray()
+    for off in offsets:
+        buf += struct.pack('<I', off)
+    for slot in range(NUM_SLOTS):
+        fb = KEY_MIN + slot
+        for cid in by_key.get(fb, []):
+            buf += struct.pack('<H', cid)
+    return bytes(buf)
+
+
+def build_mied_v4(raw_entries: list,
+                  unihan_readings: dict = None,
+                  en_dat_bytes: bytes = None,
+                  en_val_bytes: bytes = None) -> tuple:
+    """Build a complete MIED v4 binary blob from raw (word, freq, reading)
+    entries. Returns (bytes, stats_dict).
+
+    Optional en_dat_bytes / en_val_bytes embed the English MDBL-format
+    trie + value pool inside the v4 blob so SmartEn has a dict to query
+    when v4 is the only partition flashed. Backwards compatible: old
+    loaders that only read 0x30 bytes of header ignore the added
+    English metadata and serve only Chinese.
+
+    The v4 binary embeds char_offsets and word_offsets sections so the
+    runtime CompositionSearcher does NOT need heap allocations for them
+    (Core 1 has only 48 KB FreeRTOS heap, far less than the ~590 KB the
+    on-the-fly offset arrays would need).
+    """
+    char_to_id, char_table = build_char_table_v4(raw_entries, unihan_readings)
+    word_table = build_word_table_v4(raw_entries, char_to_id, char_table)
+
+    char_section, char_offsets = serialize_char_table_v4(char_table)
+    word_section, group_ranges, flat, word_offsets = \
+        serialize_word_table_v4(word_table)
+    first_idx = serialize_first_char_idx_v4(flat, len(char_to_id))
+    key_idx   = serialize_key_to_char_idx_v4(char_table)
+    char_off_section = serialize_offsets_v4(char_offsets)
+    word_off_section = serialize_offsets_v4(word_offsets)
+
+    # Syllable prefix table: extract directly from raw reading strings so
+    # the ruleset is grounded in the source data, not a re-derivation of
+    # the encoded char_table. Fall back to char_table if raw_entries don't
+    # expose per-char phoneme lists.
+    prefixes = build_syllable_prefix_set(raw_entries)
+    if not prefixes:
+        prefixes = build_syllable_prefix_set_from_char_table(char_table)
+    prefix_section = serialize_syllable_prefix_table_v4(prefixes)
+
+    # Header is 0x40 = 64 bytes (was 0x30, grown 2026-04-24 for embedded
+    # English sections at 0x30..0x3F). Old loaders that stop reading at
+    # 0x30 still work — they just don't discover the English offsets,
+    # and serve Chinese only. char_table_off etc. remain authoritative,
+    # so the grown header is fully backward-compatible.
+    HEADER_SIZE = 0x40
+    char_off       = HEADER_SIZE
+    word_off       = char_off + len(char_section)
+    first_off      = word_off + len(word_section)
+    key_off        = first_off + len(first_idx)
+    char_offs_off  = key_off + len(key_idx)
+    word_offs_off  = char_offs_off + len(char_off_section)
+    prefix_off     = word_offs_off + len(word_off_section)
+    zh_end         = prefix_off + len(prefix_section)
+
+    en_dat_bytes = en_dat_bytes or b''
+    en_val_bytes = en_val_bytes or b''
+    en_dat_off     = zh_end if en_dat_bytes else 0
+    en_dat_size    = len(en_dat_bytes)
+    en_val_off     = (en_dat_off + en_dat_size) if en_val_bytes else 0
+    en_val_size    = len(en_val_bytes)
+    total_size     = zh_end + en_dat_size + en_val_size
+
+    # Header flags:
+    #   bit 0  = per-reading phoneme_pos byte present (Phase 1.4 long-press
+    #            disambiguation). Loader keys filtering on this bit so old
+    #            MIE4 dicts (flags=0) keep working with no filter applied.
+    HEADER_FLAG_PHONEME_POS = 0x0001
+    flags_word = HEADER_FLAG_PHONEME_POS
+
+    header = bytearray()
+    header += MAGIC_V4
+    header += struct.pack('<HH', VERSION_V4, flags_word)
+    header += struct.pack('<II', len(char_table), len(flat))
+    header += struct.pack('<IIII',
+                          char_off, word_off, first_off, key_off)
+    header += struct.pack('<I', total_size)         # offset 0x20
+    header += struct.pack('<I', char_offs_off)      # offset 0x24
+    header += struct.pack('<I', word_offs_off)      # offset 0x28
+    header += struct.pack('<I', prefix_off)         # offset 0x2C
+    header += struct.pack('<II', en_dat_off, en_dat_size)  # 0x30, 0x34
+    header += struct.pack('<II', en_val_off, en_val_size)  # 0x38, 0x3C
+    header += b'\x00' * (HEADER_SIZE - len(header))
+    assert len(header) == HEADER_SIZE
+
+    blob = (bytes(header)
+            + char_section + word_section
+            + first_idx + key_idx
+            + char_off_section + word_off_section
+            + prefix_section
+            + en_dat_bytes + en_val_bytes)
+    assert len(blob) == total_size
+
+    # Stats
+    n_words_with_overrides = sum(
+        1 for (_w, _c, ridx, _f, _t) in flat if any(r != 0 for r in ridx))
+    char_count_dist = defaultdict(int)
+    for (_w, char_ids, _r, _f, _t) in flat:
+        n = len(char_ids)
+        bucket = n if n < 8 else 8  # collapse 8+ into one bucket for display
+        char_count_dist[bucket] += 1
+    total_readings = sum(len(rs) for _ch, rs in char_table)
+
+    stats = {
+        'magic': 'MIE4',
+        'version': VERSION_V4,
+        'char_count': len(char_table),
+        'word_count': len(flat),
+        'word_count_by_size': dict(char_count_dist),
+        'total_readings': total_readings,
+        'avg_readings_per_char': total_readings / max(1, len(char_table)),
+        'words_with_reading_overrides': n_words_with_overrides,
+        'header_bytes':            HEADER_SIZE,
+        'char_table_bytes':        len(char_section),
+        'word_table_bytes':        len(word_section),
+        'first_char_idx_bytes':    len(first_idx),
+        'key_to_char_idx_bytes':   len(key_idx),
+        'char_offsets_bytes':      len(char_off_section),
+        'word_offsets_bytes':      len(word_off_section),
+        'prefix_bytes':            len(prefix_section),
+        'en_dat_bytes':            en_dat_size,
+        'en_val_bytes':            en_val_size,
+        'total_bytes':             len(blob),
+    }
+    return blob, stats
+
+
 # ── Argument parsing ──────────────────────────────────────────────────────
 
 def parse_args():
@@ -606,13 +1280,18 @@ def parse_args():
     p.add_argument('--moe-csv',        metavar='CSV',
                    help='MoE word list CSV path (注音/詞語/頻率 columns, UTF-8 BOM)')
     p.add_argument('--zh-min-freq',     metavar='N', type=int, default=0,
-                   help='Only generate abbreviated ZH variants for words with freq >= N '
-                        '(0 = no filter, default).  libchewing freq is binary 0/1; '
-                        'MoE freq is a numeric count.')
+                   help='Drop Chinese entries (both base and abbreviated) whose freq < N '
+                        '(0 = no filter, default).  libchewing freq is a numeric usage '
+                        'count; MoE freq likewise.  Raise this to shrink the dict under '
+                        'a fixed PSRAM budget while keeping the most-used words.')
     p.add_argument('--zh-max-abbr-syls', metavar='N', type=int, default=4,
                    help='Only generate abbreviated ZH variants for words with <= N '
                         'syllables (0 = no limit; default: 4).  Words longer than N '
                         'syllables are stored under their full key sequence only.')
+    p.add_argument('--zh-max-per-key',  metavar='N', type=int, default=0,
+                   help='Collision pruning: keep only the top-N Chinese words per key '
+                        'sequence (sorted by freq descending).  0 = no limit (default).  '
+                        'Use to bound dict_values.bin when many homophones share a key.')
     p.add_argument('--en-wordlist',    metavar='TXT',
                    help='English word list — one word per line, optional space or TAB '
                         'frequency.  Supports hermitdave/FrequencyWords (space-separated) '
@@ -633,6 +1312,13 @@ def parse_args():
                         '(small-font charlist; derived from Chinese dict only)')
     p.add_argument('--output-dir',     default=str(OUTPUT_DIR),
                    help=f'Output directory  [default: {OUTPUT_DIR}]')
+    p.add_argument('--v4-output',      metavar='PATH', default=None,
+                   help='Also build the MIED v4 (Composition Architecture) dict '
+                        'and write the single combined binary to PATH. '
+                        'When set, gen_dict.py emits BOTH v2 (legacy MIED) and v4 '
+                        '(MIE4); they consume the same Chinese sources but the v4 '
+                        'output skips abbreviation expansion (composed at search '
+                        'time). v4 is typically much smaller. Default: not built.')
     return p.parse_args()
 
 # ── Main ──────────────────────────────────────────────────────────────────
@@ -651,14 +1337,16 @@ def main():
     if args.libchewing or args.moe_csv:
         abbr_syls_label = str(args.zh_max_abbr_syls) if args.zh_max_abbr_syls else '無限制'
         freq_label      = f'>= {args.zh_min_freq}' if args.zh_min_freq else '不限'
-        print(f'ZH abbrev filter: 音節上限={abbr_syls_label}  最低頻率={freq_label}')
+        per_key_label   = str(args.zh_max_per_key) if args.zh_max_per_key else '無限制'
+        print(f'ZH filter: 音節上限={abbr_syls_label}  最低頻率={freq_label}  '
+              f'每鍵上限={per_key_label}')
 
     zh_entries: list = []
 
     if args.libchewing:
         print(f'Loading libchewing  {args.libchewing} ...')
         loaded = load_libchewing(args.libchewing,
-                                 min_freq_for_abbr=args.zh_min_freq,
+                                 min_freq=args.zh_min_freq,
                                  max_abbr_syls=args.zh_max_abbr_syls)
         zh_entries.extend(loaded)
         print(f'  {len(loaded):,} entries')
@@ -666,21 +1354,53 @@ def main():
     if args.moe_csv:
         print(f'Loading MoE CSV     {args.moe_csv} ...')
         loaded = load_moe_csv(args.moe_csv,
-                              min_freq_for_abbr=args.zh_min_freq,
+                              min_freq=args.zh_min_freq,
                               max_abbr_syls=args.zh_max_abbr_syls)
         zh_entries.extend(loaded)
         print(f'  {len(loaded):,} entries')
+
+    # PSRAM budget for the Chinese dict (plan: docs/design-notes/mie-architecture.md).
+    # Printed purely as a guideline; exceeding it does not fail the build.
+    ZH_BUDGET_BYTES = 3 * 1024 * 1024
 
     zh_stats = None
     zh_key_to_words = None
     if zh_entries:
         print(f'Building Chinese MIED  ({len(zh_entries):,} total entries) ...')
-        dat, val, zh_stats, zh_key_to_words = build_mied(zh_entries)
+        dat, val, zh_stats, zh_key_to_words = build_mied(
+            zh_entries, max_per_key=args.zh_max_per_key)
         (output_dir / 'dict_dat.bin').write_bytes(dat)
         (output_dir / 'dict_values.bin').write_bytes(val)
+        total_zh  = zh_stats['dat_bytes'] + zh_stats['val_bytes']
+        budget_mb = total_zh / (1024 * 1024)
+        budget_ok = '[OK]' if total_zh <= ZH_BUDGET_BYTES else '[OVER BUDGET]'
         print(f'  dict_dat.bin    : {zh_stats["dat_bytes"]:>9,} bytes  '
               f'({zh_stats["key_count"]:,} unique key sequences)')
         print(f'  dict_values.bin : {zh_stats["val_bytes"]:>9,} bytes')
+        print(f'  ZH total        : {total_zh:>9,} bytes  '
+              f'({budget_mb:.2f} MB / 3.00 MB budget)  {budget_ok}')
+
+    # v4 build is deferred until AFTER the English dict is assembled so
+    # the v4 blob can embed en_dat / en_val directly — SmartEn then
+    # works against the --v4-flashed partition without needing the
+    # legacy MDBL dict alongside.
+    v4_defer_args = None
+    if args.v4_output and (args.libchewing or args.moe_csv):
+        v4_defer_args = {'v4_path': Path(args.v4_output)}
+        v4_defer_args['v4_path'].parent.mkdir(parents=True, exist_ok=True)
+        print(f'\nPreparing MIED v4 (Composition Architecture) ...')
+        raw_v4 = []
+        if args.libchewing:
+            r = load_libchewing_v4(args.libchewing,
+                                    min_freq=args.zh_min_freq)
+            raw_v4.extend(r)
+            print(f'  v4 raw libchewing entries: {len(r):,}')
+        if args.moe_csv:
+            r = load_moe_csv_v4(args.moe_csv,
+                                min_freq=args.zh_min_freq)
+            raw_v4.extend(r)
+            print(f'  v4 raw MoE entries:        {len(r):,}')
+        v4_defer_args['raw_v4'] = raw_v4
 
     # ── Charlist emit (small font variant) ────────────────────────────────
     if args.emit_charlist and zh_key_to_words:
@@ -716,7 +1436,7 @@ def main():
         (output_dir / 'en_values.bin').write_bytes(val)
         total_en  = en_stats['dat_bytes'] + en_stats['val_bytes']
         budget_mb = total_en / (1024 * 1024)
-        budget_ok = '\u2713 OK' if total_en < 1024 * 1024 else '\u26a0 OVER BUDGET'
+        budget_ok = '[OK]' if total_en < 1024 * 1024 else '[OVER BUDGET]'
         print(f'  en_dat.bin      : {en_stats["dat_bytes"]:>9,} bytes  '
               f'({en_stats["key_count"]:,} unique key sequences)')
         pruned_note = (f', {en_stats["pruned_count"]:,} pruned'
@@ -725,6 +1445,42 @@ def main():
               f'({en_stats["entry_count"]:,} words stored{pruned_note})')
         print(f'  EN total        : {total_en:>9,} bytes  '
               f'({budget_mb:.2f} MB / 1.00 MB budget)  {budget_ok}')
+
+    # ── MIED v4 build (deferred from above so English can be embedded) ────
+    if v4_defer_args is not None:
+        print(f'\nBuilding MIED v4 (Composition Architecture) ...')
+        en_dat_emb = None
+        en_val_emb = None
+        if args.en_wordlist:
+            en_dat_emb = (output_dir / 'en_dat.bin').read_bytes()
+            en_val_emb = (output_dir / 'en_values.bin').read_bytes()
+            print(f'  embedding English: en_dat={len(en_dat_emb):,} B, '
+                  f'en_val={len(en_val_emb):,} B')
+        else:
+            print(f'  no --en-wordlist, SmartEn will be unavailable with this v4 blob')
+
+        v4_blob, v4_stats = build_mied_v4(v4_defer_args['raw_v4'],
+                                          unihan_readings=None,
+                                          en_dat_bytes=en_dat_emb,
+                                          en_val_bytes=en_val_emb)
+        v4_path = v4_defer_args['v4_path']
+        v4_path.write_bytes(v4_blob)
+        v4_mb = len(v4_blob) / (1024 * 1024)
+        print(f'  v4 char_table:             {v4_stats["char_table_bytes"]:>9,} bytes  '
+              f'({v4_stats["char_count"]:,} unique chars, '
+              f'avg {v4_stats["avg_readings_per_char"]:.2f} readings/char)')
+        print(f'  v4 word_table:             {v4_stats["word_table_bytes"]:>9,} bytes  '
+              f'({v4_stats["word_count"]:,} multi-char words, '
+              f'{v4_stats["words_with_reading_overrides"]:,} with reading overrides)')
+        print(f'  v4 first_char_idx:         {v4_stats["first_char_idx_bytes"]:>9,} bytes')
+        print(f'  v4 key_to_char_idx:        {v4_stats["key_to_char_idx_bytes"]:>9,} bytes')
+        print(f'  v4 char_offsets:           {v4_stats["char_offsets_bytes"]:>9,} bytes')
+        print(f'  v4 word_offsets:           {v4_stats["word_offsets_bytes"]:>9,} bytes')
+        print(f'  v4 prefix_table:           {v4_stats["prefix_bytes"]:>9,} bytes')
+        print(f'  v4 en_dat (embedded):      {v4_stats["en_dat_bytes"]:>9,} bytes')
+        print(f'  v4 en_val (embedded):      {v4_stats["en_val_bytes"]:>9,} bytes')
+        print(f'  v4 TOTAL                   {v4_stats["total_bytes"]:>9,} bytes  '
+              f'({v4_mb:.2f} MB)  -> {v4_path}')
 
     # ── Metadata ──────────────────────────────────────────────────────────
     meta = {
@@ -739,15 +1495,18 @@ def main():
             'en_max_words':  args.en_max_words  if args.en_max_words  else None,
             'en_min_freq':   args.en_min_freq   if args.en_min_freq   else None,
             'en_max_per_key': args.en_max_per_key if args.en_max_per_key else None,
+            'zh_min_freq':      args.zh_min_freq      if args.zh_min_freq      else None,
+            'zh_max_abbr_syls': args.zh_max_abbr_syls if args.zh_max_abbr_syls else None,
+            'zh_max_per_key':   args.zh_max_per_key   if args.zh_max_per_key   else None,
         },
         'charlist_path':  args.emit_charlist,
         'chinese': zh_stats,
         'english': en_stats,
         'built_at': datetime.now(timezone.utc).isoformat(),
         'license_notices': [
-            'libchewing-data: © LibChewing contributors, LGPL-2.1 '
+            'libchewing-data: (c) LibChewing contributors, LGPL-2.1 '
             '(https://github.com/chewing/libchewing-data)',
-            'MoE dictionary: © Republic of China Ministry of Education, '
+            'MoE dictionary: (c) Republic of China Ministry of Education, '
             'public domain for educational use '
             '(https://dict.revised.moe.edu.tw/)',
             'English wordlist: credit per source file; see --en-wordlist provenance.',

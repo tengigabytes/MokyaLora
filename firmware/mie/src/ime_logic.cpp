@@ -10,6 +10,35 @@
 
 namespace mie {
 
+// ── SYM1 long-press symbol picker (Phase 1.4 Task B) ────────────────────
+// 4-column × 4-row grid of common Traditional-Chinese punctuation that the
+// user can't otherwise type from the half-keyboard. Layout (row-major):
+//
+//   「  」  『  』
+//   （  ）  【  】
+//   ，  。  、  ；
+//   ：  ？  ！  …
+//
+// Selection wraps modulo grid size on Left/Right; Up/Down step ±cols and
+// also wrap mod size. The grid lives in .rodata — no runtime allocation.
+static constexpr int kSymPickerCols  = 4;
+static constexpr int kSymPickerRows  = 4;
+static constexpr int kSymPickerCells = kSymPickerCols * kSymPickerRows;
+
+static const char* const kSymPickerCells_[kSymPickerCells] = {
+    "\xe3\x80\x8c", "\xe3\x80\x8d", "\xe3\x80\x8e", "\xe3\x80\x8f",  // 「」『』
+    "\xef\xbc\x88", "\xef\xbc\x89", "\xe3\x80\x90", "\xe3\x80\x91",  // （）【】
+    "\xef\xbc\x8c", "\xe3\x80\x82", "\xe3\x80\x81", "\xef\xbc\x9b",  // ，。、；
+    "\xef\xbc\x9a", "\xef\xbc\x9f", "\xef\xbc\x81", "\xe2\x80\xa6",  // ：？！…
+};
+
+int  ImeLogic::picker_cell_count() const { return kSymPickerCells; }
+int  ImeLogic::picker_cols()        const { return kSymPickerCols;  }
+const char* ImeLogic::picker_cell(int idx) const {
+    if (idx < 0 || idx >= kSymPickerCells) return "";
+    return kSymPickerCells_[idx];
+}
+
 // ── Construction / configuration ─────────────────────────────────────────────
 
 ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
@@ -19,19 +48,44 @@ ImeLogic::ImeLogic(TrieSearcher& zh_searcher, TrieSearcher* en_searcher)
     // All POD members initialized in-class.
 }
 
+void ImeLogic::set_selected(int idx) {
+    if (cand_count_ == 0) return;
+    if (idx < 0) idx = 0;
+    if (idx >= cand_count_) idx = cand_count_ - 1;
+    if (selected_ == idx) return;
+    selected_ = idx;
+    notify_changed();
+}
+
 void ImeLogic::set_listener(IImeListener* listener) {
     listener_ = listener;
+}
+
+void ImeLogic::attach_composition_searcher(CompositionSearcher* cs) {
+    composition_searcher_ = cs;
+}
+
+bool ImeLogic::load_lru(const uint8_t* buf, int len) {
+    return lru_.deserialize(buf, len);
+}
+
+int ImeLogic::serialize_lru(uint8_t* buf, int cap) const {
+    return lru_.serialize(buf, cap);
 }
 
 // ── Top-level dispatcher ─────────────────────────────────────────────────────
 
 bool ImeLogic::process_key(const KeyEvent& ev) {
+    // Cache now_ms so commit paths (did_commit / commit_partial) can stamp
+    // LRU entries without routing a clock through every call site.
+    now_ms_cache_ = ev.now_ms;
+
     // BACK is reserved for UI; silently ignore if the router missed it.
     if (ev.keycode == MOKYA_KEY_BACK)               return false;
     if (ev.keycode == MOKYA_KEY_NONE)               return false;
     if (ev.keycode >= MOKYA_KEY_LIMIT)              return false;
 
-    // SYM1 uses both edges (short-press vs long-press).
+    // SYM1 uses both edges (short-press vs long-press picker).
     if (ev.keycode == MOKYA_KEY_SYM1)
         return handle_sym1(ev.pressed, ev.now_ms);
 
@@ -39,6 +93,40 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
     if (!ev.pressed) return false;
 
     const mokya_keycode_t kc = ev.keycode;
+
+    // ── Picker-active routing ───────────────────────────────────────
+    // While the SYM1 long-press picker is open, DPAD navigates the
+    // grid and OK commits the selected symbol. Any other key closes
+    // the picker without commit (the user changed their mind).
+    if (sym_picker_open_) {
+        if (kc == MOKYA_KEY_LEFT || kc == MOKYA_KEY_RIGHT ||
+            kc == MOKYA_KEY_UP   || kc == MOKYA_KEY_DOWN) {
+            int sel = sym_picker_sel_;
+            if      (kc == MOKYA_KEY_LEFT)  sel = (sel - 1 + kSymPickerCells) % kSymPickerCells;
+            else if (kc == MOKYA_KEY_RIGHT) sel = (sel + 1) % kSymPickerCells;
+            else if (kc == MOKYA_KEY_UP)    sel = (sel - kSymPickerCols + kSymPickerCells) % kSymPickerCells;
+            else                            sel = (sel + kSymPickerCols) % kSymPickerCells;
+            sym_picker_sel_ = sel;
+            notify_changed();
+            return true;
+        }
+        if (kc == MOKYA_KEY_OK) {
+            const char* s = kSymPickerCells_[sym_picker_sel_];
+            sym_picker_open_ = false;
+            sym_picker_sel_  = 0;
+            emit_commit(s);
+            notify_changed();
+            return true;
+        }
+        // SYM1 short-press in picker is intercepted by handle_sym1
+        // (closes picker without commit). Any other key (DEL, MODE,
+        // slot keys, SYM2, etc): close without commit, ignore this
+        // press; next press hits normal routing.
+        sym_picker_open_ = false;
+        sym_picker_sel_  = 0;
+        notify_changed();
+        return true;
+    }
 
     // MODE — commit any pending, then cycle mode.
     if (kc == MOKYA_KEY_MODE) { cycle_mode(); return true; }
@@ -51,16 +139,30 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
         kc == MOKYA_KEY_LEFT || kc == MOKYA_KEY_RIGHT)
         return handle_dpad(kc);
 
-    // OK — commit selected candidate, or commit multi-tap pending, or let
-    // the UI handle it as Enter/confirm. OK does NOT auto-append a
-    // trailing space in SmartEn: the English-sentence convention is
-    // that the next word carries its own leading space (handled in
-    // commit_selected_candidate), so punctuation can follow a word
-    // immediately without creating "Apple ," artifacts.
+    // OK — short-press semantics:
+    //   - has candidates    → commit selected
+    //   - multi-tap pending → commit it
+    //   - otherwise (idle)  → emit "\n" (Phase 1.4 Task C, mirrors the
+    //                          SPACE-when-idle convention)
     if (kc == MOKYA_KEY_OK) {
-        if (has_candidates()) { commit_selected_candidate(); notify_changed(); return true; }
-        if (multitap_.keycode != MOKYA_KEY_NONE) { multitap_commit(); notify_changed(); return true; }
-        return false;
+        if (sym_picker_open_) {
+            // Picker has its own OK semantic (commit highlighted symbol);
+            // already routed above in the picker-active block.
+            return false;
+        }
+        if (has_candidates()) {
+            commit_selected_candidate();
+            notify_changed();
+            return true;
+        }
+        if (multitap_.keycode != MOKYA_KEY_NONE) {
+            multitap_commit();
+            notify_changed();
+            return true;
+        }
+        emit_commit("\n");
+        notify_changed();
+        return true;
     }
 
     // SYM2 — multi-tap punctuation cycling.
@@ -88,6 +190,7 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
 // ── Periodic tick (multi-tap timeout + SYM1 long-press detection) ───────────
 
 bool ImeLogic::tick(uint32_t now_ms) {
+    now_ms_cache_ = now_ms;
     bool changed = false;
 
     if (multitap_.keycode != MOKYA_KEY_NONE &&
@@ -105,6 +208,16 @@ bool ImeLogic::tick(uint32_t now_ms) {
         // Phase A ships with an open flag only. A follow-up milestone
         // wires the picker list into pending_view().
         changed = true;
+    }
+
+
+    // Lock the long-press cycle once the multitap timeout passes — no
+    // visible change (the cycled phoneme stays in phoneme_hint_), just
+    // means the next long-press of the same slot will start a new byte
+    // instead of cycling the previous one.
+    if (lp_cycle_.byte_index >= 0 &&
+        (uint32_t)(now_ms - lp_cycle_.last_ms) >= kMultiTapTimeoutMs) {
+        lp_cycle_.byte_index = -1;
     }
 
     if (changed) notify_changed();
@@ -150,6 +263,7 @@ void ImeLogic::abort() {
 
     key_seq_len_          = 0;
     key_seq_[0]           = '\0';
+    std::memset(phoneme_hint_, 0, sizeof(phoneme_hint_));
     display_clear();
     pending_style_        = PendingStyle::None;
     matched_prefix_bytes_ = 0;
@@ -160,6 +274,7 @@ void ImeLogic::abort() {
     sym1_                 = {};
     sym_picker_open_      = false;
     sym_picker_sel_       = 0;
+    lp_cycle_             = {};
     en_capitalize_next_        = true;   // treat abort as new sentence start
     en_last_ended_with_space_  = true;
 
@@ -178,12 +293,14 @@ void ImeLogic::cycle_mode() {
     // Clear remaining composition (no candidates → just discard).
     key_seq_len_          = 0;
     key_seq_[0]           = '\0';
+    std::memset(phoneme_hint_, 0, sizeof(phoneme_hint_));
     display_clear();
     pending_style_        = PendingStyle::None;
     matched_prefix_bytes_ = 0;
     matched_prefix_keys_  = 0;
     cand_count_           = 0;
     selected_             = 0;
+    lp_cycle_             = {};
 
     switch (mode_) {
         case InputMode::SmartZh: mode_ = InputMode::SmartEn; break;
@@ -204,28 +321,16 @@ bool ImeLogic::handle_dpad(mokya_keycode_t kc) {
             case MOKYA_KEY_RIGHT:
                 selected_ = (selected_ + 1) % cand_count_;
                 break;
-            case MOKYA_KEY_UP: {
-                // Previous page, keeping slot within page.
-                int slot = selected_ % kPageSize;
-                int p    = page();
-                int pc   = page_count();
-                int np   = (p - 1 + pc) % pc;
-                int pos  = np * kPageSize + slot;
-                if (pos >= cand_count_) pos = cand_count_ - 1;
-                selected_ = pos;
-                break;
-            }
-            case MOKYA_KEY_DOWN: {
-                // Next page, keeping slot within page.
-                int slot = selected_ % kPageSize;
-                int p    = page();
-                int pc   = page_count();
-                int np   = (p + 1) % pc;
-                int pos  = np * kPageSize + slot;
-                if (pos >= cand_count_) pos = cand_count_ - 1;
-                selected_ = pos;
-                break;
-            }
+            case MOKYA_KEY_UP:
+            case MOKYA_KEY_DOWN:
+                // Up/Down navigation is owned by the view layer, which knows
+                // the visual flex-wrap row layout (see ime_view_apply +
+                // find_row_neighbour). The engine's kPageSize page-jump
+                // raced the view override and caused the highlight to flash
+                // to the wrong cell for one frame before snapping back.
+                // Consume the event without changing selected_; the view
+                // override runs in the LVGL task and sets selected_ itself.
+                return true;
             default: return false;
         }
         notify_changed();
@@ -264,6 +369,11 @@ bool ImeLogic::handle_del() {
     if (key_seq_len_ > 0) {
         --key_seq_len_;
         key_seq_[key_seq_len_] = '\0';
+        // If the cycled byte was just deleted, clear the cycle so the
+        // next long-press starts fresh.
+        if (lp_cycle_.byte_index >= key_seq_len_) {
+            lp_cycle_.byte_index = -1;
+        }
         run_search();
         notify_changed();
         return true;

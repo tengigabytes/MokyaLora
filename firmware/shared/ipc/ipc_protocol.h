@@ -110,11 +110,21 @@ typedef struct {
     uint32_t uptime_s;              ///< System uptime in seconds
 } IpcPayloadDeviceStatus;
 
-/** IPC_MSG_TX_ACK */
+/** IPC_MSG_TX_ACK
+ *  Carries delivery status for an outbound IPC_CMD_SEND_TEXT. `seq` echoes
+ *  the IPC msg seq we used when pushing the original CMD; `packet_id` is
+ *  the Meshtastic mesh-level packet id so a Core 1 client that wants to
+ *  associate ACKs across the mesh (logs / forwarding) can match them.
+ *  When `result == 2 (failed)`, `error_reason` carries the
+ *  meshtastic_Routing_Error value Meshtastic reported. */
 typedef struct {
-    uint8_t  seq;                   ///< Sequence number of the original CMD_SEND_TEXT
+    uint8_t  seq;                   ///< IPC seq of the original CMD_SEND_TEXT
     uint8_t  result;                ///< 0 = sending, 1 = delivered, 2 = failed
+    uint8_t  error_reason;          ///< meshtastic_Routing_Error (0 on success)
+    uint8_t  _pad;                  ///< Pads to a 4-byte boundary
+    uint32_t packet_id;             ///< Meshtastic packet id (32 bit)
 } IpcPayloadTxAck;
+_Static_assert(sizeof(IpcPayloadTxAck) == 8, "IpcPayloadTxAck must be exactly 8 bytes");
 
 /** IPC_CMD_SET_TX_POWER */
 typedef struct {
@@ -164,8 +174,9 @@ typedef struct {
     uint8_t  buf[2][128];           ///< Double buffer: [0] and [1] slots
     uint8_t  write_idx;             ///< Index Core 1 is currently writing into (0 or 1)
     uint8_t  len[2];                ///< Valid byte count in each slot
-    uint8_t  _pad[2];
-} IpcGpsBuf;                        /* 260 bytes, place in shared SRAM */
+    uint8_t  _pad[1];               ///< Pads to 260 B to match shared-SRAM reservation
+} IpcGpsBuf;
+_Static_assert(sizeof(IpcGpsBuf) == 260, "IpcGpsBuf must be exactly 260 bytes");
 
 /* ── Config IPC (M1.2, for M4+ LVGL settings UI) ────────────────────────── */
 

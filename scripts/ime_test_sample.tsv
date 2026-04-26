@@ -1,0 +1,4 @@
+# Sample IME test cases — tab-separated: expected_text<TAB>key sequence
+# Key names are MOKYA_KEY_* from firmware/mie/include/mie/keycode.h
+# (KEY_ prefix optional; 0xNN / decimal also accepted).
+快樂	KEY_D KEY_J KEY_9 KEY_Z

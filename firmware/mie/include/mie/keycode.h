@@ -100,6 +100,27 @@ typedef uint8_t mokya_keycode_t;
  * are reserved for future extension and must not be emitted.           */
 #define MOKYA_KEY_LIMIT         ((mokya_keycode_t)0x40)
 
+/* ── Producer-side event flags (Phase 1.4 long-press disambiguation) ── *
+ * Carried in key_event_t.flags (Core 1 queue) and mie::KeyEvent::flags
+ * (engine-facing). Only meaningful on SmartZh slot keys; other consumers
+ * may set the bits but the engine ignores them where irrelevant.        *
+ *                                                                       *
+ *   MOKYA_KEY_FLAG_LONG_PRESS — key held past kLongPressMs (500 ms);    *
+ *                               consume secondary phoneme (strict).     *
+ *                                                                       *
+ * Two-state design: a short tap means "fuzzy / any phoneme on this      *
+ * slot" (legacy half-keyboard), and a long press means "strict          *
+ * secondary phoneme". Slot 4's tertiary (ㄦ) is reachable only via the  *
+ * fuzzy short-tap path.                                                  *
+ *                                                                       *
+ * Bits 1..5 reserved for future hint flags.                              */
+#define MOKYA_KEY_FLAG_LONG_PRESS   ((uint8_t)0x01)
+/* Test/debug only: force the engine to record hint = ANY (0xFF) for this
+ * byte. Equivalent to a short tap under the current default semantics —
+ * kept as an explicit signal so test scripts can pin the behaviour even
+ * if the engine default ever changes. */
+#define MOKYA_KEY_FLAG_HINT_ANY     ((uint8_t)0x04)
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

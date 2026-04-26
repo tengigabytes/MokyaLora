@@ -62,6 +62,17 @@ void sram_test(void);
 // bringup_flash.c — Flash test + speed sweep
 void flash_test(void);
 void flash_speed_test(void);// sweep M0 CLKDIV*RXDELAY from RAM, test Flash reads
+void flash_bench(void);     // bench current M0 64 KB uncached + cached throughput
+void flash_sweep2(void);    // sweep M0 with Pico SDK boot2_w25q080-style config (w/ M-byte)
+void flash_reset(void);     // emergency 66+99 device reset (both cmd widths)
+void flash_boost_pads(void);// RP2350 QSPI pad high-speed config (see P2-16)
+void flash_pad_ablation(void); // 2^3 ablation of SCLK drive/slew + SD schmitt at CLKDIV=1
+void flash_deep_scan(void);    // full 16 MB XOR compare: baseline vs CLKDIV=1 + SLEWFAST (uncached 1-beat)
+void flash_deep_ablation(void);// deep-scan oracle across 4 pad configs at CLKDIV=1 (uncached 1-beat)
+void flash_deep_scan_cached(void);     // P2-16 revisit: cached-burst oracle, XIP_BASE + per-block invalidate
+void flash_deep_ablation_cached(void); // P2-16 revisit: cached-burst ablation across 4 pad configs
+void flash_rand_scan_cached(void);     // P2-16 revisit 2: random-address cached oracle, 100k samples
+void flash_rand_scan_long(void);       // P2-16 revisit 2: 1M samples random cached (duration stress)
 struct flash_speed_result {
     uint8_t  clkdiv;
     uint8_t  rxdelay;
@@ -69,7 +80,10 @@ struct flash_speed_result {
     uint32_t read_val;
     uint32_t expected;
     bool     pass;
+    uint32_t bench_us;    // time to read FLASH_BENCH_WORDS (uncached)
+    uint32_t bench_kbps;  // KB/s for the bench pass
 };
+#define FLASH_BENCH_WORDS 16384u  // 64 KB
 void flash_speed_run(struct flash_speed_result *results, int count,
                      const uint8_t *clkdivs, const uint8_t *rxdelays,
                      uint32_t sys_hz);
@@ -79,14 +93,19 @@ bool psram_init(void);      // call once at boot — returns true if APS6404L fo
 void psram_test(void);
 void psram_full_test(void); // full 8 MB two-pass write+verify test
 void psram_full_test_75(void); // full 8 MB test at CLKDIV=1 (75 MHz), restores timing
+void psram_verify_full(void); // 6-pattern 8 MB stress (ADDR, ~ADDR, 0xFF, 0x00, walking, checker)
+void psram_full_at(uint8_t cd, uint8_t rd); // run psram_verify_full at given timing
+void psram_wthru_test(void); // 4 alias combos (wr_alias x rd_alias), probes write-through
 void psram_speed_test(void);// sweep CLKDIV*RXDELAY, find max PSRAM QPI speed
 void psram_diag_test(void); // CLKDIV=1 error pattern analysis & timing tuning
 void psram_jlink_prep(void);// write sentinel, print J-Link mem32 command
 void psram_diag(void);
 void psram_probe(void);
+void qmi_diag(void);        // dump QMI M0/M1 + XIP_CTRL cache state
 void psram_set_timing(uint8_t clkdiv, uint8_t rxdelay);
 uint32_t psram_sweep_pass(void);
 uint32_t psram_verify_pass(void);
+uint32_t psram_verify_pass_cached(void);
 void psram_set_full_timing(uint32_t timing);
 
 // bringup_memory_tft.c — TFT consolidated diagnostics (Step 20)
