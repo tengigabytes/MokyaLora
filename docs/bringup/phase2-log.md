@@ -2269,6 +2269,71 @@ Python enums are generated from the C headers to prevent drift.
 
 ---
 
+## Open Follow-ups (rolling)
+
+Snapshot 2026-04-27. Update on commit when items resolve or new ones
+land. Items closed should move into the relevant milestone narrative
+above (with date) and be deleted from this list.
+
+### IME quality / measurement
+
+- **lazy_friday picker rank-7 commit miscommit.** `scripts/ime_passage_lazy_friday.txt`
+  char 15 expected `'開'` at rank 7; picker injected SYM1×7 + OK but
+  commit landed on `'放'`. Cascades into commit-fail for the rest of
+  the passage (327 CJK / 100 % committed otherwise). Hypotheses:
+  (a) SYM1 debounce eating one keypress, (b) candidate list shifted
+  between rank-detection and scroll, (c) rank → key mapping off-by-
+  one. Investigate via RTT trace of the picker scroll + observe
+  candidate index in IME state during the failure.
+- **Refresh Phase 1.6 regression table** in
+  [`mie-v4-status.md`](./mie-v4-status.md). Lines 264-272 still show
+  numbers captured against the pre-rewrite passage content. Capture
+  both `--precise-hints` (engine-internal regression) and default
+  HINT_ANY (real-UX) columns; document the trade-off. Hardware run
+  2026-04-27: user2 218 CJK 68.8 % rank-0 / 97.2 % top-8 / 100 %
+  commit (precise); user3 246+48 ASCII 70.3 / 97.2 / 99.2; user4 259
+  69.9 / 96.9 / 98.8; user5 162 51.9 / 92.0 / 98.8 (precise) → 71.0
+  / 100 / 100 (default after #17, warm LRU); t9_stress 69 CJK + 519
+  ASCII 71.0 / 100 / 100; lazy_friday 327 blocked by picker bug
+  above.
+- **Re-run two-pass LRU regression** on the new fictional passages
+  (`scripts/test_lru_regression.py --erase`). Earlier blocked by
+  the warm-detect HardFault that stripped Core 1 launch — fixed in
+  submodule `14dd31554`. Goal: verify Phase 1.6.1 kCap = 128 still
+  delivers measurable cold→warm rank-0 lift on user2..5.
+
+### Phase 2 plumbing
+
+- **Verify RTT key-inject `--transport rtt`** end-to-end. Original
+  user concern (see "B2 — IPC config soft-reload" entry) was that
+  SWD/RTT shared bandwidth was conflicting; root cause turned out
+  to be the warm-detect bug, so the RTT path may already work.
+  Just needs confirmation: ime_text_test.py with `--transport rtt`
+  on a representative passage with no inject timeouts.
+
+### B2 IPC config follow-ups
+
+(LoRa subset already shipped — see "B2 — IPC config soft-reload"
+entry for what's live.)
+
+- **Extend handler keys beyond LoRa subset.** `ipc_config_handler.cpp`
+  currently returns `UNKNOWN_KEY` for Device / Position / Power /
+  Display / Channel / Owner. Most map directly to `config.*` fields;
+  Owner uses `reloadOwner` not `reloadConfig`.
+- **Reboot-required path** for keys where `reloadConfig` isn't enough
+  (Device.role, rebroadcast_mode, button_gpio, buzzer_gpio, most
+  module configs). Add a separate flag in `ipc_config_handler` so
+  SETs on those keys mark COMMIT to fall back to RebootNotifier
+  full-reset instead of soft-reload. Document which keys take which
+  path in the handler header.
+- **Core 1 settings view UI.** LVGL view that lets the user navigate /
+  edit settings via keypad and drives IPC_CMD_GET / SET / COMMIT.
+  Needs: list of editable keys, value display, edit overlay (numeric
+  +/- for tx_power, picker for region enum), commit button. Cycle
+  into the view via FUNC like other views.
+
+---
+
 ## Issues Log (Phase 2)
 
 | # | Date | Area | Issue | Resolution |
