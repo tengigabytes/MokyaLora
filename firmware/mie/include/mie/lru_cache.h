@@ -8,8 +8,11 @@
 // separately by the Core 1 side.
 //
 // Heap-free: all state is embedded in a fixed-capacity array. sizeof(LruCache)
-// is ~6 KB + 8 B for metadata; the entire engine still fits in Core 1's BSS
-// budget without touching the FreeRTOS heap.
+// is ~6 KB + 8 B for metadata at the current kCap = 128; the entire engine
+// still fits in Core 1's BSS budget without touching the FreeRTOS heap.
+// (Phase 1.6.1, 2026-04-26: bumped from 64 → 128 after RAM budget rework
+// moved the persist scratch buffer off BSS and onto the FreeRTOS heap so a
+// kCap doubling could fit. See docs/design-notes/mie-p1.6-lru-plan.md.)
 
 #pragma once
 
@@ -54,7 +57,10 @@ static_assert(sizeof(LruEntry) == 48, "LruEntry must be 48 bytes for LittleFS pe
 
 class LruCache {
 public:
-    static constexpr int kCap = 64;
+    // Capacity bumped 64 → 128 in Phase 1.6.1 (2026-04-26) after the
+    // long-passage analysis showed in-pass repeat lift was capped by
+    // window size on >100-char content. See mie-p1.6-lru-plan.md.
+    static constexpr int kCap = 128;
 
     LruCache() { reset(); }
 
