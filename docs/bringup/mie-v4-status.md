@@ -428,8 +428,15 @@ Follow-up work (2026-04-23 / 24):
   `--reboot` exercises cross-reset persistence. `force_lru_save()`
   uses safe `(cur_prod + 2)` ring advancement (the ring-wrap bug
   that wedged QMI in the 2026-04-23 session).
-- `scripts/ime_passage_*.txt` — six reference passages (user1..5 +
-  echeneis); see Phase 1.6 regression table above.
+- `scripts/ime_passage_*.txt` — reference passages spanning
+  encyclopedic content (Echeneis-family), rare-char stress, household
+  prose, embedded-systems prose, classical-Chinese style, café-scene
+  narrative, and an English/Chinese mixed engineering passage; see
+  Phase 1.6 regression table above. (The user2..5 / lazy_friday /
+  t9_stress files were rewritten as fully fictional, neutral text
+  in 2026-04-26 — earlier baseline numbers in the regression table
+  were captured against the previous content of those filenames and
+  should be re-measured against the new text before comparing.)
 
 ## Recovery (if v4 is broken)
 
