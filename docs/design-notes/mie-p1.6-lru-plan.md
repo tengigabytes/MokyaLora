@@ -95,8 +95,8 @@ coverage** (6 passages, 1 416 CJK, 0 miss) but **repeat-typer cost**:
 - `吸` (ㄒㄧ¹, rank 21 in its bucket) — hit 4× in a single passage,
   each time requiring DPAD RIGHT × 21 + OK.
 - `鮣` (ㄧㄣˋ, rank 16) — hit 2×, same pattern.
-- Names of people / places (e.g. `XX`, `YY`) — one-off short
-  rank, but the user will type them again next session.
+- Names of people / places (one-off short-rank tokens — proper nouns the
+  user will type again next session, not in any general dictionary).
 
 A personalised LRU that learns from the first commit and promotes
 subsequent identical-reading commits to rank 0-7 directly eliminates
