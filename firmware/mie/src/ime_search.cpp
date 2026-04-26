@@ -227,6 +227,15 @@ void ImeLogic::run_search_v4() {
         // Static to avoid blowing the IME task's 8 KB stack — at
         // kMaxCandidates=100 a stack-local Candidate[100] is ~3.6 KB.
         // Safe because the IME task is the only caller of run_search().
+        //
+        // Inner loop is O(n × m) string-compare dedup. Measured 2026-04-26
+        // via MIE_TRACE on user1 30-char benchmark: 79% of adj_merge calls
+        // do zero compares (primary already saturated, or m == 0); the
+        // active 21% averaged ~3 K compares each, p99 ~5 K, giving a
+        // total ~52 K strcmps over 30 chars ≈ 0.57 ms/char average and
+        // p99 1.65 ms for a single search. That is < 0.5 % of the
+        // 396 ms/char wall time, so a hash/sort dedup would deliver no
+        // user-visible improvement — left as the simpler O(N×M) form.
         static Candidate tmp[kMaxCandidates];
         for (int k = 0; k < 4 && n < kMaxCandidates; ++k) {
             int t = adj[k];

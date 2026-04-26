@@ -46,24 +46,46 @@ slots from high-frequency entries turned out to be wrong-shaped:
   deliver, and passage length past ~64 disperses repeats beyond
   the window.
 
-Real fixes for the long-passage ceiling (deferred as P1.6.1
-research):
+Real fixes for the long-passage ceiling:
 
-1. **kCap bump (64 → 256)** — +9 KB BSS for cache + another 9 KB
-   for the persist scratch buffer. Currently blocked: Core 1 SRAM
-   headroom was exhausted at the heap=52 KB experiment (the
-   `RAM overflowed by 2496 bytes` incident in 2026-04-24 RTT
-   bring-up). A path would reclaim BSS first from an over-
-   provisioned static buffer elsewhere in Core 1.
-2. **Persistent frequency model** — replace in-session LRU with a
+1. **kCap bump (64 → 128) — DELIVERED 2026-04-26 (Phase 1.6.1).**
+   `s_scratch` was the BSS hog blocking the bump (3.3 KB pinned in
+   .bss alongside the LruCache itself). Solution: move the save-
+   path scratch onto the FreeRTOS heap (allocated inside
+   `lru_persist_save`, freed on return). Net BSS change is
+   negative (−256 B): +3 KB for the 64 extra LruEntries inside
+   `g_ime_storage`, −3.3 KB from removing the static scratch.
+   Heap pressure during save: 6.4 KB transient malloc, freed
+   immediately; tripwire is commit-50 / mode-cycle / 30 s-idle
+   so the spike is rare and short. NULL malloc → save returns
+   false; in-RAM LRU intact, retries on next tripwire.
+
+   **Hardware numbers, user1.txt (228 CJK, 95 s):**
+   - Pass 1 (cold LRU):  rank-0 = 54.4 %, in-top-8 = 98.2 %,
+     5.98 keystrokes/char
+   - Pass 2 (warm LRU):  rank-0 = 64.1 %  (**+9.7 pp**),
+     in-top-8 = 99.1 %, 5.54 keystrokes/char (−7 %)
+
+   That +9.7 pp Pass 1 → Pass 2 lift is the win that 64-entry
+   could not deliver on long passages (the historical
+   "+0/+0/+0 lift" measurement). 100 % commit, 0 miss in both
+   passes. 419 ms/char wall time matches the 404 ms historical
+   baseline within noise.
+
+2. **kCap bump 128 → 256** — still blocked. The simple BSS
+   trick is exhausted (no more easy static buffers to spill to
+   heap). 256 would need to spill more state out of BSS or
+   shrink LV_MEM_SIZE / configTOTAL_HEAP_SIZE — both with their
+   own risk surface. Defer until a long passage shows we can't
+   reach the user's target on 128.
+3. **Persistent frequency model** — replace in-session LRU with a
    cross-session histogram (`(reading, word) → uses`) re-ranked
    at search time. Matches "same user, same vocabulary, over
-   weeks" better than the 64-entry session cache. Larger rework,
+   weeks" better than the 128-entry session cache. Larger rework,
    needs LittleFS or similar store.
-3. **Accept** — the current LRU is meaningful for the real-world
-   use case (short, repetitive messaging), just not for the
-   long-passage regression proxy. Keep the unit test captured in
-   `01af1b9` as documentation and move on.
+4. **Accept and stop here.** The Phase 1.6.1 numbers above are
+   already meaningful for the real-world use case. Skip 256
+   unless / until evidence demands it.
 
 ## Problem statement
 
