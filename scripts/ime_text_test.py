@@ -611,10 +611,14 @@ def main():
     ap.add_argument('--reset-every-n', type=int, default=0,
                     help='reset engine state every N chars '
                          '(0 = let text accumulate; 1 = isolate each char)')
-    ap.add_argument('--no-hints', action='store_true',
-                    help='Force every Bopomofo press to send hint=0xFF '
-                         '(any phoneme position) — simulates v2 / pre-Phase 1.4 '
-                         'half-keyboard behaviour for rank comparison.')
+    ap.add_argument('--precise-hints', action='store_true',
+                    help='Use the dict-encoded long-press positions for every '
+                         'Bopomofo press (engine-internal regression mode). '
+                         'Tighter candidate filter — gives higher rank-0 numbers '
+                         'but reports false MISSes vs real-UX (#17 in task list).')
+    ap.add_argument('--no-hints', action='store_true', help=argparse.SUPPRESS)
+    # ^^ Back-compat alias: the default is now no-hints (HINT_ANY). The flag
+    # is kept as a no-op so older harness invocations don't break.
     ap.add_argument('--user-sim', action='store_true',
                     help='Realistic-user mode: type every byte as short-tap '
                          '(primary-phoneme filter) first; if target is not '
@@ -692,15 +696,22 @@ def main():
         else:
             kb, tone, _ = rs[0]
             pos = ()
-        if args.no_hints:
-            # v2 simulation: every byte is a short-tap with HINT_ANY
-            # (no phoneme-position filter). One event per byte.
+        if args.precise_hints:
+            # Engine-internal regression: cycle long-presses to land on the
+            # exact phoneme position the dict authored. Filters candidates
+            # narrowly — gives higher rank-0 numbers but the MISS reports
+            # don't match real-user typing (#17).
+            events = reading_to_events(bytes(kb), pos, tone, keymap)
+        else:
+            # Default: short-tap every byte with HINT_ANY. Matches how a
+            # real user actually presses the half-keyboard (most users
+            # don't disambiguate phoneme position via long-press). 2026-
+            # 04-27: flipped to default after #17 confirmed precise-hints
+            # default was producing false MISSes (e.g., user5 樂, user3
+            # 學/確, user4 學/閱) that weren't actually unreachable —
+            # they just weren't in the precise-pos bucket.
             events = reading_to_events(bytes(kb), pos, tone, keymap,
                                        short_only=True, hint_any=True)
-        else:
-            # Canonical precise plan: cycle long-presses to land on the
-            # exact phoneme position the dict authored.
-            events = reading_to_events(bytes(kb), pos, tone, keymap)
         if events is None: absent.add(ch); continue
         plans[ch] = events
         # All-short-tap plan (one event per byte) for --user-sim's
