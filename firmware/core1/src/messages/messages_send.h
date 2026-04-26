@@ -21,11 +21,16 @@
 extern "C" {
 #endif
 
+/* Returns true if the slot was pushed onto the ring. When true and
+ * `out_seq != NULL`, *out_seq receives the IPC seq used in the
+ * IpcMsgHeader so the caller can match the eventual IPC_MSG_TX_ACK
+ * back to its send. */
 bool messages_send_text(uint32_t to_node_id,
                         uint8_t  channel_index,
                         bool     want_ack,
                         const uint8_t *text,
-                        uint16_t text_len);
+                        uint16_t text_len,
+                        uint8_t *out_seq);
 
 #ifdef __cplusplus
 }

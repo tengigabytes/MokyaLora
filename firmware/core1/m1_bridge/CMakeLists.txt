@@ -222,6 +222,7 @@ add_executable(core1_bridge
     ${IME_DIR}/lru_persist.cpp
     ${MESSAGES_DIR}/messages_inbox.c
     ${MESSAGES_DIR}/messages_send.c
+    ${MESSAGES_DIR}/messages_tx_status.c
 )
 
 # SEGGER_RTT.c triggers -Wcast-qual and -Wcast-align under our default

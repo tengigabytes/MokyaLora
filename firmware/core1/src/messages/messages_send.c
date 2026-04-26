@@ -17,7 +17,8 @@ bool messages_send_text(uint32_t to_node_id,
                         uint8_t  channel_index,
                         bool     want_ack,
                         const uint8_t *text,
-                        uint16_t text_len)
+                        uint16_t text_len,
+                        uint8_t *out_seq)
 {
     if (text_len > MESSAGES_SEND_TEXT_MAX) {
         text_len = MESSAGES_SEND_TEXT_MAX;
@@ -38,12 +39,14 @@ bool messages_send_text(uint32_t to_node_id,
     }
 
     const uint16_t total = (uint16_t)(header_size + text_len);
-
-    return ipc_ring_push(&g_ipc_shared.c1_to_c0_ctrl,
-                         g_ipc_shared.c1_to_c0_slots,
-                         IPC_RING_SLOT_COUNT,
-                         IPC_CMD_SEND_TEXT,
-                         s_seq++,
-                         buf,
-                         total);
+    uint8_t seq = s_seq++;
+    bool ok = ipc_ring_push(&g_ipc_shared.c1_to_c0_ctrl,
+                            g_ipc_shared.c1_to_c0_slots,
+                            IPC_RING_SLOT_COUNT,
+                            IPC_CMD_SEND_TEXT,
+                            seq,
+                            buf,
+                            total);
+    if (out_seq) *out_seq = seq;
+    return ok;
 }
