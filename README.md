@@ -10,45 +10,28 @@ Licensed under CERN-OHL-S-2.0 (hardware) and CC-BY-SA-4.0 (documentation).
 
 | Revision | Status |
 |----------|--------|
-| Rev A | **Received 2026-04-02 — bringup in progress** — 21 of 25 steps fully passed; 3 open issues |
+| Rev A | **Bringup complete (2026-04, Steps 1–26)** — see [`docs/bringup/rev-a-bringup-log.md`](docs/bringup/rev-a-bringup-log.md) |
 
-**Rev A bringup summary** (see [`docs/bringup/rev-a-bringup-log.md`](docs/bringup/rev-a-bringup-log.md) for full details):
+All Rev A subsystems validated on hardware: power rails, MCU boot, USB CDC, I2C
+sensors (LIS2MDL mag, LSM6DSV16X IMU, LPS22HH baro, BQ25622 charger, BQ27441
+fuel gauge, LM27965 LED driver), Teseo-LIV3FL GNSS (NMEA + RF diagnostics),
+ST7789VI TFT (PIO 8080 + DMA), 6×6 keypad (PIO scan), W25Q128JW flash + APS6404L
+PSRAM (8 MB at 75 MHz cached XIP), SX1262 LoRa (Meshtastic mesh validated),
+J-Link SWD debug, NAU8315 audio, IM69D130 PDM mic. Audio + mic to be removed in
+Rev B per current product direction; the rest carry forward.
 
-| Step | Component | Result |
-|------|-----------|--------|
-| 1 | Power rails (1.8 V / 3.3 V) | ✅ PASS |
-| 2 | MCU boot + USB CDC | ✅ PASS |
-| 3 | I2C sensors (IMU / Mag / Baro / GNSS) | ✅ PASS |
-| 4 | TFT LCD (ST7789VI, PIO 8080) | ✅ PASS (via FPC adapter — Issue 5) |
-| 5 | LoRa SX1262 (SPI + RF link) | ✅ PASS (TX/RX verified — Step 23) |
-| 6 | Keypad (6×6 matrix, 36 keys) | ✅ PASS |
-| 7 | Audio — NAU8315 I2S amp + speaker | ✅ PASS |
-| 8 | Battery (BQ25622 charger) + vibration motor | ⚠️ CONDITIONAL (charger OK; BQ27441 cold-boot NACK — Issue 10) |
-| 9 | Flash + PSRAM (W25Q128JW + APS6404L) | ✅ PASS (QPI 37.5 MHz, 150 Mbit/s, 8 MB validated) |
-| 10 | PDM microphone (IM69D130) | ⚠️ PARTIAL (capture/playback OK; background noise) |
-| 11 | J-Link SWD debug | ✅ PASS |
-| 12 | BQ27441 fuel gauge | ⚠️ CONDITIONAL (SOC readable; learning cycle pending) |
-| 13 | TFT fast refresh (DMA) | ✅ PASS (60–80 FPS) |
-| 14 | GNSS outdoor RF test | ❌ FAIL (0 satellites — Issue 11) |
-| 15 | LoRa RF performance | ✅ PASS (Meshtastic mesh validated) |
-| 16 | Core 1 (A–H stages) | ✅ PASS (FreeRTOS SMP, IPC, sensors, SPI) |
-| 17 | Meshtastic integration | ✅ PASS (bidirectional mesh messaging) |
-| 18–19 | Interactive menu + regression tests | ✅ PASS (51+ commands, TFT menu, 18/20 reliable) |
-| 20–21 | Menu consolidation + code modularisation | ✅ PASS (21 source files, ~8580 lines) |
-| 23 | LoRa standalone TX/RX | ✅ PASS (6 bug fixes, AES-128-CTR TX) |
-| 24 | Core 1 TFT output + menu wrap-around | ✅ PASS |
-| 25 | PSRAM DMA error investigation | ⚠️ CONDITIONAL (DMA burst read errors observed, root cause unconfirmed; CPU read workaround) |
-
-**Open issues:** Issue 10 (BQ27441 cold-boot latchup), Issue 11 (GNSS 0 satellites), Issue 14 (PSRAM DMA burst read errors — root cause unconfirmed, no production impact).
-
-### Firmware
+### Firmware (Phase 2 — RP2350B productisation, active)
 
 | Component | Status |
 |-----------|--------|
-| Core 0 — Meshtastic modem | **Validated** — LoRa modem running on Rev A (v2.7.15 dev, `rp2350b-mokya` variant); bidirectional mesh messaging confirmed |
-| Core 1 — FreeRTOS + UI | **Architecture validated** — FreeRTOS SMP, manual TinyUSB CDC, IPC, I2C sensors all proven on hardware; LVGL integration pending |
-| MokyaInput Engine (MIE) | **Phase 1 complete** — full IME (Smart Zh/En, Direct, Bopomofo), C API, 83/83 tests passing |
-| Bringup shell | **Active** — `firmware/tools/bringup/`; 51+ commands, TFT interactive menu, 21 source files |
+| Core 0 — Meshtastic modem (Arduino-Pico + single-core FreeRTOS) | **Live on Rev A** — `rp2350b-mokya` variant of Meshtastic 2.7.21, IPC byte bridge to Core 1 owns USB CDC, `meshtastic --info` round-trip ~4.5 s |
+| Core 1 — FreeRTOS + LVGL + UI (separate Apache-2.0 image at flash 0x10200000) | **Live** — TinyUSB CDC, doorbell-driven IPC, all I2C/sensor drivers, GNSS, ST7789VI display + LVGL v9, keypad → LVGL view router (chat / nodes / IME / message / RF debug views) |
+| MokyaInput Engine (MIE) | **Phase 1.6.1 on hardware** — Smart Zh/En + Bopomofo, MIEF unicode font (19 320 glyphs), MIE4 v4 dictionary in flash, 128-entry LRU cache (flash-persisted), 120/120 host tests passing |
+| IPC protocol | **3 SPSC rings + GPS double-buffer in 24 KB shared SRAM** — RX_TEXT, NODE_UPDATE, TX_ACK, SEND_TEXT, GET/SET/COMMIT_CONFIG (LoRa subset) all wired; full `IPCPhoneAPI` subclass deferred |
+| GPS bridge | **Phase 1 — `IpcGpsBuf` end-to-end** — Core 1 owns Teseo, NMEA streamed to Core 0's `IpcGpsStream` adapter; Phase 2 (real Teseo NMEA into ring) deferred |
+
+Phase 2 milestones M1–M3 ✅, M5 Phase 1+2+3 ✅, B2 step 1 ✅. See
+[`docs/bringup/phase2-log.md`](docs/bringup/phase2-log.md) for the full log.
 
 ## System Overview
 
@@ -78,55 +61,67 @@ MokyaLora/
 │   ├── assets/                         # Documentation images (block diagrams, etc.)
 │   ├── requirements/                   # Requirements specifications
 │   │   ├── system-requirements.md      # System-level spec, operating modes, mandatory HW rules
-│   │   ├── hardware-requirements.md    # Full BOM, power tree, GPIO map, keypad matrix, design rules
-│   │   └── software-requirements.md   # SRS (WHAT): driver needs, power states, UI/UX, IME requirements
+│   │   ├── hardware-requirements.md    # Full BOM, power tree, GPIO map, keypad matrix
+│   │   └── software-requirements.md    # SRS (WHAT): driver needs, power states, UI/UX, IME
 │   ├── design-notes/                   # Design decision records
-│   │   ├── power-architecture.md       # Power tree, rail definitions, charger/gauge configuration
-│   │   ├── rf-matching.md              # LoRa / GNSS RF frontend, TCXO coupling, antenna rules
+│   │   ├── firmware-architecture.md    # HOW: memory map, IPC byte layout, build, boot sequence
+│   │   ├── core1-driver-development.md # Required reading before adding any Core 1 driver
+│   │   ├── core1-memory-budget.md      # Heap / stack / static-buffer ledger (must update on add)
+│   │   ├── ipc-ram-replan.md           # Shared SRAM layout planning
+│   │   ├── mie-architecture.md         # MIE module structure + roadmap
+│   │   ├── mie-p1.6-lru-plan.md        # Personalised LRU cache design
+│   │   ├── mie-smarten-ranking.md      # Smart-EN ranking analysis
+│   │   ├── usb-control-protocol.md     # CDC#1 control protocol (M9, future)
+│   │   ├── power-architecture.md       # Power tree, rail definitions, charger config
+│   │   ├── rf-matching.md              # LoRa / GNSS RF frontend, TCXO coupling
 │   │   └── mcu-gpio-allocation.md      # Full GPIO pin map, I2C bus allocation
 │   ├── bringup/                        # Bring-up and debug logs
-│   │   ├── rev-a-bringup-log.md
+│   │   ├── rev-a-bringup-log.md        # Steps 1–26 (complete)
+│   │   ├── phase2-log.md               # Phase 2 firmware milestones + Issues Log (P2-x, P3-x)
+│   │   ├── mie-v4-status.md            # MIE Phase 1.6 hardware regression results
+│   │   ├── tft-layouts.md              # LVGL view layouts
 │   │   └── measurements/               # Oscilloscope / spectrum captures
 │   └── manufacturing/                  # Manufacturing-related documents
 │       ├── fab-notes.md                # PCB specification, Gerber list, assembly notes
-│       └── compliance.md              # Regulatory notes (CE / FCC / NCC)
+│       └── compliance.md               # Regulatory notes (CE / FCC / NCC, deferred)
 ├── hardware/
-│   ├── kicad/                          # KiCad 8 source design files
-│   │   ├── MokyaLora.kicad_pro         # Project file
-│   │   ├── MokyaLora.kicad_sch         # Top-level schematic (13 sub-sheets)
-│   │   ├── MokyaLora.kicad_pcb         # PCB layout
-│   │   ├── MokyaLora.kicad_sym         # Project symbol library
-│   │   ├── *.kicad_dbl                 # Component database libraries (ODBC: KiCad-Library DSN)
+│   ├── kicad/                          # KiCad 8 source design files (Rev A)
+│   │   ├── MokyaLora.kicad_{pro,sch,pcb,sym}
+│   │   ├── *.kicad_dbl                 # Component database libraries
 │   │   ├── MokyaLora.pretty/           # Project footprint library (61 footprints)
 │   │   ├── packages3D/                 # Component 3D models — see NOTICE for licensing
-│   │   ├── FabricationFiles/           # KiCad fabrication output (Gerbers + BOM)
-│   │   └── plots/                      # KiCad plot output (schematic PDF)
-│   ├── production/                     # Released fabrication snapshots (copied from FabricationFiles)
-│   │   └── rev-a/
-│   │       ├── gerber/                 # Gerber + drill files
-│   │       ├── pdf/                    # Schematic PDF + assembly drawing PDF
-│   │       ├── MokyaLora.csv           # Bill of Materials
-│   │       └── MokyaLora.step          # Full-board 3D export
+│   │   ├── FabricationFiles/           # KiCad fabrication output (source)
+│   │   └── plots/                      # Schematic PDF + PCB renders
+│   ├── production/                     # Released fabrication snapshots
+│   │   └── rev-a/                      # Gerber + drill + PDF + BOM + STEP
 │   └── mechanical/                     # Enclosure and stack-up drawings (future)
-│       └── enclosure/
-├── firmware/                           # Firmware (future — Arduino-Pico + FreeRTOS + LVGL)
+├── firmware/                           # Phase 2 active — dual-image RP2350B firmware
 │   ├── CMakeLists.txt
 │   ├── core0/                          # Core 0 modem firmware [GPL-3.0]
-│   │   └── src/                        # Meshtastic stack integration
+│   │   ├── meshtastic/                 # git submodule: tengigabytes/firmware @ feat/rp2350b-mokya
+│   │   └── src/                        # RP2350B platform glue (variants/, radio init)
 │   ├── core1/                          # Core 1 UI & application firmware [Apache-2.0]
-│   │   └── src/                        # LVGL, FreeRTOS, MIE integration
-│   ├── mie/                            # MokyaInput Engine — IME sub-library [MIT]
-│   │   ├── CMakeLists.txt              # Builds as static library; no Pico SDK dependency
-│   │   ├── include/mie/                # Public headers
+│   │   ├── freertos-kernel/            # git submodule: FreeRTOS-Kernel V11.3.0 [MIT]
+│   │   ├── m1_bridge/                  # CMake target — main_core1_bridge.c entry, IPC dispatch
+│   │   └── src/                        # LVGL, drivers, MIE integration, view router
+│   ├── mie/                            # MokyaInput Engine [MIT] — host-buildable static library
+│   │   ├── include/mie/                # Public C headers
 │   │   ├── src/                        # Trie-Searcher, IME-Logic
 │   │   ├── hal/                        # IHalPort interface + rp2350 / pc adapters
 │   │   ├── tools/                      # gen_font.py, gen_dict.py (data pipeline)
 │   │   ├── data/                       # Generated .bin assets (gitignored)
-│   │   └── tests/                      # C++ unit tests (host build only)
+│   │   └── tests/                      # 120 C++ host-only GoogleTest cases
 │   ├── shared/
-│   │   └── ipc/                        # Inter-core IPC protocol definition [MIT]
-│   │       └── ipc_protocol.h          # Sole interface boundary between Core 0 and Core 1
+│   │   └── ipc/                        # Inter-core IPC protocol [MIT]
+│   │       ├── ipc_protocol.h          # Sole shared header between Core 0 and Core 1
+│   │       ├── ipc_shared_layout.h     # Shared-SRAM POD at 0x2007A000 (24 KB)
+│   │       └── ipc_ringbuf.{c,h}       # SPSC ring helpers
 │   └── tools/                          # Flash scripts and test utilities
+├── scripts/                            # Build, flash, debug, test helpers
+│   ├── build_and_flash.sh              # Primary workflow — builds both cores + J-Link flash
+│   ├── ime_text_test.py                # MIE bench harness (SWD / RTT key-inject)
+│   └── test_ipc_config.sh              # B2 IPC config soft-reload SWD-inject test
+├── CLAUDE.md                           # Working-set entry point (this is what Claude Code reads)
 └── .gitignore
 ```
 
@@ -185,18 +180,22 @@ accepted by the project owner before being committed.
 
 ### Firmware
 
-- **Bringup firmware** — A hardware validation shell (`firmware/tools/bringup/`) is
-  available for Rev A bring-up. It is a development/test tool only and is not intended
-  for end-user deployment.
+- **Phase 2 active development** — Core 0 (Meshtastic 2.7.21 modem) and Core 1 (FreeRTOS
+  + LVGL UI) are under active development on Rev A hardware. The architecture is validated
+  end-to-end (LoRa mesh, USB CDC over IPC bridge, IME on hardware, GPS bridge, scrollable
+  message inbox, soft-reload config), but features are still landing — see
+  [`docs/bringup/phase2-log.md`](docs/bringup/phase2-log.md) for the milestone-by-milestone
+  log and the Issues Log of resolved defects (P2-1 through P3-5).
 
-- **MokyaInput Engine (MIE)** — The IME sub-library (`firmware/mie/`) is available as a
-  host-buildable static library with unit tests. It has not yet been integrated with
-  RP2350B hardware.
+- **MokyaInput Engine (MIE)** — On-hardware Phase 1.6.1 with personalised LRU cache and
+  MIEF unicode font. 120 host-side unit tests pass. Public C API stable.
 
-- **Core 0 / Core 1** — Application firmware development has not yet started.
+- **Bringup tooling** — Rev A hardware bringup is complete (Steps 1–26); the legacy
+  bringup shell at `firmware/tools/bringup/` is no longer the active entry point. Current
+  development drives the dual-image firmware via `scripts/build_and_flash.sh`.
 
 - **No warranty** — All firmware is provided "as-is" under its respective open-source
-  licence (GPL-3.0 for Core 0, Apache-2.0 for Core 1, MIT for MIE and bringup tools)
+  licence (GPL-3.0 for Core 0, Apache-2.0 for Core 1, MIT for MIE / IPC / shared / tools)
   without any warranty of fitness for a particular purpose.
 
 ## Contributing
