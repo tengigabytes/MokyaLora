@@ -131,8 +131,8 @@ typedef struct {
     IpcRingSlot       c0_log_to_c1_slots[IPC_LOG_RING_SLOT_COUNT];    ///< 16 × 264 B — log lines
     IpcRingSlot       c1_to_c0_slots[IPC_RING_SLOT_COUNT];            ///< 32 × 264 B — host commands
 
-    /* Reserved for Phase 2 M4 (GPS bridge) */
-    uint8_t           gps_buf[260];
+    /* GPS NMEA double-buffer (M3.5 — Core 1 writer, Core 0 reader) */
+    IpcGpsBuf         gps_buf;
 
     /* Fill to 24 KB; compile-time checked below */
     uint8_t           _tail_pad[IPC_SHARED_SIZE
@@ -141,7 +141,7 @@ typedef struct {
                                 - 3 * sizeof(IpcRingCtrl)               /* three ctrl blocks */
                                 - 2 * IPC_RING_SLOT_COUNT * sizeof(IpcRingSlot)  /* data + cmd */
                                 - IPC_LOG_RING_SLOT_COUNT * sizeof(IpcRingSlot)  /* log */
-                                - 260];
+                                - sizeof(IpcGpsBuf)];
 } IpcSharedSram;
 
 _Static_assert(sizeof(IpcRingSlot)  == IPC_RING_SLOT_STRIDE,      "IpcRingSlot must equal stride");
