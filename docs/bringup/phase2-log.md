@@ -1833,6 +1833,106 @@ Bugs hit during the follow-up:
   before dying, which made the symptom look like a task-
   creation failure rather than a stack overflow.
 
+#### M3.5 — IpcGpsBuf bridge + dummy fixed-position pipeline ✅ (2026-04-26)
+
+**Goal.** Wire Core 1's GNSS path through the existing `IpcGpsBuf`
+shared-SRAM double-buffer to Core 0's Meshtastic `GPS` class, so
+`PositionModule` produces a position fix without requiring a real
+sky-view fix. Phase 1 of M3.5 ships behind a dev-only build flag and
+uses a fixed-position dummy NMEA injector; Phase 2 (later) will swap the
+producer to the real Teseo-LIV3FL parsed-fix path.
+
+**Phase 1 pieces (committed 2026-04-26):**
+
+- **Core 1 dummy NMEA producer** (`firmware/core1/src/sensor/gps_dummy.{c,h}`).
+  500 ms task that emits one `$GPGGA` and one `$GPRMC` per second (alternating)
+  at the user-supplied dummy coordinates `25.052103 N, 121.574039 E`, alt 50 m,
+  fix=1, 8 sats. Runtime-computed NMEA checksum so any string edit stays
+  consistent. Selected via CMake option `MOKYA_GPS_DUMMY_NMEA=ON` (default OFF);
+  `gps_task.c` `#ifdef`-switches between the dummy and the real Teseo task at
+  build time. Dummy-mode Teseo source is not compiled at all (full `#ifndef`
+  around `gps_task()` body).
+
+- **`IpcGpsBuf` typedef cleanup**. The struct was 261 B by `sizeof()` but the
+  shared-SRAM layout reserved 260 B (`_pad[2]` should have been `_pad[1]`).
+  Fixed and added `_Static_assert(sizeof(IpcGpsBuf) == 260)`. Replaced
+  `uint8_t gps_buf[260]` in `IpcSharedSram` with the typed `IpcGpsBuf gps_buf`,
+  updated the `_tail_pad` arithmetic to use `sizeof(IpcGpsBuf)`. No address
+  shift, all post-build `nm` symbol locations unchanged.
+
+- **Core 0 `IpcGpsStream` adapter** (`firmware/core0/meshtastic/variants/.../ipc_gps_stream.{h,cpp}`).
+  Arduino `Stream` subclass. `available()`/`read()`/`peek()` latch the
+  just-published slot (`buf[write_idx ^ 1]` per the
+  firmware-architecture.md §5.4 contract) on each refresh; bytes flow until
+  the buffer is drained, then the next Core 1 flip latches the new slot.
+  `write()` is a no-op (IpcGpsBuf is one-way).
+
+- **Meshtastic submodule patch** (commit `06c5f15a3` on
+  `tengigabytes/firmware feat/rp2350b-mokya`), all gated by
+  `MOKYA_IPC_GPS_STREAM`:
+  - `GPS.h` — `_serial_gps` typed as `Stream*` in this build; new
+    public `static void setExternalSerial(Stream *)` for variant injection.
+  - `GPS.cpp` — typed-init for the new arm, `setExternalSerial()` impl,
+    `createGps()` forces `tx_gpio = 0` so the chip-detect probe loop never
+    fires (the loop's gate is `if (tx_gpio && gnssModel == UNKNOWN)`).
+    `setup()` accepts `GNSS_MODEL_UNKNOWN` as a valid generic-NMEA chip
+    instead of returning false → looping every 2 s. The `probe()` case-0
+    block's SerialUART-only baud-rate path (`end()` / `setFIFOSize()` /
+    `baudRate()` / `updateBaudRate()`) is `#if`-gated out so the file still
+    compiles when `_serial_gps` is `Stream*`.
+  - `variants/.../variant.cpp` — `initVariant()` calls
+    `GPS::setExternalSerial(&IpcGpsStream::instance())` after IPC bring-up
+    but before main.cpp runs `GPS::createGps()`.
+  - `platformio.ini` — drop `MESHTASTIC_EXCLUDE_GPS=1`; add `HAS_GPS=1`,
+    `MOKYA_IPC_GPS_STREAM=1`, `GPS_RX_PIN=99` (any non-zero — guards the
+    early-return in `createGps()`); add `ipc_gps_stream.cpp` to
+    `build_src_filter`.
+
+**Verification.** `meshtastic --port COMxx --info` reports the local
+node's `position` populated with `latitude=25.052103`, `longitude=121.574039`,
+`altitude=50`, `locationSource=LOC_INTERNAL`. Independently confirmed via
+SWD that `IpcGpsStream::s_instance` latches each Core 1 flip and
+`read_pos` advances through the 72-byte sentence per refresh.
+
+**Two integration bugs hit during bring-up:**
+
+1. **`gps_dummy.c` wrote into the wrong slot**. First version did
+   `buf[write_idx ^ 1] = sentence; write_idx = old write_idx ^ 1`, so
+   `write_idx` ended pointing at the just-published slot. The architecture
+   spec (and the `IpcGpsStream` reader) follows the convention "writer
+   owns `buf[write_idx]`, reader reads `buf[write_idx ^ 1]`". Reader was
+   therefore always reading the empty/stale slot. Fixed by writing into
+   `buf[cur]` then flipping `write_idx = cur ^ 1`. The two conventions
+   are equivalent up to labelling; matching the spec is what mattered.
+
+2. **GGA-only never produces a Meshtastic position**. After clearing the
+   slot-order bug, SWD confirmed Core 0 was reading bytes — but
+   `lookForLocation()` still returned false. Cause: GPS.cpp:1772 requires
+   `reader.date.age() < GPS_SOL_EXPIRY_MS`, and `TinyGPSPlus::date` is
+   only populated by `$GPRMC` (or equivalent) — `$GPGGA` carries time
+   but no date. With only GGA, `date.age()` returns `ULONG_MAX` and the
+   freshness gate fails forever. Fixed by interleaving an `$GPRMC` per
+   GGA (500 ms period each, both carrying the same UTC second). RMC date
+   is hard-coded to `260426` since this is a dummy producer with no
+   real wall clock — the date field is just a TinyGPS validity gate.
+
+**Investigation pattern worth carrying forward.** The whole debug arc
+ran on SWD memory inspection. With `nm` to find
+`_ZZN12IpcGpsStream8instanceEvE10s_instance` and `gps`, sampling 8 bytes
+of the singleton (`last_seen_idx` / `read_pos` / `latched_idx`) across
+2-second windows isolated "Core 0 not consuming bytes" before any code
+patches. Without that, the failure (empty `position: {}` in `--info`)
+would have been ambiguous between five different layers. RTT was not
+needed for any of this; SWD `mem8` against a `nm`-resolved address was
+faster.
+
+**Phase 2 scope (deferred).** Real Teseo NMEA → IpcGpsBuf wiring on
+Core 1 (replace the dummy producer in normal builds). Phase 2 also
+needs a Core 0 sanity-check that `lookForLocation()`'s date check still
+passes when the Teseo wakes up before its first RMC — the current Teseo
+driver in M3.4.5d already parses RMC, so the real path should "just
+work" as long as both sentences are forwarded.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
