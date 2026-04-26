@@ -1933,6 +1933,93 @@ passes when the Teseo wakes up before its first RMC — the current Teseo
 driver in M3.4.5d already parses RMC, so the real path should "just
 work" as long as both sentences are forwarded.
 
+#### M5 Phase 1 — RX_TEXT one-way (Core 0 → Core 1 LVGL) ✅ (2026-04-26)
+
+**Goal.** Stop using Core 1 as a dumb byte-bridge for received text. The
+M1 byte-bridge keeps the host CDC stream working (`meshtastic --info`
+etc.), but every received text message also needs to *land in Core 1's
+own LVGL UI* so the device can act as a feature-phone instead of just
+a USB modem. M5 is the milestone where Core 1 becomes a real
+PhoneAPI-style client; this Phase 1 slice covers only the simplest
+one-way case (incoming text), with NODE_UPDATE / TX_ACK /
+IPC_CMD_SEND_TEXT / Config IPC deferred.
+
+**Pieces (committed 2026-04-26):**
+
+- **Core 0 IPC observer** (`firmware/core0/meshtastic/variants/rp2350/rp2350b-mokya/ipc_text_observer.{h,cpp}`).
+  `IpcTextObserver` registers a `CallbackObserver<IpcTextObserver,
+  const meshtastic_MeshPacket *>` against
+  `textMessageModule->notifyObservers()` (TextMessageModule.cpp:44 —
+  same hook the InkHUD applets use). On each RX text, it builds an
+  `IpcPayloadText` (struct already defined in `ipc_protocol.h`:
+  `from_node_id`, `to_node_id`, `channel_index`, `want_ack`, `text_len`,
+  flexible `text[]`) and `ipc_ring_push`es it onto the `c0_to_c1` DATA
+  ring with `IPC_MSG_RX_TEXT`. Single-shot init via
+  `mokya_register_ipc_observers()`, called from `main.cpp` immediately
+  after `setupModules()` so `textMessageModule` is non-null. The hook
+  is gated on `MOKYA_IPC_GPS_STREAM` so the patch is invisible to
+  upstream arches.
+
+- **Core 1 dispatcher** (`firmware/core1/m1_bridge/src/main_core1_bridge.c`).
+  The existing `if (msg_id == IPC_MSG_SERIAL_BYTES)` chain grew an
+  earlier branch for `IPC_MSG_RX_TEXT`: cast `scratch` to
+  `IpcPayloadText`, clamp `text_len` against the actual payload bytes
+  (defends against a producer-side length mismatch), then call
+  `messages_inbox_publish()`.
+
+- **Inbox** (`firmware/core1/src/messages/messages_inbox.{c,h}`).
+  Single-snapshot store of the most recent message + a monotonic 32-bit
+  `seq`. Producer writes body fields, then bumps `seq` with
+  `__atomic_store_n(..., __ATOMIC_RELEASE)`; consumer reads `seq` with
+  `__ATOMIC_ACQUIRE`, copies the snapshot if `seq` differs from
+  `last_seen_seq`. No mutex — `bridge_task` is the sole producer and
+  `lvgl_task` (via `messages_view_refresh()`) is the sole consumer, so
+  the seq-release / seq-acquire pair is sufficient. Multi-message
+  scrollback is M5 Phase 2 work.
+
+- **LVGL view** (`firmware/core1/src/ui/messages_view.{c,h}` + view
+  router glue). Two labels: a green header line "From 0xNNNNNNNN  ch%d"
+  and a wrapped white body label, both using `mie_font_unifont_sm_16`
+  so Traditional-Chinese / Bopomofo / Latin-1 all render. Refresh polls
+  `messages_inbox_take_if_new(s_last_seen_seq, &snap)` and re-`set_text`s
+  on snapshot bump. Added as the 5th view in `view_router`
+  (`VIEW_COUNT 4 → 5`); FUNC cycles `keypad → rf → font_test → ime →
+  messages → keypad`.
+
+**Verification.** Layered test:
+
+1. **Display + inbox path (Layers 3+4)**: SWD-poked
+   `s_snap = {seq=1, from=0xDEADBEEF, text="Hello world!"}` directly,
+   `s_last_seen_seq` advanced from 0 → 1 within a refresh tick,
+   confirming `messages_view_refresh()` consumed the snapshot.
+
+2. **Full end-to-end (Layers 1–4)**: peer mesh node sent several real
+   `--sendtext` messages addressed to our node (`!b15db862`). SWD
+   readback after the user reported "messages sent":
+   `s_snap.seq = 5` (cumulative), `to_node_id = 0xB15DB862` (= our
+   node, so the wire-side flow is "real DM"), `text_len = 106`,
+   payload bytes decode to a complete 36-character Traditional-Chinese
+   sentence `「簡單說：那個警告是預留給未來功能的 UI 佔位符，對應的操作入口目前不存在。」`
+   byte-for-byte. UTF-8 boundary handling, fullwidth punctuation, and
+   space-mixed Latin all survived the round trip.
+
+**Why this slice was small.** `IPC_MSG_RX_TEXT`, `IpcPayloadText`, the
+`c0_to_c1` ring, and `ipc_ring_push` were already defined and exercised
+by M1's byte-bridge. The work was wiring an observer on the producer
+side and adding a typed dispatcher case on the consumer side. The big
+M5 questions (Core 0 selective reset, full PhoneAPI subclassing,
+structured config IPC) are deferred — this slice proves the typed-IPC
+pattern works end-to-end before we commit to the full architecture.
+
+**Submodule commit.** Lives on `tengigabytes/firmware feat/rp2350b-mokya`
+as `c3c7776c1`; super-project records the bump.
+
+**Phase 2 scope (deferred).** `IPC_MSG_NODE_UPDATE` (so node list view
+reflects mesh activity), `IPC_MSG_TX_ACK` (compose-side delivery
+confirmation), `IPC_CMD_SEND_TEXT` (Core 1 → Core 0 outbound from MIE),
+multi-message scrollback in `messages_inbox`, and the corresponding
+"compose / chat thread" LVGL views.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
