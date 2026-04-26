@@ -17,6 +17,7 @@
  *   body    (white)   — wrapped UTF-8             at y=24, fills middle
  *   footer  (gray)    — "msg N/M"                 at bottom
  */
+static lv_obj_t *s_panel;
 static lv_obj_t *s_header;
 static lv_obj_t *s_body;
 static lv_obj_t *s_footer;
@@ -81,6 +82,7 @@ static void render_offset(uint32_t offset)
 void messages_view_init(lv_obj_t *panel)
 {
     const lv_font_t *f16 = mie_font_unifont_sm_16();
+    s_panel = panel;
 
     lv_obj_set_style_bg_color(panel, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
@@ -245,6 +247,13 @@ static bool maybe_render_tx_status_footer(void)
 
 void messages_view_refresh(void)
 {
+    /* Skip render work while hidden — see nodes_view_refresh for
+     * rationale. Track current state so activation re-renders cleanly. */
+    if (s_panel != NULL && lv_obj_has_flag(s_panel, LV_OBJ_FLAG_HIDDEN)) {
+        s_last_tx_change_seq = 0u;   /* force overlay repaint on activation */
+        return;
+    }
+
     uint32_t latest = messages_inbox_latest_seq();
     if (latest == 0u) {
         if (s_displayed_seq != 0u) {
