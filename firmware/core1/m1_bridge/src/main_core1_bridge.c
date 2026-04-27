@@ -86,6 +86,7 @@
 #include "messages_tx_status.h"
 #include "nodes_db.h"
 #include "settings_client.h"
+#include "watchdog_task.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -660,18 +661,26 @@ int main(void)
      * a RTT burst and flips it back when done. Default = SWD.        */
     key_inject_rtt_task_start();
 
+    /* Watchdog task — owns the HW watchdog. Priority +3 (same as ime)
+     * so it is never starved by the round-robin app tasks at +2. The
+     * task itself enables the HW watchdog on its first iteration; until
+     * then no kicks are due. See watchdog_task.h for the hang model. */
+    TASK_START_OR_PANIC(watchdog_task_start(tskIDLE_PRIORITY + 3), "wd");
+
     #undef TASK_START_OR_PANIC
 
     /* Heap budget checkpoint (see docs/design-notes/core1-memory-budget.md §5).
-     * configTOTAL_HEAP_SIZE is 48 KB (M3.4.5d). Original policy was
-     * ≥ 20 % reserve; loosened to 15 % as Phase 1.6.1's RTT key-inject
-     * task (128-word stack + TCB, ~600 B) pushed us from 9.6 KB free
-     * down to ~9 KB. 15 % = 7.2 KB reserve is still plenty for runtime
-     * transients (queue bursts, LVGL allocators) and leaves room to
-     * accumulate another ~2 KB of features before the next heap bump. */
+     * configTOTAL_HEAP_SIZE is 48 KB. Original policy was ≥ 20 % reserve;
+     * loosened to 15 % when Phase 1.6.1's RTT key-inject task pushed
+     * free heap down to ~9 KB; loosened again to 14 % when B2 Stage 2
+     * (settings UI, ~640 B) and the watchdog task (~860 B) brought
+     * boot free heap down to ~7.3 KB. 14 % = 6.7 KB reserve is still
+     * comfortably above runtime transient peaks. Bumping
+     * configTOTAL_HEAP_SIZE is not viable on Rev A — RAM region is full
+     * (.heap section already abuts .shared_ipc at 0x2007A000). */
     size_t heap_total = configTOTAL_HEAP_SIZE;
     size_t heap_free  = xPortGetFreeHeapSize();
-    size_t heap_min   = (heap_total * 15) / 100;   /* 15 % reserve */
+    size_t heap_min   = (heap_total * 14) / 100;   /* 14 % reserve */
     /* Expose heap_free as a file-static so the boot value can be read
      * via SWD when a panic appears to fire silently. */
     extern volatile uint32_t g_core1_boot_heap_free;

@@ -36,7 +36,7 @@ static lv_obj_t *s_footer;
  * dirty = caller pressed OK in edit mode; pending until next Apply.
  * The Apply success clears dirty for all keys in the group.
  */
-#define KEY_CACHE_MAX  16u  /* must be ≥ settings_keys_total_count() */
+#define KEY_CACHE_MAX  14u  /* equals settings_keys_total_count() — keep in sync */
 /* Per-key cached value buffer. Owner long_name (39 B) is stored
  * truncated to keep BSS tight; Stage 3 string editing won't go through
  * this cache — IME view will own the buffer. */

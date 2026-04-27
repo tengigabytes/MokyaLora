@@ -183,6 +183,7 @@ add_executable(core1_bridge
     ${POWER_DIR}/bq25622.c
     ${POWER_DIR}/bq27441.c
     ${POWER_DIR}/lm27965.c
+    ${POWER_DIR}/watchdog_task.c
     ${SENSOR_DIR}/sensor_task.c
     ${SENSOR_DIR}/lps22hh.c
     ${SENSOR_DIR}/lis2mdl.c
@@ -313,6 +314,7 @@ target_link_libraries(core1_bridge
     hardware_pio
     hardware_dma
     hardware_i2c
+    hardware_watchdog
     tinyusb_device
     FreeRTOS-Kernel
     FreeRTOS-Kernel-Heap4

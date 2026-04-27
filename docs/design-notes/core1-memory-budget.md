@@ -83,7 +83,8 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 | `ime` | `src/ime/ime_task.cpp` | 1024 | 4096 | tskIDLE+3 | Drain `key_event_t` queue → `ImeLogic::process_key`; 20 ms `tick()` for multi-tap / long-press; owns the `ImeLogic` instance + both `TrieSearcher` instances as statics (~3 KB, see §4). Primary consumer of the KeyEvent queue (FA §4.4); the listener callbacks are re-entrancy-free. |
 | `key_inject` | `src/keypad/key_inject.c` | 256 | 1024 | tskIDLE+2 | Drain `g_key_inject_buf` ring (SWD transport) → `key_event_push_inject_flags`. Skip-loop when `g_key_inject_mode != SWD`. |
 | `key_inj_rtt` | `src/keypad/key_inject_rtt.c` | 256 | 1024 | tskIDLE+2 | Drain SEGGER RTT down-channel 1 → parse binary wire frame → `key_event_push_inject_flags`. Skip-loop when `g_key_inject_mode != RTT`. Stack sized for TRACE()'s 128 B vsnprintf scratch. |
-| **App subtotal** |  | | **34,944 B (34.1 KB)** | | |
+| `wd` | `src/power/watchdog_task.c` | 192 | 768 | tskIDLE+3 | HW watchdog kicker. Polls `g_ipc_shared.c0_heartbeat` every 200 ms; kicks on advance, stops kicking after 4 s of silence so the 3 s HW watchdog resets the chip. Honours `wd_pause` (atomic counter — flash_safety_wrap, Power::reboot wrap their long ops). 192 words is plenty: only atomic loads, integer math, register writes — no printf or callbacks. |
+| **App subtotal** |  | | **35,712 B (34.9 KB)** | | |
 
 ### 3.2 FreeRTOS internal tasks
 
@@ -117,6 +118,15 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 | **Estimated** | **~34.4 KB** | **~38.8 KB** | **~40.9 KB** |
 | `configTOTAL_HEAP_SIZE` | 49,152 | 49,152 | 49,152 |
 | **Reserve (threshold 15 %)** | **~14.7 KB (30 %)** ✓ | **~10.5 KB (21 %)** ✓ | **~8.2 KB (17 %)** ✓ |
+
+**Measured 2026-04-27 post watchdog liveness chain (SWD, `g_core1_boot_heap_free`)**:
+`xFreeBytesRemaining = 7,296 B (14.84 %)` — 0.4 KB above the 14 %
+panic threshold. Watchdog task adds 768 B stack + ~88 B TCB ≈ 0.86 KB
+from heap_4. Threshold lowered 15 %→14 % since RAM region is full
+(`.heap` abuts `.shared_ipc` at 0x2007A000; cannot bump
+`configTOTAL_HEAP_SIZE`). KEY_CACHE_MAX trimmed 16→14 to free 38 B
+BSS so the link could close; cache size now matches exact
+`settings_keys_total_count()`.
 
 **Measured 2026-04-27 post B2 Stage 2 settings UI (SWD, `g_core1_boot_heap_free`)**:
 `xFreeBytesRemaining = 8,160 B (16.6 %)` — 0.8 KB above the 15 %

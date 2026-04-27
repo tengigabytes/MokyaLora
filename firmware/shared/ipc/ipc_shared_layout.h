@@ -120,8 +120,23 @@ typedef struct {
     volatile uint32_t flash_lock;       ///< C0-writes / C1-parks handshake (IPC_FLASH_LOCK_*)
     volatile uint32_t flash_lock_c0;    ///< C1-writes / C0-parks handshake (Phase 1.6)
 
+    /* Watchdog liveness chain (post-B2 PR). Core 0 increments c0_heartbeat
+     * from vApplicationIdleHook at FreeRTOS tick rate; Core 1's wd_task
+     * polls c0_heartbeat every 200 ms and kicks the HW watchdog. If
+     * c0_heartbeat stalls for ≥ 4 s, wd_task stops kicking and the HW
+     * watchdog (3 s timeout) resets the chip.
+     *
+     * wd_pause is a nesting counter — non-zero suppresses silence
+     * detection but kicks continue. Used by long blocking ops:
+     * flash_range_erase/program (P2-11 park ≥ 500 ms), Power::reboot()
+     * delay (500 ms before watchdog_reboot()), LittleFS format, etc.
+     * mokya_watchdog_pause()/resume() in this header are the public
+     * helpers; they atomic-fetch-add with __ATOMIC_RELAXED. */
+    volatile uint32_t c0_heartbeat;     ///< Core 0 monotonic liveness counter
+    volatile uint32_t wd_pause;         ///< Pause counter — non-zero = no silence detect
+
     /* Control blocks — 32 B each, separated from slots for cache-friendliness */
-    uint32_t          _pad_to_0x20[3];
+    uint32_t          _pad_to_0x20[1];
     IpcRingCtrl       c0_to_c1_ctrl;      ///< Core 0 → Core 1 DATA ring (producer = C0)
     IpcRingCtrl       c0_log_to_c1_ctrl;  ///< Core 0 → Core 1 LOG ring (producer = C0)
     IpcRingCtrl       c1_to_c0_ctrl;      ///< Core 1 → Core 0 CMD ring (producer = C1)
@@ -136,8 +151,8 @@ typedef struct {
 
     /* Fill to 24 KB; compile-time checked below */
     uint8_t           _tail_pad[IPC_SHARED_SIZE
-                                - 20                                    /* magic + 3 ready/lock words + flash_lock_c0 */
-                                - 12                                    /* _pad_to_0x20[3] */
+                                - 28                                    /* magic + ready/lock + flash_lock_c0 + heartbeat + wd_pause */
+                                - 4                                     /* _pad_to_0x20[1] */
                                 - 3 * sizeof(IpcRingCtrl)               /* three ctrl blocks */
                                 - 2 * IPC_RING_SLOT_COUNT * sizeof(IpcRingSlot)  /* data + cmd */
                                 - IPC_LOG_RING_SLOT_COUNT * sizeof(IpcRingSlot)  /* log */
@@ -154,6 +169,31 @@ _Static_assert(sizeof(IpcSharedSram) == IPC_SHARED_SIZE,          "IpcSharedSram
  * .shared_ipc section at IPC_SHARED_ORIGIN on both sides.
  */
 extern IpcSharedSram g_ipc_shared;
+
+/* ── Watchdog pause helpers (post-B2 PR) ─────────────────────────────── *
+ *
+ * Nesting counter — each pause() must be matched with exactly one
+ * resume(). While the counter is non-zero, Core 1's wd_task continues
+ * to kick the HW watchdog but skips the c0_heartbeat silence check.
+ * That is precisely what long blocking ops need: they can stall Core 0
+ * for ≥ 4 s (LittleFS format, P2-11 park, Power::reboot delay) without
+ * triggering a false-positive watchdog reset, but the chip is still
+ * protected against a real Core 1 hang because the kicks themselves
+ * stop if wd_task itself hangs.
+ *
+ * Atomic RELAXED is sufficient — wd_task only reads the value to
+ * decide whether to skip silence-detect; it does not order any other
+ * memory access against it. Both cores can pause/resume freely.
+ */
+static inline void mokya_watchdog_pause(void)
+{
+    __atomic_fetch_add(&g_ipc_shared.wd_pause, 1u, __ATOMIC_RELAXED);
+}
+
+static inline void mokya_watchdog_resume(void)
+{
+    __atomic_fetch_sub(&g_ipc_shared.wd_pause, 1u, __ATOMIC_RELAXED);
+}
 
 #ifdef __cplusplus
 }
