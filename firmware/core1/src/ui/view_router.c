@@ -33,6 +33,19 @@ typedef struct {
 static view_entry_t s_views[VIEW_COUNT];
 static int          s_view_router_active;
 
+/* Cached pointers to (a) the active LVGL screen panels are mounted
+ * onto when visible, and (b) an off-screen stash (a separate lv_obj
+ * with no parent — LVGL only traverses the *active* screen tree, so
+ * children of an unloaded screen are skipped entirely during refresh).
+ *
+ * Hidden views move into the stash; activating a view moves it back
+ * onto the active screen. This eliminates the per-LVGL-tick refresh
+ * traversal cost for the 6 inactive views. Discovered after the
+ * 2026-04-27 settings_view +14 % IME bench regression — see
+ * phase2-log "settings_view per-LVGL-tick cost" entry.                */
+static lv_obj_t *s_screen;
+static lv_obj_t *s_stash;
+
 /* Modal borrow state (Stage 3 — IME string edit for settings_view).
  * `s_modal_caller` is -1 when no modal is active, otherwise the index
  * of the view that requested the borrow. `s_modal_on_done` fires when
@@ -58,14 +71,33 @@ static lv_obj_t *make_panel(lv_obj_t *screen)
 static void activate(int idx)
 {
     for (int i = 0; i < VIEW_COUNT; ++i) {
-        if (i == idx) lv_obj_clear_flag(s_views[i].panel, LV_OBJ_FLAG_HIDDEN);
-        else          lv_obj_add_flag  (s_views[i].panel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_t *p = s_views[i].panel;
+        if (i == idx) {
+            if (lv_obj_get_parent(p) != s_screen) {
+                lv_obj_set_parent(p, s_screen);
+            }
+            lv_obj_clear_flag(p, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(p, LV_OBJ_FLAG_HIDDEN);
+            if (s_stash != NULL && lv_obj_get_parent(p) != s_stash) {
+                lv_obj_set_parent(p, s_stash);
+            }
+        }
     }
     s_view_router_active = idx;
 }
 
 void view_router_init(lv_obj_t *screen)
 {
+    s_screen = screen;
+    /* Off-screen stash: a free-standing lv_obj_t with no parent. LVGL
+     * only traverses the active screen's tree during refresh, so any
+     * panel parented under this stash is invisible to the refresh
+     * pipeline (no draw, no layout, no invalidate). lv_obj_create(NULL)
+     * creates a new screen — exactly what we want for an off-screen
+     * holder we never lv_screen_load. */
+    s_stash = lv_obj_create(NULL);
+
     /* Create panels first so init hooks can populate them. */
     s_views[0].name    = "keypad";
     s_views[0].panel   = make_panel(screen);
