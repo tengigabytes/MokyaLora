@@ -2612,6 +2612,129 @@ cascade ON they're written but unused by the views (which read
 from the cascade cache). Phase E removes the Core 0 producers
 along with the IPC message types in `ipc_protocol.h`.
 
+#### M5 Phase 2 Phase D follow-up — bridge USB pass-through gate ✅ (2026-04-28)
+
+**Symptom.** Even with cascade Phase A–D landed and cleanly
+flashed, the cascade cache stayed empty for inbound text from
+peers (50ca DMs) until something triggered USB activity (e.g.
+running `meshtastic --info` from a host). At that point a burst of
+queued packets would all flow through cascade in seconds. SWD
+probe of stub `messages_inbox` confirmed Core 0's TextMessageModule
+DID see the messages (`IpcTextObserver` fired), but the cascade
+ring `s_msgs` stayed empty — they weren't reaching cascade via the
+PhoneAPI byte stream.
+
+**Misdiagnosis (reverted).** Initial guess was that
+`SerialConsole::onNowHasData()` was missing a
+`concurrency::mainDelay.interrupt()` call, leaving the FromRadio
+emission scheduled but unwoken. Patched the Meshtastic submodule
+to add the wake. Empirical "evidence" (rebooted→my_info gap
+shrinking from 38 s → 204 ms) turned out to be a misread of the
+trace — the 38 s was actually user reaction time between Core 1
+boot and a manual `--info`, not a stalled state machine. Patch
+reverted (parent commit `5389ef1`); the failed-experiment commits
+(`56b7684a1` + its `7cfb4aa6c` revert) were `reset --hard`'d off
+the submodule branch since they never reached upstream.
+
+**Real root cause: bridge_task USB pass-through spin lock.** The
+bridge task's IPC_MSG_SERIAL_BYTES handler was unconditionally
+spinning in `taskYIELD()` while `tud_cdc_write_available() == 0`,
+gated only on `tud_mounted()`. When USB is enumerated (host OS
+sees the device) but no software has actually opened the COM port,
+the CDC FIFO has no consumer — `tud_cdc_write_available()` stays 0
+indefinitely, and the spin became infinite. Bridge stopped popping
+further `c0_to_c1` ring slots, cascade stopped getting bytes, and
+Core 0's `IpcSerialStream::write()` blocked on the now-full ring
+— stalling the LoRa-RX → router → modules → phone chain. Stub
+text messages still landed because they ride a separate IPC
+message type (`IPC_MSG_RX_TEXT`) which `ipc_text_observer.cpp`
+push as best-effort and which bridge handles **before** the stuck
+`SERIAL_BYTES` slot. So Core 0's TextMessageModule observer fired
+fine; only the PhoneAPI byte-stream half of the dispatch was
+deadlocked.
+
+SWD probe of `BRIDGE_RX_COUNT_ADDR` confirmed: counter stuck at
+`0x1248` while `BRIDGE_USB_STATE` showed `0x01` (mounted, no
+DTR). After the bug runs ~30 seconds, `g_rx_total` hadn't moved
+and `phoneapi_session.s_stats.frames_parsed` was frozen. Same
+counters advanced again only when an external host opened the
+port and started reading the FIFO.
+
+**Fix Iteration 1 — time-bounded spin** (commit `cb283d6`).
+Cap the spin at 100 ms wall-clock. If FIFO doesn't drain within
+the window → break out, accept partial USB-frame for any
+non-existent host (cascade tap above the loop already consumed
+the bytes). This unblocked cascade in standalone mode but kept
+attempting a brief spin per slot.
+
+**Fix Iteration 2 — strict host-active gate** (commit `22f29da`,
+matches user's "Core 1 should be the real PhoneAPI host; USB CDC
+is a forward sub-mode only when a real device is connected"
+intent). New predicate `cdc_host_active()` returns true if EITHER:
+
+- `tud_cdc_connected()` — DTR asserted (pyserial / `meshtastic`
+  CLI / Android app over OTG, …).
+- Recent CDC OUT activity within a 5 s grace window — host has
+  written bytes to us (Chrome WebSerial / web console doesn't
+  assert DTR but does send a `want_config_id` at session start,
+  which falls into this branch via `cdc_mark_active()` in the
+  bridge's RX path).
+
+If neither holds, the entire USB write loop is skipped — no
+spinning, no FIFO interaction. Cascade has already received the
+slot's bytes via the tap above the gate, so internal data flow is
+unaffected. The 5 s grace lets a freshly-connected client send
+bytes once and keep receiving for another 5 s without DTR
+assertion; further writes from the host extend the window.
+
+**Validation (after gate).** Fresh flash with no USB host
+connected. SWD probe over 30 s:
+
+| Counter | T+5 s | T+35 s | Δ |
+|---|---|---|---|
+| `g_rx_total` (USB writes) | 0 | 0 | 0 — pass-through fully idle |
+| `frames_parsed` | 49 | 57 | +8 frames decoded by cascade |
+| `s_msgs.next_seq` | 0 | 4 | **+4 inbound TEXT live** |
+| `BRIDGE_USB_STATE` | 0x01 (mounted, no DTR) | same | — |
+
+50ca → b862 DMs streamed through cascade in real time, no
+external trigger needed. Hand-decoded `s_msgs` ring entries
+confirm 168-byte UTF-8 Traditional Chinese DMs land byte-perfect
+through the framing parser + protobuf decoder + msgs ring.
+
+**Architectural lesson learned.** The cascade-vs-stub asymmetry
+that initially looked like a PhoneAPI bug was actually a
+bridge-task plumbing bug. Stub fires off `textMessageModule`
+observer (one independent IPC message type per text packet),
+cascade rides the byte stream (FromRadio.packet inside
+`IPC_MSG_SERIAL_BYTES`). When the SERIAL_BYTES path stalled,
+stub kept working — and gave the appearance that "Core 0
+processes TEXT but cascade misses them". The fix is on Core 1's
+bridge, not Core 0's notification chain.
+
+**Stock Meshtastic notification path is correct.** The
+`mainController.runOrDelay()` loop (Arduino-Pico ThreadController)
+processes ALL ready threads in one iteration with `canSleep=false`
+forcing `tillNext=0` whenever any thread runs. So when LoRa RX
+ISR enqueues to `Router::fromRadioQueue` (which has `reader=Router`
+→ `mainDelay.interrupt()` from ISR), Router runs, sendToPhone
+fires, `fromNumChanged.notifyObservers` calls
+`PhoneAPI::handleFromNumChanged` →
+`SerialConsole::onNowHasData()` → `setIntervalFromNow(0)`. Same
+loop iteration sees SerialConsole's interval=0, runs writeStream,
+drains queue. No `mainDelay.interrupt()` needed inside
+onNowHasData — the prior ISR-driven wake already activated the
+loop, and runOrDelay self-progresses through inter-thread
+schedule changes.
+
+**Remaining work.** `phoneapi_session_set_usb_connected()` still
+uses raw `tud_cdc_line_state_cb()` for the cascade FSM
+STANDALONE/FORWARD transition. With the new `cdc_host_active()`
+predicate, it would be more consistent to drive mode from there
+too (so Chrome WebSerial sessions get FORWARD mode rather than
+staying in STANDALONE). Defer to Phase E cleanup along with stub
+deletion.
+
 **Next: Phase E.** Delete on Core 0:
 - `IpcTextObserver` registration on TextMessageModule
 - `mokya_handle_ipc_command` `IPC_CMD_SEND_TEXT` branch (the
