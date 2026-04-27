@@ -33,6 +33,14 @@ typedef struct {
 static view_entry_t s_views[VIEW_COUNT];
 static int          s_view_router_active;
 
+/* Modal borrow state (Stage 3 — IME string edit for settings_view).
+ * `s_modal_caller` is -1 when no modal is active, otherwise the index
+ * of the view that requested the borrow. `s_modal_on_done` fires when
+ * the modal exits via FUNC press. */
+static int                       s_modal_caller = -1;
+static view_router_modal_done_t  s_modal_on_done;
+static void                     *s_modal_ctx;
+
 /* Optional helper: create a full-screen container with no padding /
  * border / scroll so init'd views paint pixel-perfect at (0,0). */
 static lv_obj_t *make_panel(lv_obj_t *screen)
@@ -104,17 +112,47 @@ void view_router_init(lv_obj_t *screen)
     activate(0);   /* keypad_view visible at boot; FUNC cycles keypad → rf → font_test → ime → messages → nodes → settings */
 }
 
+static void modal_finish(bool committed)
+{
+    int caller = s_modal_caller;
+    view_router_modal_done_t cb = s_modal_on_done;
+    void *ctx = s_modal_ctx;
+    s_modal_caller  = -1;
+    s_modal_on_done = NULL;
+    s_modal_ctx     = NULL;
+    if (cb) cb(committed, ctx);
+    if (caller >= 0 && caller < VIEW_COUNT) activate(caller);
+}
+
+void view_router_modal_enter(int target_view,
+                             view_router_modal_done_t on_done,
+                             void *ctx)
+{
+    if (s_modal_caller >= 0) return;                  /* reject re-entry */
+    if (target_view < 0 || target_view >= VIEW_COUNT) return;
+    s_modal_caller  = s_view_router_active;
+    s_modal_on_done = on_done;
+    s_modal_ctx     = ctx;
+    activate(target_view);
+}
+
+bool view_router_in_modal(void)
+{
+    return s_modal_caller >= 0;
+}
+
 void view_router_tick(void)
 {
     /* Drain the view-observer mirror queue (see key_event.c). The IME
      * task owns the primary queue; popping it here would race. */
     key_event_t ev;
     while (key_event_view_pop(&ev, 0)) {
-        /* FUNC press edge cycles views. Release is intentionally
-         * forwarded to the active view so it can clear its "pressed"
-         * highlight for FUNC if the user held it. */
+        /* FUNC press edge: outside modal it cycles views; inside modal
+         * it commits the borrow and fires the on_done callback before
+         * snapping back to the caller view. */
         if (ev.keycode == MOKYA_KEY_FUNC && ev.pressed) {
-            activate((s_view_router_active + 1) % VIEW_COUNT);
+            if (s_modal_caller >= 0) modal_finish(true);
+            else                     activate((s_view_router_active + 1) % VIEW_COUNT);
             continue;
         }
         if (s_views[s_view_router_active].apply) {

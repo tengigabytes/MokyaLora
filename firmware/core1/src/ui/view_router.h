@@ -34,3 +34,22 @@ void view_router_init(lv_obj_t *screen);
  * refresh hook. Call once per lvgl_task iteration after
  * lv_timer_handler(). */
 void view_router_tick(void);
+
+/* ── Modal view borrow (Stage 3 IME string edit) ─────────────────────── *
+ *
+ * Lets one view temporarily hand control to another (e.g.
+ * settings_view → ime_view to type a string), with a callback that
+ * fires when the user is done. While modal, FUNC press no longer
+ * cycles views; instead it commits the modal and returns to the
+ * caller. Other keys are forwarded to the borrowed view normally.
+ *
+ * Re-entry is rejected (only one modal at a time). The caller view's
+ * panel becomes hidden while the borrowed view runs; refresh hooks
+ * still fire on every view so state stays current.
+ */
+typedef void (*view_router_modal_done_t)(bool committed, void *ctx);
+
+void view_router_modal_enter(int target_view,
+                             view_router_modal_done_t on_done,
+                             void *ctx);
+bool view_router_in_modal(void);
