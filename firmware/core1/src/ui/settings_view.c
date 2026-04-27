@@ -12,6 +12,7 @@
 #include "settings_client.h"
 #include "settings_keys.h"
 #include "ime_task.h"
+#include "mie/utf8.h"
 
 /* Layout (landscape 320×240):
  *   y   0 .. 23   header  — "[Group X/Y] group_name [pending: N]"
@@ -426,23 +427,12 @@ static void enter_edit_for_row(uint8_t row)
     s_render_seq++;
 }
 
-/* Caller-side truncate-to-cache helper. ime_request_text already
- * truncated the SET payload to the key's max_bytes on a UTF-8
- * boundary; we further trim to VAL_BUF_MAX for the browse-list cache
- * (the cache is display-only — long_name displays as a prefix, the
- * full bytes still went out via the SET payload). */
-static int utf8_truncate_cache(const char *s, int len)
-{
-    if (len <= (int)VAL_BUF_MAX) return len;
-    int i = (int)VAL_BUF_MAX;
-    while (i > 0 && (((unsigned char)s[i]) & 0xC0u) == 0x80u) i--;
-    return i;
-}
-
 /* ime_request_text done callback. Receives the UTF-8 string already
- * truncated to the key's max_bytes; we just route it into the cache
- * + IPC SET. The IPC_CFG_* key is passed via the user ctx (encoded
- * as intptr_t to avoid an out-of-band file-static). */
+ * truncated to the key's max_bytes; we route it into the cache + IPC
+ * SET. The IPC_CFG_* key is passed via ctx (encoded as uintptr_t to
+ * avoid an out-of-band file-static). The cache is display-only —
+ * long_name shows as a leading-prefix while the full byte_len goes
+ * out via the SET payload. */
 static void str_edit_done(bool committed, const char *utf8,
                           uint16_t byte_len, void *ctx)
 {
@@ -456,7 +446,7 @@ static void str_edit_done(bool committed, const char *utf8,
     }
     int gidx = find_key_index(key);
     if (gidx >= 0) {
-        int cache_len = utf8_truncate_cache(utf8, (int)byte_len);
+        size_t cache_len = mie_utf8_truncate(utf8, byte_len, VAL_BUF_MAX);
         s_cache[gidx].value_len  = (uint8_t)cache_len;
         memcpy(s_cache[gidx].value, utf8, cache_len);
         s_cache[gidx].have_value = true;

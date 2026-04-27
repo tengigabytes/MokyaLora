@@ -28,6 +28,7 @@
 #include "hardware/xip_cache.h"
 
 #include <mie/ime_logic.h>
+#include <mie/utf8.h>
 #include <mie/trie_searcher.h>
 #include <mie/composition_searcher.h>
 
@@ -499,17 +500,6 @@ struct text_request_state_t {
 };
 static text_request_state_t s_text_req = {false, 0, 0, nullptr, nullptr};
 
-/* Walk back from `max_bytes` until we land on a UTF-8 codepoint
- * boundary (any byte whose top two bits are NOT 10b). Returns the
- * largest length ≤ min(len, max_bytes) that ends cleanly. */
-static int utf8_truncate_clean(const char *s, int len, int max_bytes)
-{
-    if (len <= max_bytes) return len;
-    int i = max_bytes;
-    while (i > 0 && (((unsigned char)s[i]) & 0xC0u) == 0x80u) i--;
-    return i;
-}
-
 static void seed_text_unsafe(const char *utf8, int byte_len)
 {
     /* Caller must hold g_snapshot_mutex. */
@@ -537,12 +527,12 @@ static void modal_trampoline(bool committed, void *ctx)
     s_text_req.done   = nullptr;
     s_text_req.ctx    = nullptr;
 
-    int len = g_text_len;
-    if (max_bytes > 0 && len > (int)max_bytes) {
-        len = utf8_truncate_clean(g_text, len, (int)max_bytes);
+    size_t len = (g_text_len < 0) ? 0 : (size_t)g_text_len;
+    if (max_bytes > 0) {
+        len = mie_utf8_truncate(g_text, len, (size_t)max_bytes);
     }
 
-    if (done) done(committed, g_text, (uint16_t)(len < 0 ? 0 : len), user_ctx);
+    if (done) done(committed, g_text, (uint16_t)len, user_ctx);
 
     /* Always clear so the next request starts fresh; mirrors the
      * historical messages_send + Stage 3 behaviour. Acquires the
@@ -569,15 +559,15 @@ bool ime_request_text(const ime_text_request_t *req,
     if (xSemaphoreTake(g_snapshot_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
         return false;
     }
-    int initial_len = 0;
+    size_t initial_len = 0;
     if (req->initial != nullptr) {
-        initial_len = (int)std::strlen(req->initial);
-        if (req->max_bytes > 0 && initial_len > (int)req->max_bytes) {
-            initial_len = utf8_truncate_clean(req->initial, initial_len,
-                                              (int)req->max_bytes);
+        initial_len = std::strlen(req->initial);
+        if (req->max_bytes > 0) {
+            initial_len = mie_utf8_truncate(req->initial, initial_len,
+                                            (size_t)req->max_bytes);
         }
     }
-    seed_text_unsafe(req->initial, initial_len);
+    seed_text_unsafe(req->initial, (int)initial_len);
     xSemaphoreGive(g_snapshot_mutex);
     /* Bump the dirty counter so the IME view's gated refresh repaints
      * the seeded prefill on first entry. */

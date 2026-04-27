@@ -30,6 +30,7 @@ add_library(mie STATIC
     src/ime_smart.cpp
     src/ime_direct.cpp
     src/lru_cache.cpp
+    src/utf8.c
 )
 
 target_include_directories(mie PUBLIC
