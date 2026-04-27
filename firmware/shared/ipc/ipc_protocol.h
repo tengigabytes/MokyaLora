@@ -47,7 +47,20 @@ typedef enum {
     IPC_CMD_FACTORY_RESET  = 0x88,  ///< Request factory reset (wipes persistent config)
     IPC_CMD_GET_CONFIG     = 0x89,  ///< Request config value by key
     IPC_CMD_SET_CONFIG     = 0x8A,  ///< Set config value by key
-    IPC_CMD_COMMIT_CONFIG  = 0x8B,  ///< Commit pending changes (save + reboot if needed)
+    IPC_CMD_COMMIT_CONFIG  = 0x8B,  ///< Commit pending changes via soft reload (no MCU reset).
+                                    ///<   Core 0 calls service->reloadConfig(saveWhat) for the
+                                    ///<   accumulated SEGMENT_* bitmask plus reloadOwner() if any
+                                    ///<   owner key was SET. Use for keys whose Meshtastic
+                                    ///<   handler accepts requiresReboot=false (LoRa subset,
+                                    ///<   display screen-on/flip, owner, channel, etc).
+    IPC_CMD_COMMIT_REBOOT  = 0x8C,  ///< Commit pending changes AND graceful reboot.
+                                    ///<   Same flash + reload as 0x8B, then triggers the P2-10
+                                    ///<   RebootNotifier path: Core 0 pushes IPC_MSG_REBOOT_NOTIFY,
+                                    ///<   Core 1 calls tud_disconnect(), watchdog resets the chip.
+                                    ///<   Caller (Core 1 settings UI) is responsible for choosing
+                                    ///<   this path when any SET-edited key is reboot-required
+                                    ///<   (device.role, rebroadcast_mode, position.gps_mode,
+                                    ///<   power.is_power_saving, etc).
 
     /* Bidirectional (debug) */
     IPC_MSG_LOG_LINE       = 0xF0,  ///< Debug log line (either core → other core)
@@ -189,11 +202,23 @@ _Static_assert(sizeof(IpcGpsBuf) == 260, "IpcGpsBuf must be exactly 260 bytes");
  *             0x10–0x1F reserved for ModuleConfig.
  *
  * Core 0 GPL adapter translates between IpcConfigKey and Meshtastic's
- * config globals.  B2 step 1 (2026-04-26) implements the LoRa subset
- * (REGION / TX_POWER / HOP_LIMIT) in
- * `firmware/core0/.../variants/rp2350/rp2350b-mokya/ipc_config_handler.cpp`
- * with COMMIT routed through `service->reloadConfig(SEGMENT_CONFIG)`.
- * Other categories return UNKNOWN_KEY until follow-up slices wire them up.
+ * config globals in
+ * `firmware/core0/.../variants/rp2350/rp2350b-mokya/ipc_config_handler.cpp`.
+ *
+ * Two commit paths exist:
+ *   IPC_CMD_COMMIT_CONFIG (0x8B) — soft reload via service->reloadConfig(saveWhat)
+ *     plus reloadOwner() when needed. No MCU reset.
+ *   IPC_CMD_COMMIT_REBOOT (0x8C) — same flash + reload, then graceful reboot via
+ *     RebootNotifier (P2-10 path). Required for keys Meshtastic flags as
+ *     requiresReboot=true (e.g. device.role, position.gps_mode, power.*).
+ * The Core 1 settings UI maintains the per-key needs_reboot table and picks
+ * which command to send; Core 0 simply executes the requested commit.
+ *
+ * Note: IPC_CFG_DEVICE_NAME (0x0100) is an alias for IPC_CFG_OWNER_LONG_NAME
+ * (0x0700) — meshtastic_Config_DeviceConfig has no name field; the
+ * user-visible node name lives in `owner.long_name`/`owner.short_name`.
+ * The alias is kept so the enum value stays stable; new code should use
+ * the OWNER_* keys directly.
  */
 typedef enum {
     /* 0x01xx — Device */

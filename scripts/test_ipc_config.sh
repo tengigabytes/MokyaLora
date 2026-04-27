@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
 # test_ipc_config.sh — End-to-end test for B2 IPC config handler.
 #
-# Injects IPC_CMD_SET_CONFIG (key=LORA_TX_POWER, value=NEW) followed by
-# IPC_CMD_COMMIT_CONFIG into the c1→c0 ring via SWD memwrite, then
-# reads tx_power back through Meshtastic CLI to verify the soft-reset
-# path applied the change without rebooting.
+# Injects IPC_CMD_SET_CONFIG / GET_CONFIG / COMMIT_CONFIG / COMMIT_REBOOT
+# frames into the c1→c0 ring via SWD memwrite, then reads back through
+# the Meshtastic CLI to verify the soft-reload and graceful-reboot paths.
+#
+# Usage:
+#   bash scripts/test_ipc_config.sh           # run full suite
+#   bash scripts/test_ipc_config.sh lora      # LoRa subset only (legacy)
+#   bash scripts/test_ipc_config.sh owner     # OWNER_LONG_NAME round-trip
+#   bash scripts/test_ipc_config.sh display   # DISPLAY_SCREEN_ON_SECS
+#   bash scripts/test_ipc_config.sh power     # POWER_SHUTDOWN_AFTER_SECS
+#   bash scripts/test_ipc_config.sh reboot    # COMMIT_REBOOT (lora.tx_power)
+#                                             # — verifies rebootCount increments
 #
 # Layout (from ipc_shared_layout.h):
 #   IpcSharedSram @ 0x2007A000
@@ -23,113 +31,278 @@ set -e
 
 JLINK="C:/Program Files/SEGGER/JLink_V932/JLink.exe"
 PORT="${PORT:-COM16}"
-NEW_TX_POWER="${1:-15}"
 
 C1_TO_C0_CTRL=0x2007A060
 C1_TO_C0_SLOTS=0x2007D200
 SLOT_STRIDE=264
 
+# Message IDs
+IPC_CMD_GET_CONFIG=0x89
 IPC_CMD_SET_CONFIG=0x8A
 IPC_CMD_COMMIT_CONFIG=0x8B
+IPC_CMD_COMMIT_REBOOT=0x8C
+
+# Config keys (must match IpcConfigKey in ipc_protocol.h)
+IPC_CFG_OWNER_LONG_NAME=0x0700
+IPC_CFG_OWNER_SHORT_NAME=0x0701
+IPC_CFG_LORA_REGION=0x0200
 IPC_CFG_LORA_TX_POWER=0x0202
+IPC_CFG_LORA_HOP_LIMIT=0x0203
+IPC_CFG_SCREEN_ON_SECS=0x0500
+IPC_CFG_SHUTDOWN_AFTER_SECS=0x0401
 
-# Build a J-Link script that:
-#   1. Reads c1_to_c0_ctrl.head (offset +0)
-#   2. Writes a SET frame at slots[head%32]
-#   3. Increments head
-#   4. Reads new head
-#   5. Writes a COMMIT frame at slots[(head+1)%32]
-#   6. Increments head again
+# ── ring helpers ──────────────────────────────────────────────────────
+
+# Read ring head and return as decimal in $HEAD
+read_head() {
+    cat > /tmp/jlink_read_head.jlink <<EOF
+connect
+h
+mem32 $C1_TO_C0_CTRL 1
+g
+qc
+EOF
+    HEAD_LINE=$("$JLINK" -device RP2350_M33_0 -if SWD -speed 4000 -autoconnect 1 \
+        -CommanderScript "$(cygpath -w /tmp/jlink_read_head.jlink)" 2>&1 \
+        | grep -E "^2007A060" | head -1)
+    HEAD_HEX=$(echo "$HEAD_LINE" | awk '{print $3}')
+    HEAD=$((16#$HEAD_HEX))
+}
+
+# inject_ipc_frame <msg_id_hex> <seq_hex> <payload_hex_string_or_empty>
+#   - msg_id_hex:   e.g. 0x8A
+#   - seq_hex:      e.g. 0xAA
+#   - payload_hex:  whitespace-separated bytes, e.g. "02 02 01 00 0F"
+#                   Empty for zero-length payload (commits).
 #
-# Since J-Link Commander has no arithmetic, the script only knows how to
-# write to slot[N] for some hardcoded N. We pick the next two head slots
-# by reading head once and then doing two pushes.
+# Computes slot address from current ring head, writes header + payload
+# byte-by-byte via J-Link `w1`, then advances head with release semantics.
+inject_ipc_frame() {
+    local msg_id="$1"
+    local seq="$2"
+    local payload="$3"
 
-# Read head + tail
-cat > /tmp/jlink_read_head.jlink <<EOF
+    read_head
+    local SLOT_IDX=$((HEAD % 32))
+    local SLOT_ADDR=$((C1_TO_C0_SLOTS + SLOT_IDX * SLOT_STRIDE))
+
+    # Count payload bytes
+    local PAYLOAD_LEN=0
+    if [ -n "$payload" ]; then
+        PAYLOAD_LEN=$(echo "$payload" | wc -w)
+    fi
+
+    # Build J-Link script
+    local SCRIPT="/tmp/jlink_inject_$$.jlink"
+    {
+        echo "connect"
+        echo "h"
+        # Header bytes: msg_id, seq, payload_len_lo, payload_len_hi
+        printf "w1 0x%X %s\n" "$SLOT_ADDR" "$msg_id"
+        printf "w1 0x%X %s\n" $((SLOT_ADDR + 1)) "$seq"
+        printf "w1 0x%X 0x%02X\n" $((SLOT_ADDR + 2)) $((PAYLOAD_LEN & 0xFF))
+        printf "w1 0x%X 0x%02X\n" $((SLOT_ADDR + 3)) $(((PAYLOAD_LEN >> 8) & 0xFF))
+        # Payload
+        local i=4
+        for byte in $payload; do
+            printf "w1 0x%X %s\n" $((SLOT_ADDR + i)) "$byte"
+            i=$((i + 1))
+        done
+        # Publish: bump head with release semantics
+        printf "w4 %s 0x%X\n" "$C1_TO_C0_CTRL" $((HEAD + 1))
+        echo "g"
+        echo "qc"
+    } > "$SCRIPT"
+
+    "$JLINK" -device RP2350_M33_0 -if SWD -speed 4000 -autoconnect 1 \
+        -CommanderScript "$(cygpath -w "$SCRIPT")" 2>&1 | tail -3 > /dev/null
+    rm -f "$SCRIPT"
+}
+
+# bytes_for_u8 <hex>          → "0xNN"
+# bytes_for_u32 <decimal>     → "0xNN 0xNN 0xNN 0xNN" (LE)
+# bytes_for_string <ascii>    → "0xNN 0xNN ..." (no null terminator)
+# bytes_for_set_config_payload <key_u16> <value_bytes>
+bytes_for_u32_le() {
+    local v="$1"
+    printf "0x%02X 0x%02X 0x%02X 0x%02X" \
+        $((v & 0xFF)) \
+        $(((v >> 8) & 0xFF)) \
+        $(((v >> 16) & 0xFF)) \
+        $(((v >> 24) & 0xFF))
+}
+
+bytes_for_string() {
+    local s="$1"
+    local out=""
+    local i=0
+    while [ $i -lt ${#s} ]; do
+        out=$(printf "%s 0x%02X" "$out" "'${s:$i:1}")
+        i=$((i + 1))
+    done
+    echo "${out# }"
+}
+
+# build_set_payload <key_u16> <value_byte_string>
+# Returns header (key u16 LE + vlen u16 LE) + value bytes.
+build_set_payload() {
+    local key=$1
+    local value="$2"
+    local vlen=0
+    if [ -n "$value" ]; then
+        vlen=$(echo "$value" | wc -w)
+    fi
+    printf "0x%02X 0x%02X 0x%02X 0x%02X %s" \
+        $((key & 0xFF)) \
+        $(((key >> 8) & 0xFF)) \
+        $((vlen & 0xFF)) \
+        $(((vlen >> 8) & 0xFF)) \
+        "$value"
+}
+
+# ── Test cases ───────────────────────────────────────────────────────
+
+test_lora_subset() {
+    local NEW_TX_POWER=${1:-15}
+    echo "=== LoRa subset: SET tx_power=$NEW_TX_POWER, COMMIT_CONFIG ==="
+
+    local payload=$(build_set_payload $IPC_CFG_LORA_TX_POWER "$(printf "0x%02X" $NEW_TX_POWER)")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xAA "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xAB ""
+    sleep 3
+
+    local actual=$(python -m meshtastic --port "$PORT" --get lora.tx_power 2>&1 | grep "lora.tx_power:" | awk '{print $2}')
+    if [ "$actual" = "$NEW_TX_POWER" ]; then
+        echo "  ✓ tx_power=$actual (rebootCount unchanged)"
+    else
+        echo "  ✗ expected $NEW_TX_POWER, got $actual"
+        return 1
+    fi
+}
+
+test_owner_long_name() {
+    local NEW_NAME="${1:-MokyaTest}"
+    echo "=== OWNER_LONG_NAME: SET '$NEW_NAME', COMMIT_CONFIG ==="
+
+    local value=$(bytes_for_string "$NEW_NAME")
+    local payload=$(build_set_payload $IPC_CFG_OWNER_LONG_NAME "$value")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xB0 "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xB1 ""
+    sleep 3
+
+    local actual=$(python -m meshtastic --port "$PORT" --info 2>&1 | grep -oE '"longName": *"[^"]*"' | head -1 | sed 's/.*"longName": *"\([^"]*\)".*/\1/')
+    if [ "$actual" = "$NEW_NAME" ]; then
+        echo "  ✓ owner.long_name='$actual' (no reboot)"
+    else
+        echo "  ✗ expected '$NEW_NAME', got '$actual'"
+        return 1
+    fi
+}
+
+test_display_screen_on_secs() {
+    local NEW_SECS=${1:-90}
+    echo "=== DISPLAY_SCREEN_ON_SECS: SET $NEW_SECS, COMMIT_CONFIG ==="
+
+    local value=$(bytes_for_u32_le "$NEW_SECS")
+    local payload=$(build_set_payload $IPC_CFG_SCREEN_ON_SECS "$value")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xC0 "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xC1 ""
+    sleep 3
+
+    local actual=$(python -m meshtastic --port "$PORT" --get display.screen_on_secs 2>&1 | grep "display.screen_on_secs:" | awk '{print $2}')
+    if [ "$actual" = "$NEW_SECS" ]; then
+        echo "  ✓ screen_on_secs=$actual (no reboot)"
+    else
+        echo "  ✗ expected $NEW_SECS, got $actual"
+        return 1
+    fi
+}
+
+test_power_shutdown_secs() {
+    local NEW_SECS=${1:-3600}
+    echo "=== POWER_SHUTDOWN_AFTER_SECS: SET $NEW_SECS, COMMIT_CONFIG ==="
+
+    local value=$(bytes_for_u32_le "$NEW_SECS")
+    local payload=$(build_set_payload $IPC_CFG_SHUTDOWN_AFTER_SECS "$value")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xD0 "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xD1 ""
+    sleep 3
+
+    local actual=$(python -m meshtastic --port "$PORT" --get power.on_battery_shutdown_after_secs 2>&1 | grep "power.on_battery_shutdown_after_secs:" | awk '{print $2}')
+    if [ "$actual" = "$NEW_SECS" ]; then
+        echo "  ✓ on_battery_shutdown_after_secs=$actual (no reboot)"
+    else
+        echo "  ✗ expected $NEW_SECS, got $actual"
+        return 1
+    fi
+}
+
+read_boot_counter() {
+    cat > /tmp/jlink_read_bc.jlink <<'EOF'
 connect
 h
-mem32 $C1_TO_C0_CTRL 2
+mem32 0x400D8018 1
 g
 qc
 EOF
-HEAD_LINE=$("$JLINK" -device RP2350_M33_0 -if SWD -speed 4000 -autoconnect 1 \
-  -CommanderScript "$(cygpath -w /tmp/jlink_read_head.jlink)" 2>&1 \
-  | grep -E "^2007A060" | head -1)
-echo "Ring state: $HEAD_LINE"
-HEAD_HEX=$(echo "$HEAD_LINE" | awk '{print $3}')
-TAIL_HEX=$(echo "$HEAD_LINE" | awk '{print $4}')
-HEAD=$((16#$HEAD_HEX))
-TAIL=$((16#$TAIL_HEX))
-echo "head=$HEAD tail=$TAIL pending=$((HEAD - TAIL))"
+    "$JLINK" -device RP2350_M33_0 -if SWD -speed 4000 -autoconnect 1 \
+        -CommanderScript "$(cygpath -w /tmp/jlink_read_bc.jlink)" 2>&1 \
+        | grep "^400D8018" | head -1 \
+        | awk '{print "0x" $3}'
+}
 
-SLOT0_IDX=$((HEAD % 32))
-SLOT1_IDX=$(((HEAD + 1) % 32))
-SLOT0_ADDR=$(printf "0x%X" $((C1_TO_C0_SLOTS + SLOT0_IDX * SLOT_STRIDE)))
-SLOT1_ADDR=$(printf "0x%X" $((C1_TO_C0_SLOTS + SLOT1_IDX * SLOT_STRIDE)))
-NEW_HEAD_AFTER_SET=$((HEAD + 1))
-NEW_HEAD_AFTER_COMMIT=$((HEAD + 2))
-NEW_HEAD_HEX_SET=$(printf "0x%X" $NEW_HEAD_AFTER_SET)
-NEW_HEAD_HEX_COMMIT=$(printf "0x%X" $NEW_HEAD_AFTER_COMMIT)
+test_commit_reboot() {
+    local NEW_TX_POWER=${1:-22}
+    echo "=== COMMIT_REBOOT: SET tx_power=$NEW_TX_POWER, COMMIT_REBOOT ==="
 
-echo "Inject SET at slot $SLOT0_IDX ($SLOT0_ADDR), COMMIT at slot $SLOT1_IDX ($SLOT1_ADDR)"
-echo "Setting tx_power = $NEW_TX_POWER"
+    # Read boot counter from WATCHDOG.SCRATCH3 — incremented at end of
+    # initVariant() on every boot, survives SYSRESETREQ + watchdog reset.
+    # More reliable than Meshtastic's cached uptimeSeconds or rebootCount.
+    local bc_before=$(read_boot_counter)
+    echo "  boot_counter before: $bc_before"
 
-# SET frame: header (msg_id=0x8A, seq=0xAA, payload_len=0x0005) + payload (key=0x0202 LE, value_len=0x0001 LE, value=NEW_TX_POWER)
-# Header packed as 4 bytes LE: msg_id, seq, payload_len_lo, payload_len_hi
-# So bytes: 8A AA 05 00 → as u32 LE = 0x000505AA8A → wait let me redo
-# Actually header is struct: u8 msg_id, u8 seq, u16 payload_len. Packed = 4B.
-# As bytes: [msg_id][seq][len_lo][len_hi] = 8A AA 05 00.
-# As u32 little-endian: 0x000505AA — no wait:
-#   byte 0 = 8A → bits [7:0]
-#   byte 1 = AA → bits [15:8]
-#   byte 2 = 05 → bits [23:16]
-#   byte 3 = 00 → bits [31:24]
-# u32 = 0x0005AA8A
-SET_HDR_W0=0x0005AA8A
-# Payload: IpcPayloadConfigValue{u16 key=0x0202, u16 value_len=0x0001, u8 value=NEW}
-# bytes: [02 02 01 00 NN]
-# Word 1 (slot+4): bytes 4..7 = key_lo key_hi vlen_lo vlen_hi = 02 02 01 00 → u32 = 0x00010202
-# Word 2 (slot+8): bytes 8..11 = value(1B) + 3 garbage bytes — write only value byte
-SET_PAYLOAD_W0=0x00010202
-NEW_TX_POWER_HEX=$(printf "0x%02X" "$NEW_TX_POWER")
+    local payload=$(build_set_payload $IPC_CFG_LORA_TX_POWER "$(printf "0x%02X" $NEW_TX_POWER)")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xE0 "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_REBOOT" 0xE1 ""
 
-# COMMIT frame: header msg_id=0x8B seq=0xAB payload_len=0 → 8B AB 00 00 → u32 = 0x0000AB8B
-COMMIT_HDR_W0=0x0000AB8B
+    echo "  Waiting 12 s for graceful reboot + USB CDC re-enum..."
+    sleep 12
 
-# Inject script — write payload words first, then publish head with release semantics
-cat > /tmp/jlink_inject.jlink <<EOF
-connect
-h
-w4 $SLOT0_ADDR $SET_HDR_W0
-w4 $(printf "0x%X" $((SLOT0_ADDR + 4))) $SET_PAYLOAD_W0
-w1 $(printf "0x%X" $((SLOT0_ADDR + 8))) $NEW_TX_POWER_HEX
-w4 $C1_TO_C0_CTRL $NEW_HEAD_HEX_SET
-g
-qc
-EOF
-echo "=== Injecting SET ==="
-"$JLINK" -device RP2350_M33_0 -if SWD -speed 4000 -autoconnect 1 \
-  -CommanderScript "$(cygpath -w /tmp/jlink_inject.jlink)" 2>&1 | tail -3
+    local bc_after=$(read_boot_counter)
+    local actual=$(python -m meshtastic --port "$PORT" --get lora.tx_power 2>&1 | grep "lora.tx_power:" | awk '{print $2}')
+    echo "  boot_counter after:  $bc_after, tx_power=$actual"
 
-# Tiny pause so Core 0 drains the SET before we publish COMMIT — both
-# would work in a single batch but separate writes match how Core 1 will
-# eventually emit them.
-sleep 1
+    if [ "$actual" = "$NEW_TX_POWER" ] && [ "$bc_after" != "$bc_before" ]; then
+        echo "  ✓ tx_power=$actual, boot_counter incremented ($bc_before → $bc_after)"
+    else
+        echo "  ✗ value=$actual (expected $NEW_TX_POWER), boot_counter $bc_before → $bc_after"
+        return 1
+    fi
+}
 
-cat > /tmp/jlink_commit.jlink <<EOF
-connect
-h
-w4 $SLOT1_ADDR $COMMIT_HDR_W0
-w4 $C1_TO_C0_CTRL $NEW_HEAD_HEX_COMMIT
-g
-qc
-EOF
-echo "=== Injecting COMMIT ==="
-"$JLINK" -device RP2350_M33_0 -if SWD -speed 4000 -autoconnect 1 \
-  -CommanderScript "$(cygpath -w /tmp/jlink_commit.jlink)" 2>&1 | tail -3
+# ── Dispatch ─────────────────────────────────────────────────────────
 
-sleep 3
-
-echo "=== Verifying via meshtastic --get lora.tx_power ==="
-python -m meshtastic --port "$PORT" --get lora.tx_power 2>&1 | tail -3
+case "${1:-all}" in
+    lora)    test_lora_subset "${2:-15}" ;;
+    owner)   test_owner_long_name "${2:-MokyaTest}" ;;
+    display) test_display_screen_on_secs "${2:-90}" ;;
+    power)   test_power_shutdown_secs "${2:-3600}" ;;
+    reboot)  test_commit_reboot "${2:-22}" ;;
+    all)
+        test_lora_subset 15
+        test_owner_long_name "MokyaTest"
+        test_display_screen_on_secs 90
+        test_power_shutdown_secs 3600
+        # COMMIT_REBOOT goes last — chip reboots so don't run more after.
+        test_commit_reboot 22
+        ;;
+    *)
+        echo "Usage: $0 [all|lora|owner|display|power|reboot] [value]"
+        exit 1
+        ;;
+esac

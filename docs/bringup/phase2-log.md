@@ -2205,6 +2205,62 @@ feat/rp2350b-mokya`. Super-project bump in `9f19f39`.
 
 ---
 
+#### P2-20 — Deferred Core 1 launch + SWD-only QMI wedge recovery (2026-04-27)
+
+**Status:** ✅ Fixed.
+**Impact:** All cold boots — fresh-erase or warm — were dying with Core 1
+HardFault until this. Discovered while attempting to build the
+COMMIT_REBOOT IPC path for B2 follow-up; the reboot path turned out to be
+the latest in a long line of triggers for the same underlying race.
+
+**Symptom:** After any cold boot, Core 1 HardFaults at IBUSERR fetching
+its own image around `0x10200674` (early `main()`). Core 0 reaches
+Meshtastic idle hook fine, but USB CDC bridge is down so `--info` times
+out. Repeated reset cycles eventually leave the chip in "QMI wedge"
+state — J-Link `erase` returns RAMCode timeout, no SWD reset strategy
+recovers.
+
+**Root cause (verified).** P2-11 wrap (`flash_safety_wrap.c::mokya_flash_park_core1`)
+parks Core 1 only if `c1_ready==1`, but Core 1 sets that flag late in
+its boot. Core 0's first boot-time flash op (LittleFS format on fresh
+erase, NodeDB save on warm boot) fires within ~50–200 ms of
+`initVariant()` returning — before Core 1 reaches `c1_ready=1`. With
+c1_ready=0 the wrap falls through, Core 0 enters direct mode for the
+flash op, Core 1 is still fetching flash for its own startup → IBUSERR.
+
+**Fix.** `firmware/core0/.../variant.cpp`: defer Core 1 launch from
+`initVariant()` to `vApplicationIdleHook()`. `initVariant()` now only
+calls `multicore_reset_core1()` (holding Core 1 in `PSM_FRCE_OFF.PROC1`)
+and stashes launch params; `vApplicationIdleHook` does the actual
+`multicore_launch_core1_raw()` on first invocation, which is guaranteed
+to be after Meshtastic `setup()` has finished and all boot-time flash
+ops are complete. Boot is now race-free: while Core 0 does its early
+flash work, Core 1 is explicitly held in PSM reset (not fetching
+anything). Once Core 0 reaches idle, Core 1 launches into a quiet bus.
+
+**SWD-only recovery method (new).** Documented in `~/.claude/projects/.../memory/reference_qmi_wedge_swd_recovery.md`:
+RP2350 bootrom honours `WATCHDOG.SCRATCH4=0xb007c0d3` + XOR-checked
+scratch[5..7] as a "boot-to-RAM-PC" magic. Load a small Thumb stub at
+`0x20040000` that calls bootrom `rom_reboot(BOOTSEL|NO_RETURN)`, set
+scratch redirect, write `0xC0000007` to `WATCHDOG.CTRL`, watchdog times
+out, bootrom jumps to stub, stub enters BOOTSEL mode → RPI-RP2 USB MSC
+mounts → J-Link RAMCode works again, full chip erase + reflash OK.
+Replaces the previous `project_qmi_wedge_recovery` claim that "only
+physical USB unplug can recover".
+
+**Verification.** BOOTSEL recovery → full erase (43 s) → flash patched
+ELF + Core 1 BIN + dict + font → 5 consecutive `meshtastic --info` over
+60 s all succeed (`nodedbCount=1, rebootCount=0`), both cores running
+real workload (Core 0 in `xTaskIncrementTick` / scheduler, Core 1 in
+`bridge_task` / USB device task).
+
+**Side-effect:** Core 1 image now starts hundreds of ms later than
+before. UI / IPC consumers on Core 1 should not assume Core 0 is "still
+booting" when they come up. Boot phase breadcrumb gains `0x17` (Core 1
+launched late from idle hook).
+
+---
+
 ## Cross-cutting Decisions (2026-04-15)
 
 ### DEC-1 — MIE keycode API refactor (out-of-band, pre-M3)
@@ -2337,6 +2393,7 @@ entry for what's live.)
 
 | # | Date | Area | Issue | Resolution |
 |---|------|------|-------|-----------|
+| P2-20 | 2026-04-27 | P2-11 race window — Core 1 IBUSERR HardFault during Core 0's first boot-time flash op (LittleFS format on fresh-erase, NodeDB save on warm boot), + the chip subsequently entering "QMI wedge" state where SYSRESETREQ + J-Link RAMCode erase all fail | **Symptom 1 (Core 1 dies on cold boot):** After full chip erase + reflash, on boot Core 1 runs its reset handler → main() → first flash fetch at PC=`0x10200674` → **CFSR=0x101 (IBUSERR+IACCVIOL)** HardFault loop (PC stuck at `0xEFFFFFFE` exception-return value, IPSR=003). Core 0 boots into Meshtastic idle hook fine, but USB CDC bridge runs on Core 1 so `--info` times out. Reproducible across baseline ELF (commit `ed6fa3e`) and rebuilt baseline (`14dd315`), and across erased / fresh / valid-LittleFS conditions — meaning it isn't fresh-LittleFS specific. **Symptom 2 (post-fault QMI wedge):** Multiple cycles of "Core 1 dies → SYSRESETREQ → re-boot → Core 1 dies again" eventually leave the chip in a state where J-Link's `erase` command times out with "RAMCode did not respond in time", PC stays in bootrom flash function (`0xF80`/`0xF88`), and **no SWD reset strategy recovers** — RSetType 0/1/2/8, watchdog timeout (writing `0xC0000007` to `WATCHDOG.CTRL`), DCRSR/DCRDR direct PC write (silently rejected), `unlock` + low-speed (100 kHz) all fail. Memory `project_qmi_wedge_recovery` previously claimed only physical USB unplug recovers this. **Investigation:** Halted Core 0 mid-fault, observed XIP_CTRL = `0x80` (cache disabled, SPLIT_WAYS bit only) and DIRECT_CSR = `0x03010803` (EN=1) **at the moment of fault**. So Core 0 (or some boot path) was in QMI direct mode with cache off when SysTick fired (IPSR stacked = `0x0F`), Core 0 ISR then IBUSERRed fetching `xTaskIncrementTick` (`0x1002F630`). Same pattern for Core 1: in early `main()` (PC=`0x10200674` is `hw_clear_bits` on RESETS), IBUSERR fetching from flash because Core 0 was in direct mode for its first flash op. **Race window:** P2-11 wrap (`mokya_flash_park_core1`) parks Core 1 ONLY if `c1_ready==1`. Core 1's `c1_ready` write happens late in its boot (after .bss zero, .data copy, runtime_init, full main() init reaching `ime_task_start`). Meanwhile Core 0's first flash op (LittleFS format on fresh erase, NodeDB save on warm boot) fires within ~50–200 ms of `initVariant()` returning. So with very high probability, Core 0's first wrap call sees `c1_ready==0`, falls through, enters direct mode while Core 1 is still fetching flash → IBUSERR. The "QMI wedge" symptom is a downstream artefact: when Core 1 hardfaults mid-fetch, some cache lines or QMI-prefetch state corrupts; subsequent SYSRESETREQ doesn't fully reset that, so re-boot hits the same fault sooner each cycle, eventually Core 0 itself dies and bootrom is stuck. **SWD-only recovery method (new, supersedes "physical unplug only"):** RP2350 bootrom honours `WATCHDOG.SCRATCH4=0xb007c0d3` + XOR-checked `SCRATCH5/6/7` as a "boot-to-RAM-PC" magic. Load a small Thumb stub at `0x20040000` that calls bootrom `rom_table_lookup('R'\|'B'<<8, RT_FLAG_FUNC_ARM_SEC)` → `rom_reboot(BOOTSEL\|NO_RETURN, 10, 0, 0)`, set scratch[4..7] to point at the stub, write `0xC0000007` to `WATCHDOG.CTRL`, watchdog times out, bootrom reads scratch magic, jumps to stub, stub enters BOOTSEL mode, USB MSC `D:` drive appears. From BOOTSEL state J-Link RAMCode works again, full chip erase OK (43 s for 16 MB), full reflash via `loadfile` works. Stub source + complete script in `~/.claude/projects/.../memory/reference_qmi_wedge_swd_recovery.md`. **Why "QMI wedge" is reachable in this codebase but not on stock Pico SDK builds:** stock builds either run single-image (no Core 1 race) or use SDK's full multicore_launch_core1 which does the FIFO handshake before any flash op. MokyaLora's dual-image custom launch leaves Core 1 running its own image while Core 0 begins flash work — the SDK's race-free guarantee doesn't transfer. | **Fixed (2026-04-27): defer Core 1 launch from `initVariant()` to `vApplicationIdleHook()`.** `firmware/core0/.../variants/rp2350/rp2350b-mokya/variant.cpp`: instead of calling `multicore_launch_core1_raw()` at the end of `initVariant()`, just call `multicore_reset_core1()` (which holds Core 1 in `PSM_FRCE_OFF.PROC1` reset) and stash the launch params in static globals (`s_core1_sp`, `s_core1_entry`). Add `extern "C" void vApplicationIdleHook(void)` (FreeRTOS fires this on Core 0 once no other task is runnable — guaranteed to be after `setup()` and all boot-time flash ops have completed). On the first call, the hook does `multicore_reset_core1()` again (idempotent — keeps Core 1 in clean bootrom mailbox state) then `multicore_launch_core1_raw(entry, sp, vt)`. Result: Core 1 starts executing its image with Core 0 already idle, no concurrent flash ops, no race. The boot-time flash burst (LittleFS format on fresh erase) runs with Core 1 explicitly held in PSM reset — guaranteed not fetching flash. After that burst is done and Core 0 reaches idle, Core 1 launches and immediately joins the IPC handshake. `configUSE_IDLE_HOOK=1` is the Arduino-Pico FreeRTOSConfig.h default so no platformio.ini change needed. **Verification:** BOOTSEL recovery → erase → flash patched ELF → 5 consecutive `python -m meshtastic --info` over 60 s all return cleanly (`nodedbCount=1, rebootCount=0`). Both cores running with PC samples varying across real workload (Core 0 around `0x1002F324`/`0x1002F360` = FreeRTOS scheduler / `xTaskIncrementTick`; Core 1 around `0x10215390`/`0x102127F8` = bridge_task / USB device task). Owner reads `Meshtastic b862 (b862)`. **Side-effects worth noting:** (1) Boot timing changes: Core 1 image now starts ~hundreds of ms later than before, after Meshtastic setup completes. UI / IPC consumers on Core 1 should not assume Core 0 is "still booting" when they come up. (2) The `dbg[3]=*sentinel` snapshot in initVariant phase 4 is now meaningless (Core 1 hasn't run, can't have written sentinel). Phase byte advances to `0x17` from idle hook on first launch — useful as a "Core 1 launched late" SWD breadcrumb. |
 | P3-5 | 2026-04-26 | Build/test flow — MDBL v2 dict was the default flash output even though all of M5 / Phase 1.6 baselines run on MIE4 v4 | **Symptom:** Recurring footgun: a "fresh" `bash scripts/build_and_flash.sh` (no flag) silently wrote MDBL v2 over the flash dict partition, and any subsequent `ime_text_test` measured ~1700 ms/char — an apparent ~4× regression that was actually just v2 ranking the candidates differently from v4. Already partly mitigated by P2-15 follow-up (--core1 no longer touches the dict partition) and the 2026-04-24 `--core1` tightening, but the no-flag default kept producing the wrong format every time the dict was deliberately reflashed. Most recently bit the M5P3 benchmark run, where a 1700 ms/char measurement masked the real ~430 ms/char baseline until it was traced back to the dict format on flash. | **Fixed (2026-04-26).** Default flipped to MIE4 v4: `scripts/build_and_flash.sh` now sets `USE_V4=true` unconditionally, `--v4` is a kept-for-compat no-op, and the only way back to v2 is the explicit `--v2-deprecated` flag (which prints a 3-second loud warning before flashing). `scripts/ime_text_test.py` rejects MDBL on both the host-side dict file AND on the device flash (probes `0x10400000` magic via SWD before running) — bench runs against a stale v2 flash now exit with a clear "reflash via build_and_flash.sh --dict" message instead of producing nonsense numbers. Core 1's `mie_dict_loader.c` exports `g_mie_dict_format` (MIE4 / MDBL_DEPRECATED / NONE) for SWD inspection. v2 binaries in `firmware/mie/data/` (`dict_dat.bin`, `dict_values.bin`, `en_*.bin`) and the v2 generator path in `gen_dict.py` are kept as archaeology with a `firmware/mie/data/README.md` note marking them retired. |
 | P2-1 | 2026-04-11 | Meshtastic `AddI2CSensorTemplate.h` | Latent upstream bug — non-dependent `ScanI2CTwoWire` name fails to resolve under `MESHTASTIC_EXCLUDE_I2C=1` due to two-phase template lookup | Workaround: `-DMESHTASTIC_EXCLUDE_AIR_QUALITY_SENSOR=1` in Core 0 variant. Upstream fix would be to also guard the `ScanI2CTwoWire*` parameter declaration under `#if !MESHTASTIC_EXCLUDE_I2C`. |
 | P2-2 | 2026-04-11 | Arduino-Pico 5.4.4 FreeRTOS SMP on RP2350 | Core 1's passive-idle task HardFaults in `vStartFirstTask` the instant `xPortStartScheduler` launches it, blocking Core 0 from ever reaching `setup()`. CFSR=0x101 (IACCVIOL+IBUSERR), MMFAR=BFAR=0x2000C5AC (inside Core 1's own PSP region). Independent of `-DNO_USB` — architecture change, not a stub bug. | Switched to single-core FreeRTOS (`-DconfigNUMBER_OF_CORES=1`). Requires guarding the SMP-only framework code (`vTaskCoreAffinitySet`, `vTaskPreemptionDisable/Enable`, IdleCoreN task creation) in `freertos-main.cpp` / `freertos-lwip.cpp` and fixing the missing `extern` decl of `ulCriticalNesting` in the port — all done idempotently by `patch_arduinopico.py`. Core 1 is now left under Pico SDK reset and will be launched separately by the M1.0b Apache-2.0 boot image. Upstream fix would be to (a) provide an `extern` decl of `ulCriticalNesting` in single-core mode in `portmacro.h`, (b) drop `static` from `ulCriticalNesting` in `port.c`, and (c) either make `freertos-main.cpp`/`freertos-lwip.cpp` compile under `configNUMBER_OF_CORES==1` or gate the SMP-only bits. |
