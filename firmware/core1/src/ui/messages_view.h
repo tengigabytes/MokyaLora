@@ -1,20 +1,16 @@
-/* messages_view.h — Show the most recent IPC_MSG_RX_TEXT (M5 Phase 1).
+/* messages_view.h — incoming text-message viewer + reply target.
  *
- * Two labels: a header line with the sender node ID + channel index, and
- * a wrapped body label with the message text. Refresh polls the
- * messages_inbox singleton; when its sequence number bumps, the labels
- * are updated.
+ * UP/DOWN navigates the inbox; OK sends the IME-committed text as a
+ * DM reply to the currently-displayed sender. Footer shows TX status
+ * for the most recent send (sending / delivered / failed).
  *
- * Thread model: call all entry points from lvgl_task only.
+ * Scroll position + sticky-to-newest are preserved across destroy/
+ * recreate via the view-owned state struct in messages_view.c.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
 #pragma once
 
-#include "lvgl.h"
-#include "key_event.h"
+#include "view_router.h"
 
-void messages_view_init(lv_obj_t *panel);
-void messages_view_apply(const key_event_t *ev);
-void messages_view_refresh(void);
+const view_descriptor_t *messages_view_descriptor(void);

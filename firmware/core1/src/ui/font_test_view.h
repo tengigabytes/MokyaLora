@@ -7,14 +7,12 @@
  * generated .bin has a bug — see docs/design-notes/mie-architecture.md
  * §4.1 for the MIEF format and the glyph dsc semantics.
  *
- * Thread model: call all three entry points from lvgl_task only.
+ * Debug-only: included in the build when MOKYA_DEBUG_VIEWS is defined.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
-#include "lvgl.h"
-#include "key_event.h"
+#include "view_router.h"
 
-void font_test_view_init(lv_obj_t *panel);
-void font_test_view_apply(const key_event_t *ev);
+const view_descriptor_t *font_test_view_descriptor(void);

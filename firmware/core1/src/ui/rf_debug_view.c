@@ -1,6 +1,7 @@
 /* rf_debug_view.c — see rf_debug_view.h. */
 
 #include "rf_debug_view.h"
+#include "key_event.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -68,7 +69,7 @@ static lv_obj_t *mk_label(lv_obj_t *parent, int x, int y, lv_color_t color)
     return lbl;
 }
 
-void rf_debug_view_init(lv_obj_t *parent)
+static void create(lv_obj_t *parent)
 {
     lv_obj_set_style_bg_color(parent, COL_BG, 0);
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
@@ -286,14 +287,14 @@ static void render_sats(const teseo_rf_state_t *r)
     }
 }
 
-void rf_debug_view_apply(const key_event_t *ev)
+static void apply(const key_event_t *ev)
 {
     (void)ev;
     /* No per-key bindings in the RF view for now. FUNC is swallowed by
      * the router before it reaches us. */
 }
 
-void rf_debug_view_refresh(void)
+static void refresh(void)
 {
     const teseo_state_t    *st = teseo_get_state();
     const teseo_sat_view_t *sv = teseo_get_sat_view();
@@ -321,4 +322,27 @@ void rf_debug_view_refresh(void)
     } else {
         lv_label_set_text(s_footer_lbl, "");
     }
+}
+
+static void destroy(void)
+{
+    s_title_lbl = s_fix_lbl = s_time_lbl = s_pos_lbl = NULL;
+    s_motion_lbl = s_rf_lbl = s_anf_gps_lbl = s_anf_gln_lbl = NULL;
+    s_counters_lbl = s_sat_hdr_lbl = s_footer_lbl = NULL;
+    for (int i = 0; i < SAT_ROWS; ++i) s_sat_lbl[i] = NULL;
+}
+
+static const view_descriptor_t RF_DEBUG_DESC = {
+    .id      = VIEW_ID_RF_DEBUG,
+    .name    = "rf_debug",
+    .create  = create,
+    .destroy = destroy,
+    .apply   = apply,
+    .refresh = refresh,
+    .flags   = 0,
+};
+
+const view_descriptor_t *rf_debug_view_descriptor(void)
+{
+    return &RF_DEBUG_DESC;
 }

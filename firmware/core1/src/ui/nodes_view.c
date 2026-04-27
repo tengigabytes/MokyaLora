@@ -98,7 +98,7 @@ static void render_offset(uint32_t offset)
     lv_label_set_text(s_footer, foot);
 }
 
-void nodes_view_init(lv_obj_t *panel)
+static void create(lv_obj_t *panel)
 {
     const lv_font_t *f16 = mie_font_unifont_sm_16();
     s_panel = panel;
@@ -131,7 +131,7 @@ void nodes_view_init(lv_obj_t *panel)
     lv_obj_set_width(s_footer, 312);
 }
 
-void nodes_view_apply(const key_event_t *ev)
+static void apply(const key_event_t *ev)
 {
     if (!ev || !ev->pressed) return;
 
@@ -155,21 +155,12 @@ void nodes_view_apply(const key_event_t *ev)
     }
 }
 
-void nodes_view_refresh(void)
+static void refresh(void)
 {
-    /* Skip the heavy snprintf-and-set_text path while the panel is
-     * hidden — view_router_tick calls every view's refresh each LVGL
-     * tick to "stay current", but with NodeDB observer firing at a few
-     * Hz this stole noticeable lvgl_task budget from ime_view's render
-     * path. Track change_seq so a single render at activation paints
-     * the latest state. */
+    /* Active-only refresh: router no longer calls us when hidden. */
+    if (s_panel == NULL) return;
+
     uint32_t cur = nodes_db_change_seq();
-
-    if (s_panel != NULL && lv_obj_has_flag(s_panel, LV_OBJ_FLAG_HIDDEN)) {
-        s_last_change_seq = cur;
-        return;
-    }
-
     if (cur == s_last_change_seq) return;
     s_last_change_seq = cur;
 
@@ -178,4 +169,26 @@ void nodes_view_refresh(void)
      * offset until they DOWN-back to 0. */
     if (s_sticky_to_newest) s_offset = 0u;
     render_offset(s_offset);
+}
+
+static void destroy(void)
+{
+    s_panel = s_header = s_body = s_footer = NULL;
+    s_last_change_seq = 0u;        /* force re-render on next activation */
+    /* s_offset / s_sticky_to_newest persist across destroy. */
+}
+
+static const view_descriptor_t NODES_DESC = {
+    .id      = VIEW_ID_NODES,
+    .name    = "nodes",
+    .create  = create,
+    .destroy = destroy,
+    .apply   = apply,
+    .refresh = refresh,
+    .flags   = 0,
+};
+
+const view_descriptor_t *nodes_view_descriptor(void)
+{
+    return &NODES_DESC;
 }

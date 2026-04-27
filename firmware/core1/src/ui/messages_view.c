@@ -79,7 +79,7 @@ static void render_offset(uint32_t offset)
     s_displayed_seq = entry.seq;
 }
 
-void messages_view_init(lv_obj_t *panel)
+static void create(lv_obj_t *panel)
 {
     const lv_font_t *f16 = mie_font_unifont_sm_16();
     s_panel = panel;
@@ -112,7 +112,7 @@ void messages_view_init(lv_obj_t *panel)
     lv_obj_set_width(s_footer, 312);
 }
 
-void messages_view_apply(const key_event_t *ev)
+static void apply(const key_event_t *ev)
 {
     if (!ev || !ev->pressed) return;
 
@@ -245,14 +245,10 @@ static bool maybe_render_tx_status_footer(void)
     return true;
 }
 
-void messages_view_refresh(void)
+static void refresh(void)
 {
-    /* Skip render work while hidden — see nodes_view_refresh for
-     * rationale. Track current state so activation re-renders cleanly. */
-    if (s_panel != NULL && lv_obj_has_flag(s_panel, LV_OBJ_FLAG_HIDDEN)) {
-        s_last_tx_change_seq = 0u;   /* force overlay repaint on activation */
-        return;
-    }
+    /* Active-only refresh: router no longer calls us when hidden. */
+    if (s_panel == NULL) return;
 
     uint32_t latest = messages_inbox_latest_seq();
     if (latest == 0u) {
@@ -285,4 +281,28 @@ void messages_view_refresh(void)
     }
 
     (void)maybe_render_tx_status_footer();
+}
+
+static void destroy(void)
+{
+    s_panel = s_header = s_body = s_footer = NULL;
+    s_displayed_seq = 0u;          /* force first render after recreate */
+    s_last_tx_change_seq = 0u;     /* re-overlay TX status on next refresh */
+    /* s_offset / s_sticky_to_newest / s_pending_tx_* persist across
+     * destroy via static .bss — preserves scroll + in-flight TX UX. */
+}
+
+static const view_descriptor_t MESSAGES_DESC = {
+    .id      = VIEW_ID_MESSAGES,
+    .name    = "messages",
+    .create  = create,
+    .destroy = destroy,
+    .apply   = apply,
+    .refresh = refresh,
+    .flags   = 0,
+};
+
+const view_descriptor_t *messages_view_descriptor(void)
+{
+    return &MESSAGES_DESC;
 }

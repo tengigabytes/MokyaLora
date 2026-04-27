@@ -548,11 +548,13 @@ static void drain_replies(void)
 
 /* ── Public entry points ─────────────────────────────────────────────── */
 
-void settings_view_init(lv_obj_t *panel)
+static void create(lv_obj_t *panel)
 {
     const lv_font_t *f16 = mie_font_unifont_sm_16();
     s_panel = panel;
 
+    /* settings_client_init() is idempotent (creates the reply queue
+     * once); safe to call on every recreate. */
     settings_client_init();
 
     lv_obj_set_style_bg_color(panel, lv_color_black(), 0);
@@ -585,7 +587,7 @@ void settings_view_init(lv_obj_t *panel)
     s_dirty_load = true;
 }
 
-void settings_view_apply(const key_event_t *ev)
+static void apply(const key_event_t *ev)
 {
     if (!ev || !ev->pressed) return;
 
@@ -655,17 +657,14 @@ void settings_view_apply(const key_event_t *ev)
     }
 }
 
-void settings_view_refresh(void)
+static void refresh(void)
 {
     if (s_panel == NULL) return;
 
-    /* Drain replies even when hidden so caches stay current; just skip
-     * the LVGL relabel work while off-screen. */
+    /* Active-only refresh: router no longer calls us when hidden, so
+     * the inbox-style "drain even when hidden" branch is gone. The
+     * cache is still re-seeded on activation via s_dirty_load. */
     drain_replies();
-
-    if (lv_obj_has_flag(s_panel, LV_OBJ_FLAG_HIDDEN)) {
-        return;
-    }
 
     if (s_dirty_load) {
         send_get_burst(s_cur_group);
@@ -677,4 +676,31 @@ void settings_view_refresh(void)
         s_last_render_seq = s_render_seq;
         render_all();
     }
+}
+
+static void destroy(void)
+{
+    s_panel = s_header = s_body = s_footer = NULL;
+    /* Force re-render + GET burst on next activation so widgets reflect
+     * latest cache. s_cache / s_mode / s_cur_group / s_cur_row /
+     * s_cache dirty flags / s_footer_msg / s_edit_buf all persist
+     * across destroy via static .bss — preserves the user's edit
+     * state through cache eviction. */
+    s_last_render_seq = (uint32_t)-1;
+    s_dirty_load = true;
+}
+
+static const view_descriptor_t SETTINGS_DESC = {
+    .id      = VIEW_ID_SETTINGS,
+    .name    = "settings",
+    .create  = create,
+    .destroy = destroy,
+    .apply   = apply,
+    .refresh = refresh,
+    .flags   = 0,
+};
+
+const view_descriptor_t *settings_view_descriptor(void)
+{
+    return &SETTINGS_DESC;
 }

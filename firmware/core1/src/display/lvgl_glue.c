@@ -115,7 +115,11 @@ static void lvgl_task(void *arg)
     /* View router owns all UI panels; FUNC-press cycles between them
      * (keypad_view ↔ rf_debug_view today). Adding a new diagnostic /
      * screen means adding an entry in view_router.c only. */
-    view_router_init(lv_screen_active());
+    /* LRU capacity = 3 (active + 3 cached, max 4 widget trees alive).
+     * Modal: caller pinned + ime active + 2 cached = exactly fits.
+     * See docs/design-notes/core1-memory-budget.md §1 + plan
+     * ui-peaceful-lighthouse.md for sizing. */
+    view_router_init(lv_screen_active(), 3);
 
     /* lv_mem_monitor diagnostic, emitted via RTT TRACE every 5 s. We
      * deliberately do NOT keep the snapshot in .bss — there is < 12 B

@@ -155,7 +155,7 @@ static const mokya_keycode_t s_grid_layout[GRID_ROWS][GRID_COLS] = {
     { MOKYA_KEY_MODE, MOKYA_KEY_TAB, MOKYA_KEY_SPACE, MOKYA_KEY_SYM1, MOKYA_KEY_SYM2      },
 };
 
-void keypad_view_init(lv_obj_t *parent)
+static void create(lv_obj_t *parent)
 {
     for (uint16_t i = 0; i < MOKYA_KEY_LIMIT; ++i) {
         s_cells[i] = NULL;
@@ -250,7 +250,7 @@ static void apply_event(const key_event_t *ev)
     lv_label_set_text(s_header_label, buf);
 }
 
-void keypad_view_apply(const key_event_t *ev)
+static void apply(const key_event_t *ev)
 {
     apply_event(ev);
 
@@ -261,4 +261,28 @@ void keypad_view_apply(const key_event_t *ev)
              (unsigned long)g_key_event_rejected);
     lv_label_set_text(s_footer_label, buf);
     lv_obj_align(s_footer_label, LV_ALIGN_TOP_RIGHT, -6, 0);
+}
+
+static void destroy(void)
+{
+    for (uint16_t i = 0; i < MOKYA_KEY_LIMIT; ++i) {
+        s_cells[i] = NULL;
+    }
+    s_header_label = NULL;
+    s_footer_label = NULL;
+}
+
+static const view_descriptor_t KEYPAD_DESC = {
+    .id      = VIEW_ID_KEYPAD,
+    .name    = "keypad",
+    .create  = create,
+    .destroy = destroy,
+    .apply   = apply,
+    .refresh = NULL,
+    .flags   = 0,
+};
+
+const view_descriptor_t *keypad_view_descriptor(void)
+{
+    return &KEYPAD_DESC;
 }

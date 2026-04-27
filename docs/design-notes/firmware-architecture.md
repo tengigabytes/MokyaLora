@@ -181,7 +181,7 @@ cooperative `OSThread` stack) lives in `SCRATCH_X`, not in this 176 KB region.
 | Segment                  | Size      | Contents                                                              |
 |--------------------------|-----------|-----------------------------------------------------------------------|
 | `.framebuffer`           | 150 KB    | `s_framebuffer[240*320]` RGB565 — LVGL DIRECT mode primary buffer     |
-| `.bss` LVGL internal heap| 56 KB     | `work_mem_int.0` — `LV_MEM_SIZE` pool (widgets, styles, font cache)   |
+| `.bss` LVGL internal heap| 56 KB     | `work_mem_int.0` — `LV_MEM_SIZE` pool. Lazy create + LRU cache (active + 3 cached) since 2026-04-27 — pool usage no longer scales with total view count. |
 | `.bss` FreeRTOS Heap4    | 56 KB     | `ucHeap[]` — task stacks + TCBs + queues. Bumped 48 → 56 KB on 2026-04-27 (heap free 7.3 → 15.5 KB / 27 %) |
 | `.bss` MIE / IME runtime | ~10 KB    | `g_ime_storage` (ImeLogic placement-new), TrieSearchers, char buffers |
 | `.bss` driver / kernel state | ~22 KB | I2C, keypad PIO, GPS NMEA, FreeRTOS list heads, TinyUSB CDC, drivers  |

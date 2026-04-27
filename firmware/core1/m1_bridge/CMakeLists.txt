@@ -208,6 +208,7 @@ add_executable(core1_bridge
     ${UI_DIR}/nodes_view.c
     ${UI_DIR}/settings_view.c
     ${UI_DIR}/view_router.c
+    ${UI_DIR}/view_registry.c
     ${SETTINGS_DIR}/settings_keys.c
     ${SETTINGS_DIR}/settings_client.c
     ${PSRAM_DIR}/psram.c
@@ -302,6 +303,10 @@ target_compile_definitions(core1_bridge PRIVATE
     # Opt MIE source files into RTT perf trace (mie/src/ime_search.cpp etc.).
     # PC tests do not define this so MIE stays decoupled from mokya_trace.h.
     MOKYA_MIE_PERF_TRACE=1
+    # Include debug-only views (rf_debug, font_test) in the FUNC cycle.
+    # Production builds should set this to 0 to drop them from the
+    # registry — the view_id_t enum + registry table both honour it.
+    MOKYA_DEBUG_VIEWS=1
     $<$<BOOL:${MOKYA_GPS_DUMMY_NMEA}>:MOKYA_GPS_DUMMY_NMEA=1>
 )
 

@@ -38,7 +38,11 @@ static const char s_body[] =
 
 #define TITLE_H_PX  36    /* 32 px font + 4 px breathing room */
 
-void font_test_view_init(lv_obj_t *panel)
+/* No widget pointers to track — the title/body labels live as anonymous
+ * children of `panel`, and `lv_obj_del(panel)` (called by router after
+ * destroy) sweeps them. No persistent state. */
+
+static void create(lv_obj_t *panel)
 {
     const lv_font_t *f16 = mie_font_unifont_sm_16();
     const lv_font_t *f32 = mie_font_unifont_sm_32();
@@ -62,16 +66,34 @@ void font_test_view_init(lv_obj_t *panel)
     lv_label_set_text(body, s_body);
     if (f16) lv_obj_set_style_text_font(body, f16, 0);
     lv_obj_set_style_text_color(body, lv_color_white(), 0);
-    /* 4 px inter-row gap — Unifont glyphs fill most of the 16 px cell,
-     * so rows with line_space=0 bleed into each other (ascenders of
-     * line N touch descenders of line N-1). */
     lv_obj_set_style_text_line_space(body, 4, 0);
     lv_obj_set_style_text_letter_space(body, 0, 0);
     lv_obj_set_size(body, 320, 240 - TITLE_H_PX);
     lv_obj_set_pos(body, 0, TITLE_H_PX);
 }
 
-void font_test_view_apply(const key_event_t *ev)
+static void destroy(void)
+{
+    /* No file-scope widget pointers; `lv_obj_del(panel)` (router) sweeps
+     * children. Nothing to null. */
+}
+
+static void apply(const key_event_t *ev)
 {
     (void)ev;
+}
+
+static const view_descriptor_t FONT_TEST_DESC = {
+    .id      = VIEW_ID_FONT_TEST,
+    .name    = "font_test",
+    .create  = create,
+    .destroy = destroy,
+    .apply   = apply,
+    .refresh = NULL,
+    .flags   = 0,
+};
+
+const view_descriptor_t *font_test_view_descriptor(void)
+{
+    return &FONT_TEST_DESC;
 }

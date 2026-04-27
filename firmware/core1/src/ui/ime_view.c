@@ -207,8 +207,25 @@ static void make_divider(lv_obj_t *parent, int y)
 
 /* ── Init ────────────────────────────────────────────────────────────── */
 
-void ime_view_init(lv_obj_t *panel)
+static void create(lv_obj_t *panel)
 {
+    /* Force re-snapshot on first refresh after recreate. */
+    s_last_counter = (uint32_t)-1;
+    s_cell_valid = 0;
+
+    /* Pre-populate the SWD debug header MAGIC so test scripts that
+     * read g_dbg the moment they switch to ime_view see a valid signal
+     * even before the first refresh runs (was set by old init's first
+     * refresh path; lazy creation no longer guarantees that). The seq
+     * stays even (= "stable empty snapshot") so readers don't retry. */
+    g_dbg->magic = IME_VIEW_DEBUG_MAGIC;
+    g_dbg->seq   = 0;
+
+    /* Same thing for g_ime_cand_full so its magic is observable
+     * immediately. */
+    g_ime_cand_full.magic = IME_CAND_FULL_MAGIC;
+    g_ime_cand_full.seq   = 0;
+
     const lv_font_t *f16 = mie_font_unifont_sm_16();
 
     lv_obj_set_style_bg_color(panel, COL_BG, 0);
@@ -347,7 +364,7 @@ static int find_row_neighbour(int dir /* -1 = up, +1 = down */)
     return best_idx;
 }
 
-void ime_view_apply(const key_event_t *ev)
+static void apply(const key_event_t *ev)
 {
     if (!ev || !ev->pressed) return;
     /* SYM1 picker has its own engine-side DPAD routing (steps ±cols on
@@ -666,8 +683,9 @@ static void render_candidates(void)
     }
 }
 
-void ime_view_refresh(void)
+static void refresh(void)
 {
+    if (s_ta == NULL) return;          /* destroyed; recreate pending */
     uint32_t cur = __atomic_load_n(&g_ime_dirty_counter, __ATOMIC_ACQUIRE);
     if (cur == s_last_counter) return;
 
@@ -691,4 +709,34 @@ void ime_view_refresh(void)
     render_candidates();
 
     TRACE("lvgl", "render_end", "n_cand=%d", s_cand_count);
+}
+
+static void destroy(void)
+{
+    s_ta = s_mode_lbl = s_page_lbl = s_cand_box = NULL;
+    for (int i = 0; i < CAND_MAX; ++i) {
+        s_cand_cells[i] = NULL;
+        s_cand_lbls[i]  = NULL;
+        s_last_cell_text[i][0] = '\0';
+    }
+    s_last_counter = (uint32_t)-1;
+    s_cell_valid = 0;
+    /* g_text / g_ime_cand_full / mode / candidates ALL live in
+     * ime_task / engine state, not in this view — survival is
+     * automatic. */
+}
+
+static const view_descriptor_t IME_DESC = {
+    .id      = VIEW_ID_IME,
+    .name    = "ime",
+    .create  = create,
+    .destroy = destroy,
+    .apply   = apply,
+    .refresh = refresh,
+    .flags   = 0,
+};
+
+const view_descriptor_t *ime_view_descriptor(void)
+{
+    return &IME_DESC;
 }

@@ -485,11 +485,8 @@ int ime_view_picker_selected(void) {
 /* ── Generic text-input request (post-Stage 3) ──────────────────────── *
  *
  * One request in flight at a time; rejected with `false` if re-entered.
- * IME view index in the view_router table is fixed at 3 (matches
- * view_router.c init order — cross-checked by settings_view).
+ * Target view is `VIEW_ID_IME` (view_router.h enum).
  */
-
-#define IME_REQUEST_VIEW_INDEX  3
 
 struct text_request_state_t {
     bool             active;
@@ -579,7 +576,7 @@ bool ime_request_text(const ime_text_request_t *req,
     s_text_req.ctx       = ctx;
     s_text_req.active    = true;
 
-    view_router_modal_enter(IME_REQUEST_VIEW_INDEX, modal_trampoline, nullptr);
+    view_router_modal_enter(VIEW_ID_IME, modal_trampoline, nullptr);
     return true;
 }
 
