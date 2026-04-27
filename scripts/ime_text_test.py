@@ -56,7 +56,7 @@ IME_CAND_FULL_MAGIC = 0xECA11100
 IME_CAND_FULL_MAX   = 100
 IME_CAND_FULL_WLEN  = 24
 IME_CAND_FULL_SIZE  = 16 + IME_CAND_FULL_MAX * IME_CAND_FULL_WLEN  # 2416
-VIEW_COUNT      = 6   # M5P2: keypad → rf → font_test → ime → messages → nodes
+VIEW_COUNT      = 7   # B2 Stage 2: keypad → rf → font_test → ime → messages → nodes → settings
 IME_VIEW_INDEX  = 3
 
 # Flash partition holding the dict blob. We probe the first 4 bytes via SWD

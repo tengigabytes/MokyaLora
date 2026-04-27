@@ -2333,6 +2333,30 @@ above (with date) and be deleted from this list.
 
 ### IME quality / measurement
 
+- **settings_view per-LVGL-tick cost — +14 % wall-time regression on
+  bench (2026-04-27).** `ime_text_test.py user1.txt` (228 chars, no
+  reset, default settings) measured 478 ms/char vs the 416 ms Phase
+  1.6.1 baseline. Bisect confirmed: with `settings_view` removed
+  from `view_router_init`, 421 ms/char (= baseline ± noise);
+  watchdog/postmortem/ime_request_text contribute zero. Cost
+  manifests even when settings is HIDDEN — `settings_view_refresh()`
+  drains its reply queue every LVGL tick, AND the 3 LVGL labels +
+  panel stay in the screen object tree adding refresh-traversal
+  cost. Per-char wall-time is also no longer flat: with settings
+  enabled it climbs 463 → 522 ms across 200 chars (committed-text
+  label repaint cost compounds); without settings it stays flat at
+  ~347 ms across the same span. **IME engine itself is unaffected**
+  (rank-0 79.7 % vs 64.1 % historical, in-top-8 99.1 %, 100 %
+  commit). Mitigation candidates, none implemented yet:
+  (a) lazy-init settings_view's LVGL widgets (defer creation until
+      first activation) — eliminates the screen-tree traversal cost
+      for the never-used case.
+  (b) on hide, detach the panel from the screen tree (lv_obj_set_parent
+      to off-screen) and re-attach on activate — keeps drain_replies
+      working but removes refresh-tree cost.
+  (c) skip drain_replies when hidden — accept that replies arriving
+      while settings is hidden will wait until next activation; reply
+      queue depth 8 absorbs bursts.
 - ~~**lazy_friday picker rank-7 commit miscommit.**~~ **No-repro on
   2026-04-27** — three consecutive runs against
   `scripts/ime_passage_lazy_friday.txt` (warm, then `--erase` cold
