@@ -87,6 +87,9 @@
 #include "nodes_db.h"
 #include "settings_client.h"
 #include "watchdog_task.h"
+#ifdef MOKYA_PHONEAPI_CASCADE
+#include "phoneapi_session.h"
+#endif
 #include "postmortem.h"
 #include "msp_canary.h"
 
@@ -336,6 +339,14 @@ static void bridge_task(void *pv)
             }
 
             if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u) {
+#ifdef MOKYA_PHONEAPI_CASCADE
+                /* Cascade tap: parse FromRadio frames in parallel with the
+                 * existing CDC pass-through. The framing parser is
+                 * stateful across slots, so feed the entire payload here
+                 * before any USB write — pass-through bytes are NOT
+                 * modified by this call. */
+                phoneapi_session_feed_from_core0(scratch, hdr.payload_len);
+#endif
                 uint16_t remaining = hdr.payload_len;
                 const uint8_t *p = scratch;
                 /* The data ring carries Meshtastic stream-protocol frames
@@ -643,6 +654,13 @@ int main(void)
     /* Settings reply queue — created before bridge_task starts dispatching
      * IPC_MSG_CONFIG_VALUE / IPC_MSG_CONFIG_RESULT into it. */
     settings_client_init();
+
+#ifdef MOKYA_PHONEAPI_CASCADE
+    /* Cascade PhoneAPI byte-stream tap (M5 Phase 2 Phase A). Initialised
+     * before bridge_task starts so the very first SERIAL_BYTES slot is
+     * fed into the framing parser. */
+    phoneapi_session_init();
+#endif
 
     /* Keypad scan task — MUST run at the same priority as usb / bridge / lvgl.
      * usb_device_task is a `tud_task(); taskYIELD();` loop with no blocking

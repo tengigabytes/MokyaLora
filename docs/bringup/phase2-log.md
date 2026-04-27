@@ -2259,6 +2259,114 @@ before. UI / IPC consumers on Core 1 should not assume Core 0 is "still
 booting" when they come up. Boot phase breadcrumb gains `0x17` (Core 1
 launched late from idle hook).
 
+#### M5 Phase 2 — Cascade PhoneAPI architecture, Phase A skeleton ✅ (2026-04-27)
+
+**Plan.** `~/.claude/plans/core1-usb-core1-composed-globe.md`. Decided
+that the right end-state is **not** `IPCPhoneAPI` (a second PhoneAPI
+session on Core 0 dedicated to Core 1 — the original M5 framing), but
+instead a **cascade**: Core 1 is the *primary* PhoneAPI client, USB CDC
+is a transparent byte-tunnel sub-mode that activates only when a host
+opens the CDC. The SERIAL_BYTES ring carries exactly one PhoneAPI
+session. Core 0 is unaffected — entire change is Core-1-side.
+
+**Why cascade over dual-session.**
+1. Core 0's PhoneAPI has a hidden global static (`heartbeatReceived` in
+   `PhoneAPI.cpp:36`) that breaks when two instances are both active —
+   would require patching Meshtastic submodule.
+2. PhoneAPI lazy-starts on `want_config_id` (none of the 11 streaming
+   states fire without a client request). Two sessions would mean two
+   `want_config_id`s, each restarting the state machine and clobbering
+   the other's mid-stream output.
+3. Cascade reuses the existing `ipc_serial_stub` byte transport
+   verbatim. Zero Meshtastic patches needed for transport itself.
+4. License: `mesh.pb.h` is GPL-3.0 in `firmware/core0/meshtastic/protobufs/LICENSE`.
+   Core 1 (Apache-2.0) cannot include it. Either approach needed an
+   independent decoder; cascade keeps the boundary cleaner because the
+   only crossing point is opaque bytes on a ring.
+
+**License approach (decided 2026-04-27):** hand-written minimal
+decoder in `firmware/core1/src/phoneapi/`, no nanopb runtime, no
+generated headers. Field numbers are wire-format interop facts and
+are not copyrightable — identical to writing a third-party HTTP
+client. Each new file carries `SPDX-License-Identifier: Apache-2.0`
+and a header comment noting the wire format mirrors Meshtastic's
+public protobufs.
+
+**Phase A deliverable: byte-stream tap + tag identification.** New
+files under `firmware/core1/src/phoneapi/`:
+
+- `phoneapi_framing.{c,h}` — 5-state machine for `0x94 0xC3 LEN_HI
+  LEN_LO <payload>`. 512 B internal payload buffer. Bulk-copies
+  payload across IPC ring slot boundaries (single 256-byte slot
+  cannot carry a full FromRadio, so multi-slot reassembly is
+  mandatory). Stats counters (`frames_ok`, `frames_oversized`,
+  `resync_drops`) inspectable via SWD.
+- `phoneapi_decode.{c,h}` — varint reader + wire-type-aware skip;
+  `phoneapi_decode_from_radio()` walks the FromRadio message,
+  identifies which `payload_variant` oneof field is present (tags
+  2..17 per `mesh.proto:2070`), records its byte length or scalar
+  value. Returns the top-level `FromRadio.id` (field 1) too.
+- `phoneapi_session.{c,h}` — Phase A glue. Owns one static
+  `phoneapi_framing_t`, the on-frame callback decodes + emits one
+  RTT trace per frame (`TRACE("phapi", "rx_frame", "len=%u,id=%u,
+  tag=%s,val=%u", ...)`), bumps a per-tag histogram counter.
+
+Bridge task tap point: `main_core1_bridge.c:340` (right when a
+SERIAL_BYTES slot is popped, before the existing `tud_cdc_write` loop).
+The cascade tap and CDC pass-through are independent — neither
+modifies bytes the other touches.
+
+**Build-flag toggle: `MOKYA_PHONEAPI_CASCADE`** (CMake option, default
+`OFF`). All new sources are listed under
+`$<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:...>`, the `phoneapi_session.h`
+include in `main_core1_bridge.c` is `#ifdef`-gated, and the init +
+feed call sites are `#ifdef`-gated too. With the flag OFF the binary
+is byte-identical to before (verified by clean Phase A build matrix:
+both `OFF` and `ON` link successfully without warnings).
+
+**Validation gate (Phase A success criteria from the plan).** ELF
+flashed with `MOKYA_PHONEAPI_CASCADE=ON`, RTT logger captured with
+`JLinkRTTLogger.exe -RTTSearchRanges "0x20000000 0x80000"`, USB host
+ran `python -m meshtastic --info`. Captured 50 `phapi` events:
+
+| Tag | Count | Notes |
+|---|---|---|
+| `rebooted` (8) | 1 | first frame after boot, before `want_config_id` |
+| `my_info` (3) | 1 | MyNodeInfo |
+| `deviceui` (17) | 1 | DeviceUIConfig |
+| `node_info` (4) | 2 | matches the 2 nodes in NodeDB |
+| `metadata` (13) | 1 | DeviceMetadata |
+| `channel` (10) | 8 | 8 channel slots (1 primary + 7 disabled) |
+| `config` (5) | 10 | Config oneof variants |
+| `module_config` (9) | 16 | ModuleConfig oneof variants |
+| `file_info` (15) | 6 | FileInfo manifest |
+| `config_complete_id` (7) | 1 | terminator |
+| `queue_status` (11) | 2 | heartbeat replies |
+
+`bad_frame` and `frames_oversized` both 0. USB host's `--info` returned
+the full state dump unchanged — cascade tap and pass-through coexist.
+This proves: framing parser handles cross-slot frames (saw 115 B
+node_info crossing slot boundary), tag identification correctly maps
+all 11 expected variants, and the tap is non-destructive to the
+existing transport.
+
+**Memory cost (Phase A only).** ELF text +~1 KB (decoder code), bss
++~600 B (512 B framing buffer + 80 B stats counters). Negligible.
+
+**What Phase A does NOT do:** field-level decode (no NodeDB cache, no
+my_info struct, no config), no ToRadio encoder, no mode state machine
+(the bridge always taps regardless of USB DTR — fine for Phase A
+because it's just observation), no LVGL view changes. Those land
+across Phases B–D per the plan.
+
+**Next: Phase B.** Field-level decoders for the 7 message types we
+care about (my_info, node_info, channel, config sub-oneof,
+module_config tag-only, metadata, packet) + `phoneapi_cache.{c,h}`
+holding NodeDB (LRU, 128 entries) + my_info + channels + config
+snapshots. Validation: SWD dump of cache after a `--info` run should
+match what Meshtastic CLI reports. Risk R1 mitigation
+(shadow-then-swap on `config_complete_id`) gets implemented here.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

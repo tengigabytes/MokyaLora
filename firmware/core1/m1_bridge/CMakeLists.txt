@@ -54,6 +54,14 @@ option(MOKYA_GPS_DUMMY_NMEA
     "Inject dummy fixed-position NMEA into IpcGpsBuf instead of running Teseo"
     OFF)
 
+# M5 Phase 2 — Cascade PhoneAPI client. Core 1 parses FromRadio bytes
+# flowing from Core 0 in parallel with the existing USB CDC pass-through.
+# Phase A: framing parser + tag-level RTT trace only (no cache, no
+# stub replacement). Default OFF until Phase E flips it permanently.
+option(MOKYA_PHONEAPI_CASCADE
+    "Enable Core 1 cascade PhoneAPI byte-stream parser (M5 Phase 2)"
+    OFF)
+
 pico_sdk_init()
 
 # ── FreeRTOS RP2350_ARM_NTZ port ─────────────────────────────────────────────
@@ -122,6 +130,9 @@ set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
 
 # ── Settings UI (B2 Stage 2) ─────────────────────────────────────────────────
 set(SETTINGS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/settings)
+
+# ── Cascade PhoneAPI client (M5 Phase 2) ─────────────────────────────────────
+set(PHONEAPI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/phoneapi)
 
 # ── Debug / RTT trace ────────────────────────────────────────────────────────
 # Reuse the SEGGER RTT C source bundled with pico-sdk (same file pico_stdio_rtt
@@ -236,6 +247,9 @@ add_executable(core1_bridge
     ${MESSAGES_DIR}/messages_send.c
     ${MESSAGES_DIR}/messages_tx_status.c
     ${MESSAGES_DIR}/nodes_db.c
+    $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_framing.c>
+    $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_decode.c>
+    $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_session.c>
 )
 
 # SEGGER_RTT.c triggers -Wcast-qual and -Wcast-align under our default
@@ -274,6 +288,7 @@ target_include_directories(core1_bridge PRIVATE
     ${IME_DIR}
     ${MESSAGES_DIR}
     ${SETTINGS_DIR}
+    ${PHONEAPI_DIR}
     ${DEBUG_DIR}
     ${SEGGER_DIR}/RTT
     ${SEGGER_DIR}/Config
@@ -308,6 +323,7 @@ target_compile_definitions(core1_bridge PRIVATE
     # registry — the view_id_t enum + registry table both honour it.
     MOKYA_DEBUG_VIEWS=1
     $<$<BOOL:${MOKYA_GPS_DUMMY_NMEA}>:MOKYA_GPS_DUMMY_NMEA=1>
+    $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:MOKYA_PHONEAPI_CASCADE=1>
 )
 
 target_link_libraries(core1_bridge
