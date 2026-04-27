@@ -236,3 +236,88 @@ bool phoneapi_cache_get_node_by_id(uint32_t node_id, phoneapi_node_t *out)
 uint32_t phoneapi_cache_change_seq(void)    { return s_cache.change_seq; }
 uint32_t phoneapi_cache_committed_seq(void) { return s_cache.committed_seq; }
 bool     phoneapi_cache_config_complete(void) { return s_cache.config_complete; }
+
+// ── Messages ring ───────────────────────────────────────────────────
+//
+// Single-producer (`phoneapi_session` decoder) / single-consumer
+// (`messages_view` LVGL refresh). Slot writes happen under a separate
+// mutex from the main cache so a long NodeDB upsert burst doesn't
+// stall an inbound text. `seq` is bumped last with __ATOMIC_RELEASE so
+// a consumer polling `latest_seq` sees the slot fully published.
+
+static struct {
+    phoneapi_text_msg_t entries[PHONEAPI_MSG_RING_CAP];
+    uint32_t            next_seq;     // monotonic, 0 = "never published"
+    uint32_t            count;        // 0..PHONEAPI_MSG_RING_CAP
+    uint32_t            head;         // index of newest entry
+} s_msgs;
+
+static SemaphoreHandle_t s_msgs_lock = NULL;
+
+static void msgs_lock_init_lazy(void)
+{
+    if (s_msgs_lock == NULL) {
+        s_msgs_lock = xSemaphoreCreateMutex();
+    }
+}
+
+void phoneapi_msgs_publish(uint32_t from_node_id,
+                            uint32_t to_node_id,
+                            uint8_t  channel_index,
+                            const uint8_t *text,
+                            uint16_t text_len)
+{
+    msgs_lock_init_lazy();
+    if (text_len > PHONEAPI_MSG_TEXT_MAX) {
+        text_len = PHONEAPI_MSG_TEXT_MAX;
+    }
+    if (s_msgs_lock != NULL) {
+        xSemaphoreTake(s_msgs_lock, portMAX_DELAY);
+    }
+
+    uint32_t slot = (s_msgs.head + 1u) % PHONEAPI_MSG_RING_CAP;
+    if (s_msgs.count == 0u) {
+        slot = 0;  // very first write
+    }
+    phoneapi_text_msg_t *e = &s_msgs.entries[slot];
+    e->from_node_id  = from_node_id;
+    e->to_node_id    = to_node_id;
+    e->channel_index = channel_index;
+    e->text_len      = text_len;
+    if (text_len > 0u && text != NULL) {
+        memcpy(e->text, text, text_len);
+    }
+    e->seq = ++s_msgs.next_seq;
+
+    s_msgs.head = slot;
+    if (s_msgs.count < PHONEAPI_MSG_RING_CAP) {
+        s_msgs.count++;
+    }
+
+    if (s_msgs_lock != NULL) {
+        xSemaphoreGive(s_msgs_lock);
+    }
+}
+
+uint32_t phoneapi_msgs_count(void)       { return s_msgs.count; }
+uint32_t phoneapi_msgs_latest_seq(void)  { return s_msgs.next_seq; }
+
+bool phoneapi_msgs_take_at_offset(uint32_t offset, phoneapi_text_msg_t *out)
+{
+    msgs_lock_init_lazy();
+    bool ok = false;
+    if (s_msgs_lock != NULL) {
+        xSemaphoreTake(s_msgs_lock, portMAX_DELAY);
+    }
+    if (offset < s_msgs.count) {
+        // newest is at head; offset N steps back wraps within ring
+        uint32_t idx = (s_msgs.head + PHONEAPI_MSG_RING_CAP - offset) %
+                       PHONEAPI_MSG_RING_CAP;
+        *out = s_msgs.entries[idx];
+        ok   = true;
+    }
+    if (s_msgs_lock != NULL) {
+        xSemaphoreGive(s_msgs_lock);
+    }
+    return ok;
+}

@@ -209,7 +209,8 @@ Not exhaustive — just the ones large enough (≥ 256 B) to care about.
 | `s_line` | same | 96 B | NMEA line accumulator. |
 | `ImeLogic` instance (M4) | `src/ime/ime_task.c` | ~3 KB | 50 × `Candidate` (~40 B) ≈ 2 KB + 256 B display + 64 B key_seq + ~200 B per-candidate prefix + state. Static to keep the `ime` task stack small. |
 | LVGL draw buffer | `src/display/lvgl_glue.c` | TBD | One partial buffer for ST7789VI; update when the allocation is promoted from `LV_MEM_SIZE` to explicit static. |
-| `s_cache` (cascade PhoneAPI) | `src/phoneapi/phoneapi_cache.c` | 5924 B | Phase B cache: my_info (~68 B) + metadata (~44 B) + 8 channels × 20 B + 64 nodes × 88 B. Only present when `MOKYA_PHONEAPI_CASCADE=ON`. |
+| `s_cache` (cascade PhoneAPI) | `src/phoneapi/phoneapi_cache.c` | ~3.1 KB | Phase B cache: my_info (~68 B) + metadata (~44 B) + 8 channels × 20 B + 32 nodes × 88 B. Phase D dropped node cap 64 → 32 to make room for `s_msgs`; can grow back when Core 1 RAM frees up. Only present when `MOKYA_PHONEAPI_CASCADE=ON`. |
+| `s_msgs` (cascade messages ring) | `src/phoneapi/phoneapi_cache.c` | ~864 B | Phase D inbound TEXT_MESSAGE_APP ring: 4 × phoneapi_text_msg_t (~216 B each). Cascade flag only. |
 | `s_framing` | `src/phoneapi/phoneapi_framing.c` | ~528 B | 512 B FromRadio frame buffer + state machine. Cascade flag only. |
 
 Shared-SRAM IPC buffers (SPSC rings + GPS double-buffer) live in the

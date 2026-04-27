@@ -28,6 +28,18 @@ bool phoneapi_encode_want_config_id(uint32_t nonce);
 bool phoneapi_encode_heartbeat(void);
 bool phoneapi_encode_disconnect(void);
 
+// Phase D: outbound TEXT_MESSAGE_APP. Builds
+//   ToRadio { packet { to=fixed32, channel=v, decoded { portnum=1,
+//                       payload=<text> }, want_ack=v } }
+// `text_len` is the UTF-8 byte length (no NUL needed). Max ~200 B
+// (longer mesh packets exist but the LVGL compose buffer caps at
+// MESSAGES_SEND_TEXT_MAX). Returns true on a successful TX-ring push.
+bool phoneapi_encode_text_packet(uint32_t to_node_id,
+                                  uint8_t  channel_index,
+                                  bool     want_ack,
+                                  const uint8_t *text,
+                                  uint16_t text_len);
+
 #ifdef __cplusplus
 }
 #endif

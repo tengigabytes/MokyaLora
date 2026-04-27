@@ -5,7 +5,22 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef MOKYA_PHONEAPI_CASCADE
+#include "phoneapi_cache.h"
+typedef phoneapi_text_msg_t  msgs_entry_t;
+#define msgs_take_at_offset(o, e)  phoneapi_msgs_take_at_offset((o), (e))
+#define msgs_count()               phoneapi_msgs_count()
+#define msgs_latest_seq()          phoneapi_msgs_latest_seq()
+#define MSGS_TEXT_MAX              PHONEAPI_MSG_TEXT_MAX
+#else
 #include "messages_inbox.h"
+typedef messages_inbox_entry_t msgs_entry_t;
+#define msgs_take_at_offset(o, e)  messages_inbox_take_at_offset((o), (e))
+#define msgs_count()               messages_inbox_count()
+#define msgs_latest_seq()          messages_inbox_latest_seq()
+#define MSGS_TEXT_MAX              MESSAGES_INBOX_TEXT_MAX
+#endif
+
 #include "messages_send.h"
 #include "messages_tx_status.h"
 #include "mie_font.h"
@@ -43,8 +58,8 @@ static uint32_t s_last_tx_change_seq;
 
 static void render_offset(uint32_t offset)
 {
-    messages_inbox_entry_t entry;
-    if (!messages_inbox_take_at_offset(offset, &entry)) {
+    msgs_entry_t entry;
+    if (!msgs_take_at_offset(offset, &entry)) {
         lv_label_set_text(s_header, "(no messages yet)");
         lv_label_set_text(s_body, "");
         lv_label_set_text(s_footer, "msg 0/0");
@@ -59,16 +74,16 @@ static void render_offset(uint32_t offset)
              (unsigned)entry.channel_index);
     lv_label_set_text(s_header, hdr);
 
-    char body[MESSAGES_INBOX_TEXT_MAX + 1];
+    char body[MSGS_TEXT_MAX + 1];
     uint16_t n = entry.text_len;
-    if (n > MESSAGES_INBOX_TEXT_MAX) n = MESSAGES_INBOX_TEXT_MAX;
+    if (n > MSGS_TEXT_MAX) n = MSGS_TEXT_MAX;
     if (n > 0) memcpy(body, entry.text, n);
     body[n] = '\0';
     lv_label_set_text(s_body, body);
 
     /* Footer: "msg N/M" where N is 1-indexed position from oldest, M is
      * total count. So offset 0 (newest) = "msg M/M". */
-    uint32_t total = messages_inbox_count();
+    uint32_t total = msgs_count();
     uint32_t shown = (total > offset) ? (total - offset) : 0u;
     char foot[32];
     snprintf(foot, sizeof(foot), "msg %lu/%lu",
@@ -122,8 +137,8 @@ static void apply(const key_event_t *ev)
      * doesn't broadcast on the mesh. Empty IME buffer or empty inbox
      * is a no-op with a footer hint. */
     if (ev->keycode == MOKYA_KEY_OK) {
-        messages_inbox_entry_t target;
-        if (!messages_inbox_take_at_offset(s_offset, &target)) {
+        msgs_entry_t target;
+        if (!msgs_take_at_offset(s_offset, &target)) {
             lv_label_set_text(s_footer, "(no recipient — wait for a msg)");
             return;
         }
@@ -171,7 +186,7 @@ static void apply(const key_event_t *ev)
         return;
     }
 
-    uint32_t total = messages_inbox_count();
+    uint32_t total = msgs_count();
     if (total == 0) return;
 
     if (ev->keycode == MOKYA_KEY_UP) {
@@ -250,7 +265,7 @@ static void refresh(void)
     /* Active-only refresh: router no longer calls us when hidden. */
     if (s_panel == NULL) return;
 
-    uint32_t latest = messages_inbox_latest_seq();
+    uint32_t latest = msgs_latest_seq();
     if (latest == 0u) {
         if (s_displayed_seq != 0u) {
             render_offset(0);
@@ -270,8 +285,8 @@ static void refresh(void)
     /* Re-render if our cached seq for the current offset is stale.
      * This catches both "new message arrived at sticky offset 0" and
      * "ring buffer eviction shifted what offset N points at". */
-    messages_inbox_entry_t peek;
-    if (messages_inbox_take_at_offset(s_offset, &peek)) {
+    msgs_entry_t peek;
+    if (msgs_take_at_offset(s_offset, &peek)) {
         if (peek.seq != s_displayed_seq) {
             render_offset(s_offset);
             /* render_offset just rewrote the footer to "msg N/M".

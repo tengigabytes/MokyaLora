@@ -34,6 +34,8 @@
 extern "C" {
 #endif
 
+#define PHONEAPI_MSG_TEXT_MAX    200u
+#define PHONEAPI_MSG_RING_CAP      4u
 #define PHONEAPI_PIO_ENV_MAX     32u   // null-terminated
 #define PHONEAPI_DEVICE_ID_MAX   16u   // bytes (raw, no NUL)
 #define PHONEAPI_FW_VERSION_MAX  32u   // null-terminated
@@ -41,7 +43,7 @@ extern "C" {
 #define PHONEAPI_SHORT_NAME_MAX  8u    // null-terminated (proto says ~2 chars)
 #define PHONEAPI_CHANNEL_NAME_MAX 12u  // null-terminated (proto says <12 bytes)
 #define PHONEAPI_CHANNEL_COUNT   8u
-#define PHONEAPI_NODES_CAP       64u
+#define PHONEAPI_NODES_CAP       32u
 
 // MyNodeInfo subset
 typedef struct {
@@ -106,6 +108,19 @@ typedef struct {
     uint32_t phase_seq;              // matches cache.current_phase_seq if fresh
 } phoneapi_node_t;
 
+// Decoded TEXT_MESSAGE_APP payload — published by the cascade decoder
+// when a FromRadio.packet with portnum==TEXT_MESSAGE_APP is seen.
+// Field shape matches `messages_inbox_entry_t` so messages_view can be
+// migrated with minimal code change.
+typedef struct {
+    uint32_t seq;            ///< Monotonic id assigned at publish
+    uint32_t from_node_id;
+    uint32_t to_node_id;
+    uint8_t  channel_index;
+    uint16_t text_len;
+    uint8_t  text[PHONEAPI_MSG_TEXT_MAX];
+} phoneapi_text_msg_t;
+
 // Public API ---------------------------------------------------------
 
 void phoneapi_cache_init(void);
@@ -141,6 +156,18 @@ bool phoneapi_cache_get_node_by_id(uint32_t node_id, phoneapi_node_t *out);
 uint32_t phoneapi_cache_change_seq(void);
 uint32_t phoneapi_cache_committed_seq(void);
 bool     phoneapi_cache_config_complete(void);
+
+// Inbound text-message ring (FIFO of last PHONEAPI_MSG_RING_CAP).
+// Producer = phoneapi_session decoder; consumer = messages_view.
+void     phoneapi_msgs_publish(uint32_t from_node_id,
+                                uint32_t to_node_id,
+                                uint8_t  channel_index,
+                                const uint8_t *text,
+                                uint16_t text_len);
+uint32_t phoneapi_msgs_count(void);
+uint32_t phoneapi_msgs_latest_seq(void);
+// `offset` 0 = newest, 1 = next-newest. Returns false if offset >= count.
+bool     phoneapi_msgs_take_at_offset(uint32_t offset, phoneapi_text_msg_t *out);
 
 #ifdef __cplusplus
 }

@@ -89,6 +89,13 @@ bool phoneapi_decode_channel(const uint8_t *buf, uint16_t len,
 bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
                                phoneapi_node_t *out);
 
+// MeshPacket → if portnum == TEXT_MESSAGE_APP, fill `out_msg` and
+// return true. For non-text packets returns false (caller should drop).
+// `out_msg->seq` is left zero — caller assigns when publishing.
+#define PHONEAPI_PORTNUM_TEXT_MESSAGE_APP 1u
+bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
+                                 phoneapi_text_msg_t *out_msg);
+
 // Helper to locate the variant payload within a FromRadio frame.
 // Returns pointer + length of the variant sub-message bytes, or NULL.
 // (For varint variants like config_complete_id, returns NULL — callers

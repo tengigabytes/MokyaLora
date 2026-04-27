@@ -522,6 +522,92 @@ bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
     return out->num != 0u;
 }
 
+// ── Data sub-decoder (MeshPacket.decoded) ───────────────────────────
+// Fields: portnum=1 v, payload=2 b. Other fields ignored.
+
+typedef struct {
+    uint32_t portnum;
+    const uint8_t *payload;
+    uint16_t       payload_len;
+} data_subview_t;
+
+static bool decode_data(const uint8_t *buf, uint16_t len, void *vctx)
+{
+    data_subview_t *out = (data_subview_t *)vctx;
+    out->portnum = 0;
+    out->payload = NULL;
+    out->payload_len = 0;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->portnum = (uint32_t)v;
+        } else if (f == 2u && w == WT_LEN) {
+            uint64_t plen;
+            if (!read_varint(buf, len, &pos, &plen)) return false;
+            if (plen > (uint64_t)(len - pos)) return false;
+            out->payload     = &buf[pos];
+            out->payload_len = (uint16_t)plen;
+            pos += (uint16_t)plen;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// ── MeshPacket → text decoder ───────────────────────────────────────
+// Fields: from=1 fixed32, to=2 fixed32, channel=3 v, decoded=4 LD.
+
+bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
+                                 phoneapi_text_msg_t *out_msg)
+{
+    memset(out_msg, 0, sizeof(*out_msg));
+    data_subview_t data = { 0, NULL, 0 };
+    bool           have_data = false;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out_msg->from_node_id = v;
+        } else if (f == 2u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out_msg->to_node_id = v;
+        } else if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out_msg->channel_index = (uint8_t)v;
+        } else if (f == 4u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
+            have_data = true;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+
+    if (!have_data || data.portnum != PHONEAPI_PORTNUM_TEXT_MESSAGE_APP) {
+        return false;
+    }
+    uint16_t copy = (data.payload_len > PHONEAPI_MSG_TEXT_MAX)
+                        ? PHONEAPI_MSG_TEXT_MAX
+                        : data.payload_len;
+    if (copy > 0u && data.payload != NULL) {
+        memcpy(out_msg->text, data.payload, copy);
+    }
+    out_msg->text_len = copy;
+    return true;
+}
+
 const char *phoneapi_from_radio_tag_name(from_radio_tag_t tag)
 {
     switch (tag) {

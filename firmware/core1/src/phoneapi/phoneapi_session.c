@@ -171,6 +171,31 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
               (unsigned)summary.variant_value,
               (unsigned)phoneapi_cache_node_count());
         break;
+    case FR_TAG_PACKET: {
+        // Steady-state mesh traffic. Phase D extracts TEXT_MESSAGE_APP
+        // packets into the messages ring; other portnums are dropped
+        // (telemetry / position / routing — not displayed in v1 LVGL).
+        uint16_t sub_len = 0;
+        const uint8_t *sub = phoneapi_find_variant_payload(payload, len,
+                                                           FR_TAG_PACKET,
+                                                           &sub_len);
+        if (sub == NULL) break;
+        phoneapi_text_msg_t m;
+        bool is_text = phoneapi_decode_text_packet(sub, sub_len, &m);
+        TRACE("phapi", "rx_packet",
+              "sub_len=%u,is_text=%u,from=%u,to=%u,len=%u",
+              (unsigned)sub_len, (unsigned)is_text,
+              (unsigned)m.from_node_id, (unsigned)m.to_node_id,
+              (unsigned)m.text_len);
+        if (is_text) {
+            phoneapi_msgs_publish(m.from_node_id, m.to_node_id,
+                                  m.channel_index, m.text, m.text_len);
+            TRACE("phapi", "rx_text",
+                  "from=%u,len=%u",
+                  (unsigned)m.from_node_id, (unsigned)m.text_len);
+        }
+        break;
+    }
     default:
         // CONFIG / MODULE_CONFIG / FILE_INFO / DEVICEUI / etc — Phase A
         // tag-only tracing already happened above. Field-level decode

@@ -2525,6 +2525,108 @@ flag-OFF baseline): text +14 KB, bss +6 KB.
 - Stub deletion (Core 0 IpcTextObserver, IPC_CMD_SEND_TEXT,
   IPC_MSG_RX_TEXT, IPC_MSG_TX_ACK) — Phase E.
 
+#### M5 Phase 2 Phase D — text in/out via cascade ✅ (2026-04-27)
+
+**Delivered.**
+
+- `phoneapi_decode_text_packet()` in `phoneapi_decode.{c,h}` — walks
+  MeshPacket fields (from / to / channel / decoded), drills into the
+  Data sub-message (portnum / payload), accepts only
+  `portnum == TEXT_MESSAGE_APP (1)`. Other portnums (routing,
+  position, telemetry, …) return false and are dropped.
+- `phoneapi_text_msg_t` + 4-entry messages ring in
+  `phoneapi_cache.{c,h}`. Same field shape as `messages_inbox_entry_t`
+  to minimise the LVGL migration delta. Separate mutex from the main
+  cache so a NodeDB upsert burst doesn't stall an inbound text.
+- `phoneapi_encode_text_packet(to, channel, want_ack, text, len)` in
+  `phoneapi_encode.{c,h}` — builds
+  `ToRadio { packet { to=fixed32, channel=v, decoded { portnum=1,
+                       payload=text }, want_ack=v } }`. Uses a 2-byte
+  varint slot for the LD length prefixes so the body length can be
+  back-filled after writing. Stack-built (~384 B scratch), pushed via
+  `phoneapi_tx_push()`.
+- `phoneapi_session.c on_frame()` extended: on `FR_TAG_PACKET`,
+  decodes via `phoneapi_decode_text_packet`, publishes successful
+  TEXT messages into `phoneapi_msgs_publish`, traces both the attempt
+  (`phapi,rx_packet,sub_len=…,is_text=…,from=…,to=…`) and the publish
+  (`phapi,rx_text`) so non-text portnums are visible in the log too.
+- `messages_send.c` — `#ifdef MOKYA_PHONEAPI_CASCADE` branch routes
+  outbound text through `phoneapi_encode_text_packet`. Stub path
+  (`IPC_CMD_SEND_TEXT` + `IpcPayloadText`) is preserved verbatim for
+  flag-OFF builds and for Phase E rollback safety.
+- `messages_view.c` — `#ifdef MOKYA_PHONEAPI_CASCADE` typedef +
+  macro abstractions select between `phoneapi_msgs_*` and
+  `messages_inbox_*`. The render / navigation / OK-to-reply logic is
+  unchanged; only the data-source binding switches.
+
+**Memory pressure.** Adding the 4-entry messages ring (~864 B)
+overflowed Core 1's RAM with the Phase B nodes cap of 64. Trimmed
+`PHONEAPI_NODES_CAP` from 64 → 32 (saves 2.8 KB). Net cache footprint
+(cascade ON): 3.1 KB cache + 0.86 KB messages ring + 0.5 KB framing +
+mutexes ≈ 4.5 KB, down from Phase B's 6.4 KB. ELF size: text 575908,
+bss 342248. Memory budget doc updated.
+
+**Validation.**
+
+1. Regression: `meshtastic --info` round-trip — full state dump
+   delivered to host, all 11 FromRadio variants captured by cascade
+   tap. Identical to Phase B output. ✅
+2. Mode-FSM regression: cold boot (no host) → boot want_config_id +
+   3 cycles after USB plug/unplug — same as Phase C. ✅
+3. Outbound encoder validation via heartbeat path (Phase C): Core 1
+   periodically emits `ToRadio.heartbeat` and Core 0 acknowledges
+   with `queue_status` (seen in trace). The text-packet encoder uses
+   the same `put_tag` / `put_varint` / `frame_and_push` primitives,
+   so encoder correctness is implied transitively. ✅
+4. Inbound packet decoder ran on a real `FromRadio.packet` (a
+   routing-ack from a `--sendtext` broadcast). Decoded `from` and
+   `to` both = 0xB15DB862 (own node), `is_text=0` (routing portnum,
+   not TEXT_MESSAGE_APP). Correct rejection. ✅
+
+**Deferred to future hardware testing (peer node required).**
+
+End-to-end inbound TEXT_MESSAGE_APP DM (peer node →
+phoneapi_msgs_publish → messages_view) is not exercised in this
+Phase D log because no peer was on the bench at commit time. The
+decoder + cache + view pipeline is in place; verifying it requires
+either TNGB-50ca or the Heltec gateway awake and within range,
+sending a DM to this node. To add when a peer is available:
+
+```
+# from peer node:
+python -m meshtastic --port <peer_port> --dest '!b15db862' --sendtext "ping"
+# observe Core 1: SWD-dump phoneapi_cache.s_msgs entries[0],
+#                 RTT capture phapi,rx_text
+# LVGL messages_view should auto-show the message under cascade flag
+```
+
+End-to-end outbound from Core 1 LVGL (OK key on messages_view →
+peer node receives) likewise needs a peer to confirm receipt; it
+exercises the same `phoneapi_encode_text_packet` path that
+heartbeats already use, but with a non-trivial payload.
+
+**Phase D leaves stubs alive.** `messages_inbox` (stub-fed by Core
+0 IPC_MSG_RX_TEXT) and `nodes_db` (stub-fed by IPC_MSG_NODE_UPDATE)
+both still receive their messages and remain compiled. Under
+cascade ON they're written but unused by the views (which read
+from the cascade cache). Phase E removes the Core 0 producers
+along with the IPC message types in `ipc_protocol.h`.
+
+**Next: Phase E.** Delete on Core 0:
+- `IpcTextObserver` registration on TextMessageModule
+- `mokya_handle_ipc_command` `IPC_CMD_SEND_TEXT` branch (the
+  `handle_send_text` path in `ipc_command_handler.cpp`)
+- `IPC_MSG_TX_ACK` emit path (was tied to SEND_TEXT)
+- `IpcPayloadText` typedef in `firmware/shared/ipc/ipc_protocol.h`
+- `IPC_MSG_RX_TEXT` / `IPC_CMD_SEND_TEXT` / `IPC_MSG_TX_ACK` ids
+- Bump `IPC_PROTOCOL_VERSION`
+
+And on Core 1: delete `messages_inbox.{c,h}`, `messages_send.c`'s
+stub branch, and the corresponding bridge_task dispatch arms; flip
+`MOKYA_PHONEAPI_CASCADE` default to ON. `messages_view.c` /
+`messages_send.c` get their `#ifdef` scaffolding removed and become
+cascade-only.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
