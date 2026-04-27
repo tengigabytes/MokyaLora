@@ -144,10 +144,10 @@ Verified by reading both linker scripts and by SWD inspection of both cores' SPs
            │  Core 1 — FreeRTOS + LVGL + MIE (Apache-2.0) 312KB │
            │   .framebuffer 240×320×16bpp        150 KB         │
            │   LVGL heap (LV_MEM_SIZE)            56 KB         │
-           │   FreeRTOS Heap4 (task stacks+TCB)   48 KB         │
+           │   FreeRTOS Heap4 (task stacks+TCB)   56 KB         │
            │   .data + driver/kernel state        ~35 KB        │
            │   MIE / IME runtime state            ~10 KB        │
-           │   .heap (de facto MSP, guarded ≥2K) ~17 KB         │
+           │   .heap (de facto MSP, guarded ≥2K)  ~9 KB         │
            │   Reserve in .bss                     ~0 (PSRAM)   │
 0x2007A000 ├────────────────────────────────────────────────────┤
            │  Shared IPC (NOLOAD, MIT)                     24KB │
@@ -182,7 +182,7 @@ cooperative `OSThread` stack) lives in `SCRATCH_X`, not in this 176 KB region.
 |--------------------------|-----------|-----------------------------------------------------------------------|
 | `.framebuffer`           | 150 KB    | `s_framebuffer[240*320]` RGB565 — LVGL DIRECT mode primary buffer     |
 | `.bss` LVGL internal heap| 56 KB     | `work_mem_int.0` — `LV_MEM_SIZE` pool (widgets, styles, font cache)   |
-| `.bss` FreeRTOS Heap4    | 48 KB     | `ucHeap[]` — all task stacks + TCBs + queues (see §4.2)               |
+| `.bss` FreeRTOS Heap4    | 56 KB     | `ucHeap[]` — task stacks + TCBs + queues. Bumped 48 → 56 KB on 2026-04-27 (heap free 7.3 → 15.5 KB / 27 %) |
 | `.bss` MIE / IME runtime | ~10 KB    | `g_ime_storage` (ImeLogic placement-new), TrieSearchers, char buffers |
 | `.bss` driver / kernel state | ~22 KB | I2C, keypad PIO, GPS NMEA, FreeRTOS list heads, TinyUSB CDC, drivers  |
 | `.data`                  | 12.5 KB   | Initialised globals (vtables, time-critical functions in RAM)         |

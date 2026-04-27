@@ -54,7 +54,7 @@
 /* ── Memory — Heap4 ─────────────────────────────────────────────────────── */
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configSUPPORT_STATIC_ALLOCATION         0
-#define configTOTAL_HEAP_SIZE                   ( 48 * 1024 )
+#define configTOTAL_HEAP_SIZE                   ( 56 * 1024 )
 
 /* ── Interrupt priorities ────────────────────────────────────────────────── */
 /* Per the RP2350_ARM_NTZ port README, configMAX_SYSCALL_INTERRUPT_PRIORITY

@@ -19,9 +19,9 @@ Physical SRAM on RP2350B is **520 KB** at `0x20000000 – 0x20082000`.
 |---|---|---|---|
 | Shared IPC window | 24 KB | Core 0 ↔ Core 1 | Fixed, reserved at link time — see firmware-architecture.md §5. |
 | Core 1 .text/.rodata/.data/.bss | ~300 KB | m1_bridge image | Driver/LVGL/FreeRTOS code + statics. |
-| FreeRTOS heap (heap_4) | **48 KB** | `configTOTAL_HEAP_SIZE` | Task stacks, TCBs, kernel objects. See §3. |
+| FreeRTOS heap (heap_4) | **56 KB** | `configTOTAL_HEAP_SIZE` | Task stacks, TCBs, kernel objects. See §3. Bumped from 48 → 56 KB on 2026-04-27 after PSRAM relocation freed 15 KB of MSP-guard slack. **Measured `g_core1_boot_heap_free = 15,488 B (27.0 %)`** at boot, unchanged after 60-char IME stress (heap settles at the per-task allocation baseline). |
 | LVGL heap | **56 KB** | `LV_MEM_SIZE` in `lv_conf.h` | Separate from FreeRTOS. Widgets, styles, fonts, draw buffers. **Measured 2026-04-27** (RTT TRACE on `lvgl_mem` channel, lv_mem_monitor every 5 s, after 4× `--info` round-trips): `total=50808, max_used=47528, free=3692, used_pct=93 %, frag_pct=4 %`. The pool is **not over-provisioned** — it sits at the working ceiling with 5 views (keypad / RF / messages / font_test / settings) + the MIEF Unifont 16-px font (~16 KB resident in lv_font cache) + view_router widgets. **No room to trim** to recover `.bss` for FreeRTOS heap. Any future LVGL widget / font addition needs an offset removal in `lv_conf.h` first. |
-| MCU main stack (MSP) | ~17 KB de facto (post 2026-04-27 PSRAM relocation) | linker `__StackTop` | Pre-scheduler + exception handlers. Effective MSP region = the slot between `__end__` (top of `.bss + .heap`) and `__StackTop = 0x2007A000`. **Was 2 KB before PSRAM relocation; now 17 KB after moving 15 KB of bursty/snapshot buffers to `.psram_bss`.** Linker assertion `__StackTop - __end__ >= 0x800` (in `memmap_core1_bridge.ld`) enforces a hard 2 KB minimum and fires at link-time if `.bss` regrows past the threshold. Tracked at runtime by `msp_canary` (`firmware/core1/src/debug/msp_canary.{c,h}`): boot fills the slot with `0xDEADBEEF`, `wd_task` refreshes peak every 200 ms into `g_msp_peak_used` / `g_msp_low_water_addr`. **Measured 2026-04-27** under USB+IPC + IME stress: peak = **488 B (~3 % of available)** — large headroom. |
+| MCU main stack (MSP) | ~9 KB de facto (post 2026-04-27 heap bump) | linker `__StackTop` | Pre-scheduler + exception handlers. Effective MSP region = the slot between `__end__` and `__StackTop = 0x2007A000`. **Trajectory:** 2 KB (original) → 17 KB (after PSRAM relocation) → **9 KB** after `configTOTAL_HEAP_SIZE` 48 → 56 KB which absorbed 8 KB of the MSP slack. Linker assertion `__StackTop - __end__ >= 0x800` (in `memmap_core1_bridge.ld`) enforces a hard 2 KB minimum at link-time. Tracked at runtime by `msp_canary` (`firmware/core1/src/debug/msp_canary.{c,h}`): boot fills the slot with `0xDEADBEEF`, `wd_task` refreshes peak every 200 ms into `g_msp_peak_used` / `g_msp_low_water_addr`. **Measured 2026-04-27** under USB+IPC + 60-char IME stress: peak = **436 B (~5 % of available)** — comfortable ~20× headroom. |
 | LVGL framebuffer | 150 KB | `s_framebuffer` in `display/lvgl_glue.c`, dedicated `.framebuffer` NOLOAD section | DIRECT mode 240×320 RGB565. Largest single SRAM consumer (~48 % of Core 1 carve-out). |
 | Slack | — | — | Whatever's left. Goal: keep ≥ 32 KB unused for growth. |
 
@@ -87,6 +87,11 @@ link; compare against this table when the numbers drift.
 5. **LVGL heap stays separate.** Widgets, styles, lv_malloc — all from
    `LV_MEM_SIZE`. Never split widgets across FreeRTOS heap.
 6. **Reserve ≥ 15 % of `configTOTAL_HEAP_SIZE`** at all times. With the
+   current 56 KB heap (post 2026-04-27 bump), that is ≥ 8,602 B free
+   after all tasks are running. Currently at 27 % (15.5 KB free).
+   Original 2024-04 wording (kept below for historical context) was
+   based on the 48 KB heap and the 14 % crisis threshold; both are
+   now superseded.
    current 48 KB heap, that is ≥ 7.2 KB free after all tasks are
    running. The boot-time log prints the figure (and stashes it in
    `g_core1_boot_heap_free` for SWD readback) — `main` panics if we
@@ -152,17 +157,22 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 | §3.2 Kernel tasks | 4,096 | 4,096 | 4,096 |
 | §3.3 Queues / TCBs / overhead | ~1,420 | ~1,700 | ~1,900 |
 | **Estimated** | **~34.4 KB** | **~38.8 KB** | **~40.9 KB** |
-| `configTOTAL_HEAP_SIZE` | 49,152 | 49,152 | 49,152 |
-| **Reserve (threshold 15 %)** | **~14.7 KB (30 %)** ✓ | **~10.5 KB (21 %)** ✓ | **~8.2 KB (17 %)** ✓ |
+| `configTOTAL_HEAP_SIZE` | 49,152 | 49,152 | 57,344 (post 2026-04-27 bump) |
+| **Reserve (threshold 15 %)** | **~14.7 KB (30 %)** ✓ | **~10.5 KB (21 %)** ✓ | **~15.5 KB (27 %)** ✓ |
 
-**Measured 2026-04-27 post watchdog liveness chain (SWD, `g_core1_boot_heap_free`)**:
-`xFreeBytesRemaining = 7,296 B (14.84 %)` — 0.4 KB above the 14 %
-panic threshold. Watchdog task adds 768 B stack + ~88 B TCB ≈ 0.86 KB
-from heap_4. Threshold lowered 15 %→14 % since RAM region is full
-(`.heap` abuts `.shared_ipc` at 0x2007A000; cannot bump
-`configTOTAL_HEAP_SIZE`). KEY_CACHE_MAX trimmed 16→14 to free 38 B
-BSS so the link could close; cache size now matches exact
-`settings_keys_total_count()`.
+**Measured 2026-04-27 post `configTOTAL_HEAP_SIZE` 48 → 56 KB bump (SWD, `g_core1_boot_heap_free`)**:
+`xFreeBytesRemaining = 15,488 B (27.0 %)` — back to a healthy reserve
+after the PSRAM relocation (commit `46a7821`) freed enough MSP-guard
+slack to absorb 8 KB of `ucHeap` growth. Threshold restored to **15 %**.
+MSP guard region remains 8.93 KB (still ~20× measured peak 436 B).
+60-char IME stress: heap_free unchanged from boot baseline.
+
+**Pre-bump 2026-04-27 measurements (kept for historical context)**:
+`xFreeBytesRemaining = 7,296 B (14.84 %)` post watchdog liveness
+chain — 0.4 KB above the 14 % panic threshold. Watchdog task adds
+768 B stack + ~88 B TCB ≈ 0.86 KB from heap_4. Threshold had been
+lowered 15 %→14 % since RAM region was full and bumping was blocked.
+PSRAM offload + heap bump retroactively resolved that constraint.
 
 **Measured 2026-04-27 post B2 Stage 2 settings UI (SWD, `g_core1_boot_heap_free`)**:
 `xFreeBytesRemaining = 8,160 B (16.6 %)` — 0.8 KB above the 15 %
