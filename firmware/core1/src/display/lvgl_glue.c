@@ -117,9 +117,29 @@ static void lvgl_task(void *arg)
      * screen means adding an entry in view_router.c only. */
     view_router_init(lv_screen_active());
 
+    /* lv_mem_monitor diagnostic, emitted via RTT TRACE every 5 s. We
+     * deliberately do NOT keep the snapshot in .bss — there is < 12 B
+     * of MSP-guard headroom right now and any new global trips the
+     * linker assertion. RTT log lets us read peak usage without
+     * paying any RAM cost. Filter with `grep lvgl_mem` on the capture. */
+    uint32_t mon_last_ms = 0;
+
     for (;;) {
         uint32_t next = lv_timer_handler();
         view_router_tick();
+
+        uint32_t now_ms = lvgl_tick_get_ms();
+        if ((now_ms - mon_last_ms) >= 5000u) {
+            mon_last_ms = now_ms;
+            lv_mem_monitor_t mon;
+            lv_mem_monitor(&mon);
+            TRACE("lvgl_mem", "stats",
+                  "total=%u,free=%u,max_used=%u,used_pct=%u,frag_pct=%u",
+                  (unsigned)mon.total_size, (unsigned)mon.free_size,
+                  (unsigned)mon.max_used,   (unsigned)mon.used_pct,
+                  (unsigned)mon.frag_pct);
+        }
+
         if (next == LV_NO_TIMER_READY || next > 100u) {
             next = 100u;
         }

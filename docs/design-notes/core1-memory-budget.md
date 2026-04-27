@@ -20,10 +20,46 @@ Physical SRAM on RP2350B is **520 KB** at `0x20000000 – 0x20082000`.
 | Shared IPC window | 24 KB | Core 0 ↔ Core 1 | Fixed, reserved at link time — see firmware-architecture.md §5. |
 | Core 1 .text/.rodata/.data/.bss | ~300 KB | m1_bridge image | Driver/LVGL/FreeRTOS code + statics. |
 | FreeRTOS heap (heap_4) | **48 KB** | `configTOTAL_HEAP_SIZE` | Task stacks, TCBs, kernel objects. See §3. |
-| LVGL heap | **48 KB** | `LV_MEM_SIZE` in `lv_conf.h` | Separate from FreeRTOS. Widgets, styles, fonts, draw buffers. |
-| MCU main stack (MSP) | 4 KB | linker `__StackTop` | Pre-scheduler + exception handlers. |
-| LVGL framebuffer(s) | see §4 | `display/lvgl_glue.c` | Currently one partial buffer. |
+| LVGL heap | **56 KB** | `LV_MEM_SIZE` in `lv_conf.h` | Separate from FreeRTOS. Widgets, styles, fonts, draw buffers. **Measured 2026-04-27** (RTT TRACE on `lvgl_mem` channel, lv_mem_monitor every 5 s, after 4× `--info` round-trips): `total=50808, max_used=47528, free=3692, used_pct=93 %, frag_pct=4 %`. The pool is **not over-provisioned** — it sits at the working ceiling with 5 views (keypad / RF / messages / font_test / settings) + the MIEF Unifont 16-px font (~16 KB resident in lv_font cache) + view_router widgets. **No room to trim** to recover `.bss` for FreeRTOS heap. Any future LVGL widget / font addition needs an offset removal in `lv_conf.h` first. |
+| MCU main stack (MSP) | ~17 KB de facto (post 2026-04-27 PSRAM relocation) | linker `__StackTop` | Pre-scheduler + exception handlers. Effective MSP region = the slot between `__end__` (top of `.bss + .heap`) and `__StackTop = 0x2007A000`. **Was 2 KB before PSRAM relocation; now 17 KB after moving 15 KB of bursty/snapshot buffers to `.psram_bss`.** Linker assertion `__StackTop - __end__ >= 0x800` (in `memmap_core1_bridge.ld`) enforces a hard 2 KB minimum and fires at link-time if `.bss` regrows past the threshold. Tracked at runtime by `msp_canary` (`firmware/core1/src/debug/msp_canary.{c,h}`): boot fills the slot with `0xDEADBEEF`, `wd_task` refreshes peak every 200 ms into `g_msp_peak_used` / `g_msp_low_water_addr`. **Measured 2026-04-27** under USB+IPC + IME stress: peak = **488 B (~3 % of available)** — large headroom. |
+| LVGL framebuffer | 150 KB | `s_framebuffer` in `display/lvgl_glue.c`, dedicated `.framebuffer` NOLOAD section | DIRECT mode 240×320 RGB565. Largest single SRAM consumer (~48 % of Core 1 carve-out). |
 | Slack | — | — | Whatever's left. Goal: keep ≥ 32 KB unused for growth. |
+
+### 1.1 PSRAM .psram_bss region (added 2026-04-27)
+
+PSRAM (APS6404L, 8 MB at `0x11000000`) is initialised by `psram_init()` in
+`main()` line 573 — runs before any task starts. The linker carves
+**1 MB at `0x11700000`** (offset 7 MB) into `PSRAM_BSS` (see
+`memmap_core1_bridge.ld`); buffers opt in via
+`__attribute__((section(".psram_bss")))`. Crt0 does NOT zero this
+region, so `main()` clears it manually right after `psram_init()`
+returns. **Placement at 7 MB offset is intentional** — the MIE dict
+loader writes the v4 blob (up to ~5 MB) starting at offset 0; an
+earlier draft placed `.psram_bss` at `0x11000000` and the dict copy
+silently overwrote `lru_tmp` / `tmp` etc, manifesting as flaky search
+results on long passages.
+
+Currently relocated to `.psram_bss` (~15 KB total, 2026-04-27):
+
+| Symbol | Size | Why PSRAM is OK |
+|---|---:|---|
+| `mie::ImeLogic::run_search_v4::tmp` | 3.6 KB | Bursty (per-keystroke), data only consumed by Core 1 itself, fully cached. |
+| `mie::ImeLogic::prepend_lru_candidates::lru_tmp` | 3.6 KB | Same. |
+| `s_text_buf` (ime_view) | 2.0 KB | Snapshot copy, read sequentially during render — cached PSRAM is fast for this. |
+| `s_combined` (ime_view) | 2.2 KB | Render scratch, single-writer single-reader. |
+| `s_cand_buf` (ime_view) | 1.9 KB | Candidate cell text snapshot. |
+| `s_last_cell_text` (ime_view) | 1.9 KB | Per-cell dirty-tracking cache. |
+
+**Cache-coherence caveat — DO NOT relocate SWD-readable buffers.**
+PSRAM at `0x11000000` is **WRITE-BACK cached** by the RP2350 XIP cache.
+SWD memory accesses through AHB-AP bypass the L1 cache, so dirty
+cache lines are invisible to a SWD reader. `g_ime_cand_full` was
+moved to PSRAM in a first attempt and immediately broke
+`scripts/ime_text_test.py` with "cand_full seq unstable" — its
+seq-lock invariant requires the SWD reader to see writes in order.
+Anything inspected over SWD MUST stay in regular `.bss`, OR write
+via the uncached alias `0x15xxxxxx`, OR call
+`xip_cache_clean_range()` after each write.
 
 `scripts/build_and_flash.sh` prints the section sizes after each Core 1
 link; compare against this table when the numbers drift.

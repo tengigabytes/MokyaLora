@@ -95,8 +95,9 @@ link time; no run-time allocator ever crosses the boundary.
 │                                                                         │
 │  APS6404L QSPI PSRAM (8 MB)  — XIP via QMI, Core 1 only                 │
 │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │  0x11000000 │ MIE dictionary      │ 4 MB │ DAT + values (XIP)   │    │
-│  │  0x11400000 │ Application heap    │ 4 MB │ msg history, node $  │    │
+│  │  0x11000000 │ MIE v4 dict blob    │ 5 MB │ DAT + values (XIP)   │    │
+│  │  0x11500000 │ Slack / future heap │ 2 MB │ unallocated reserve  │    │
+│  │  0x11700000 │ .psram_bss carve    │ 1 MB │ Core 1 BSS-style ofld│    │
 │  └─────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -141,13 +142,13 @@ Verified by reading both linker scripts and by SWD inspection of both cores' SPs
            │   .heap (protobuf, NodeDB, router)  122 KB         │
 0x2002C000 ├────────────────────────────────────────────────────┤
            │  Core 1 — FreeRTOS + LVGL + MIE (Apache-2.0) 312KB │
-           │   LCD framebuffer 240×320×16bpp     150 KB         │
-           │   LVGL heap + widgets                48 KB         │
-           │   FreeRTOS Heap4 (task stacks+TCB)   32 KB         │
-           │   FreeRTOS kernel .bss                8 KB         │
-           │   HAL + MIE + App state              28 KB         │
-           │   Main stack (__StackBottom..Top)     8 KB         │
-           │   Reserve / margin                   38 KB         │
+           │   .framebuffer 240×320×16bpp        150 KB         │
+           │   LVGL heap (LV_MEM_SIZE)            56 KB         │
+           │   FreeRTOS Heap4 (task stacks+TCB)   48 KB         │
+           │   .data + driver/kernel state        ~35 KB        │
+           │   MIE / IME runtime state            ~10 KB        │
+           │   .heap (de facto MSP, guarded ≥2K) ~17 KB         │
+           │   Reserve in .bss                     ~0 (PSRAM)   │
 0x2007A000 ├────────────────────────────────────────────────────┤
            │  Shared IPC (NOLOAD, MIT)                     24KB │
            │   Handshake (16 B)                                 │
@@ -175,26 +176,39 @@ Meshtastic's peak heap usage (200 nodes, full NodeDB + pending-packet queue + AE
 sits around 100 KB; 122 KB gives ~20% headroom. The Arduino-Pico **task stack** (8 KB
 cooperative `OSThread` stack) lives in `SCRATCH_X`, not in this 176 KB region.
 
-#### Core 1 SRAM breakdown (312 KB)
+#### Core 1 SRAM breakdown (312 KB, measured 2026-04-27)
 
-| Segment              | Size    | Contents                                                     |
-|----------------------|---------|--------------------------------------------------------------|
-| Framebuffer          | 150 KB  | `uint16_t fb[240*320]` — LVGL direct-mode primary buffer     |
-| LVGL internal heap   | 48 KB   | `lv_mem` pool — widgets, styles, image cache                 |
-| FreeRTOS Heap4       | 32 KB   | `ucHeap[]` — all task stacks + TCBs + queues (see §4.2)      |
-| FreeRTOS kernel .bss | 8 KB    | task/timer list heads, scheduler state, critical nesting     |
-| HAL / driver state   | 12 KB   | I2C buffers, keypad scan buf, GPS NMEA parser                |
-| MIE runtime state    | 10 KB   | IME FSM, candidate ring, current syllable parser             |
-| App state            | 6 KB    | Message list cursors, LVGL obj pointers, power FSM           |
-| Main stack           | 8 KB    | `__StackBottom..__StackTop` — `main()` + ISR entry           |
-| Reserve / margin     | 38 KB   | unallocated; absorbs LVGL peak + message cache growth        |
+| Segment                  | Size      | Contents                                                              |
+|--------------------------|-----------|-----------------------------------------------------------------------|
+| `.framebuffer`           | 150 KB    | `s_framebuffer[240*320]` RGB565 — LVGL DIRECT mode primary buffer     |
+| `.bss` LVGL internal heap| 56 KB     | `work_mem_int.0` — `LV_MEM_SIZE` pool (widgets, styles, font cache)   |
+| `.bss` FreeRTOS Heap4    | 48 KB     | `ucHeap[]` — all task stacks + TCBs + queues (see §4.2)               |
+| `.bss` MIE / IME runtime | ~10 KB    | `g_ime_storage` (ImeLogic placement-new), TrieSearchers, char buffers |
+| `.bss` driver / kernel state | ~22 KB | I2C, keypad PIO, GPS NMEA, FreeRTOS list heads, TinyUSB CDC, drivers  |
+| `.data`                  | 12.5 KB   | Initialised globals (vtables, time-critical functions in RAM)         |
+| `.heap` (de facto MSP)   | ~17 KB    | Region between `__end__` and `__StackTop`; main stack + ISR frames    |
+| Reserve / margin         | ~ 0 KB    | None — `.bss` packs to within 12 B of MSP guard threshold             |
 
-Task stacks are **not** a separate segment — under `heap_4` every `xTaskCreate()` call
-allocates its stack out of `ucHeap`. Summing the per-task stacks in §4.2 plus ~2 KB of
-idle/timer task overhead plus TCBs + queues yields ~28 KB live in Heap4, leaving 4 KB
-headroom inside the 32 KB pool for burst queue growth.
+Notes:
 
-Target margin ≥ 10 % of 312 KB (31 KB); current 38 KB margin is **12.2 %**.
+- **PSRAM `.psram_bss` (offload region)** — 15 KB of bursty / snapshot
+  buffers (`run_search tmp`, `lru_tmp`, `s_text_buf`, `s_combined`,
+  `s_cand_buf`, `s_last_cell_text`) live at `0x11000000` (APS6404L 8 MB
+  via QMI M1) instead of SRAM. PSRAM is `WRITE-BACK` cached — anything
+  inspected over SWD MUST stay in `.bss`. See
+  `docs/design-notes/core1-memory-budget.md` §1.1.
+- **Main stack guard** — `memmap_core1_bridge.ld` has
+  `ASSERT(__StackTop - __end__ >= 0x800)`; build fails if `.bss` outgrows
+  the available MSP region. Runtime watermark in `g_msp_peak_used`
+  (peak measured = 488 B / ~17 KB available).
+- Task stacks are **not** a separate segment — `xTaskCreate()` allocates
+  out of `ucHeap`. ~41 KB of the 48 KB heap is live; ~7 KB free at
+  steady state (`g_core1_boot_heap_free`).
+- LVGL pool sits at **93 % utilisation** (47.5 KB / 50.8 KB usable from
+  the 56 KB `LV_MEM_SIZE`); not over-provisioned, no room to trim.
+
+Target margin ≥ 10 % of 312 KB (31 KB) — **not currently met in `.bss`**;
+the 256 KB PSRAM_BSS carve-out is the de facto growth pool.
 
 #### Shared IPC region (24 KB) — see §5
 

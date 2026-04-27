@@ -88,6 +88,7 @@
 #include "settings_client.h"
 #include "watchdog_task.h"
 #include "postmortem.h"
+#include "msp_canary.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -478,6 +479,13 @@ void vPortSetupTimerInterrupt(void)
 
 int main(void)
 {
+    /* MSP canary fill — must run before any deep call chain. The .heap
+     * region (~2 KB) sitting between .bss top and __StackTop has no
+     * other consumer in this image, so we paint it with 0xDEADBEEF and
+     * later scan to discover the historical MSP low-water mark. See
+     * docs/design-notes/core1-memory-budget.md §1 (MSP guard). */
+    msp_canary_init();
+
     /* Zero operational counters in the tail pad so SWD sees 0 before the
      * bridge task starts publishing real values. */
     dbg_u32(BRIDGE_RX_COUNT_ADDR,   0u);
@@ -563,6 +571,19 @@ int main(void)
      * failure here is logged but non-fatal (IME will panic later when
      * it tries to copy the dict blob). */
     (void)psram_init();
+
+    /* Zero the .psram_bss section. PSRAM is not part of crt0's
+     * __bss_start__/__bss_end__ range, so anything placed in PSRAM via
+     * `__attribute__((section(".psram_bss")))` retains whatever the
+     * APS6404L came up with after reset. We do it once here before any
+     * consumer can access it. Empty section is fine — start == end. */
+    {
+        extern uint32_t __psram_bss_start;
+        extern uint32_t __psram_bss_end;
+        uint32_t *p   = &__psram_bss_start;
+        uint32_t *end = &__psram_bss_end;
+        while (p < end) *p++ = 0u;
+    }
 
     /* Copy the MDBL dict blob from flash partition (0x10400000) to
      * PSRAM. Status in g_mie_dict_load_status; on failure s_mie_dict

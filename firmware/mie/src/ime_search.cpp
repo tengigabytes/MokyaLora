@@ -18,6 +18,17 @@
 #define MIE_TRACE_BARE(src, ev)      ((void)0)
 #endif
 
+// Linker section for large bursty buffers. On Core 1 builds we have a
+// dedicated PSRAM-backed BSS region (.psram_bss) at 0x11000000 — moving
+// these multi-KB statics off SRAM frees the MSP guard / FreeRTOS heap
+// reserve. PC tests don't have PSRAM, so the macro degrades to a no-op
+// and the buffers stay in regular .bss.
+#ifdef MOKYA_MIE_PERF_TRACE
+#define MIE_PSRAM_BSS __attribute__((section(".psram_bss")))
+#else
+#define MIE_PSRAM_BSS
+#endif
+
 namespace mie {
 
 // Top-level dispatcher: routes between v4 CompositionSearcher (when attached)
@@ -236,7 +247,7 @@ void ImeLogic::run_search_v4() {
         // p99 1.65 ms for a single search. That is < 0.5 % of the
         // 396 ms/char wall time, so a hash/sort dedup would deliver no
         // user-visible improvement — left as the simpler O(N×M) form.
-        static Candidate tmp[kMaxCandidates];
+        static Candidate tmp[kMaxCandidates] MIE_PSRAM_BSS;
         for (int k = 0; k < 4 && n < kMaxCandidates; ++k) {
             int t = adj[k];
             if (t < 1 || t > 4) continue;
@@ -322,7 +333,7 @@ void ImeLogic::prepend_lru_candidates() {
     // Stack buffer of kMaxCandidates would push ~3.6 KB onto the IME task
     // stack per call; run_search_v4 already uses a static tmp for the same
     // reason. Reuse that pattern.
-    static Candidate lru_tmp[kMaxCandidates];
+    static Candidate lru_tmp[kMaxCandidates] MIE_PSRAM_BSS;
     static uint8_t   lru_prefix[kMaxCandidates];
 
     int lru_n = lru_.lookup(

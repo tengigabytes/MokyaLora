@@ -6,6 +6,7 @@
 
 #include "ipc_shared_layout.h"
 #include "postmortem.h"
+#include "msp_canary.h"
 
 volatile uint32_t g_wd_state;
 
@@ -67,6 +68,12 @@ static void wd_task(void *pv)
             cnt = (cnt + 1) & WD_STATE_COUNT_MASK;
             g_wd_state = WD_STATE_KICK | cnt;
         }
+
+        /* Refresh MSP canary high-water every tick. Scan is bounded by
+         * 512 word loads, terminates at the first non-canary, no allocs,
+         * no printf — safe on this 192-word stack. Result lands in
+         * g_msp_peak_used / g_msp_low_water_addr for SWD readback. */
+        msp_canary_refresh();
 
         vTaskDelay(pdMS_TO_TICKS(WD_TICK_MS));
     }

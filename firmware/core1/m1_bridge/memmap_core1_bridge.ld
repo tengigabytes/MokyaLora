@@ -45,6 +45,17 @@ MEMORY
     FLASH      (rx) : ORIGIN = 0x10200000, LENGTH = 2048K
     RAM        (rwx): ORIGIN = 0x2002C000, LENGTH = 312K
     SHARED_IPC (rw) : ORIGIN = 0x2007A000, LENGTH = 24K
+    /* PSRAM (APS6404L 8 MB) lives behind QMI M1 at 0x11000000. The MIE
+     * dictionary loader writes the v4 blob starting at offset 0 (up to
+     * ~5 MB; see firmware/core1/src/ime/mie_dict_loader.c). We carve
+     * .psram_bss out of the LAST 1 MB (offset 0x700000 = 7 MB) to stay
+     * clear of both the live dict and any future growth into the slack
+     * between 5 MB and 7 MB. NOTE: PSRAM is NOT zero-initialised by
+     * crt0 — main() must zero this region manually after psram_init()
+     * AND mie_dict_load_to_psram() so the dict copy does not clobber
+     * a freshly-zeroed buffer (placement at 0x11700000 means dict and
+     * buffers no longer collide regardless of order). */
+    PSRAM_BSS  (rw) : ORIGIN = 0x11700000, LENGTH = 1024K
 }
 
 /* The SDK's _entry_point is the ELF entry; like the SDK default memmap we
@@ -237,6 +248,20 @@ SECTIONS
         __shared_ipc_end = .;
     } > SHARED_IPC
 
+    /* PSRAM-resident BSS. NOLOAD: the ELF carries no bytes for it.
+     * crt0 will NOT zero this region; main() must do it manually after
+     * psram_init(). Placement controlled per-symbol via:
+     *     __attribute__((section(".psram_bss")))
+     * Anything ending up here MUST tolerate ~3-5x slower access than
+     * SRAM and MUST NOT be touched during the flash safety wrap window
+     * (Core 1 is parked anyway). */
+    .psram_bss (NOLOAD) : ALIGN(8) {
+        __psram_bss_start = .;
+        *(.psram_bss .psram_bss.*)
+        . = ALIGN(8);
+        __psram_bss_end = .;
+    } > PSRAM_BSS
+
     /* Scratch X/Y regions live inside 0x20080000..0x20082000 and are owned by
      * Core 0. We don't place anything there, but the SDK crt0 data-copy table
      * references __scratch_[xy]_{source,start,end}__ unconditionally, so we
@@ -261,10 +286,18 @@ SECTIONS
     } > FLASH =0xaa
 
     /* Stack lives at the top of the 312 KB RAM carve. No core 1 stack region
-     * because there's only one core in this image. */
+     * because there's only one core in this image.
+     *
+     * MSP ("main stack") region in practice = the .heap slot between
+     * __end__ and __StackTop. There is NO physical separation between
+     * .heap and the MSP — the SDK uses .heap for picolibc's heap (we
+     * don't allocate from it) and the actual stack pointer grows down
+     * from __StackTop into the same bytes. As .bss grows, this region
+     * shrinks. We guard a 2 KB minimum below — measured peak MSP usage
+     * is ~488 B (msp_canary), so 2 KB leaves > 4× headroom. */
     __StackLimit = ORIGIN(RAM) + LENGTH(RAM);
     __StackTop   = ORIGIN(RAM) + LENGTH(RAM);
-    __StackBottom = __StackTop - 0x2000;  /* 8 KB reserved for main stack */
+    __StackBottom = __StackTop - 0x800;    /* 2 KB de facto, see comment above */
     __StackOneTop    = __StackTop;         /* unused in single-core build */
     __StackOneBottom = __StackTop;
     PROVIDE(__stack = __StackTop);
@@ -287,6 +320,15 @@ SECTIONS
     PROVIDE (__llvm_libc_heap_limit = __HeapLimit);
 
     ASSERT(__StackLimit >= __HeapLimit, "region RAM overflowed")
+
+    /* Hard guard: MSP region (the .heap slot) must be at least 2 KB.
+     * If .bss grows past this point the build fails — fix by trimming
+     * static buffers, or by relocating the FreeRTOS / LVGL heaps off
+     * .bss into a dedicated region. Do NOT silently raise __StackTop
+     * (it abuts Core 0's region at 0x20080000). */
+    ASSERT(__StackTop - __end__ >= 0x800,
+        "MSP guard < 2 KB: .bss outgrew the available main-stack region. \
+Trim large statics or relocate ucHeap/LVGL pool out of .bss.")
 
     /DISCARD/ : {
         /* Drop the bootrom IMAGE_DEF block — see header comment. */

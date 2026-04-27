@@ -90,6 +90,13 @@ typedef struct {
     int32_t  selected;                                  /* 12 */
     char     words[IME_CAND_FULL_MAX][IME_CAND_FULL_WLEN]; /* 16..2416 */
 } ime_cand_full_t;
+/* MUST stay in SRAM. PSRAM at 0x11000000 is WRITE-BACK cached; SWD
+ * memory accesses through the AHB-AP bypass the L1 cache and would
+ * see stale seq/words after a CPU write — breaking the seq-lock that
+ * scripts/ime_text_test.py relies on ("cand_full seq unstable").
+ * Could be moved if we either flush via xip_cache_clean_range after
+ * each write, or write via the uncached alias 0x15xxxxxx — both add
+ * complexity for a 2.4 KB save. Keeping in .bss is the simple call. */
 volatile ime_cand_full_t g_ime_cand_full __attribute__((used));
 
 /* ── Screen geometry (landscape 320×240) ─────────────────────────────── */
@@ -139,7 +146,10 @@ static uint32_t s_last_counter = (uint32_t)-1;
 #define CAND_MAX             40
 #define COMBINED_BUF_SZ   (TEXT_BUF_SZ + PENDING_BUF_SZ + 8)
 
-static char s_text_buf[TEXT_BUF_SZ + 1];
+/* PSRAM-resident: large UTF-8 snapshot + the concatenated render
+ * buffer. Both are written once per snapshot/render tick (~30 Hz max),
+ * read sequentially during render — cached PSRAM reads are fine. */
+static char s_text_buf[TEXT_BUF_SZ + 1] __attribute__((section(".psram_bss")));
 static int  s_text_len;
 static int  s_cursor_bytes;
 
@@ -147,12 +157,14 @@ static char s_pending_buf[PENDING_BUF_SZ + 1];
 
 static char s_mode_buf[16];
 
-static char s_cand_buf[CAND_MAX][CAND_BUF_SZ];
+/* PSRAM-resident: 40 × 48 B = 1.9 KB of candidate cell text strings,
+ * memcpy'd from the IME under lock and read out by LVGL render. */
+static char s_cand_buf[CAND_MAX][CAND_BUF_SZ] __attribute__((section(".psram_bss")));
 static int  s_cand_count;
 static int  s_cand_total;
 static int  s_selected;
 
-static char s_combined[COMBINED_BUF_SZ];
+static char s_combined[COMBINED_BUF_SZ] __attribute__((section(".psram_bss")));
 
 /* Cell layout coordinates — captured after lv_obj_update_layout() finishes
  * the flex-wrap pass so apply() can map DPAD Up/Down onto a visual row
@@ -172,7 +184,11 @@ static lv_obj_t *s_cand_lbls[CAND_MAX];
  * is the expensive part — glyph layout reruns). Selection bg/color is
  * always written every frame (see render_candidates comment). */
 static int  s_last_cand_count = -1;
-static char s_last_cell_text[CAND_MAX][CAND_BUF_SZ];
+/* PSRAM-resident dirty-tracking cache: compared against s_cand_buf
+ * once per render to skip unchanged cells. Pure compare/copy — fine
+ * in PSRAM. */
+static char s_last_cell_text[CAND_MAX][CAND_BUF_SZ]
+    __attribute__((section(".psram_bss")));
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
