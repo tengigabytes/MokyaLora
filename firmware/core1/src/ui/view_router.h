@@ -25,6 +25,10 @@
 
 #include "lvgl.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* Create one hidden panel per view under `screen` and initialise every
  * view. After this call, view 0 is visible and receives events. */
 void view_router_init(lv_obj_t *screen);
@@ -53,3 +57,7 @@ void view_router_modal_enter(int target_view,
                              view_router_modal_done_t on_done,
                              void *ctx);
 bool view_router_in_modal(void);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif

@@ -112,6 +112,65 @@ int         ime_view_picker_cols(void);
 const char *ime_view_picker_cell(int idx);
 int         ime_view_picker_selected(void);
 
+/* ── Generic text-input request (post-Stage 3, MIE reuse pattern) ────── *
+ *
+ * Lets any view ask the IME for a UTF-8 string without having to wire
+ * up its own modal borrow + callback + truncation. Internally:
+ *
+ *   1. Validates that no other request is in flight (one at a time).
+ *   2. Pre-fills g_text with `req->initial` (NULL = empty).
+ *   3. Stores the user callback + ctx + max_bytes in file-static state.
+ *   4. Calls view_router_modal_enter(IME view, trampoline) so FUNC press
+ *      finishes the borrow.
+ *   5. On modal exit, the trampoline reads g_text, UTF-8-safe-truncates
+ *      to max_bytes, invokes the user callback, clears the request
+ *      state, and clears g_text for the next request.
+ *
+ * `prompt`, `mode_hint`, and `flags` are accepted now but not yet
+ * honoured — they reserve the API surface for follow-up work
+ * (header label, initial mode, ASCII/NUMERIC/HEX restrictions). The
+ * truncation done before the callback fires is the only piece that's
+ * fully wired in this revision.
+ *
+ * Returns false if a request is already active or the IME isn't ready.
+ */
+typedef enum {
+    IME_TEXT_FLAG_NONE        = 0,
+    IME_TEXT_FLAG_ALLOW_EMPTY = (1u << 0),  /* commit empty string is OK */
+    IME_TEXT_FLAG_ASCII_ONLY  = (1u << 1),  /* hint only — not yet enforced */
+    IME_TEXT_FLAG_NUMERIC_ONLY= (1u << 2),  /* hint only */
+    IME_TEXT_FLAG_HEX_ONLY    = (1u << 3),  /* hint only */
+} ime_text_flags_t;
+
+typedef enum {
+    IME_TEXT_MODE_DEFAULT  = 0,             /* keep whatever mode IME is in */
+    IME_TEXT_MODE_SMART_ZH = 1,
+    IME_TEXT_MODE_SMART_EN = 2,
+    IME_TEXT_MODE_DIRECT   = 3,
+} ime_text_mode_hint_t;
+
+typedef struct {
+    const char *prompt;       /* TODO: header label, ignored for now */
+    const char *initial;      /* pre-fill text (NULL = empty)        */
+    uint16_t    max_bytes;    /* UTF-8-safe truncate before callback */
+    uint8_t     mode_hint;    /* TODO: ime_text_mode_hint_t, ignored */
+    uint8_t     flags;        /* ime_text_flags_t bitmask            */
+} ime_text_request_t;
+
+typedef void (*ime_text_done_fn)(bool        committed,
+                                 const char *utf8,
+                                 uint16_t    byte_len,
+                                 void       *ctx);
+
+bool ime_request_text(const ime_text_request_t *req,
+                      ime_text_done_fn          done,
+                      void                     *ctx);
+
+/* True if a request is currently in flight (between ime_request_text and
+ * its callback). Diagnostic; settings_view's modal flow reads this to
+ * detect re-entry before pushing a new request. */
+bool ime_request_text_active(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

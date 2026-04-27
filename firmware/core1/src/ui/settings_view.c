@@ -11,13 +11,7 @@
 #include "mie/keycode.h"
 #include "settings_client.h"
 #include "settings_keys.h"
-#include "view_router.h"
 #include "ime_task.h"
-
-/* Index of the IME view in view_router's table. Must match the
- * init order in view_router.c (keypad=0, rf=1, font_test=2, ime=3,
- * messages=4, nodes=5, settings=6). */
-#define VIEW_INDEX_IME  3
 
 /* Layout (landscape 320×240):
  *   y   0 .. 23   header  — "[Group X/Y] group_name [pending: N]"
@@ -43,11 +37,12 @@ static lv_obj_t *s_footer;
  * dirty = caller pressed OK in edit mode; pending until next Apply.
  * The Apply success clears dirty for all keys in the group.
  */
-#define KEY_CACHE_MAX  14u  /* equals settings_keys_total_count() — keep in sync */
+#define KEY_CACHE_MAX  15u  /* must equal settings_keys_total_count() — runtime-checked at first refresh */
 /* Per-key cached value buffer. Owner long_name (39 B) is stored
- * truncated to keep BSS tight; Stage 3 string editing won't go through
- * this cache — IME view will own the buffer. */
-#define VAL_BUF_MAX    16u
+ * truncated; full bytes flow through ime_request_text without
+ * touching this cache. 12 B keeps total BSS bounded while still
+ * showing the leading 3-4 CJK characters or 12 ASCII chars. */
+#define VAL_BUF_MAX    12u
 
 typedef struct {
     bool      have_value;
@@ -78,17 +73,12 @@ static uint8_t  s_edit_buf[VAL_BUF_MAX];
 static uint16_t s_edit_len;
 static uint16_t s_edit_key;       /* IPC_CFG_* of the key being edited */
 
-static char s_footer_msg[48];     /* sticky footer override (msg ≤ ~40 chars) */
+static char s_footer_msg[40];     /* sticky footer override (msg ≤ ~36 chars) */
 
-/* Stage 3 string-edit state. While the modal IME borrow is active,
- * s_pending_str_key holds the IPC_CFG_* of the key the user is
- * editing so the callback can route the typed string back into our
- * cache and emit IPC_CMD_SET_CONFIG. Cleared on every callback. */
-static uint16_t s_pending_str_key;
-
-/* Forward decls for the STR edit modal callback (defined near
+/* Forward decl for the ime_request_text callback (defined near
  * confirm_edit; referenced earlier from enter_edit_for_row). */
-static void str_edit_done(bool committed, void *ctx);
+static void str_edit_done(bool committed, const char *utf8,
+                          uint16_t byte_len, void *ctx);
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
@@ -392,15 +382,35 @@ static void enter_edit_for_row(uint8_t row)
 
     s_edit_key = defs[row].ipc_key;
 
-    /* Strings skip the numeric edit overlay entirely — hand straight off
-     * to the IME view via a modal borrow (Stage 3). */
+    /* Strings skip the numeric edit overlay entirely — hand off to the
+     * generic ime_request_text helper (post-Stage 3 MIE-reuse pattern,
+     * supersedes the bespoke modal_enter call site). The current cached
+     * value (if any) seeds the IME so the user can edit-in-place. */
     if (defs[row].kind == SK_KIND_STR) {
-        s_pending_str_key = s_edit_key;
-        ime_view_clear_text();
+        char initial[VAL_BUF_MAX + 1];
+        const char *prefill = NULL;
+        if (s_cache[gidx].have_value && s_cache[gidx].value_len > 0) {
+            uint8_t n = s_cache[gidx].value_len;
+            if (n > VAL_BUF_MAX) n = VAL_BUF_MAX;
+            memcpy(initial, s_cache[gidx].value, n);
+            initial[n] = '\0';
+            prefill = initial;
+        }
+        ime_text_request_t req = {
+            .prompt    = defs[row].label,
+            .initial   = prefill,
+            .max_bytes = (uint16_t)defs[row].max,
+            .mode_hint = IME_TEXT_MODE_DEFAULT,
+            .flags     = IME_TEXT_FLAG_NONE,
+        };
         snprintf(s_footer_msg, sizeof(s_footer_msg),
                  "type %s, FUNC = done", defs[row].label);
         s_render_seq++;
-        view_router_modal_enter(VIEW_INDEX_IME, str_edit_done, NULL);
+        if (!ime_request_text(&req, str_edit_done,
+                              (void *)(uintptr_t)defs[row].ipc_key)) {
+            snprintf(s_footer_msg, sizeof(s_footer_msg),
+                     "ime busy — try again");
+        }
         return;
     }
 
@@ -416,63 +426,43 @@ static void enter_edit_for_row(uint8_t row)
     s_render_seq++;
 }
 
-/* UTF-8 safe truncation: walk back from `max_bytes` until we land on
- * a code-point boundary (any byte whose top two bits are NOT 10b).
- * Returns the largest length ≤ max_bytes that ends on a clean boundary. */
-static int utf8_truncate_to(const char *s, int len, int max_bytes)
+/* Caller-side truncate-to-cache helper. ime_request_text already
+ * truncated the SET payload to the key's max_bytes on a UTF-8
+ * boundary; we further trim to VAL_BUF_MAX for the browse-list cache
+ * (the cache is display-only — long_name displays as a prefix, the
+ * full bytes still went out via the SET payload). */
+static int utf8_truncate_cache(const char *s, int len)
 {
-    if (len <= max_bytes) return len;
-    int i = max_bytes;
+    if (len <= (int)VAL_BUF_MAX) return len;
+    int i = (int)VAL_BUF_MAX;
     while (i > 0 && (((unsigned char)s[i]) & 0xC0u) == 0x80u) i--;
     return i;
 }
 
-static void str_edit_done(bool committed, void *ctx)
+/* ime_request_text done callback. Receives the UTF-8 string already
+ * truncated to the key's max_bytes; we just route it into the cache
+ * + IPC SET. The IPC_CFG_* key is passed via the user ctx (encoded
+ * as intptr_t to avoid an out-of-band file-static). */
+static void str_edit_done(bool committed, const char *utf8,
+                          uint16_t byte_len, void *ctx)
 {
-    (void)ctx;
-    uint16_t key = s_pending_str_key;
-    s_pending_str_key = 0;
-    if (!committed || key == 0) {
-        ime_view_clear_text();
-        s_render_seq++;
-        return;
-    }
-
-    const settings_key_def_t *d = settings_key_find(key);
-    if (!d) { ime_view_clear_text(); s_render_seq++; return; }
-
-    int byte_len = 0;
-    const char *t = ime_view_text(&byte_len, NULL);
-    if (t == NULL || byte_len <= 0) {
+    uint16_t key = (uint16_t)(uintptr_t)ctx;
+    if (!committed || key == 0) { s_render_seq++; return; }
+    if (utf8 == NULL || byte_len == 0) {
         snprintf(s_footer_msg, sizeof(s_footer_msg),
                  "(empty — not committed)");
-        ime_view_clear_text();
         s_render_seq++;
         return;
     }
-
-    /* Truncate to the key's max byte length on a UTF-8 boundary. */
-    int send_len = utf8_truncate_to(t, byte_len, (int)d->max);
-    if (send_len <= 0) {
-        ime_view_clear_text();
-        s_render_seq++;
-        return;
-    }
-
-    /* Cache for display (truncated again to VAL_BUF_MAX on a UTF-8
-     * boundary; the cache is just for the browse list, the SET payload
-     * carries the full send_len bytes). */
     int gidx = find_key_index(key);
     if (gidx >= 0) {
-        int cache_len = utf8_truncate_to(t, send_len, (int)VAL_BUF_MAX);
+        int cache_len = utf8_truncate_cache(utf8, (int)byte_len);
         s_cache[gidx].value_len  = (uint8_t)cache_len;
-        memcpy(s_cache[gidx].value, t, cache_len);
+        memcpy(s_cache[gidx].value, utf8, cache_len);
         s_cache[gidx].have_value = true;
         s_cache[gidx].dirty      = true;
     }
-
-    (void)settings_client_send_set(key, t, (uint16_t)send_len);
-    ime_view_clear_text();
+    (void)settings_client_send_set(key, utf8, byte_len);
     s_render_seq++;
 }
 
@@ -480,20 +470,8 @@ static void confirm_edit(void)
 {
     const settings_key_def_t *d = settings_key_find(s_edit_key);
     if (!d) { s_mode = UI_BROWSE; return; }
-    if (d->kind == SK_KIND_STR) {
-        /* Hand off to the IME view via a modal borrow. The user types
-         * the string with the normal IME, then presses FUNC to "done";
-         * view_router invokes str_edit_done() which routes the typed
-         * UTF-8 into s_cache + IPC_CMD_SET_CONFIG. */
-        s_pending_str_key = s_edit_key;
-        ime_view_clear_text();
-        snprintf(s_footer_msg, sizeof(s_footer_msg),
-                 "type %s, FUNC = done", d->label);
-        s_mode = UI_BROWSE;
-        s_render_seq++;
-        view_router_modal_enter(VIEW_INDEX_IME, str_edit_done, NULL);
-        return;
-    }
+    /* SK_KIND_STR can't reach here — enter_edit_for_row short-circuits
+     * strings into ime_request_text without entering UI_EDIT mode. */
 
     int gidx = find_key_index(s_edit_key);
     if (gidx < 0) { s_mode = UI_BROWSE; return; }

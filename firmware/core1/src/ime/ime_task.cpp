@@ -16,6 +16,7 @@
 #include "ime_task.h"
 #include "lru_persist.h"
 #include "mokya_trace.h"
+#include "view_router.h"
 
 #include <cstring>
 #include <new>
@@ -478,6 +479,118 @@ const char *ime_view_picker_cell(int idx) {
 }
 int ime_view_picker_selected(void) {
     return g_ime ? g_ime->picker_selected() : 0;
+}
+
+/* ── Generic text-input request (post-Stage 3) ──────────────────────── *
+ *
+ * One request in flight at a time; rejected with `false` if re-entered.
+ * IME view index in the view_router table is fixed at 3 (matches
+ * view_router.c init order — cross-checked by settings_view).
+ */
+
+#define IME_REQUEST_VIEW_INDEX  3
+
+struct text_request_state_t {
+    bool             active;
+    uint16_t         max_bytes;
+    uint8_t          flags;
+    ime_text_done_fn done;
+    void            *ctx;
+};
+static text_request_state_t s_text_req = {false, 0, 0, nullptr, nullptr};
+
+/* Walk back from `max_bytes` until we land on a UTF-8 codepoint
+ * boundary (any byte whose top two bits are NOT 10b). Returns the
+ * largest length ≤ min(len, max_bytes) that ends cleanly. */
+static int utf8_truncate_clean(const char *s, int len, int max_bytes)
+{
+    if (len <= max_bytes) return len;
+    int i = max_bytes;
+    while (i > 0 && (((unsigned char)s[i]) & 0xC0u) == 0x80u) i--;
+    return i;
+}
+
+static void seed_text_unsafe(const char *utf8, int byte_len)
+{
+    /* Caller must hold g_snapshot_mutex. */
+    if (byte_len < 0) byte_len = 0;
+    if (byte_len > (int)kTextCapacity) byte_len = (int)kTextCapacity;
+    if (byte_len > 0 && utf8 != NULL) {
+        std::memcpy(g_text, utf8, (size_t)byte_len);
+    }
+    g_text_len = byte_len;
+    g_cursor   = byte_len;
+    g_text[g_text_len] = '\0';
+}
+
+static void modal_trampoline(bool committed, void *ctx)
+{
+    (void)ctx;   /* user ctx is in s_text_req.ctx, not this */
+    if (!s_text_req.active) return;
+
+    /* Snapshot user state then clear the slot so the callback can
+     * legitimately call ime_request_text again (one-shot chain). */
+    ime_text_done_fn done       = s_text_req.done;
+    void            *user_ctx   = s_text_req.ctx;
+    uint16_t         max_bytes  = s_text_req.max_bytes;
+    s_text_req.active = false;
+    s_text_req.done   = nullptr;
+    s_text_req.ctx    = nullptr;
+
+    int len = g_text_len;
+    if (max_bytes > 0 && len > (int)max_bytes) {
+        len = utf8_truncate_clean(g_text, len, (int)max_bytes);
+    }
+
+    if (done) done(committed, g_text, (uint16_t)(len < 0 ? 0 : len), user_ctx);
+
+    /* Always clear so the next request starts fresh; mirrors the
+     * historical messages_send + Stage 3 behaviour. Acquires the
+     * mutex via the public helper. */
+    ime_view_clear_text();
+}
+
+bool ime_request_text_active(void)
+{
+    return s_text_req.active;
+}
+
+bool ime_request_text(const ime_text_request_t *req,
+                     ime_text_done_fn          done,
+                     void                     *ctx)
+{
+    if (req == nullptr || done == nullptr)        return false;
+    if (s_text_req.active)                        return false;
+    if (g_snapshot_mutex == nullptr)              return false;
+
+    /* Pre-fill g_text under the mutex. ime_view_clear_text takes the
+     * mutex itself, so we don't call it here; instead seed_text_unsafe
+     * runs inside our own lock. */
+    if (xSemaphoreTake(g_snapshot_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return false;
+    }
+    int initial_len = 0;
+    if (req->initial != nullptr) {
+        initial_len = (int)std::strlen(req->initial);
+        if (req->max_bytes > 0 && initial_len > (int)req->max_bytes) {
+            initial_len = utf8_truncate_clean(req->initial, initial_len,
+                                              (int)req->max_bytes);
+        }
+    }
+    seed_text_unsafe(req->initial, initial_len);
+    xSemaphoreGive(g_snapshot_mutex);
+    /* Bump the dirty counter so the IME view's gated refresh repaints
+     * the seeded prefill on first entry. */
+    __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
+
+    s_text_req.max_bytes = req->max_bytes;
+    s_text_req.flags     = req->flags;
+    s_text_req.done      = done;
+    s_text_req.ctx       = ctx;
+    s_text_req.active    = true;
+
+    view_router_modal_enter(IME_REQUEST_VIEW_INDEX, modal_trampoline, nullptr);
+    return true;
 }
 
 } // extern "C"
