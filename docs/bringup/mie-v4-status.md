@@ -258,18 +258,25 @@ Hardware checks (SWD):
   without HardFault on either core.
 
 Hardware regression — `scripts/test_lru_regression.py` across the
-six reference passages (erased partition, full passages, cold → warm
-within one boot session; user1 also validated `--reboot` round-trip):
+reference passages (erased partition, full passages, cold → warm
+within one boot session; user1 also validated `--reboot` round-trip).
+Two passes are reported: cold (Pass 1, post-erase) and warm (Pass 2
+on the same passage in the same boot). 2026-04-27 re-run on the
+**rewritten fictional content** with **kCap = 128** (Phase 1.6.1).
 
-| Passage  | Chars | Pass 1 rank-0 | Pass 2 rank-0 | Δrank-0 | Accept |
-|----------|-------|---------------|---------------|---------|--------|
-| user1-30 |  24   |  5  (21 %)    | 23  (96 %)    | **+18** | PASS   |
-| user1    | 217   | 110 (51 %)    | 122 (56 %)    |  +12    | PASS   |
-| user2    | 258   | 134 (52 %)    | 135 (52 %)    |   +1    | FAIL*  |
-| user3    | 264   | 138 (52 %)    | 140 (53 %)    |   +2    | PASS   |
-| user4    | 252   | 109 (43 %)    | 112 (44 %)    |   +3    | FAIL*  |
-| user5    | 182   |  58 (32 %)    |  58 (32 %)    |   0     | FAIL*  |
-| echeneis |  77   |  46 (60 %)    |  69 (90 %)    | **+23** | PASS   |
+| Passage     | Chars | Pass 1 rank-0 | Pass 2 rank-0 | Δrank-0 | Δrank≥8 | Commit | Accept |
+|-------------|-------|---------------|---------------|---------|---------|--------|--------|
+| user1-30 †  |  24   |  5  (21 %)    | 23  (96 %)    | **+18** | n/a     | 100 %  | PASS   |
+| user1 †     | 217   | 110 (51 %)    | 122 (56 %)    |  +12    | n/a     | 100 %  | PASS   |
+| user2       | 218   | 109 (50.0 %)  | 118 (54.1 %)  |  +9     |  -3     | 100 %  | FAIL*  |
+| user3       | 246+48| 132 (53.7 %)  | 138 (56.1 %)  |  +6     |  -4     | 100 %  | FAIL*  |
+| user4       | 259   | 141 (54.4 %)  | 146 (56.4 %)  |  +5     |  -1     | 100 %  | FAIL*  |
+| user5       | 162   |  68 (42.0 %)  | 115 (71.0 %)  | **+47** | -25     | 100 %  | PASS   |
+| lazy_friday | 327   | 181 (55.4 %)  | 184 (56.3 %)  |  +3     |  -2     | 100 %  | FAIL*  |
+| echeneis †  |  77   |  46 (60 %)    | 69  (90 %)    | **+23** | n/a     | 100 %  | PASS   |
+
+†2026-04-22 numbers, content unchanged on disk so kCap = 128 is
+expected to be at least as strong; not re-captured this round.
 
 *FAIL = script's three-part acceptance (rank≤3 must not regress; ≥10
 chars must promote out of rank≥8 tail) not met — not a crash or
@@ -280,13 +287,58 @@ Pass 1 rank-0 = 5 → Pass 2 rank-0 = 23, delta +18. Flash `LRU1` magic
 survives the SYSRESETREQ and Core 1 relaunch, cache re-hydrates
 without any warm pass since power-on.
 
-Shape of the data: the LRU materially moves the needle on short /
-repetitive passages (user1-30, echeneis — +18 / +23 rank-0) but
-flattens out on the 200+ char passages. Almost certainly a **64-entry
-LRU cap vs passage size** ceiling — by the time Pass 2 starts,
-early-passage chars have been evicted in Pass 1's own tail. Future
-P1.6.1 could raise kCap, add frequency weighting, or spill eviction
-to a second-chance tier. Out of scope for the initial P1.6 land.
+#### 2026-04-27 single-pass dual-mode snapshot (`--precise-hints` vs default HINT_ANY)
+
+Hardware re-run on the rewritten fictional passages. `--precise-hints`
+forces every Bopomofo press to use the dict-encoded long-press
+position (engine-internal regression mode — tighter candidate filter,
+higher rank-0, but reports false MISSes against the real-UX path).
+Default HINT_ANY short-taps every byte and matches what a user types
+on the half-keyboard. Trade-off: precise-hints is the right yardstick
+for engine-side ranking changes; HINT_ANY is the right yardstick for
+end-user UX. Pass = `ime_text_test.py PASSAGE` warm-LRU baseline.
+
+| Passage     | Chars (CJK + ASCII) | Mode      | rank-0 | top-8 | commit |
+|-------------|---------------------|-----------|--------|-------|--------|
+| user2       | 218                 | precise   | 68.8 % | 97.2 %| 100 %  |
+| user3       | 246 + 48            | precise   | 70.3 % | 97.2 %| 99.2 % |
+| user4       | 259                 | precise   | 69.9 % | 96.9 %| 98.8 % |
+| user5       | 162                 | precise   | 51.9 % | 92.0 %| 98.8 % |
+| user5       | 162                 | HINT_ANY† | 71.0 % | 100 % | 100 %  |
+| t9_stress   | 69 + 519            | precise   | 71.0 % | 100 % | 100 %  |
+| lazy_friday | 327                 | HINT_ANY  | 56.9 % | 94.2 %| 100 %  |
+
+†`user5` HINT_ANY captured *after* the dict-regen change that flipped
+the default from `--precise-hints` to HINT_ANY (Open Follow-ups #17 /
+2026-04-26 dict rebuild) on a warm LRU — same passage where precise
+mode reports the lowest rank-0 of the set. The 51.9 % → 71.0 % gap
+is the canonical illustration that the precise-hints filter under-
+counts user-reachable candidates whenever the dict's encoded long-
+press position differs from what the user actually presses; it does
+**not** mean the engine got better between runs.
+
+`lazy_friday` was flagged as a picker rank-7 commit cascade in an
+earlier draft of this table; the failure does not reproduce on
+2026-04-27 (327/327 commit ✓ across one warm and one cold/warm
+two-pass run). Bullet retired in `phase2-log.md` Open Follow-ups.
+
+Shape of the data (post-Phase 1.6.1, kCap = 128): user5 jumps from
++0 (kCap = 64 baseline) to **+47** rank-0 — the canonical "kCap was
+the bottleneck" passage. user2 / user3 / user4 lift from +1 / +2 / +3
+to +9 / +6 / +5 — modest but no longer flat. lazy_friday remains the
+hardest case (+3 rank-0 lift on 327 chars), consistent with the long-
+passage profile that Phase 1.6.1's plan flagged as still bound by
+recency. Short / repetitive passages (user1-30, echeneis) keep their
+strong +18 / +23 lift. Every passage now lands 100 % commit on both
+passes, and rank≤3 never regresses across cold→warm.
+
+The lingering FAIL* flags are entirely the script's "≥10 chars
+promoted out of the rank≥8 tail" gate, not commit or rank≤3
+regressions; for user2..4 the cold-pass tail is only 12–21 chars to
+begin with, so a tail of 10–18 after warming caps the achievable
+promotion well below 10 even when the cache is doing useful work.
+Consider relaxing the gate, or making it scale with the cold-pass
+tail size, in a future test-tooling pass.
 
 Follow-up work (2026-04-23 / 24):
 - `--reboot` round-trip fix: `force_lru_save()` was resetting

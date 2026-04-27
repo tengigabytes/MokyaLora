@@ -2277,39 +2277,38 @@ above (with date) and be deleted from this list.
 
 ### IME quality / measurement
 
-- **lazy_friday picker rank-7 commit miscommit.** `scripts/ime_passage_lazy_friday.txt`
-  char 15 expected `'開'` at rank 7; picker injected SYM1×7 + OK but
-  commit landed on `'放'`. Cascades into commit-fail for the rest of
-  the passage (327 CJK / 100 % committed otherwise). Hypotheses:
-  (a) SYM1 debounce eating one keypress, (b) candidate list shifted
-  between rank-detection and scroll, (c) rank → key mapping off-by-
-  one. Investigate via RTT trace of the picker scroll + observe
-  candidate index in IME state during the failure.
-- **Refresh Phase 1.6 regression table** in
-  [`mie-v4-status.md`](./mie-v4-status.md). Lines 264-272 still show
-  numbers captured against the pre-rewrite passage content. Capture
-  both `--precise-hints` (engine-internal regression) and default
-  HINT_ANY (real-UX) columns; document the trade-off. Hardware run
-  2026-04-27: user2 218 CJK 68.8 % rank-0 / 97.2 % top-8 / 100 %
-  commit (precise); user3 246+48 ASCII 70.3 / 97.2 / 99.2; user4 259
-  69.9 / 96.9 / 98.8; user5 162 51.9 / 92.0 / 98.8 (precise) → 71.0
-  / 100 / 100 (default after #17, warm LRU); t9_stress 69 CJK + 519
-  ASCII 71.0 / 100 / 100; lazy_friday 327 blocked by picker bug
-  above.
-- **Re-run two-pass LRU regression** on the new fictional passages
-  (`scripts/test_lru_regression.py --erase`). Earlier blocked by
-  the warm-detect HardFault that stripped Core 1 launch — fixed in
-  submodule `14dd31554`. Goal: verify Phase 1.6.1 kCap = 128 still
-  delivers measurable cold→warm rank-0 lift on user2..5.
+- ~~**lazy_friday picker rank-7 commit miscommit.**~~ **No-repro on
+  2026-04-27** — three consecutive runs against
+  `scripts/ime_passage_lazy_friday.txt` (warm, then `--erase` cold
+  Pass 1, then warm Pass 2) all reported 327/327 CJK commit ✓ 100 %,
+  including every rank-7 hit. Picker bullet retired; if the cascade
+  recurs, file a fresh entry with the exact LRU state and dict
+  blob hash so the trigger is locatable.
+- ~~**Refresh Phase 1.6 regression table** in `mie-v4-status.md`.~~
+  **Done 2026-04-27.** New "single-pass dual-mode snapshot" table
+  added below the original two-pass table, capturing `--precise-hints`
+  vs default HINT_ANY for user2..5 / t9_stress / lazy_friday with the
+  rewritten fictional content. Two-pass numbers themselves still
+  reflect pre-rewrite content — refresh as part of #11.
+- ~~**Re-run two-pass LRU regression** on the new fictional passages.~~
+  **Done 2026-04-27.** kCap = 128 delivers measurable cold→warm
+  rank-0 lift across user2..5 (+9 / +6 / +5 / **+47**) and lazy_friday
+  (+3). user5 in particular jumps from kCap = 64 baseline +0 to +47.
+  All passages 100 % commit on both passes. Refreshed table in
+  `mie-v4-status.md`. Lingering FAIL* flags are the script's
+  rank≥8-promotion gate misfiring on small tails — see the analysis
+  paragraph below the table.
 
 ### Phase 2 plumbing
 
-- **Verify RTT key-inject `--transport rtt`** end-to-end. Original
-  user concern (see "B2 — IPC config soft-reload" entry) was that
-  SWD/RTT shared bandwidth was conflicting; root cause turned out
-  to be the warm-detect bug, so the RTT path may already work.
-  Just needs confirmation: ime_text_test.py with `--transport rtt`
-  on a representative passage with no inject timeouts.
+- ~~**Verify RTT key-inject `--transport rtt`** end-to-end.~~
+  **Done 2026-04-27.** `ime_text_test.py scripts/ime_passage_user2.txt
+  --transport rtt` ran 218/218 commit ✓ 100 % with zero `rtt inject
+  timeout` errors at 420 ms/char (faster than the SWD pass at 458
+  ms/char on the same content cold). RTT transport is wired end-to-
+  end: rtt_send_frame → ring drain → key_inject_rtt task →
+  key_event_push_inject_flags → ime_task. SWD/RTT contention was a
+  red herring; root cause was the warm-detect HardFault as suspected.
 
 ### B2 IPC config follow-ups
 
