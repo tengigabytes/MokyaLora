@@ -37,8 +37,9 @@ JLINK  = r"C:/Program Files/SEGGER/JLink_V932/JLink.exe"
 ARM_NM = (r"C:/Program Files/Arm/GNU Toolchain mingw-w64-x86_64-arm-none-eabi/"
           r"bin/arm-none-eabi-nm.exe")
 
-RING_SIZE     = 64
-KEYI_MAGIC    = 0x4B454949
+RING_EVENTS   = 32              # V2: 32 slots × 2 bytes per event = 64 byte ring
+EVENT_SIZE    = 2
+KEYI_MAGIC    = 0x4B45494A      # "KEYJ" — V2 2-byte event format
 IME_DBG_ADDR  = 0x2007FE00
 IME_DBG_MAGIC = 0xEEED0003
 IME_DBG_SIZE  = 0x190
@@ -62,9 +63,10 @@ IME_OFF_PENDING_BUF   = 0x164
 IME_OFF_PENDING_BUF_LEN = 32
 IME_OFF_MODE          = 0x184
 
-# View names → s_active value (matches view_router.c init order)
-VIEW_NAMES = {'keypad': 0, 'rf': 1, 'font': 2, 'ime': 3}
-VIEW_COUNT = 4
+# View names → s_view_router_active value (matches view_router.c init order)
+VIEW_NAMES = {'keypad': 0, 'rf': 1, 'font': 2, 'ime': 3,
+              'messages': 4, 'nodes': 5, 'settings': 6}
+VIEW_COUNT = 7
 
 KEYCODE_HDR = "firmware/mie/include/mie/keycode.h"
 
@@ -161,7 +163,13 @@ def buf_addrs(elf):
     _cached['inject_pushed']   = base + 12
     _cached['inject_rejected'] = base + 16
     _cached['inject_events']   = base + 20
-    _cached['s_active']        = nm_symbol(elf, 's_active')
+    # view_router renamed s_active → s_view_router_active to disambiguate
+    # from i2c_bus.c's identically-named static. Prefer the new symbol;
+    # fall back for older builds.
+    try:
+        _cached['s_active']    = nm_symbol(elf, 's_view_router_active')
+    except RuntimeError:
+        _cached['s_active']    = nm_symbol(elf, 's_active')
     return _cached
 
 # ── Inject + state ──────────────────────────────────────────────────────
@@ -174,28 +182,39 @@ def check_inject_alive(device, elf):
             f"key_inject_buf magic = 0x{magic:08X} ≠ expected 0x{KEYI_MAGIC:08X}; "
             f"flash latest firmware")
 
-def queue_events(device, elf, byte_list, batch_size=16):
+def queue_events(device, elf, event_list, batch_size=8):
+    """V2 wire format: each event is a (key_byte, flags_byte) tuple.
+    producer_idx counts events, slot = producer % RING_EVENTS, each slot
+    occupies EVENT_SIZE bytes starting at events[]. Drain after each
+    batch so a long sequence cannot wrap inside the ring."""
     a = buf_addrs(elf)
     producer = read_u32(device, a['inject_producer'])
     cmds = []
-    for byte in byte_list:
-        slot = producer % RING_SIZE
-        cmds.append(f'w1 0x{a["inject_events"] + slot:08X} 0x{byte:02X}')
+    pending = 0
+    for (kb, fb) in event_list:
+        slot = producer % RING_EVENTS
+        base = a['inject_events'] + slot * EVENT_SIZE
+        cmds.append(f'w1 0x{base:08X} 0x{kb & 0xFF:02X}')
+        cmds.append(f'w1 0x{base + 1:08X} 0x{fb & 0xFF:02X}')
         producer += 1
-        if len(cmds) >= batch_size:
+        pending += 1
+        if pending >= batch_size:
             cmds.append(f'w4 0x{a["inject_producer"]:08X} 0x{producer:08X}')
             write_batch(device, cmds)
             cmds = []
-            # Wait for the polling task (10 ms cadence) to drain the ring.
+            pending = 0
             time.sleep(0.05)
             producer = read_u32(device, a['inject_producer'])
     if cmds:
         cmds.append(f'w4 0x{a["inject_producer"]:08X} 0x{producer:08X}')
         write_batch(device, cmds)
 
-def press(kc):     return [0x80 | (kc & 0x7F), 0x00 | (kc & 0x7F)]
-def press_only(kc): return [0x80 | (kc & 0x7F)]
-def release_only(kc): return [0x00 | (kc & 0x7F)]
+def press(kc):
+    return [(0x80 | (kc & 0x7F), 0), (0x00 | (kc & 0x7F), 0)]
+def press_only(kc):
+    return [(0x80 | (kc & 0x7F), 0)]
+def release_only(kc):
+    return [(0x00 | (kc & 0x7F), 0)]
 
 def inject_keys(device, elf, kc_list, hold_ms=30, gap_ms=20):
     """For each keycode, send press then release with small delays."""

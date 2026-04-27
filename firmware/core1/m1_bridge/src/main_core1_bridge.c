@@ -85,6 +85,7 @@
 #include "messages_inbox.h"
 #include "messages_tx_status.h"
 #include "nodes_db.h"
+#include "settings_client.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -294,6 +295,15 @@ static void bridge_task(void *pv)
                                            a->result,
                                            a->error_reason,
                                            a->packet_id);
+                did_work = true;
+                continue;
+            }
+
+            if (hdr.msg_id == IPC_MSG_CONFIG_VALUE ||
+                hdr.msg_id == IPC_MSG_CONFIG_RESULT) {
+                settings_client_dispatch_reply(hdr.msg_id,
+                                               scratch,
+                                               hdr.payload_len);
                 did_work = true;
                 continue;
             }
@@ -597,6 +607,10 @@ int main(void)
      * key is held) finds the queue ready. Producer/consumer are both
      * future tasks; only the scan task enqueues in Phase B. */
     key_event_init();
+
+    /* Settings reply queue — created before bridge_task starts dispatching
+     * IPC_MSG_CONFIG_VALUE / IPC_MSG_CONFIG_RESULT into it. */
+    settings_client_init();
 
     /* Keypad scan task — MUST run at the same priority as usb / bridge / lvgl.
      * usb_device_task is a `tud_task(); taskYIELD();` loop with no blocking

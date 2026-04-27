@@ -104,7 +104,8 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 | Timer queue (10 × ~12 B) | `timers.c` | ~120 B | ~80 B | ~200 B |
 | TCBs (9 tasks × ~88 B) | `tasks.c` | — | — | ~792 B |
 | Heap_4 per-alloc overhead | `heap_4.c` | — | ~16 B × ~15 blocks | ~240 B |
-| **Misc subtotal** | | | | **~1.6 KB** |
+| `settings reply queue` (8 × ~70 B) | `src/settings/settings_client.c` | ~560 B | ~80 B | ~640 B |
+| **Misc subtotal** | | | | **~2.2 KB** |
 
 ### 3.4 Totals
 
@@ -116,6 +117,14 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 | **Estimated** | **~34.4 KB** | **~38.8 KB** | **~40.9 KB** |
 | `configTOTAL_HEAP_SIZE` | 49,152 | 49,152 | 49,152 |
 | **Reserve (threshold 15 %)** | **~14.7 KB (30 %)** ✓ | **~10.5 KB (21 %)** ✓ | **~8.2 KB (17 %)** ✓ |
+
+**Measured 2026-04-27 post B2 Stage 2 settings UI (SWD, `g_core1_boot_heap_free`)**:
+`xFreeBytesRemaining = 8,160 B (16.6 %)` — 0.8 KB above the 15 %
+panic threshold. Stage 2 added the `settings_client` reply queue
+(8 × ~70 B from heap_4) and a ~700 B BSS cache in `settings_view`;
+the BSS hit pushed RAM overflow at link-time, resolved by trimming
+`VAL_BUF_MAX` 40→16 (owner long_name display truncates at 16 B,
+which is fine — Stage 3 IME-driven editing will not use this cache).
 
 **Measured 2026-04-24 post RTT task (SWD, `g_core1_boot_heap_free`)**:
 `xFreeBytesRemaining = 9,312 B (19 %)` — 1.9 KB above the 15 %

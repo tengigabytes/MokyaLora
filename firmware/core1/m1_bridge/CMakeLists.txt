@@ -120,6 +120,9 @@ set(MESSAGES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/messages)
 # ── IME module (M4 Step 3+) ──────────────────────────────────────────────────
 set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
 
+# ── Settings UI (B2 Stage 2) ─────────────────────────────────────────────────
+set(SETTINGS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/settings)
+
 # ── Debug / RTT trace ────────────────────────────────────────────────────────
 # Reuse the SEGGER RTT C source bundled with pico-sdk (same file pico_stdio_rtt
 # uses internally) but DO NOT enable pico_stdio_rtt — Core 1 doesn't use the
@@ -202,7 +205,10 @@ add_executable(core1_bridge
     ${UI_DIR}/ime_view.c
     ${UI_DIR}/messages_view.c
     ${UI_DIR}/nodes_view.c
+    ${UI_DIR}/settings_view.c
     ${UI_DIR}/view_router.c
+    ${SETTINGS_DIR}/settings_keys.c
+    ${SETTINGS_DIR}/settings_client.c
     ${PSRAM_DIR}/psram.c
     ${IME_DIR}/mie_dict_loader.c
     ${IME_DIR}/ime_task.cpp
@@ -262,6 +268,7 @@ target_include_directories(core1_bridge PRIVATE
     ${PSRAM_DIR}
     ${IME_DIR}
     ${MESSAGES_DIR}
+    ${SETTINGS_DIR}
     ${DEBUG_DIR}
     ${SEGGER_DIR}/RTT
     ${SEGGER_DIR}/Config
