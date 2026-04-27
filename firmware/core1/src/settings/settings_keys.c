@@ -95,6 +95,17 @@ static const settings_key_def_t k_keys[] = {
       0, 1, /*reboot=*/0, "metric",
       NULL, 0 },
 
+    /* ── Channel ────────────────────────────────────────────────────── *
+     *
+     * Primary channel only — IPC protocol does not yet carry a channel
+     * index field, so SETs land on `channelFile.channels[0]`. Editing
+     * non-primary channels needs a protocol extension (open follow-up
+     * in b2-mossy-brooks.md). PSK editing is deferred — bytes payload
+     * needs a hex / base64 picker the current SK_KIND_STR can't do. */
+    { IPC_CFG_CHANNEL_NAME, SG_CHANNEL, SK_KIND_STR,
+      0, 11, /*reboot=*/0, "name",
+      NULL, 0 },
+
     /* ── Owner ──────────────────────────────────────────────────────── */
     { IPC_CFG_OWNER_LONG_NAME, SG_OWNER, SK_KIND_STR,
       0, 39, /*reboot=*/0, "long_name",
@@ -112,6 +123,7 @@ static const char *const k_group_names[SG_GROUP_COUNT] = {
     [SG_POSITION] = "Position",
     [SG_POWER]    = "Power",
     [SG_DISPLAY]  = "Display",
+    [SG_CHANNEL]  = "Channel",
     [SG_OWNER]    = "Owner",
 };
 

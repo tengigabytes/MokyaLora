@@ -38,7 +38,7 @@ static lv_obj_t *s_footer;
  * dirty = caller pressed OK in edit mode; pending until next Apply.
  * The Apply success clears dirty for all keys in the group.
  */
-#define KEY_CACHE_MAX  15u  /* must equal settings_keys_total_count() — runtime-checked at first refresh */
+#define KEY_CACHE_MAX  16u  /* must be ≥ settings_keys_total_count() */
 /* Per-key cached value buffer. Owner long_name (39 B) is stored
  * truncated; full bytes flow through ime_request_text without
  * touching this cache. 12 B keeps total BSS bounded while still

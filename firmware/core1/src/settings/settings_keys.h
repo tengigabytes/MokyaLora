@@ -39,6 +39,7 @@ typedef enum {
     SG_POSITION,
     SG_POWER,
     SG_DISPLAY,
+    SG_CHANNEL,
     SG_OWNER,
     SG_GROUP_COUNT,
 } settings_group_t;
