@@ -29,13 +29,21 @@ IpcSharedSram g_ipc_shared;
 
 void ipc_shared_init(void)
 {
-    /* memset the entire layout, then publish the magic. Using a byte loop
-     * rather than memset keeps us independent of libc availability on the
-     * Core 1 crt0 path. */
+    /* Zero EVERYTHING except the postmortem window — that is the one
+     * region whose contents we want to preserve across watchdog and
+     * SYSRESETREQ resets so the previous boot's panic snapshot can be
+     * read by the surface path on the next boot.
+     *
+     * The breadcrumb slots at offsets 0x5FC4..0x5FCF (registered in
+     * firmware-architecture §9.3) live inside _tail_pad_post — those
+     * DO get cleared every boot, matching the original behaviour. */
     volatile uint8_t *p = (volatile uint8_t *)&g_ipc_shared;
-    for (size_t i = 0; i < sizeof(g_ipc_shared); ++i) {
-        p[i] = 0u;
-    }
+    const size_t pm_start = offsetof(IpcSharedSram, postmortem_c0);
+    const size_t pm_end   = offsetof(IpcSharedSram, postmortem_c1)
+                          + sizeof(g_ipc_shared.postmortem_c1);
+    const size_t total    = sizeof(g_ipc_shared);
+    for (size_t i = 0; i < pm_start; ++i) p[i] = 0u;
+    for (size_t i = pm_end; i < total; ++i) p[i] = 0u;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     g_ipc_shared.boot_magic = IPC_BOOT_MAGIC;
 }

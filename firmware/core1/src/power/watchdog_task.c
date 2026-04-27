@@ -5,9 +5,9 @@
 #include "hardware/watchdog.h"
 
 #include "ipc_shared_layout.h"
+#include "postmortem.h"
 
 volatile uint32_t g_wd_state;
-volatile uint32_t g_wd_silent_max;
 
 #define WD_STATE_KICK         (1u << 24)
 #define WD_STATE_PAUSED_KICK  (2u << 24)
@@ -41,7 +41,6 @@ static void wd_task(void *pv)
             silent_ticks = 0;
         } else {
             silent_ticks++;
-            if (silent_ticks > g_wd_silent_max) g_wd_silent_max = silent_ticks;
         }
 
         uint32_t cnt = (g_wd_state & WD_STATE_COUNT_MASK);
@@ -52,7 +51,16 @@ static void wd_task(void *pv)
             cnt = (cnt + 1) & WD_STATE_COUNT_MASK;
             g_wd_state = WD_STATE_PAUSED_KICK | cnt;
         } else if (silent_ticks >= WD_SILENT_LIMIT_TICKS) {
-            /* Real Core 0 hang. Stop kicking; HW watchdog (3 s) wins. */
+            /* Real Core 0 hang. Snapshot state into the cross-reset
+             * postmortem slot so the post-reset boot can surface a
+             * causal report, then stop kicking — HW watchdog (3 s)
+             * wins. mokya_pm_snapshot_silent is first-event-wins so
+             * we re-arm only on the transition tick (g_wd_state high
+             * byte just changed). */
+            if ((g_wd_state >> 24) != (WD_STATE_SILENT >> 24)) {
+                mokya_pm_snapshot_silent(cur, g_wd_state, silent_ticks,
+                                         paused);
+            }
             g_wd_state = WD_STATE_SILENT | cnt;
         } else {
             watchdog_update();

@@ -45,7 +45,9 @@
 
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 #include "ipc_protocol.h"
+#include "mokya_postmortem.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -149,14 +151,35 @@ typedef struct {
     /* GPS NMEA double-buffer (M3.5 — Core 1 writer, Core 0 reader) */
     IpcGpsBuf         gps_buf;
 
-    /* Fill to 24 KB; compile-time checked below */
-    uint8_t           _tail_pad[IPC_SHARED_SIZE
+    /* _tail_pad_pre: zeroed by ipc_shared_init, fills space up to the
+     * postmortem slots. The postmortem block sits at absolute address
+     * 0x2007FD00..0x2007FDFF — chosen specifically to land BEFORE the
+     * existing ime_view_debug snapshot at 0x2007FE00..0x2007FFBF
+     * (firmware/core1/src/ui/ime_view.c) and BEFORE the bridge
+     * breadcrumbs at the last 64 B (0x2007FFC0..0x2007FFFF, registered
+     * in firmware-architecture §9.3). */
+    uint8_t           _tail_pad_pre[IPC_SHARED_SIZE
                                 - 28                                    /* magic + ready/lock + flash_lock_c0 + heartbeat + wd_pause */
                                 - 4                                     /* _pad_to_0x20[1] */
                                 - 3 * sizeof(IpcRingCtrl)               /* three ctrl blocks */
                                 - 2 * IPC_RING_SLOT_COUNT * sizeof(IpcRingSlot)  /* data + cmd */
                                 - IPC_LOG_RING_SLOT_COUNT * sizeof(IpcRingSlot)  /* log */
-                                - sizeof(IpcGpsBuf)];
+                                - sizeof(IpcGpsBuf)
+                                - 2 * sizeof(mokya_postmortem_t)
+                                - 512u];                                /* _tail_pad_post = ime_view_debug (448 B) + breadcrumbs (64 B) */
+
+    /* Postmortem slots — survive watchdog/SYSRESETREQ; cleared only by
+     * POR/BOR. ipc_shared_init() skips this 256-byte window. */
+    mokya_postmortem_t postmortem_c0;
+    mokya_postmortem_t postmortem_c1;
+
+    /* _tail_pad_post: zeroed by ipc_shared_init. Absolute layout:
+     *   0x2007FE00..0x2007FFBF — ime_view_debug_t snapshot (448 B,
+     *     written by Core 1's ime_view at runtime).
+     *   0x2007FFC0..0x2007FFFF — registered breadcrumb slots
+     *     (firmware-architecture §9.3): RX/TX byte counters + USB
+     *     state. Both regions are intentionally cleared on boot. */
+    uint8_t           _tail_pad_post[512];
 } IpcSharedSram;
 
 _Static_assert(sizeof(IpcRingSlot)  == IPC_RING_SLOT_STRIDE,      "IpcRingSlot must equal stride");

@@ -50,12 +50,12 @@ extern "C" {
 #define WD_TICK_MS              200u  /* wd_task polling cadence */
 #define WD_SILENT_LIMIT_TICKS    20u  /* 20 × 200 ms = 4 s without c0_heartbeat advance */
 
-/* SWD-observable counters — diagnose which path triggered a reset.
- * The high byte of g_wd_state encodes the last action (1=kick,
- * 2=paused-kick, 3=silent-no-kick), low 24 bits = monotonic kick
- * count. Packed to keep BSS overhead minimal. */
+/* SWD-observable state — high byte of g_wd_state encodes the last
+ * action (1=kick, 2=paused-kick, 3=silent-no-kick), low 24 bits =
+ * monotonic kick count. Single uint32 keeps BSS minimal; max silent
+ * ticks observed is captured into postmortem on the SILENT transition
+ * (wd_task local), not stored separately. */
 extern volatile uint32_t g_wd_state;
-extern volatile uint32_t g_wd_silent_max;     /* highest silent_ticks observed so far */
 
 /* Create the watchdog task. Returns pdPASS on success.  Idempotent —
  * second call is a no-op. */

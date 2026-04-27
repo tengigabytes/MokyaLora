@@ -215,6 +215,7 @@ add_executable(core1_bridge
     ${IME_DIR}/ime_task.cpp
     ${SEGGER_DIR}/RTT/SEGGER_RTT.c
     ${DEBUG_DIR}/mokya_trace.c
+    ${DEBUG_DIR}/postmortem.c
     ${MIE_SRC_DIR}/mie_init.cpp
     ${MIE_SRC_DIR}/trie_searcher.cpp
     ${MIE_SRC_DIR}/composition_searcher.cpp

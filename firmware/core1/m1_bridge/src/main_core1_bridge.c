@@ -87,6 +87,7 @@
 #include "nodes_db.h"
 #include "settings_client.h"
 #include "watchdog_task.h"
+#include "postmortem.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -440,6 +441,10 @@ static void bridge_task(void *pv)
             dbg_u32(BRIDGE_USB_STATE_ADDR, st);
         }
 
+        /* Fault injector for postmortem regression testing. No-op
+         * unless the SWD host has set g_mokya_pm_test_force_fault. */
+        mokya_pm_test_poll();
+
         if (!did_work) {
             /* No data in either direction — block until doorbell fires
              * (Core 0 pushed new ring data) or 10 ms timeout (handles
@@ -486,6 +491,11 @@ int main(void)
      * does not touch hardware, safe to call before the boot_magic spin. */
     SEGGER_RTT_Init();
     TRACE_BARE("core1", "boot");
+
+    /* If the previous reset left a postmortem snapshot in shared SRAM
+     * (cause = WD_SILENT / HARDFAULT / etc.), print it now and clear
+     * the magic so subsequent boots don't re-log the same event. */
+    mokya_pm_surface_on_boot();
 
     /* 2. Wait for Core 0's shared-SRAM publication. Core 0 writes
      * IPC_BOOT_MAGIC before it launches us, so this should observe the
