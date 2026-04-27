@@ -359,16 +359,42 @@ static void bridge_task(void *pv)
                  * FIFO is full, keep yielding until the host drains it —
                  * never abort mid-payload. The only legitimate way to
                  * stop is if USB unmounts (host gone). */
+                /* USB pass-through is best-effort. If `tud_mounted()` is
+                 * true but no software is actually reading from the CDC
+                 * (USB plugged into a host that has the device enumerated
+                 * but no app has opened the COM port), `tud_cdc_write_available()`
+                 * stays 0 indefinitely and an unbounded `taskYIELD()` spin
+                 * here would block the bridge from popping any further
+                 * c0→c1 ring slots. The cascade tap (above, line ~348)
+                 * has already consumed this slot's bytes — the only loss
+                 * from breaking out early is one possible frame
+                 * mis-alignment on the USB host's stream parser, which
+                 * doesn't matter when there is no host. So cap the spin
+                 * at a small wall-clock window: an actively-reading host
+                 * (pyserial / Chrome WebSerial / etc.) drains the FIFO
+                 * within ms, well under this budget. */
+                const TickType_t spin_budget = pdMS_TO_TICKS(100);
+                TickType_t       spin_start  = 0;
                 while (remaining > 0u) {
                     if (!tud_mounted()) {
                         break;
                     }
                     uint32_t avail = tud_cdc_write_available();
                     if (avail == 0u) {
+                        TickType_t now = xTaskGetTickCount();
+                        if (spin_start == 0u) {
+                            spin_start = now;
+                        } else if ((TickType_t)(now - spin_start) > spin_budget) {
+                            /* No real host consumer — drop this slot's
+                             * USB pass-through. Cascade already has the
+                             * bytes. */
+                            break;
+                        }
                         tud_cdc_write_flush();
                         taskYIELD();  /* let usb_device_task run tud_task() */
                         continue;
                     }
+                    spin_start = 0u;  /* progress made; reset window */
                     uint32_t chunk = (remaining < avail) ? remaining : avail;
                     uint32_t wrote = tud_cdc_write(p, chunk);
                     p += wrote;
