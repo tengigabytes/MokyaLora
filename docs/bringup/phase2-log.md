@@ -2368,24 +2368,79 @@ above (with date) and be deleted from this list.
 
 ### B2 IPC config follow-ups
 
-(LoRa subset already shipped — see "B2 — IPC config soft-reload"
-entry for what's live.)
+All three closed by 2026-04-27 — see "B2 Stage 2 — settings_view"
+commit and the "B2 Stage 1" entry for full keys + COMMIT_REBOOT path.
 
-- **Extend handler keys beyond LoRa subset.** `ipc_config_handler.cpp`
-  currently returns `UNKNOWN_KEY` for Device / Position / Power /
-  Display / Channel / Owner. Most map directly to `config.*` fields;
-  Owner uses `reloadOwner` not `reloadConfig`.
-- **Reboot-required path** for keys where `reloadConfig` isn't enough
-  (Device.role, rebroadcast_mode, button_gpio, buzzer_gpio, most
-  module configs). Add a separate flag in `ipc_config_handler` so
-  SETs on those keys mark COMMIT to fall back to RebootNotifier
-  full-reset instead of soft-reload. Document which keys take which
-  path in the handler header.
-- **Core 1 settings view UI.** LVGL view that lets the user navigate /
-  edit settings via keypad and drives IPC_CMD_GET / SET / COMMIT.
-  Needs: list of editable keys, value display, edit overlay (numeric
-  +/- for tx_power, picker for region enum), commit button. Cycle
-  into the view via FUNC like other views.
+- ~~Extend handler keys beyond LoRa subset.~~ Done in B2 Stage 1.
+- ~~Reboot-required path.~~ Done — `IPC_CMD_COMMIT_REBOOT (0x8C)`
+  routes to `mokya_request_graceful_reboot()`. Per-key needs_reboot
+  table lives Core-1-side in `firmware/core1/src/settings/settings_keys.c`.
+- ~~Core 1 settings view UI.~~ Done — `firmware/core1/src/ui/settings_view.c`
+  (Stage 2). 6 groups, UP/DOWN row, LEFT/RIGHT group, OK edit /
+  Apply. SK_KIND_STR (owner names) deferred to Stage 3 (IME path).
+
+### Watchdog liveness chain + cross-reset postmortem (2026-04-27)
+
+**Watchdog (commit `770daec`):** Replaces aspirational §9.4 design.
+Core 0 `vApplicationIdleHook` bumps `g_ipc_shared.c0_heartbeat` each
+tick. Core 1 `wd_task` polls every 200 ms, kicks HW watchdog (3 s
+timeout) on heartbeat advance, stops kicking after 4 s of silence
+so HW WD wins. `mokya_watchdog_pause/resume()` (inline atomic
+helpers) are nesting counters that opt out of silence detection
+during long blocking ops (flash erase/program on both cores,
+`Power::reboot` 500 ms USB-disconnect delay). Avoids
+`WATCHDOG.SCRATCH4..7` (BOOTSEL recovery uses those —
+`reference_qmi_wedge_swd_recovery` memory). Cost: 192-word stack +
+~88 B TCB ≈ 0.86 KB heap. Boot panic threshold 15 % → 14 % since
+RAM region is full.
+
+Verified end-to-end: SWD-pokeable `g_mokya_wd_test_freeze_heartbeat`
+flag → halts Core 0 idle hook → wd_task observes silence ramping
+(silent_max 5/11/17/23 over 4 s), state transitions KICK→SILENT at
+t=4 s, kick count freezes, HW watchdog fires at ~t=7 s,
+`WATCHDOG.SCRATCH3` (boot counter) increments by 1.
+
+**Postmortem (commit `a3005dc`):** RP2350 SRAM survives watchdog
+reset and SYSRESETREQ; only POR/BOR clears it. Two 128 B
+`mokya_postmortem_t` slots at `0x2007FD00..0x2007FDFF` inside
+`g_ipc_shared`; `ipc_shared_init` partial-init skips this window.
+Three capture paths:
+
+1. **Cortex-M fault handlers** (strong overrides of
+   `isr_hardfault`/`memmanage`/`busfault`/`usagefault` on both cores)
+   capture stacked frame + CFSR/HFSR/MMFAR/BFAR + EXC_RETURN +
+   FreeRTOS task name (Core 1) → SYSRESETREQ via AIRCR direct.
+2. **wd_task SILENT transition** — `mokya_pm_snapshot_silent()`
+   first-event-wins; captures `c0_heartbeat`, `wd_state`,
+   `silent_ticks`, `wd_pause`, task_name="wd".
+3. **`RebootNotifier::onReboot`** tags GRACEFUL_REBOOT before the
+   500 ms delay so soft reboot is distinguishable from a fault.
+
+Surface path: Core 1's `mokya_pm_surface_on_boot()` runs once at top
+of `main()` after `SEGGER_RTT_Init()`; reads BOTH slots, TRACE-prints
+via RTT, clears magic. Payload preserved for SWD inspection across
+subsequent reboots. Core 0 deliberately doesn't self-print (early
+Serial unreliable; Core 1 RTT works from first iteration).
+
+Test hooks shipped: `g_mokya_pm_test_force_fault` (`udf #0` →
+UsageFault → HardFault) + `g_mokya_wd_test_freeze_heartbeat` (above).
+Both default 0, no production cost.
+
+Verified all three paths produce expected forensic content:
+
+- WD_SILENT: cause=1, t=21.5 s pre-reset, c0_heartbeat captured,
+  wd_state=last KICK, silent_max=20 (=threshold), task="wd".
+- HARDFAULT (UDF inject): cause=2, pc inside `mokya_pm_test_poll`,
+  cfsr=0x00010000 (UFSR.UNDEFINSTR), hfsr=0x40000000 (FORCED),
+  exc_return=0xFFFFFFFD (PSP/no FP), task="bridge".
+- GRACEFUL_REBOOT (`meshtastic --reboot`): cause=7, c0_heartbeat
+  frozen at 0x6C26091F, no fault fields, core=0.
+
+Memory cost: 256 B inside the existing 24 KB `.shared_ipc` region
+(claimed from `_tail_pad_pre`); 0 B from heap. Postmortem at
+`0x2007FD00`, ahead of the existing `ime_view_debug` (0x2007FE00) and
+breadcrumb tail (0x2007FFC0). See `docs/design-notes/firmware-architecture.md`
+§9.4 / §9.5.
 
 ---
 

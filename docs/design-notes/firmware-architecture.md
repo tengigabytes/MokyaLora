@@ -1152,7 +1152,7 @@ ready in the shared handshake block. Time flows downward.
 ### 9.3 Shared-IPC tail pad (SWD post-mortem / operational counters)
 
 The final 64 B of the shared region (`0x2007FFC0 – 0x2007FFFF`) lives inside
-`g_ipc_shared._tail_pad`, outside both cores' heaps and task stacks, so it survives a
+`g_ipc_shared._tail_pad_post`, outside both cores' heaps and task stacks, so it survives a
 watchdog-induced reset. It holds **operational counters** that live code keeps updated,
 plus a single permanent assert tag. It is **not** a free-for-all scratchpad — every slot
 must appear in the table below before code writes to it.
@@ -1176,12 +1176,93 @@ and the M1.1-B bring-up sentinel were released in the dev-Sblzm 2026-04-18 clean
 not reintroduce them. Before adding any new slot, `grep -rn "0x2007FF" firmware/` to
 verify the address is free and update this table in the same diff.
 
-**Watchdog-survive post-mortem ring (future).** Section 9.4 describes a planned 1-byte
-event ring dumped by the safe-mode console after a WDT-induced reset. That ring is not
-yet implemented; when it is, it will claim a documented sub-range of the free region
-above and this table will be extended.
+The 448 B above breadcrumbs (`0x2007FE00 – 0x2007FFBF`) are reserved for
+`ime_view_debug_t` (Core 1 IME state snapshot, see `firmware/core1/src/ui/ime_view.c`).
+The 256 B above that (`0x2007FD00 – 0x2007FDFF`) hosts the cross-reset postmortem
+slots — see §9.5.
 
-### 9.4 Watchdog Discipline & Safe Mode
+### 9.4 Watchdog liveness chain (implemented 2026-04-27)
+
+**Hardware:** the single RP2350 watchdog runs a 3 s timeout, kicked by Core 1's
+`wd_task` (`firmware/core1/src/power/watchdog_task.c`) at 200 ms cadence. Core 0 does
+**not** feed the watchdog directly — instead it bumps `g_ipc_shared.c0_heartbeat` from
+`vApplicationIdleHook`. Core 1's `wd_task` polls the heartbeat:
+
+- If it advanced since last tick → `watchdog_update()`, reset silent counter.
+- Else → increment silent counter; if `silent_ticks ≥ 20` (4 s) AND `wd_pause == 0`,
+  stop kicking. HW watchdog (3 s) wins → chip-wide reset.
+
+**Pause API:** `mokya_watchdog_pause()` / `mokya_watchdog_resume()` (inline atomic
+helpers in `ipc_shared_layout.h`) are nesting counters. While non-zero, `wd_task`
+keeps kicking but skips silence detection. Long blocking ops opt out:
+- `firmware/core1/src/ime/flash_safety_wrap.c` (Core 1 wraps `flash_range_*`)
+- `firmware/core0/.../flash_safety_wrap.c` (Core 0 mirror)
+- `RebootNotifier::onReboot` (Core 0 — paused before the 500 ms USB-disconnect delay)
+
+**Safe-mode boot detection** (planned, not yet implemented): `WATCHDOG.SCRATCH3` is
+incremented every cold boot from `initVariant()` for SWD-observable reboot counting.
+A boot-loop counter / safe-mode lock would live in a different scratch slot —
+`SCRATCH4..7` are off-limits (BOOTSEL recovery path, see
+`reference_qmi_wedge_swd_recovery` memory note).
+
+**SWD-observable state** (Core 1 image):
+
+| Symbol                         | Meaning                                                |
+|--------------------------------|--------------------------------------------------------|
+| `g_wd_state`                   | High byte: 1=KICK, 2=PAUSED_KICK, 3=SILENT. Low 24 b: kick count. |
+| `g_ipc_shared.c0_heartbeat`    | At `0x2007A014` — Core 0 idle-hook tick counter.       |
+| `g_ipc_shared.wd_pause`        | At `0x2007A018` — non-zero while a long op is pausing. |
+| `g_mokya_wd_test_freeze_heartbeat` (Core 0 BSS) | Test hook: write 1 to halt the heartbeat → forces wd_silent → chip reset within ~7 s. |
+
+### 9.5 Cross-reset postmortem capture (implemented 2026-04-27)
+
+RP2350 SRAM survives watchdog reset and SYSRESETREQ; only POR/BOR clears it. Two
+128-byte `mokya_postmortem_t` slots live at `0x2007FD00` (Core 0) and `0x2007FD80`
+(Core 1) inside `g_ipc_shared`, and `ipc_shared_init()` is partial-init — it skips
+the postmortem window so previous-boot snapshots are readable on the next boot.
+
+**Capture paths** (all set `magic = 0xDEADC0DE` after writing fields):
+
+| `cause` | When                        | Writer                                                    |
+|---------|-----------------------------|-----------------------------------------------------------|
+| 1 WD_SILENT       | `wd_task` KICK→SILENT transition, before stopping kicks  | `mokya_pm_snapshot_silent()`            |
+| 2 HARDFAULT       | strong override of `isr_hardfault` on either core         | `mokya_pm_fault_capture()` / `_c0`      |
+| 3 MEMMANAGE       | strong override of `isr_memmanage`                        | same                                    |
+| 4 BUSFAULT        | strong override of `isr_busfault`                         | same                                    |
+| 5 USAGEFAULT      | strong override of `isr_usagefault`                       | same                                    |
+| 6 PANIC           | (reserved — explicit `panic()` hook, not yet wired)       | —                                       |
+| 7 GRACEFUL_REBOOT | `RebootNotifier::onReboot` before `Power::reboot()` delay | `mokya_pm_snapshot_graceful_reboot()`   |
+
+**Captured fields** (see `firmware/shared/ipc/mokya_postmortem.h`): magic + cause +
+`timestamp_us` + originating core; full Cortex-M stacked frame (PC, LR, SP, PSR, R0..R3,
+R12, EXC_RETURN); SCB fault status (CFSR, HFSR, MMFAR, BFAR); watchdog liveness
+context (`c0_heartbeat`, `wd_state`, `wd_silent_max`, `wd_pause`); FreeRTOS current
+task name (Core 1 only — Core 0 path skips it for fault-context simplicity). Total
+128 B / slot.
+
+**Surface path:** `mokya_pm_surface_on_boot()` in `firmware/core1/src/debug/postmortem.c`
+runs once at the top of `main()` on Core 1 (after `SEGGER_RTT_Init()`). It TRACE-prints
+both slots if their magic is set, then clears the magic — payload stays intact for SWD
+inspection. Core 0 deliberately doesn't self-print: its early-boot Serial isn't reliably
+enumerated, and Core 1's RTT works from the very first boot iteration.
+
+**Test hooks:**
+
+- `g_mokya_wd_test_freeze_heartbeat` (Core 0): write 1 via SWD → halts c0_heartbeat
+  → wd_task detects silence → chip reset → postmortem_c1 records `cause=1`.
+- `g_mokya_pm_test_force_fault` (Core 1): write 1 via SWD → bridge_task polls →
+  `udf #0` → UsageFault → escalates to HardFault → postmortem_c1 records `cause=2`
+  with full CPU context.
+
+Both default to 0; no production cost. Verification 2026-04-27 confirmed all three
+implemented paths (WD_SILENT, HARDFAULT, GRACEFUL_REBOOT) capture and surface
+correctly.
+
+### 9.6 Safe-mode boot (planned — supersedes pre-2026-04-27 design)
+
+> This section pre-dates the §9.4 watchdog implementation and §9.5 postmortem
+> mechanism; the timeout / Core-1-IdleHook details below are stale. Treat it as
+> the aspirational safe-mode design only — actual numbers live in §9.4.
 
 Hardware: the single RP2350 watchdog runs an 8 s timeout and is fed by Core 1's
 `IdleHook` (§4.2). Core 0 does not feed the WDT directly — the WDT instance is claimed
