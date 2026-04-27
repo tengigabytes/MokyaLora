@@ -138,6 +138,36 @@ static inline void dbg_u32(uintptr_t addr, uint32_t val)
     *(volatile uint32_t *)addr = val;
 }
 
+/* ── USB-host active detection ─────────────────────────────────────────────
+ * Cascade-PhoneAPI is the primary client (Core 1 is host). USB CDC is a
+ * forward sub-mode that engages ONLY when a real external host is present.
+ *
+ * "Real host" is the OR of:
+ *   - tud_cdc_connected()  — DTR asserted (pyserial, `meshtastic` CLI, …)
+ *   - recent CDC OUT activity — host has sent bytes within the grace
+ *     window (Chrome WebSerial, which doesn't assert DTR but does send
+ *     want_config_id at session start, falls into this branch)
+ *
+ * Without either signal, USB write is skipped entirely; cascade has
+ * already consumed the byte slot, so there is no data loss internally,
+ * and no spinning trying to write to a FIFO no one will drain. */
+#define CDC_ACTIVE_GRACE_MS  5000u
+static volatile TickType_t s_cdc_last_active_tick = 0;
+
+static inline void cdc_mark_active(void)
+{
+    s_cdc_last_active_tick = xTaskGetTickCount();
+}
+
+static bool cdc_host_active(void)
+{
+    if (tud_cdc_connected()) return true;
+    TickType_t last = s_cdc_last_active_tick;
+    if (last == 0) return false;
+    TickType_t now = xTaskGetTickCount();
+    return (TickType_t)(now - last) < pdMS_TO_TICKS(CDC_ACTIVE_GRACE_MS);
+}
+
 static volatile uint32_t g_rx_total;
 static volatile uint32_t g_tx_total;
 
@@ -359,47 +389,36 @@ static void bridge_task(void *pv)
                  * FIFO is full, keep yielding until the host drains it —
                  * never abort mid-payload. The only legitimate way to
                  * stop is if USB unmounts (host gone). */
-                /* USB pass-through is best-effort. If `tud_mounted()` is
-                 * true but no software is actually reading from the CDC
-                 * (USB plugged into a host that has the device enumerated
-                 * but no app has opened the COM port), `tud_cdc_write_available()`
-                 * stays 0 indefinitely and an unbounded `taskYIELD()` spin
-                 * here would block the bridge from popping any further
-                 * c0→c1 ring slots. The cascade tap (above, line ~348)
-                 * has already consumed this slot's bytes — the only loss
-                 * from breaking out early is one possible frame
-                 * mis-alignment on the USB host's stream parser, which
-                 * doesn't matter when there is no host. So cap the spin
-                 * at a small wall-clock window: an actively-reading host
-                 * (pyserial / Chrome WebSerial / etc.) drains the FIFO
-                 * within ms, well under this budget. */
-                const TickType_t spin_budget = pdMS_TO_TICKS(100);
-                TickType_t       spin_start  = 0;
-                while (remaining > 0u) {
-                    if (!tud_mounted()) {
-                        break;
-                    }
-                    uint32_t avail = tud_cdc_write_available();
-                    if (avail == 0u) {
-                        TickType_t now = xTaskGetTickCount();
-                        if (spin_start == 0u) {
-                            spin_start = now;
-                        } else if ((TickType_t)(now - spin_start) > spin_budget) {
-                            /* No real host consumer — drop this slot's
-                             * USB pass-through. Cascade already has the
-                             * bytes. */
+                /* USB pass-through engages only when a real external host
+                 * is present (DTR asserted OR recent CDC OUT activity).
+                 * Without one, this slot's bytes have already been
+                 * consumed by the cascade tap above — no need to push to
+                 * a FIFO no one will drain. Strict gate, no spinning. */
+                if (cdc_host_active() && tud_mounted()) {
+                    while (remaining > 0u) {
+                        if (!tud_mounted() || !cdc_host_active()) {
+                            /* Host went away mid-write. Stop, cascade
+                             * already has all bytes, abandoning the USB
+                             * pass-through here may break alignment for
+                             * the just-departed host but they aren't
+                             * reading anymore. */
                             break;
                         }
-                        tud_cdc_write_flush();
-                        taskYIELD();  /* let usb_device_task run tud_task() */
-                        continue;
+                        uint32_t avail = tud_cdc_write_available();
+                        if (avail == 0u) {
+                            /* Transient backpressure from an active host
+                             * — yield until they drain. cdc_host_active
+                             * keeps this bounded. */
+                            tud_cdc_write_flush();
+                            taskYIELD();
+                            continue;
+                        }
+                        uint32_t chunk = (remaining < avail) ? remaining : avail;
+                        uint32_t wrote = tud_cdc_write(p, chunk);
+                        p += wrote;
+                        remaining -= (uint16_t)wrote;
+                        g_rx_total += wrote;
                     }
-                    spin_start = 0u;  /* progress made; reset window */
-                    uint32_t chunk = (remaining < avail) ? remaining : avail;
-                    uint32_t wrote = tud_cdc_write(p, chunk);
-                    p += wrote;
-                    remaining -= (uint16_t)wrote;
-                    g_rx_total += wrote;
                 }
                 tud_cdc_write_flush();
                 dbg_u32(BRIDGE_RX_COUNT_ADDR, g_rx_total);
@@ -449,6 +468,11 @@ static void bridge_task(void *pv)
         if (tud_cdc_available()) {
             uint32_t n = tud_cdc_read(scratch, sizeof(scratch));
             if (n > 0u) {
+                /* Host sent bytes — confirms they're actively engaged.
+                 * Refreshes the cdc_host_active() grace window so USB
+                 * pass-through stays enabled even if DTR isn't set
+                 * (Chrome WebSerial). */
+                cdc_mark_active();
                 /* Push in one slot — if the ring is full, we spin until
                  * Core 0 drains. Typing rate on a human terminal will
                  * never fill a 32-slot ring. */
