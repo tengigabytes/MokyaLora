@@ -3,9 +3,17 @@
 
 #include "phoneapi_session.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+#include "timers.h"
+
+#include "pico/time.h"
+
 #include "phoneapi_cache.h"
 #include "phoneapi_decode.h"
+#include "phoneapi_encode.h"
 #include "phoneapi_framing.h"
+#include "phoneapi_tx.h"
 #include "mokya_trace.h"
 
 static phoneapi_framing_t s_framing;
@@ -16,6 +24,48 @@ static struct {
     uint32_t frames_malformed;
     uint32_t variant_counts[18];   // index = field number (0..17)
 } s_stats;
+
+// Session mode + nonce. Read via the public inspectors; written from
+// the bridge / USB callback context (single-writer per direction).
+static phoneapi_mode_t s_mode       = PHONEAPI_MODE_STANDALONE;
+static uint32_t        s_last_nonce = 0;
+
+// Heartbeat timer. Period chosen well under PhoneAPI's 15-min serial
+// timeout (`SerialConsole.cpp:27`). Started in STANDALONE, stopped in
+// FORWARD (the USB host's heartbeats keep Core 0 alive in that mode).
+#define PHONEAPI_HEARTBEAT_PERIOD_MS (5u * 60u * 1000u)
+static TimerHandle_t s_heartbeat_timer = NULL;
+
+static void heartbeat_timer_cb(TimerHandle_t t)
+{
+    (void)t;
+    if (s_mode == PHONEAPI_MODE_STANDALONE) {
+        if (phoneapi_encode_heartbeat()) {
+            TRACE_BARE("phapi", "tx_hb");
+        }
+    }
+}
+
+// Phase C nonce source: a simple LCG seeded by the µs counter. PhoneAPI
+// uses the nonce only to tag `config_complete_id` echoes back to the
+// originating client; cryptographic uniqueness is not required.
+static uint32_t fresh_nonce(void)
+{
+    static uint32_t s_seed = 0;
+    uint32_t        t      = (uint32_t)to_us_since_boot(get_absolute_time());
+    s_seed = s_seed * 1103515245u + 12345u + t;
+    if (s_seed == 0u) s_seed = 1u;
+    return s_seed;
+}
+
+static void issue_want_config_id(const char *cause)
+{
+    s_last_nonce = fresh_nonce();
+    if (phoneapi_encode_want_config_id(s_last_nonce)) {
+        TRACE("phapi", "tx_wcid", "nonce=%u,cause=%s",
+              (unsigned)s_last_nonce, cause);
+    }
+}
 
 // Locate the variant's sub-message bytes inside a FromRadio frame and
 // hand them to `decoder` + writer. Used for LD-variant tags only.
@@ -132,6 +182,7 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
 void phoneapi_session_init(void)
 {
     phoneapi_cache_init();
+    phoneapi_tx_init();
     phoneapi_framing_init(&s_framing, on_frame, NULL);
     s_stats.frames_parsed    = 0;
     s_stats.frames_malformed = 0;
@@ -139,7 +190,69 @@ void phoneapi_session_init(void)
                            sizeof(s_stats.variant_counts[0]); i++) {
         s_stats.variant_counts[i] = 0;
     }
+
+    s_mode = PHONEAPI_MODE_STANDALONE;
+    s_heartbeat_timer = xTimerCreate("phapi_hb",
+                                     pdMS_TO_TICKS(PHONEAPI_HEARTBEAT_PERIOD_MS),
+                                     pdTRUE,           // auto-reload
+                                     NULL,
+                                     heartbeat_timer_cb);
+    if (s_heartbeat_timer != NULL) {
+        xTimerStart(s_heartbeat_timer, 0);
+    }
+
+    // Boot-time want_config_id. Core 0 may not have its PhoneAPI fully
+    // initialised yet; if it drops the request, we send another one
+    // anyway when the USB host plugs in (FORWARD → STANDALONE) or via
+    // the heartbeat-driven probe. For Phase C this single send is
+    // sufficient — Core 0 is up by the time bridge_task starts in
+    // practice (see vApplicationIdleHook deferred launch).
+    issue_want_config_id("boot");
+
     TRACE_BARE("phapi", "init");
+}
+
+void phoneapi_session_set_usb_connected(bool connected)
+{
+    phoneapi_mode_t prev = s_mode;
+    s_mode = connected ? PHONEAPI_MODE_FORWARD : PHONEAPI_MODE_STANDALONE;
+
+    if (prev == s_mode) return;
+
+    TRACE("phapi", "mode",
+          "prev=%u,now=%u",
+          (unsigned)prev, (unsigned)s_mode);
+
+    if (s_mode == PHONEAPI_MODE_STANDALONE) {
+        // Re-take ownership of the session: USB host's mid-stream state
+        // may have left things half-baked. Issue fresh want_config_id
+        // and resume heartbeats.
+        issue_want_config_id("usb_unplug");
+        if (s_heartbeat_timer != NULL) {
+            xTimerReset(s_heartbeat_timer, 0);
+        }
+    } else {
+        // USB host now drives the session; suspend our heartbeat (host
+        // sends its own per Meshtastic CLI behaviour).
+        if (s_heartbeat_timer != NULL) {
+            xTimerStop(s_heartbeat_timer, 0);
+        }
+    }
+}
+
+phoneapi_mode_t phoneapi_session_mode(void)        { return s_mode; }
+uint32_t        phoneapi_session_last_nonce(void)  { return s_last_nonce; }
+
+// TinyUSB CDC line-state callback. Fires from the USB device task
+// whenever the host raises/lowers DTR (USB CDC's "port open" signal).
+// `connected` follows DTR. We override TinyUSB's weak default here;
+// putting it in phoneapi_session.c keeps the dependency gated by
+// MOKYA_PHONEAPI_CASCADE — the file is only compiled with the flag on.
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+{
+    (void)itf;
+    (void)rts;
+    phoneapi_session_set_usb_connected(dtr);
 }
 
 void phoneapi_session_feed_from_core0(const uint8_t *buf, size_t len)

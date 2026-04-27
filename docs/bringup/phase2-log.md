@@ -2443,6 +2443,88 @@ the cache without a host client; plugging USB triggers an
 expected-host want_config_id that re-streams without breaking Core
 1's state.
 
+#### M5 Phase 2 Phase C — mode FSM + Core 1 self-driven session ✅ (2026-04-27)
+
+**Delivered.** Cascade now genuinely makes Core 1 the *primary*
+PhoneAPI client. New files:
+
+- `firmware/core1/src/phoneapi/phoneapi_tx.{c,h}` — single TX gateway.
+  `phoneapi_tx_push(buf,len)` chunks the buffer into IPC_MSG_PAYLOAD_MAX
+  (256 B) slots and pushes each as `IPC_MSG_SERIAL_BYTES` to the c1→c0
+  ring under a FreeRTOS mutex. Mutex granularity is one full ToRadio
+  frame (so Core 0's PhoneAPI parser never sees interleaved bytes from
+  USB-RX-bridge vs LVGL outbound).
+- `firmware/core1/src/phoneapi/phoneapi_encode.{c,h}` — hand-written
+  ToRadio encoders for the small upstream messages: `want_config_id`
+  (field 3 varint), `heartbeat` (field 7, empty sub-message),
+  `disconnect` (field 4 bool). Each builds `0x94 0xC3 LEN_HI LEN_LO
+  <payload>` on the stack and pushes via `phoneapi_tx_push()`.
+- `phoneapi_session.{c,h}` extended with:
+  - `phoneapi_mode_t { STANDALONE, FORWARD }` + getter
+  - `phoneapi_session_set_usb_connected(bool)` invoked from a
+    `tud_cdc_line_state_cb()` override (in this same TU; TinyUSB picks
+    up the strong symbol). DTR follows the host's "port open" signal —
+    `tud_mounted()` alone is not enough, since pyserial only asserts
+    DTR when the COM port is actually opened by an app.
+  - 5-minute auto-reload heartbeat timer (`xTimerCreate`), started in
+    STANDALONE, stopped in FORWARD. Period chosen well under
+    PhoneAPI's 15-min serial timeout (`SerialConsole.cpp:27`).
+  - LCG-based nonce (`fresh_nonce()` mixes `to_us_since_boot()` into a
+    static seed). Cryptographic uniqueness is not required — PhoneAPI
+    only echoes the nonce back as `config_complete_id`.
+  - Boot path issues `want_config_id` immediately so the cache is
+    populated even if no USB host ever connects.
+
+**Mode-transition policy** (matches the user-confirmed plan choice
+"yes — re-send want_config_id on USB unplug"):
+
+- STANDALONE → FORWARD: nothing emitted. The host will send its own
+  `want_config_id` (different nonce) which Core 0 honours by
+  restarting the FromRadio stream; Core 1's cache absorbs that dump
+  for free.
+- FORWARD → STANDALONE: Core 1 immediately emits a fresh
+  `want_config_id` (cause=`usb_unplug`) and resumes its 5-min
+  heartbeat. This recovers cleanly from any half-streamed state the
+  host left behind when it dropped DTR.
+
+**Validation gate (Phase C success criteria from the plan).** Flashed
+with `MOKYA_PHONEAPI_CASCADE=ON`. RTT trace captured a full cycle
+without ever running `meshtastic --info` then transitioned to a
+`--info` run and back:
+
+```
+2.57s  phapi,tx_wcid,nonce=2582985,cause=boot
+2.77s  phapi,rx_frame,...,tag=my_info,...    ← Core 0 honoured Core 1's
+                                                want_config_id while no
+                                                host was connected
+       phapi,rx_frame,...,tag=channel × 8
+       phapi,rx_frame,...,tag=node_info × 3
+       phapi,rx_frame,...,tag=config_complete (cycle 1)
+43.11s phapi,mode,prev=0,now=1                ← --info opened COM, DTR↑
+       (host's own want_config_id triggers a 2nd full FromRadio dump)
+47.43s phapi,mode,prev=1,now=0                ← --info closed COM, DTR↓
+47.43s phapi,tx_wcid,nonce=4031595187,cause=usb_unplug
+       (3rd full FromRadio dump, this time without a USB client)
+```
+
+3 independent want_config_id cycles, all complete (`my_info × 3`,
+`config_complete × 3`). Pass-through unchanged: `--info` still
+returns the full state dump byte-for-byte. No `bad_frame` events.
+
+Memory delta vs Phase B: text 572 KB → 573.5 KB (+1.1 KB), bss
+unchanged (encoders + tx are stack-only; tx mutex + heartbeat
+TimerHandle live in FreeRTOS heap). Cumulative cascade cost (vs
+flag-OFF baseline): text +14 KB, bss +6 KB.
+
+**What still pending.**
+
+- `phoneapi_encode_text_packet()` (ToRadio.packet bearing
+  TEXT_MESSAGE_APP) for outbound DM — Phase D.
+- LVGL view migration off the `messages_inbox` / `nodes_db` stubs to
+  read from `phoneapi_cache_*` — Phase D.
+- Stub deletion (Core 0 IpcTextObserver, IPC_CMD_SEND_TEXT,
+  IPC_MSG_RX_TEXT, IPC_MSG_TX_ACK) — Phase E.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
