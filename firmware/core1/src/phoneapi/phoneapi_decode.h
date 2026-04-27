@@ -18,6 +18,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "phoneapi_cache.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -67,6 +69,33 @@ bool phoneapi_decode_from_radio(const uint8_t *buf,
 // Convenience: human-readable name for a tag (for tracing). Returns a
 // short static string; safe to format with %s.
 const char *phoneapi_from_radio_tag_name(from_radio_tag_t tag);
+
+// ─── Field-level decoders (Phase B) ─────────────────────────────────
+//
+// Each function takes the *raw bytes of the sub-message* (without the
+// outer FromRadio framing or the variant tag), as identified by the
+// summary API above. They populate `out` and return true on success.
+// On failure `out` may be partially populated.
+
+bool phoneapi_decode_my_info(const uint8_t *buf, uint16_t len,
+                             phoneapi_my_info_t *out);
+
+bool phoneapi_decode_metadata(const uint8_t *buf, uint16_t len,
+                              phoneapi_metadata_t *out);
+
+bool phoneapi_decode_channel(const uint8_t *buf, uint16_t len,
+                             phoneapi_channel_t *out);
+
+bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
+                               phoneapi_node_t *out);
+
+// Helper to locate the variant payload within a FromRadio frame.
+// Returns pointer + length of the variant sub-message bytes, or NULL.
+// (For varint variants like config_complete_id, returns NULL — callers
+// should use the summary API's variant_value field instead.)
+const uint8_t *phoneapi_find_variant_payload(const uint8_t *buf, uint16_t len,
+                                             from_radio_tag_t expected_tag,
+                                             uint16_t *out_len);
 
 #ifdef __cplusplus
 }

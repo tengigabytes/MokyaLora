@@ -121,6 +121,407 @@ bool phoneapi_decode_from_radio(const uint8_t *buf,
     return true;
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────
+
+static bool read_fixed32(const uint8_t *buf, uint16_t len, uint16_t *pos,
+                         uint32_t *out)
+{
+    if (*pos + 4u > len) return false;
+    *out = (uint32_t)buf[*pos]
+         | ((uint32_t)buf[*pos + 1] << 8)
+         | ((uint32_t)buf[*pos + 2] << 16)
+         | ((uint32_t)buf[*pos + 3] << 24);
+    *pos += 4u;
+    return true;
+}
+
+// IEEE 754 little-endian → host float (assumes host is also LE on Cortex-M33).
+static bool read_float(const uint8_t *buf, uint16_t len, uint16_t *pos,
+                       float *out)
+{
+    uint32_t bits;
+    if (!read_fixed32(buf, len, pos, &bits)) return false;
+    union { uint32_t u; float f; } u = { .u = bits };
+    *out = u.f;
+    return true;
+}
+
+// Copy an LD field's bytes as a NUL-terminated C string into `dst`,
+// truncating to dst_max-1 (always reserves room for the terminator).
+static bool read_string_into(const uint8_t *buf, uint16_t len, uint16_t *pos,
+                             char *dst, size_t dst_max)
+{
+    uint64_t slen;
+    if (!read_varint(buf, len, pos, &slen)) return false;
+    if (slen > (uint64_t)(len - *pos)) return false;
+    size_t copy = (slen < (dst_max - 1u)) ? (size_t)slen : (dst_max - 1u);
+    memcpy(dst, &buf[*pos], copy);
+    dst[copy] = '\0';
+    *pos += (uint16_t)slen;
+    return true;
+}
+
+// Copy an LD field's raw bytes into `dst`, recording length (no NUL).
+static bool read_bytes_into(const uint8_t *buf, uint16_t len, uint16_t *pos,
+                            uint8_t *dst, uint8_t dst_max, uint8_t *out_len)
+{
+    uint64_t slen;
+    if (!read_varint(buf, len, pos, &slen)) return false;
+    if (slen > (uint64_t)(len - *pos)) return false;
+    uint8_t copy = (slen < dst_max) ? (uint8_t)slen : dst_max;
+    memcpy(dst, &buf[*pos], copy);
+    *out_len = copy;
+    *pos += (uint16_t)slen;
+    return true;
+}
+
+// Walk LD-tagged fields; for each match against `inner_decoder`, hand
+// the sub-message bytes to it. Used to decode sub-messages-of-sub-
+// messages without an extra copy (e.g. NodeInfo.user, .device_metrics).
+typedef bool (*sub_decoder_fn)(const uint8_t *buf, uint16_t len, void *ctx);
+
+static bool dispatch_sub(const uint8_t *outer, uint16_t outer_len,
+                         uint16_t *outer_pos,
+                         sub_decoder_fn fn, void *ctx)
+{
+    uint64_t sub_len;
+    if (!read_varint(outer, outer_len, outer_pos, &sub_len)) return false;
+    if (sub_len > (uint64_t)(outer_len - *outer_pos)) return false;
+    bool ok = fn(&outer[*outer_pos], (uint16_t)sub_len, ctx);
+    *outer_pos += (uint16_t)sub_len;
+    return ok;
+}
+
+// ── FromRadio variant locator ───────────────────────────────────────
+
+const uint8_t *phoneapi_find_variant_payload(const uint8_t *buf, uint16_t len,
+                                             from_radio_tag_t expected_tag,
+                                             uint16_t *out_len)
+{
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return NULL;
+        uint32_t field_num = (uint32_t)(tag_word >> 3);
+        uint8_t  wt        = (uint8_t)(tag_word & 0x07u);
+
+        if ((from_radio_tag_t)field_num == expected_tag && wt == WT_LEN) {
+            uint64_t sub_len;
+            if (!read_varint(buf, len, &pos, &sub_len)) return NULL;
+            if (sub_len > (uint64_t)(len - pos)) return NULL;
+            *out_len = (uint16_t)sub_len;
+            return &buf[pos];
+        }
+
+        if (!skip_field(buf, len, &pos, wt)) return NULL;
+    }
+    return NULL;
+}
+
+// ── MyNodeInfo decoder ──────────────────────────────────────────────
+// Fields: my_node_num=1 v, reboot_count=8 v, min_app_version=11 v,
+//         device_id=12 b,  pio_env=13 s,    firmware_edition=14 v,
+//         nodedb_count=15 v.
+
+bool phoneapi_decode_my_info(const uint8_t *buf, uint16_t len,
+                             phoneapi_my_info_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->my_node_num = (uint32_t)v;
+        } else if (f == 8u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->reboot_count = (uint32_t)v;
+        } else if (f == 11u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->min_app_version = (uint32_t)v;
+        } else if (f == 12u && w == WT_LEN) {
+            if (!read_bytes_into(buf, len, &pos, out->device_id,
+                                 PHONEAPI_DEVICE_ID_MAX,
+                                 &out->device_id_len)) return false;
+        } else if (f == 13u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos, out->pio_env,
+                                  PHONEAPI_PIO_ENV_MAX)) return false;
+        } else if (f == 14u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->firmware_edition = (uint8_t)v;
+        } else if (f == 15u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->nodedb_count = (uint32_t)v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// ── DeviceMetadata decoder ──────────────────────────────────────────
+// Fields: firmware_version=1 s, device_state_version=2 v,
+//         canShutdown=3 b, hasWifi=4 b, hasBluetooth=5 b,
+//         hasEthernet=6 b, role=7 v.
+
+bool phoneapi_decode_metadata(const uint8_t *buf, uint16_t len,
+                              phoneapi_metadata_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos, out->firmware_version,
+                                  PHONEAPI_FW_VERSION_MAX)) return false;
+        } else if (f == 2u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->device_state_version = (uint32_t)v;
+        } else if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->can_shutdown = (v != 0u);
+        } else if (f == 4u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->has_wifi = (v != 0u);
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->has_bluetooth = (v != 0u);
+        } else if (f == 6u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->has_ethernet = (v != 0u);
+        } else if (f == 7u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->role = (uint8_t)v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// ── ChannelSettings sub-decoder (used by Channel.settings) ──────────
+// Fields: psk=2 b, name=3 s, id=4 fixed32 (others ignored).
+
+typedef struct {
+    char     *name;
+    size_t    name_max;
+    uint8_t  *psk_len;
+    uint32_t *channel_id;
+} chan_settings_ctx_t;
+
+static bool decode_channel_settings(const uint8_t *buf, uint16_t len, void *vctx)
+{
+    chan_settings_ctx_t *ctx = (chan_settings_ctx_t *)vctx;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 2u && w == WT_LEN) {
+            uint64_t plen;
+            if (!read_varint(buf, len, &pos, &plen)) return false;
+            if (plen > (uint64_t)(len - pos)) return false;
+            *ctx->psk_len = (uint8_t)((plen > 0xFFu) ? 0xFFu : plen);
+            pos += (uint16_t)plen;
+        } else if (f == 3u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos, ctx->name, ctx->name_max))
+                return false;
+        } else if (f == 4u && w == WT_I32) {
+            if (!read_fixed32(buf, len, &pos, ctx->channel_id)) return false;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// ── Channel decoder ─────────────────────────────────────────────────
+// Fields: index=1 v (int32), settings=2 LD, role=3 v.
+
+bool phoneapi_decode_channel(const uint8_t *buf, uint16_t len,
+                             phoneapi_channel_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->index = (uint8_t)(v & 0xFFu);
+        } else if (f == 2u && w == WT_LEN) {
+            chan_settings_ctx_t ctx = {
+                .name       = out->name,
+                .name_max   = PHONEAPI_CHANNEL_NAME_MAX,
+                .psk_len    = &out->psk_len,
+                .channel_id = &out->channel_id,
+            };
+            if (!dispatch_sub(buf, len, &pos, decode_channel_settings, &ctx))
+                return false;
+        } else if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->role = (uint8_t)v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// ── User sub-decoder (NodeInfo.user) ────────────────────────────────
+// Fields: long_name=2 s, short_name=3 s, hw_model=5 v, role=7 v,
+//         is_unmessagable=9 b.
+
+static bool decode_user(const uint8_t *buf, uint16_t len, void *vctx)
+{
+    phoneapi_node_t *out = (phoneapi_node_t *)vctx;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 2u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos, out->long_name,
+                                  PHONEAPI_LONG_NAME_MAX)) return false;
+        } else if (f == 3u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos, out->short_name,
+                                  PHONEAPI_SHORT_NAME_MAX)) return false;
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->hw_model = (uint8_t)v;
+        } else if (f == 7u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->role = (uint8_t)v;
+        } else if (f == 9u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->is_unmessagable = (v != 0u);
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// ── DeviceMetrics sub-decoder (NodeInfo.device_metrics) ─────────────
+// Fields: battery_level=1 v, voltage=2 float, channel_utilization=3 f,
+//         air_util_tx=4 f, uptime_seconds=5 v.
+
+static bool decode_device_metrics(const uint8_t *buf, uint16_t len, void *vctx)
+{
+    phoneapi_node_t *out = (phoneapi_node_t *)vctx;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->battery_level = (uint8_t)((v > 200u) ? 200u : v);
+        } else if (f == 2u && w == WT_I32) {
+            float fv;
+            if (!read_float(buf, len, &pos, &fv)) return false;
+            int32_t mv = (int32_t)(fv * 1000.0f);
+            if (mv < INT16_MIN) mv = INT16_MIN;
+            if (mv > INT16_MAX) mv = INT16_MAX;
+            out->voltage_mv = (int16_t)mv;
+        } else if (f == 3u && w == WT_I32) {
+            float fv;
+            if (!read_float(buf, len, &pos, &fv)) return false;
+            if (fv < 0.0f) fv = 0.0f;
+            if (fv > 100.0f) fv = 100.0f;
+            out->channel_util_pct = (uint8_t)(fv + 0.5f);
+        } else if (f == 4u && w == WT_I32) {
+            float fv;
+            if (!read_float(buf, len, &pos, &fv)) return false;
+            if (fv < 0.0f) fv = 0.0f;
+            if (fv > 100.0f) fv = 100.0f;
+            out->air_util_tx_pct = (uint8_t)(fv + 0.5f);
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->uptime_seconds = (uint32_t)v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// ── NodeInfo decoder ────────────────────────────────────────────────
+// Fields: num=1 v, user=2 LD, position=3 LD (skipped), snr=4 float,
+//         last_heard=5 fixed32, device_metrics=6 LD, channel=7 v,
+//         via_mqtt=8 b, hops_away=9 v, is_favorite=10 b.
+
+bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
+                               phoneapi_node_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->battery_level    = 0xFFu;
+    out->voltage_mv       = INT16_MIN;
+    out->channel_util_pct = 0xFFu;
+    out->air_util_tx_pct  = 0xFFu;
+    out->hops_away        = 0xFFu;
+    out->snr_x100         = INT32_MIN;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->num = (uint32_t)v;
+        } else if (f == 2u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_user, out))
+                return false;
+        } else if (f == 4u && w == WT_I32) {
+            float fv;
+            if (!read_float(buf, len, &pos, &fv)) return false;
+            int32_t s = (int32_t)(fv * 100.0f);
+            out->snr_x100 = s;
+        } else if (f == 5u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->last_heard = v;
+        } else if (f == 6u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_device_metrics, out))
+                return false;
+        } else if (f == 7u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->channel = (uint8_t)v;
+        } else if (f == 8u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->via_mqtt = (v != 0u);
+        } else if (f == 9u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->hops_away = (uint8_t)v;
+        } else if (f == 10u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->is_favorite = (v != 0u);
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return out->num != 0u;
+}
+
 const char *phoneapi_from_radio_tag_name(from_radio_tag_t tag)
 {
     switch (tag) {

@@ -2367,6 +2367,82 @@ snapshots. Validation: SWD dump of cache after a `--info` run should
 match what Meshtastic CLI reports. Risk R1 mitigation
 (shadow-then-swap on `config_complete_id`) gets implemented here.
 
+#### M5 Phase 2 Phase B — field-level decoder + cache ✅ (2026-04-27)
+
+**Delivered.** New `firmware/core1/src/phoneapi/phoneapi_cache.{c,h}`
+holding mutex-guarded snapshots of MyNodeInfo, DeviceMetadata, 8
+channels, and a 64-entry NodeDB. Field-level decoders extended in
+`phoneapi_decode.{c,h}` for: MyNodeInfo, DeviceMetadata, Channel
+(with embedded ChannelSettings sub-decoder), and NodeInfo (with
+embedded User + DeviceMetrics sub-decoders). Sub-message dispatch
+uses a shared `dispatch_sub()` helper that hands the bytes-of-LD
+payload to a `sub_decoder_fn` callback — keeps the per-message code
+linear without recursive parsing state.
+
+`phoneapi_session.c` now dispatches each `on_frame` to the matching
+field decoder + cache writer. Stack-allocated staging structs (no
+extra copy beyond the cache write itself, which already takes the
+mutex). Tag-only handling preserved for CONFIG / MODULE_CONFIG /
+FILE_INFO / DEVICEUI / CLIENT_NOTIFICATION (Phase A trace still
+fires; field decode deferred to Phase F admin/settings UX).
+
+**Risk R1 mitigation: phase_seq + commit-on-config_complete_id.**
+Each NodeDB entry carries a `phase_seq` field. `my_info`'s arrival
+calls `phoneapi_cache_phase_begin()` which bumps
+`current_phase_seq`. NodeInfo upserts during the phase tag the
+entry with the new `current_phase_seq`. On `config_complete_id`,
+`phoneapi_cache_commit()` evicts any entry whose `phase_seq` does
+not match the just-completed phase — i.e. nodes that disappeared
+from the upstream NodeDB get cleaned up automatically, but new
+arrivals (from the steady-state packet stream after commit) keep
+their slot because they too are tagged with the current phase.
+This avoids a full shadow-buffer copy (Phase B saves ~6 KB Core 1
+RAM that the original shadow-then-swap design would have needed).
+
+**Validation gate (SWD-dump cache vs `meshtastic --info`).**
+Re-flashed with `MOKYA_PHONEAPI_CASCADE=ON`. Ran `--info` against a
+2-node mesh that grew to 3 nodes during the test. SWD dumped 768 B
+from `s_cache` (`arm-none-eabi-nm` reported 0x20055468, struct size
+5924 B). Hand-decoded:
+
+| Field (cache) | CLI `--info` | Match |
+|---|---|---|
+| `my_node_num` = 0xB15DB862 | `myNodeNum: 2975709282` | ✅ |
+| `reboot_count` = 0 | `rebootCount: 0` | ✅ |
+| `min_app_version` = 0x75F8 (30200) | `minAppVersion: 30200` | ✅ |
+| `nodedb_count` = 3 | `nodedbCount: 3` | ✅ |
+| `pio_env` = "rp2350b-mokya" | `pioEnv: "rp2350b-mokya"` | ✅ |
+| `firmware_version` = "2.7.21.dac8318" | matches | ✅ |
+| `device_state_version` = 24 | matches | ✅ |
+| `can_shutdown` / `has_wifi` / `has_bluetooth` / `has_ethernet` = 0 | matches | ✅ |
+| 8 channels recorded, slot 0 role=PRIMARY name="" (default LongFast) | matches | ✅ |
+| Node[0] num=0xB15DB862 long_name="Meshtastic b862" short_name="b862" hw_model=79 (RPI_PICO2) is_favorite=1 battery=101 uptime=60 | matches | ✅ |
+| Node[1] num=0x58A750CA "TNGB_50ca" / "50ca" hw_model=71 (TRACKER_T1000_E) | matches | ✅ |
+| Node[2] num=0x33679C28 "TNGB 9c28" / "9c28" | matches | ✅ |
+| `phase_seq` = 2 on every node | (initial 1 → bumped to 2 on `my_info`) | ✅ |
+
+Memory cost (cumulative cascade ON vs OFF baseline):
+text 559 KB → 572 KB (+13 KB), bss 338 KB → 344 KB (+6 KB). Cache
+struct itself is 5924 B; the additional bss is the framing buffer
+(512 B) + decoder/encoder code's static data + alignment.
+
+**What still uses stub paths.** `messages_view`, `messages_send`,
+and `nodes_view` still consume the old `messages_inbox` and
+`nodes_db` stubs (which are populated by `bridge_task`'s pre-cascade
+dispatchers). Migration of those views to read from
+`phoneapi_cache_*` lands in Phase D; until then the cascade cache is
+populated but unused by the UI layer.
+
+**Next: Phase C.** Mode state machine in `phoneapi_session`:
+STANDALONE vs FORWARD, USB DTR observer, Core 1 self-issued
+`want_config_id` at boot when no host is connected, heartbeat timer.
+`phoneapi_encode.{c,h}` introduces ToRadio.want_config_id /
+ToRadio.heartbeat encoders + `phoneapi_tx.{c,h}` mutex-guarded
+upstream pusher. Validation: cold boot with USB unplugged populates
+the cache without a host client; plugging USB triggers an
+expected-host want_config_id that re-streams without breaking Core
+1's state.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

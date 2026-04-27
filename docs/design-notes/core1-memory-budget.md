@@ -209,6 +209,8 @@ Not exhaustive — just the ones large enough (≥ 256 B) to care about.
 | `s_line` | same | 96 B | NMEA line accumulator. |
 | `ImeLogic` instance (M4) | `src/ime/ime_task.c` | ~3 KB | 50 × `Candidate` (~40 B) ≈ 2 KB + 256 B display + 64 B key_seq + ~200 B per-candidate prefix + state. Static to keep the `ime` task stack small. |
 | LVGL draw buffer | `src/display/lvgl_glue.c` | TBD | One partial buffer for ST7789VI; update when the allocation is promoted from `LV_MEM_SIZE` to explicit static. |
+| `s_cache` (cascade PhoneAPI) | `src/phoneapi/phoneapi_cache.c` | 5924 B | Phase B cache: my_info (~68 B) + metadata (~44 B) + 8 channels × 20 B + 64 nodes × 88 B. Only present when `MOKYA_PHONEAPI_CASCADE=ON`. |
+| `s_framing` | `src/phoneapi/phoneapi_framing.c` | ~528 B | 512 B FromRadio frame buffer + state machine. Cascade flag only. |
 
 Shared-SRAM IPC buffers (SPSC rings + GPS double-buffer) live in the
 24 KB IPC window and are **not** in either heap — see §5 of
