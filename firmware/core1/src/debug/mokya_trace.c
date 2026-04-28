@@ -5,6 +5,13 @@
  * Truncation is silent — vsnprintf returns the would-be length so we
  * cap at the buffer size and never overflow.
  *
+ * Drop counters: SEGGER_RTT_Write is configured non-blocking
+ * (NO_BLOCK_SKIP) so when the up-buffer is full a write returns
+ * fewer bytes than requested (or 0). The counters below let us
+ * measure that pressure without changing the call path. SWD-readable
+ * via `g_trace_emit_count` / `g_trace_drop_events` /
+ * `g_trace_drop_bytes`.
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "mokya_trace.h"
@@ -13,6 +20,12 @@
 #include <stdio.h>
 
 #define MOKYA_TRACE_BUF_SZ 128
+
+/* SWD-readable instrumentation — non-atomic increments, single writer
+ * per call-site is fine because TRACE() is not used from ISR context. */
+volatile uint32_t g_trace_emit_count   = 0u;  /* events offered to RTT */
+volatile uint32_t g_trace_drop_events  = 0u;  /* events fully or partially dropped */
+volatile uint32_t g_trace_drop_bytes   = 0u;  /* total bytes lost across drops */
 
 void mokya_trace_emit(unsigned long ts_us,
                       const char *src,
@@ -49,5 +62,10 @@ void mokya_trace_emit(unsigned long ts_us,
         buf[sizeof buf - 1] = '\n';
         n = sizeof buf;
     }
-    SEGGER_RTT_Write(0, buf, (unsigned)n);
+    g_trace_emit_count++;
+    unsigned written = SEGGER_RTT_Write(0, buf, (unsigned)n);
+    if (written < (unsigned)n) {
+        g_trace_drop_events++;
+        g_trace_drop_bytes += (uint32_t)((unsigned)n - written);
+    }
 }

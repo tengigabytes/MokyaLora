@@ -36,12 +36,19 @@
  */
 #pragma once
 
+#include <stdint.h>
+
 #include "SEGGER_RTT.h"
 #include "hardware/timer.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* SWD-readable instrumentation. Updated inside mokya_trace_emit. */
+extern volatile uint32_t g_trace_emit_count;
+extern volatile uint32_t g_trace_drop_events;
+extern volatile uint32_t g_trace_drop_bytes;
 
 /* Format a single trace event into an internal stack buffer (~128 B) and
  * push it to RTT up channel 0. Use the TRACE / TRACE_BARE macros below
