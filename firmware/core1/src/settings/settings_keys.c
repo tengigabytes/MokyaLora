@@ -60,6 +60,11 @@ static const char *const k_fem_lna_mode[] = {
     "DISABLED", "ENABLED", "NOT_PRESENT",
 };
 
+static const char *const k_detect_trigger_type[] = {
+    "LOGIC_LOW", "LOGIC_HIGH", "FALL_EDGE", "RISE_EDGE",
+    "EITHER_LOW", "EITHER_HIGH",
+};
+
 /* ── Master key table ────────────────────────────────────────────────── *
  *
  * Order matters: settings_keys_in_group() returns a contiguous slice
@@ -345,6 +350,60 @@ static const settings_key_def_t k_keys[] = {
     { IPC_CFG_RANGETEST_SENDER, SG_RANGE_TEST, SK_KIND_U32,
       0, 86400, /*reboot=*/0, "sender_s",
       NULL, 0 },
+
+    /* ── DetectionSensor (B3-P4) ─────────────────────────────────── */
+    { IPC_CFG_DETECT_ENABLED, SG_DETECT_SENSOR, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "enabled",
+      NULL, 0 },
+    { IPC_CFG_DETECT_MIN_BCAST_SECS, SG_DETECT_SENSOR, SK_KIND_U32,
+      0, 86400, /*reboot=*/0, "min_bc_s",
+      NULL, 0 },
+    { IPC_CFG_DETECT_STATE_BCAST_SECS, SG_DETECT_SENSOR, SK_KIND_U32,
+      0, 86400, /*reboot=*/0, "state_bc_s",
+      NULL, 0 },
+    { IPC_CFG_DETECT_NAME, SG_DETECT_SENSOR, SK_KIND_STR,
+      0, 19, /*reboot=*/0, "name",
+      NULL, 0 },
+    { IPC_CFG_DETECT_TRIGGER_TYPE, SG_DETECT_SENSOR, SK_KIND_ENUM_U8,
+      0, 5, /*reboot=*/0, "trigger",
+      k_detect_trigger_type,
+      sizeof(k_detect_trigger_type)/sizeof(k_detect_trigger_type[0]) },
+    { IPC_CFG_DETECT_USE_PULLUP, SG_DETECT_SENSOR, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "pullup",
+      NULL, 0 },
+
+    /* ── CannedMessage (B3-P4) ───────────────────────────────────── */
+    { IPC_CFG_CANNED_UPDOWN1_ENABLED, SG_CANNED_MSG, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "updown1_en",
+      NULL, 0 },
+    { IPC_CFG_CANNED_SEND_BELL, SG_CANNED_MSG, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "send_bell",
+      NULL, 0 },
+
+    /* ── AmbientLighting (B3-P4) ─────────────────────────────────── */
+    { IPC_CFG_AMBIENT_LED_STATE, SG_AMBIENT, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "led_on",
+      NULL, 0 },
+    { IPC_CFG_AMBIENT_CURRENT, SG_AMBIENT, SK_KIND_U8,
+      0, 255, /*reboot=*/0, "current",
+      NULL, 0 },
+    { IPC_CFG_AMBIENT_RED, SG_AMBIENT, SK_KIND_U8,
+      0, 255, /*reboot=*/0, "red",
+      NULL, 0 },
+    { IPC_CFG_AMBIENT_GREEN, SG_AMBIENT, SK_KIND_U8,
+      0, 255, /*reboot=*/0, "green",
+      NULL, 0 },
+    { IPC_CFG_AMBIENT_BLUE, SG_AMBIENT, SK_KIND_U8,
+      0, 255, /*reboot=*/0, "blue",
+      NULL, 0 },
+
+    /* ── Paxcounter (B3-P4) ──────────────────────────────────────── */
+    { IPC_CFG_PAX_ENABLED, SG_PAXCOUNTER, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "enabled",
+      NULL, 0 },
+    { IPC_CFG_PAX_UPDATE_INTERVAL, SG_PAXCOUNTER, SK_KIND_U32,
+      0, 86400, /*reboot=*/0, "int_s",
+      NULL, 0 },
 };
 
 #define KEY_COUNT  ((uint8_t)(sizeof(k_keys) / sizeof(k_keys[0])))
@@ -358,9 +417,13 @@ static const char *const k_group_names[SG_GROUP_COUNT] = {
     [SG_CHANNEL]  = "Channel",
     [SG_OWNER]    = "Owner",
     [SG_SECURITY] = "Security",
-    [SG_TELEMETRY]  = "Telemetry",
-    [SG_NEIGHBOR]   = "Neighbor",
-    [SG_RANGE_TEST] = "RangeTest",
+    [SG_TELEMETRY]    = "Telemetry",
+    [SG_NEIGHBOR]     = "Neighbor",
+    [SG_RANGE_TEST]   = "RangeTest",
+    [SG_DETECT_SENSOR] = "DetectSnsr",
+    [SG_CANNED_MSG]   = "CannedMsg",
+    [SG_AMBIENT]      = "Ambient",
+    [SG_PAXCOUNTER]   = "Paxcounter",
 };
 
 const char *settings_group_name(settings_group_t g)

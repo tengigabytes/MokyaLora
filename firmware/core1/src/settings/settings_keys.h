@@ -47,6 +47,10 @@ typedef enum {
     SG_TELEMETRY,
     SG_NEIGHBOR,
     SG_RANGE_TEST,
+    SG_DETECT_SENSOR,
+    SG_CANNED_MSG,
+    SG_AMBIENT,
+    SG_PAXCOUNTER,
     SG_GROUP_COUNT,
 } settings_group_t;
 

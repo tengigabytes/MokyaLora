@@ -305,6 +305,40 @@ typedef enum {
      * exposed. */
     IPC_CFG_RANGETEST_ENABLED = 0x1200,  ///< bool
     IPC_CFG_RANGETEST_SENDER  = 0x1201,  ///< uint32 (0 = receiver-only)
+
+    /* ── 0x13xx — ModuleConfig.DetectionSensor (module_config.proto:152) ─
+     * Field 4 (send_bell) and 6 (monitor_pin) intentionally not
+     * exposed: send_bell is a niche bell-character flag for ext.
+     * notification, monitor_pin would let an unprivileged settings UI
+     * point the trigger at any GPIO (footgun without a board-level
+     * allowlist). */
+    IPC_CFG_DETECT_ENABLED          = 0x1300,  ///< bool
+    IPC_CFG_DETECT_MIN_BCAST_SECS   = 0x1301,  ///< uint32 s
+    IPC_CFG_DETECT_STATE_BCAST_SECS = 0x1302,  ///< uint32 s (0 = trigger-only)
+    IPC_CFG_DETECT_NAME             = 0x1303,  ///< string max 19 B
+    IPC_CFG_DETECT_TRIGGER_TYPE     = 0x1304,  ///< uint8 enum 0..5
+    IPC_CFG_DETECT_USE_PULLUP       = 0x1305,  ///< bool
+
+    /* ── 0x14xx — ModuleConfig.CannedMessage (module_config.proto:715) ──
+     * Rotary-encoder fields skipped — MokyaLora has a 36-key keypad,
+     * no rotary I/O. allow_input_source + enabled are deprecated. */
+    IPC_CFG_CANNED_UPDOWN1_ENABLED = 0x1400,  ///< bool (field 8)
+    IPC_CFG_CANNED_SEND_BELL       = 0x1401,  ///< bool (field 11)
+
+    /* ── 0x15xx — ModuleConfig.AmbientLighting (module_config.proto:823) ──
+     * current/red/green/blue stored as uint8 in nanopb but the proto
+     * declares uint32 (clamped 0..255 in our IPC handler). */
+    IPC_CFG_AMBIENT_LED_STATE = 0x1500,  ///< bool
+    IPC_CFG_AMBIENT_CURRENT   = 0x1501,  ///< uint8 0..255
+    IPC_CFG_AMBIENT_RED       = 0x1502,  ///< uint8 0..255
+    IPC_CFG_AMBIENT_GREEN     = 0x1503,  ///< uint8 0..255
+    IPC_CFG_AMBIENT_BLUE      = 0x1504,  ///< uint8 0..255
+
+    /* ── 0x16xx — ModuleConfig.Paxcounter (module_config.proto:276) ─────
+     * wifi_threshold + ble_threshold (int32 RSSI) skipped — defaulted
+     * at -80 server-side, no useful UI affordance. */
+    IPC_CFG_PAX_ENABLED         = 0x1600,  ///< bool
+    IPC_CFG_PAX_UPDATE_INTERVAL = 0x1601,  ///< uint32 s
 } IpcConfigKey;
 
 /** IPC_CMD_GET_CONFIG — request a config value by key.

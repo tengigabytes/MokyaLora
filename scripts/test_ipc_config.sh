@@ -66,6 +66,21 @@ IPC_CFG_NEIGHBOR_ENABLED=0x1100
 IPC_CFG_NEIGHBOR_TRANSMIT_OVER_LORA=0x1102
 IPC_CFG_RANGETEST_ENABLED=0x1200
 IPC_CFG_RANGETEST_SENDER=0x1201
+# B3-P4 expansion
+IPC_CFG_DETECT_ENABLED=0x1300
+IPC_CFG_DETECT_MIN_BCAST_SECS=0x1301
+IPC_CFG_DETECT_NAME=0x1303
+IPC_CFG_DETECT_TRIGGER_TYPE=0x1304
+IPC_CFG_DETECT_USE_PULLUP=0x1305
+IPC_CFG_CANNED_UPDOWN1_ENABLED=0x1400
+IPC_CFG_CANNED_SEND_BELL=0x1401
+IPC_CFG_AMBIENT_LED_STATE=0x1500
+IPC_CFG_AMBIENT_CURRENT=0x1501
+IPC_CFG_AMBIENT_RED=0x1502
+IPC_CFG_AMBIENT_GREEN=0x1503
+IPC_CFG_AMBIENT_BLUE=0x1504
+IPC_CFG_PAX_ENABLED=0x1600
+IPC_CFG_PAX_UPDATE_INTERVAL=0x1601
 # B3-P2 expansion
 IPC_CFG_POWER_SDS_SECS=0x0402
 IPC_CFG_POWER_LS_SECS=0x0403
@@ -672,6 +687,104 @@ print('FOUND' if b'$needle' in data else 'NOT_FOUND')
     fi
 }
 
+test_b3p4() {
+    echo "── B3-P4: DetectionSensor + CannedMessage + AmbientLighting + Paxcounter ──"
+
+    # DetectionSensor: enabled (bool), min_bcast_secs (u32),
+    # detection_trigger_type (enum 0..5), use_pullup (bool), name (string)
+    b3p1_set_get_v2 0xB0 0xB1 $IPC_CFG_DETECT_ENABLED \
+        "0x01" detection_sensor.enabled "True"
+    b3p1_set_get_v2 0xB2 0xB3 $IPC_CFG_DETECT_ENABLED \
+        "0x00" detection_sensor.enabled "False"
+    b3p1_set_get_v2 0xB4 0xB5 $IPC_CFG_DETECT_MIN_BCAST_SECS \
+        "$(bytes_for_u32_le 30)" detection_sensor.minimum_broadcast_secs "30"
+    b3p1_set_get_v2 0xB6 0xB7 $IPC_CFG_DETECT_MIN_BCAST_SECS \
+        "$(bytes_for_u32_le 0)"  detection_sensor.minimum_broadcast_secs "0"
+    b3p1_set_get_v2 0xB8 0xB9 $IPC_CFG_DETECT_TRIGGER_TYPE \
+        "0x03" detection_sensor.detection_trigger_type "3"
+    b3p1_set_get_v2 0xBA 0xBB $IPC_CFG_DETECT_TRIGGER_TYPE \
+        "0x00" detection_sensor.detection_trigger_type "0"
+    b3p1_set_get_v2 0xBC 0xBD $IPC_CFG_DETECT_USE_PULLUP \
+        "0x01" detection_sensor.use_pullup "True"
+    b3p1_set_get_v2 0xBE 0xBF $IPC_CFG_DETECT_USE_PULLUP \
+        "0x00" detection_sensor.use_pullup "False"
+
+    # DetectionSensor name (string) — host CLI reads it back as
+    # `detection_sensor.name: <value>`. Use --info JSON to verify so
+    # we don't have to worry about quoting.
+    echo "=== detection_sensor.name='Motion' ==="
+    local payload=$(build_set_payload_v2 $IPC_CFG_DETECT_NAME 0 \
+                    "$(bytes_for_string "Motion")")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xC0 "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xC1 ""
+    sleep 3
+    local name_actual=$(python -m meshtastic --port "$PORT" --get detection_sensor.name 2>&1 \
+        | grep "^detection_sensor.name:" | awk '{print $2}')
+    if [ "$name_actual" = "Motion" ]; then
+        echo "  ✓ detection_sensor.name=Motion"
+    else
+        echo "  ✗ expected Motion, got '$name_actual'"
+        return 1
+    fi
+    # Restore empty
+    payload=$(build_set_payload_v2 $IPC_CFG_DETECT_NAME 0 "")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xC2 "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xC3 ""
+    sleep 3
+
+    # DetectionSensor trigger_type out-of-range (6 > 5)
+    echo "=== detection_sensor.trigger=6 rejected (out-of-range) ==="
+    payload=$(build_set_payload_v2 $IPC_CFG_DETECT_TRIGGER_TYPE 0 "0x06")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xC4 "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xC5 ""
+    sleep 3
+    local trig=$(python -m meshtastic --port "$PORT" --get detection_sensor.detection_trigger_type 2>&1 \
+        | grep "^detection_sensor.detection_trigger_type:" | awk '{print $2}')
+    if [ "$trig" = "0" ]; then
+        echo "  ✓ trigger_type still 0 (out-of-range value rejected)"
+    else
+        echo "  ✗ trigger_type=$trig — out-of-range value accepted"
+        return 1
+    fi
+
+    # CannedMessage: updown1_enabled, send_bell
+    b3p1_set_get_v2 0xC6 0xC7 $IPC_CFG_CANNED_UPDOWN1_ENABLED \
+        "0x01" canned_message.updown1_enabled "True"
+    b3p1_set_get_v2 0xC8 0xC9 $IPC_CFG_CANNED_UPDOWN1_ENABLED \
+        "0x00" canned_message.updown1_enabled "False"
+    b3p1_set_get_v2 0xCA 0xCB $IPC_CFG_CANNED_SEND_BELL \
+        "0x01" canned_message.send_bell "True"
+    b3p1_set_get_v2 0xCC 0xCD $IPC_CFG_CANNED_SEND_BELL \
+        "0x00" canned_message.send_bell "False"
+
+    # AmbientLighting: led_state (bool) + 4 × u8 (current/red/green/blue)
+    b3p1_set_get_v2 0xCE 0xCF $IPC_CFG_AMBIENT_LED_STATE \
+        "0x01" ambient_lighting.led_state "True"
+    b3p1_set_get_v2 0xD0 0xD1 $IPC_CFG_AMBIENT_LED_STATE \
+        "0x00" ambient_lighting.led_state "False"
+    b3p1_set_get_v2 0xD2 0xD3 $IPC_CFG_AMBIENT_CURRENT \
+        "0x10" ambient_lighting.current "16"
+    b3p1_set_get_v2 0xD4 0xD5 $IPC_CFG_AMBIENT_RED \
+        "0xFF" ambient_lighting.red "255"
+    b3p1_set_get_v2 0xD6 0xD7 $IPC_CFG_AMBIENT_GREEN \
+        "0x80" ambient_lighting.green "128"
+    b3p1_set_get_v2 0xD8 0xD9 $IPC_CFG_AMBIENT_BLUE \
+        "0x00" ambient_lighting.blue "0"
+
+    # Paxcounter: enabled (bool) + update_interval (u32)
+    b3p1_set_get_v2 0xDA 0xDB $IPC_CFG_PAX_ENABLED \
+        "0x01" paxcounter.enabled "True"
+    b3p1_set_get_v2 0xDC 0xDD $IPC_CFG_PAX_ENABLED \
+        "0x00" paxcounter.enabled "False"
+    b3p1_set_get_v2 0xDE 0xDF $IPC_CFG_PAX_UPDATE_INTERVAL \
+        "$(bytes_for_u32_le 600)" paxcounter.paxcounter_update_interval "600"
+    b3p1_set_get_v2 0xE2 0xE3 $IPC_CFG_PAX_UPDATE_INTERVAL \
+        "$(bytes_for_u32_le 0)"   paxcounter.paxcounter_update_interval "0"
+}
+
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 case "${1:-all}" in
@@ -684,6 +797,7 @@ case "${1:-all}" in
     b3p1v2)  test_b3p1_v2_header ;;
     b3p2)    test_b3p2 ;;
     b3p3)    test_b3p3 ;;
+    b3p4)    test_b3p4 ;;
     all)
         test_lora_subset 15
         test_owner_long_name "MokyaTest"
