@@ -1153,6 +1153,212 @@ bool phoneapi_decode_config_security(const uint8_t *buf, uint16_t len,
     return true;
 }
 
+// ── ModuleConfig sub-oneof decoders (B3 cascade walk-down) ──────────
+// Field numbers from module_config.proto. Only fields exposed through
+// the IpcConfigKey 0x10xx — 0x16xx namespace are decoded; everything
+// else is skip_field'd. See ipc_config_handler.cpp for the wire-side
+// authoritative table of which fields land in flash.
+
+// TelemetryConfig (proto:625)
+//   1 device_update_interval, 2 environment_update_interval,
+//   3 environment_measurement_enabled, 4 environment_screen_enabled,
+//   5 environment_display_fahrenheit, 8 power_measurement_enabled,
+//   9 power_update_interval, 10 power_screen_enabled,
+//  14 device_telemetry_enabled
+bool phoneapi_decode_module_telemetry(const uint8_t *buf, uint16_t len,
+                                      phoneapi_module_telemetry_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        uint64_t v;
+        if (w == WT_VARINT) {
+            if (!read_varint(buf, len, &pos, &v)) return false;
+            switch (f) {
+            case 1u:  out->device_update_interval           = (uint32_t)v; break;
+            case 2u:  out->environment_update_interval      = (uint32_t)v; break;
+            case 3u:  out->environment_measurement_enabled  = (v != 0u);   break;
+            case 4u:  out->environment_screen_enabled       = (v != 0u);   break;
+            case 5u:  out->environment_display_fahrenheit   = (v != 0u);   break;
+            case 8u:  out->power_measurement_enabled        = (v != 0u);   break;
+            case 9u:  out->power_update_interval            = (uint32_t)v; break;
+            case 10u: out->power_screen_enabled             = (v != 0u);   break;
+            case 14u: out->device_telemetry_enabled         = (v != 0u);   break;
+            default:  break;  /* skip unknown varint fields silently */
+            }
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// NeighborInfoConfig (proto:130)
+//   1 enabled, 2 update_interval, 3 transmit_over_lora
+bool phoneapi_decode_module_neighbor(const uint8_t *buf, uint16_t len,
+                                     phoneapi_module_neighbor_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            switch (f) {
+            case 1u: out->enabled            = (v != 0u);   break;
+            case 2u: out->update_interval    = (uint32_t)v; break;
+            case 3u: out->transmit_over_lora = (v != 0u);   break;
+            default: break;
+            }
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// RangeTestConfig (proto:598) — 1 enabled, 2 sender. Fields 3 (save)
+// and 4 (clear_on_reboot) are ESP32-only, skipped.
+bool phoneapi_decode_module_range_test(const uint8_t *buf, uint16_t len,
+                                       phoneapi_module_range_test_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            if      (f == 1u) out->enabled = (v != 0u);
+            else if (f == 2u) out->sender  = (uint32_t)v;
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// DetectionSensorConfig (proto:152)
+//   1 enabled, 2 minimum_broadcast_secs, 3 state_broadcast_secs,
+//   5 name (string ≤19+NUL), 7 detection_trigger_type, 8 use_pullup.
+//   Field 4 send_bell, 6 monitor_pin not exposed.
+bool phoneapi_decode_module_detect(const uint8_t *buf, uint16_t len,
+                                   phoneapi_module_detect_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            switch (f) {
+            case 1u: out->enabled                 = (v != 0u);   break;
+            case 2u: out->minimum_broadcast_secs  = (uint32_t)v; break;
+            case 3u: out->state_broadcast_secs    = (uint32_t)v; break;
+            case 7u: out->detection_trigger_type  = (uint8_t)(v & 0xFFu); break;
+            case 8u: out->use_pullup              = (v != 0u);   break;
+            default: break;
+            }
+        } else if (f == 5u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos, out->name, sizeof(out->name)))
+                return false;
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// CannedMessageConfig (proto:715) — 8 updown1_enabled, 11 send_bell.
+// Rotary fields and deprecated fields skipped.
+bool phoneapi_decode_module_canned_msg(const uint8_t *buf, uint16_t len,
+                                       phoneapi_module_canned_msg_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            if      (f ==  8u) out->updown1_enabled = (v != 0u);
+            else if (f == 11u) out->send_bell       = (v != 0u);
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// AmbientLightingConfig (proto:823)
+//   1 led_state (bool), 2 current, 3 red, 4 green, 5 blue (all uint32 on
+//   the wire, clamped to u8 0..255 by the IPC handler — proto declares
+//   uint32 even though nanopb stores u8).
+bool phoneapi_decode_module_ambient(const uint8_t *buf, uint16_t len,
+                                    phoneapi_module_ambient_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            uint8_t  vu8 = (uint8_t)((v > 255ull) ? 255u : v);
+            switch (f) {
+            case 1u: out->led_state = (v != 0u); break;
+            case 2u: out->current   = vu8;       break;
+            case 3u: out->red       = vu8;       break;
+            case 4u: out->green     = vu8;       break;
+            case 5u: out->blue      = vu8;       break;
+            default: break;
+            }
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// PaxcounterConfig (proto:276) — 1 enabled, 2 paxcounter_update_interval.
+// Fields 3, 4 (RSSI thresholds) skipped.
+bool phoneapi_decode_module_paxcounter(const uint8_t *buf, uint16_t len,
+                                       phoneapi_module_paxcounter_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            if      (f == 1u) out->enabled                    = (v != 0u);
+            else if (f == 2u) out->paxcounter_update_interval = (uint32_t)v;
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool phoneapi_walk_config_oneof(const uint8_t *buf, uint16_t len,
                                 phoneapi_config_field_cb cb, void *ctx)
 {

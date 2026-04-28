@@ -138,6 +138,37 @@ bool phoneapi_decode_config_power(const uint8_t *buf, uint16_t len,
 bool phoneapi_decode_config_security(const uint8_t *buf, uint16_t len,
                                      phoneapi_config_security_t *out);
 
+// ── ModuleConfig sub-oneof decoders (B3 cascade walk-down) ──────────
+//
+// One per ModuleConfig sub-message we expose through IPC
+// (module_config.proto field-numbers in parens):
+//   field  5 = range_test    → phoneapi_decode_module_range_test
+//   field  6 = telemetry     → phoneapi_decode_module_telemetry
+//   field  7 = canned_message→ phoneapi_decode_module_canned_msg
+//   field 10 = neighbor_info → phoneapi_decode_module_neighbor
+//   field 11 = ambient_lighting → phoneapi_decode_module_ambient
+//   field 12 = detection_sensor → phoneapi_decode_module_detect
+//   field 13 = paxcounter    → phoneapi_decode_module_paxcounter
+//
+// Each takes the raw sub-message bytes (no outer ModuleConfig oneof
+// tag/length) and decodes only the fields exposed via IpcConfigKey.
+// `out` is zero-initialised inside; caller does not need to memset.
+
+bool phoneapi_decode_module_telemetry(const uint8_t *buf, uint16_t len,
+                                      phoneapi_module_telemetry_t *out);
+bool phoneapi_decode_module_neighbor(const uint8_t *buf, uint16_t len,
+                                     phoneapi_module_neighbor_t *out);
+bool phoneapi_decode_module_range_test(const uint8_t *buf, uint16_t len,
+                                       phoneapi_module_range_test_t *out);
+bool phoneapi_decode_module_detect(const uint8_t *buf, uint16_t len,
+                                   phoneapi_module_detect_t *out);
+bool phoneapi_decode_module_canned_msg(const uint8_t *buf, uint16_t len,
+                                       phoneapi_module_canned_msg_t *out);
+bool phoneapi_decode_module_ambient(const uint8_t *buf, uint16_t len,
+                                    phoneapi_module_ambient_t *out);
+bool phoneapi_decode_module_paxcounter(const uint8_t *buf, uint16_t len,
+                                       phoneapi_module_paxcounter_t *out);
+
 // Walk the outer Config message and invoke `cb` once per LD sub-field
 // (each oneof variant lives inside one LD field — device=1, position=2,
 // power=3, network=4, display=5, lora=6, bluetooth=7, security=8,

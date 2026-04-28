@@ -470,6 +470,141 @@ static bool populate_group_from_cache(uint8_t group)
         }
         return true;
     }
+    case SG_TELEMETRY: {
+        phoneapi_module_telemetry_t m;
+        if (!phoneapi_cache_get_module_telemetry(&m)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_TELEM_DEVICE_UPDATE_INTERVAL:
+                cache_set_row_u32(idx, m.device_update_interval); break;
+            case IPC_CFG_TELEM_ENV_UPDATE_INTERVAL:
+                cache_set_row_u32(idx, m.environment_update_interval); break;
+            case IPC_CFG_TELEM_ENV_MEASUREMENT_ENABLED:
+                cache_set_row_u8(idx, m.environment_measurement_enabled ? 1u : 0u); break;
+            case IPC_CFG_TELEM_ENV_SCREEN_ENABLED:
+                cache_set_row_u8(idx, m.environment_screen_enabled ? 1u : 0u); break;
+            case IPC_CFG_TELEM_ENV_DISPLAY_FAHRENHEIT:
+                cache_set_row_u8(idx, m.environment_display_fahrenheit ? 1u : 0u); break;
+            case IPC_CFG_TELEM_POWER_MEASUREMENT_ENABLED:
+                cache_set_row_u8(idx, m.power_measurement_enabled ? 1u : 0u); break;
+            case IPC_CFG_TELEM_POWER_UPDATE_INTERVAL:
+                cache_set_row_u32(idx, m.power_update_interval); break;
+            case IPC_CFG_TELEM_POWER_SCREEN_ENABLED:
+                cache_set_row_u8(idx, m.power_screen_enabled ? 1u : 0u); break;
+            case IPC_CFG_TELEM_DEVICE_TELEM_ENABLED:
+                cache_set_row_u8(idx, m.device_telemetry_enabled ? 1u : 0u); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_NEIGHBOR: {
+        phoneapi_module_neighbor_t m;
+        if (!phoneapi_cache_get_module_neighbor(&m)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_NEIGHBOR_ENABLED:
+                cache_set_row_u8(idx, m.enabled ? 1u : 0u); break;
+            case IPC_CFG_NEIGHBOR_UPDATE_INTERVAL:
+                cache_set_row_u32(idx, m.update_interval); break;
+            case IPC_CFG_NEIGHBOR_TRANSMIT_OVER_LORA:
+                cache_set_row_u8(idx, m.transmit_over_lora ? 1u : 0u); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_RANGE_TEST: {
+        phoneapi_module_range_test_t m;
+        if (!phoneapi_cache_get_module_range_test(&m)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_RANGETEST_ENABLED:
+                cache_set_row_u8(idx, m.enabled ? 1u : 0u); break;
+            case IPC_CFG_RANGETEST_SENDER:
+                cache_set_row_u32(idx, m.sender); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_DETECT_SENSOR: {
+        phoneapi_module_detect_t m;
+        if (!phoneapi_cache_get_module_detect(&m)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_DETECT_ENABLED:
+                cache_set_row_u8(idx, m.enabled ? 1u : 0u); break;
+            case IPC_CFG_DETECT_MIN_BCAST_SECS:
+                cache_set_row_u32(idx, m.minimum_broadcast_secs); break;
+            case IPC_CFG_DETECT_STATE_BCAST_SECS:
+                cache_set_row_u32(idx, m.state_broadcast_secs); break;
+            case IPC_CFG_DETECT_NAME:
+                cache_set_row_str(idx, m.name, PHONEAPI_DETECT_NAME_MAX); break;
+            case IPC_CFG_DETECT_TRIGGER_TYPE:
+                cache_set_row_u8(idx, m.detection_trigger_type); break;
+            case IPC_CFG_DETECT_USE_PULLUP:
+                cache_set_row_u8(idx, m.use_pullup ? 1u : 0u); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_CANNED_MSG: {
+        phoneapi_module_canned_msg_t m;
+        if (!phoneapi_cache_get_module_canned_msg(&m)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_CANNED_UPDOWN1_ENABLED:
+                cache_set_row_u8(idx, m.updown1_enabled ? 1u : 0u); break;
+            case IPC_CFG_CANNED_SEND_BELL:
+                cache_set_row_u8(idx, m.send_bell ? 1u : 0u); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_AMBIENT: {
+        phoneapi_module_ambient_t m;
+        if (!phoneapi_cache_get_module_ambient(&m)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_AMBIENT_LED_STATE:
+                cache_set_row_u8(idx, m.led_state ? 1u : 0u); break;
+            case IPC_CFG_AMBIENT_CURRENT:
+                cache_set_row_u8(idx, m.current); break;
+            case IPC_CFG_AMBIENT_RED:
+                cache_set_row_u8(idx, m.red); break;
+            case IPC_CFG_AMBIENT_GREEN:
+                cache_set_row_u8(idx, m.green); break;
+            case IPC_CFG_AMBIENT_BLUE:
+                cache_set_row_u8(idx, m.blue); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_PAXCOUNTER: {
+        phoneapi_module_paxcounter_t m;
+        if (!phoneapi_cache_get_module_paxcounter(&m)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_PAX_ENABLED:
+                cache_set_row_u8(idx, m.enabled ? 1u : 0u); break;
+            case IPC_CFG_PAX_UPDATE_INTERVAL:
+                cache_set_row_u32(idx, m.paxcounter_update_interval); break;
+            default: break;
+            }
+        }
+        return true;
+    }
     case SG_DISPLAY: {
         phoneapi_config_display_t d;
         if (!phoneapi_cache_get_config_display(&d)) return false;

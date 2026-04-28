@@ -202,6 +202,66 @@ typedef struct {
     bool     enable_message_bubbles;
 } phoneapi_config_display_t;
 
+// ── ModuleConfig sub-oneof caches (B3 follow-up — cascade walk-down) ──
+//
+// Same shape as phoneapi_config_*_t. Field numbers are documented in
+// phoneapi_decode.c next to each parser. The IPC handler exposes a
+// strict subset of fields per group (see ipc_protocol.h IpcConfigKey
+// 0x10xx — 0x16xx); cached structs hold only those — the user sees
+// nothing else through the settings UI, so decoding more would be
+// dead Core 1 RAM.
+
+typedef struct {
+    uint32_t device_update_interval;
+    uint32_t environment_update_interval;
+    bool     environment_measurement_enabled;
+    bool     environment_screen_enabled;
+    bool     environment_display_fahrenheit;
+    bool     power_measurement_enabled;
+    uint32_t power_update_interval;
+    bool     power_screen_enabled;
+    bool     device_telemetry_enabled;
+} phoneapi_module_telemetry_t;
+
+typedef struct {
+    bool     enabled;
+    uint32_t update_interval;
+    bool     transmit_over_lora;
+} phoneapi_module_neighbor_t;
+
+typedef struct {
+    bool     enabled;
+    uint32_t sender;
+} phoneapi_module_range_test_t;
+
+#define PHONEAPI_DETECT_NAME_MAX 20u
+typedef struct {
+    bool     enabled;
+    uint32_t minimum_broadcast_secs;
+    uint32_t state_broadcast_secs;
+    char     name[PHONEAPI_DETECT_NAME_MAX];
+    uint8_t  detection_trigger_type;
+    bool     use_pullup;
+} phoneapi_module_detect_t;
+
+typedef struct {
+    bool updown1_enabled;
+    bool send_bell;
+} phoneapi_module_canned_msg_t;
+
+typedef struct {
+    bool    led_state;
+    uint8_t current;
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+} phoneapi_module_ambient_t;
+
+typedef struct {
+    bool     enabled;
+    uint32_t paxcounter_update_interval;
+} phoneapi_module_paxcounter_t;
+
 // Decoded TEXT_MESSAGE_APP payload — published by the cascade decoder
 // when a FromRadio.packet with portnum==TEXT_MESSAGE_APP is seen.
 // Field shape matches `messages_inbox_entry_t` so messages_view can be
@@ -246,6 +306,15 @@ void phoneapi_cache_set_config_display(const phoneapi_config_display_t *cfg);
 void phoneapi_cache_set_config_power(const phoneapi_config_power_t *cfg);
 void phoneapi_cache_set_config_security(const phoneapi_config_security_t *cfg);
 
+// ModuleConfig writers (B3 cascade walk-down follow-up)
+void phoneapi_cache_set_module_telemetry(const phoneapi_module_telemetry_t *m);
+void phoneapi_cache_set_module_neighbor(const phoneapi_module_neighbor_t *m);
+void phoneapi_cache_set_module_range_test(const phoneapi_module_range_test_t *m);
+void phoneapi_cache_set_module_detect(const phoneapi_module_detect_t *m);
+void phoneapi_cache_set_module_canned_msg(const phoneapi_module_canned_msg_t *m);
+void phoneapi_cache_set_module_ambient(const phoneapi_module_ambient_t *m);
+void phoneapi_cache_set_module_paxcounter(const phoneapi_module_paxcounter_t *m);
+
 // Readers — copy out under the mutex.
 bool phoneapi_cache_get_my_info(phoneapi_my_info_t *out);
 bool phoneapi_cache_get_metadata(phoneapi_metadata_t *out);
@@ -259,6 +328,14 @@ bool phoneapi_cache_get_config_position(phoneapi_config_position_t *out);
 bool phoneapi_cache_get_config_display(phoneapi_config_display_t *out);
 bool phoneapi_cache_get_config_power(phoneapi_config_power_t *out);
 bool phoneapi_cache_get_config_security(phoneapi_config_security_t *out);
+
+bool phoneapi_cache_get_module_telemetry(phoneapi_module_telemetry_t *out);
+bool phoneapi_cache_get_module_neighbor(phoneapi_module_neighbor_t *out);
+bool phoneapi_cache_get_module_range_test(phoneapi_module_range_test_t *out);
+bool phoneapi_cache_get_module_detect(phoneapi_module_detect_t *out);
+bool phoneapi_cache_get_module_canned_msg(phoneapi_module_canned_msg_t *out);
+bool phoneapi_cache_get_module_ambient(phoneapi_module_ambient_t *out);
+bool phoneapi_cache_get_module_paxcounter(phoneapi_module_paxcounter_t *out);
 uint32_t phoneapi_cache_node_count(void);
 // Copy node by relative index (0..count-1, ordered most-recent first).
 bool phoneapi_cache_take_node_at(uint32_t index, phoneapi_node_t *out);

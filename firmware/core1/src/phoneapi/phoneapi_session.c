@@ -191,6 +191,96 @@ static void config_oneof_cb(uint32_t field_num,
     }
 }
 
+// ModuleConfig oneof callback — same shape as config_oneof_cb. Field
+// numbers from module_config.proto (range_test=5, telemetry=6,
+// canned_message=7, neighbor_info=10, ambient_lighting=11,
+// detection_sensor=12, paxcounter=13). MQTT/Serial/External
+// notification/StoreForward/Audio/RemoteHardware/StatusMessage/
+// TrafficManagement are not exposed through IpcConfigKey, so they
+// fall through to a tag-only trace.
+static void module_config_oneof_cb(uint32_t field_num,
+                                   const uint8_t *sub_buf, uint16_t sub_len,
+                                   void *ctx)
+{
+    (void)ctx;
+    switch (field_num) {
+    case 5u: {  /* RangeTestConfig */
+        phoneapi_module_range_test_t m;
+        if (phoneapi_decode_module_range_test(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_range_test(&m);
+            TRACE("phapi", "mc_range", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_range_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 6u: {  /* TelemetryConfig */
+        phoneapi_module_telemetry_t m;
+        if (phoneapi_decode_module_telemetry(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_telemetry(&m);
+            TRACE("phapi", "mc_telem", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_telem_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 7u: {  /* CannedMessageConfig */
+        phoneapi_module_canned_msg_t m;
+        if (phoneapi_decode_module_canned_msg(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_canned_msg(&m);
+            TRACE("phapi", "mc_canned", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_canned_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 10u: {  /* NeighborInfoConfig */
+        phoneapi_module_neighbor_t m;
+        if (phoneapi_decode_module_neighbor(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_neighbor(&m);
+            TRACE("phapi", "mc_neighbor", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_neighbor_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 11u: {  /* AmbientLightingConfig */
+        phoneapi_module_ambient_t m;
+        if (phoneapi_decode_module_ambient(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_ambient(&m);
+            TRACE("phapi", "mc_ambient", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_ambient_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 12u: {  /* DetectionSensorConfig */
+        phoneapi_module_detect_t m;
+        if (phoneapi_decode_module_detect(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_detect(&m);
+            TRACE("phapi", "mc_detect", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_detect_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 13u: {  /* PaxcounterConfig */
+        phoneapi_module_paxcounter_t m;
+        if (phoneapi_decode_module_paxcounter(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_paxcounter(&m);
+            TRACE("phapi", "mc_pax", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_pax_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    default:
+        TRACE("phapi", "mc_skip",
+              "f=%u,len=%u", (unsigned)field_num, (unsigned)sub_len);
+        break;
+    }
+}
+
 static void on_frame(const uint8_t *payload, uint16_t len, void *user)
 {
     (void)user;
@@ -257,6 +347,19 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                                                            &cfg_len);
         if (cfg == NULL) break;
         (void)phoneapi_walk_config_oneof(cfg, cfg_len, config_oneof_cb, NULL);
+        break;
+    }
+    case FR_TAG_MODULE_CONFIG: {
+        // Same model as FR_TAG_CONFIG: cascade emits each ModuleConfig
+        // sub-oneof on want_config_id replay and on AdminModule SETs.
+        // Walk the LD fields and route each to its decoder + cache
+        // writer (B3-P3/P4 follow-up).
+        uint16_t mc_len = 0;
+        const uint8_t *mc = phoneapi_find_variant_payload(payload, len,
+                                                          FR_TAG_MODULE_CONFIG,
+                                                          &mc_len);
+        if (mc == NULL) break;
+        (void)phoneapi_walk_config_oneof(mc, mc_len, module_config_oneof_cb, NULL);
         break;
     }
     case FR_TAG_CONFIG_COMPLETE_ID:

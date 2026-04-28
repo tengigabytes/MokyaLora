@@ -22,6 +22,13 @@ static struct {
     phoneapi_config_display_t   config_display;
     phoneapi_config_power_t     config_power;
     phoneapi_config_security_t  config_security;
+    phoneapi_module_telemetry_t   module_telemetry;
+    phoneapi_module_neighbor_t    module_neighbor;
+    phoneapi_module_range_test_t  module_range_test;
+    phoneapi_module_detect_t      module_detect;
+    phoneapi_module_canned_msg_t  module_canned_msg;
+    phoneapi_module_ambient_t     module_ambient;
+    phoneapi_module_paxcounter_t  module_paxcounter;
     bool                        my_info_valid;
     bool                        metadata_valid;
     bool                        config_device_valid;
@@ -30,6 +37,13 @@ static struct {
     bool                        config_display_valid;
     bool                        config_power_valid;
     bool                        config_security_valid;
+    bool                        module_telemetry_valid;
+    bool                        module_neighbor_valid;
+    bool                        module_range_test_valid;
+    bool                        module_detect_valid;
+    bool                        module_canned_msg_valid;
+    bool                        module_ambient_valid;
+    bool                        module_paxcounter_valid;
 
     uint32_t change_seq;        // bump on every write
     uint32_t committed_seq;     // bump on phoneapi_cache_commit()
@@ -70,6 +84,16 @@ typedef struct {
     uint8_t  security_debug_log_api_enabled;
     uint8_t  security_admin_channel_enabled;
     uint8_t  security_pubkey_len;
+    /* B3 cascade walk-down — ModuleConfig valid flags only.
+     * Field-level shadows omitted; settings_view cache is the
+     * authoritative read path for users. */
+    uint8_t  module_telemetry_valid;
+    uint8_t  module_neighbor_valid;
+    uint8_t  module_range_test_valid;
+    uint8_t  module_detect_valid;
+    uint8_t  module_canned_msg_valid;
+    uint8_t  module_ambient_valid;
+    uint8_t  module_paxcounter_valid;
 } phoneapi_dbg_view_t;
 
 phoneapi_dbg_view_t g_phoneapi_dbg = { .magic = 0x42335031u };
@@ -419,6 +443,44 @@ bool phoneapi_cache_get_config_security(phoneapi_config_security_t *out)
     cache_unlock();
     return ok;
 }
+
+/* ── ModuleConfig writers / readers ─────────────────────────────────
+ *
+ * One pair per ModuleConfig sub-message we expose through IPC. No
+ * SWD debug shadow for these (g_phoneapi_dbg gets bloated otherwise);
+ * `valid` flag inside s_cache is enough for SWD via struct-offset
+ * inspection.
+ */
+
+#define MODULE_CACHE_RW(name, type)                                          \
+    void phoneapi_cache_set_module_##name(const type *m)                     \
+    {                                                                        \
+        if (m == NULL) return;                                               \
+        cache_lock();                                                        \
+        s_cache.module_##name       = *m;                                    \
+        s_cache.module_##name##_valid = true;                                \
+        s_cache.change_seq++;                                                \
+        cache_unlock();                                                      \
+        g_phoneapi_dbg.module_##name##_valid = 1u;                           \
+    }                                                                        \
+    bool phoneapi_cache_get_module_##name(type *out)                         \
+    {                                                                        \
+        cache_lock();                                                        \
+        bool ok = s_cache.module_##name##_valid;                             \
+        if (ok && out != NULL) *out = s_cache.module_##name;                 \
+        cache_unlock();                                                      \
+        return ok;                                                           \
+    }
+
+MODULE_CACHE_RW(telemetry,   phoneapi_module_telemetry_t)
+MODULE_CACHE_RW(neighbor,    phoneapi_module_neighbor_t)
+MODULE_CACHE_RW(range_test,  phoneapi_module_range_test_t)
+MODULE_CACHE_RW(detect,      phoneapi_module_detect_t)
+MODULE_CACHE_RW(canned_msg,  phoneapi_module_canned_msg_t)
+MODULE_CACHE_RW(ambient,     phoneapi_module_ambient_t)
+MODULE_CACHE_RW(paxcounter,  phoneapi_module_paxcounter_t)
+
+#undef MODULE_CACHE_RW
 
 uint32_t phoneapi_cache_change_seq(void)    { return s_cache.change_seq; }
 uint32_t phoneapi_cache_committed_seq(void) { return s_cache.committed_seq; }
