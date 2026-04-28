@@ -786,6 +786,266 @@ bool phoneapi_decode_queue_status(const uint8_t *buf, uint16_t len,
     return true;
 }
 
+// ── Config sub-oneof decoders (B3-P1 / Cut B) ───────────────────────
+//
+// Each input buffer is the raw DeviceConfig / LoRaConfig / PositionConfig
+// / DisplayConfig sub-message — i.e. the bytes inside the outer
+// Config oneof's LD wrapper. The caller (phoneapi_session.on_frame
+// FR_TAG_CONFIG handler) is responsible for stripping the FromRadio
+// frame wrapper *and* the Config oneof tag before invoking these.
+//
+// Field numbers below mirror config.proto verbatim — see
+// firmware/core0/meshtastic/protobufs/meshtastic/config.proto. Keep
+// in sync with ipc_config_handler.cpp on Core 0; both ends consume
+// the same wire facts.
+
+// DeviceConfig — config.proto:202–264
+//   role=1, serial_enabled=2 (deprecated), button_gpio=4, buzzer_gpio=5,
+//   rebroadcast_mode=6, node_info_broadcast_secs=7,
+//   double_tap_as_button_press=8, is_managed=9 (deprecated),
+//   disable_triple_click=10, tzdef=11, led_heartbeat_disabled=12,
+//   buzzer_mode=13. B3-P1 surface: 1, 6, 7, 8, 10, 11, 12.
+bool phoneapi_decode_config_device(const uint8_t *buf, uint16_t len,
+                                   phoneapi_config_device_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->role = (uint8_t)v;
+        } else if (f == 6u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->rebroadcast_mode = (uint8_t)v;
+        } else if (f == 7u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->node_info_broadcast_secs = (uint32_t)v;
+        } else if (f == 8u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->double_tap_as_button_press = (v != 0u);
+        } else if (f == 10u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->disable_triple_click = (v != 0u);
+        } else if (f == 11u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos,
+                                  out->tzdef, PHONEAPI_TZDEF_MAX)) return false;
+        } else if (f == 12u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->led_heartbeat_disabled = (v != 0u);
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// LoRaConfig — config.proto:1012–1135
+//   use_preset=1, modem_preset=2, bandwidth=3, spread_factor=4,
+//   coding_rate=5, frequency_offset=6 (float, skipped), region=7,
+//   hop_limit=8, tx_enabled=9, tx_power=10 (int32), channel_num=11,
+//   override_duty_cycle=12, sx126x_rx_boosted_gain=13,
+//   override_frequency=14 (float, skipped), pa_fan_disabled=15,
+//   ignore_incoming=103 (repeated, skipped), ignore_mqtt=104,
+//   config_ok_to_mqtt=105, fem_lna_mode=106.
+bool phoneapi_decode_config_lora(const uint8_t *buf, uint16_t len,
+                                 phoneapi_config_lora_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->use_preset = (v != 0u);
+        } else if (f == 2u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->modem_preset = (uint8_t)v;
+        } else if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->bandwidth = (uint32_t)v;
+        } else if (f == 4u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->spread_factor = (uint32_t)v;
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->coding_rate = (uint32_t)v;
+        } else if (f == 7u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->region = (uint8_t)v;
+        } else if (f == 8u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->hop_limit = (uint32_t)v;
+        } else if (f == 9u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->tx_enabled = (v != 0u);
+        } else if (f == 10u && w == WT_VARINT) {
+            // int32 — proto3 encodes negatives as 10-byte varint of two's complement
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->tx_power = (int32_t)(uint32_t)v;
+        } else if (f == 11u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->channel_num = (uint32_t)v;
+        } else if (f == 12u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->override_duty_cycle = (v != 0u);
+        } else if (f == 13u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->sx126x_rx_boosted_gain = (v != 0u);
+        } else if (f == 106u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->fem_lna_mode = (uint8_t)v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// PositionConfig — config.proto:361–426
+//   position_broadcast_secs=1, position_broadcast_smart_enabled=2,
+//   fixed_position=3, gps_enabled=4 (deprecated), gps_update_interval=5,
+//   gps_attempt_time=6 (deprecated), position_flags=7, rx_gpio=8,
+//   tx_gpio=9, broadcast_smart_minimum_distance=10,
+//   broadcast_smart_minimum_interval_secs=11, gps_en_gpio=12, gps_mode=13.
+bool phoneapi_decode_config_position(const uint8_t *buf, uint16_t len,
+                                     phoneapi_config_position_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->position_broadcast_secs = (uint32_t)v;
+        } else if (f == 2u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->position_broadcast_smart_enabled = (v != 0u);
+        } else if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->fixed_position = (v != 0u);
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->gps_update_interval = (uint32_t)v;
+        } else if (f == 7u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->position_flags = (uint32_t)v;
+        } else if (f == 10u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->broadcast_smart_minimum_distance = (uint32_t)v;
+        } else if (f == 11u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->broadcast_smart_minimum_interval_secs = (uint32_t)v;
+        } else if (f == 13u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->gps_mode = (uint8_t)v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// DisplayConfig — config.proto:657–790
+//   screen_on_secs=1, gps_format=2 (deprecated),
+//   auto_screen_carousel_secs=3, compass_north_top=4 (deprecated),
+//   flip_screen=5, units=6, oled=7, displaymode=8, heading_bold=9,
+//   wake_on_tap_or_motion=10, compass_orientation=11, use_12h_clock=12,
+//   use_long_node_name=13, enable_message_bubbles=14.
+bool phoneapi_decode_config_display(const uint8_t *buf, uint16_t len,
+                                    phoneapi_config_display_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->screen_on_secs = (uint32_t)v;
+        } else if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->auto_screen_carousel_secs = (uint32_t)v;
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->flip_screen = (v != 0u);
+        } else if (f == 6u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->units = (uint8_t)v;
+        } else if (f == 7u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->oled = (uint8_t)v;
+        } else if (f == 8u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->displaymode = (uint8_t)v;
+        } else if (f == 9u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->heading_bold = (v != 0u);
+        } else if (f == 10u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->wake_on_tap_or_motion = (v != 0u);
+        } else if (f == 11u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->compass_orientation = (uint8_t)v;
+        } else if (f == 12u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->use_12h_clock = (v != 0u);
+        } else if (f == 13u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->use_long_node_name = (v != 0u);
+        } else if (f == 14u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->enable_message_bubbles = (v != 0u);
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+bool phoneapi_walk_config_oneof(const uint8_t *buf, uint16_t len,
+                                phoneapi_config_field_cb cb, void *ctx)
+{
+    if (buf == NULL || cb == NULL) return false;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t field_num = (uint32_t)(tag_word >> 3);
+        uint8_t  wt        = (uint8_t)(tag_word & 7u);
+
+        if (wt == WT_LEN) {
+            uint64_t sub_len;
+            if (!read_varint(buf, len, &pos, &sub_len)) return false;
+            if (sub_len > (uint64_t)(len - pos)) return false;
+            cb(field_num, &buf[pos], (uint16_t)sub_len, ctx);
+            pos += (uint16_t)sub_len;
+        } else if (!skip_field(buf, len, &pos, wt)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 const char *phoneapi_from_radio_tag_name(from_radio_tag_t tag)
 {
     switch (tag) {

@@ -12,12 +12,20 @@
 // Cache state — exported through the API only. Everything is guarded
 // by `s_lock`. SWD inspection still works via the static address.
 static struct {
-    phoneapi_my_info_t  my_info;
-    phoneapi_metadata_t metadata;
-    phoneapi_channel_t  channels[PHONEAPI_CHANNEL_COUNT];
-    phoneapi_node_t     nodes[PHONEAPI_NODES_CAP];
-    bool                my_info_valid;
-    bool                metadata_valid;
+    phoneapi_my_info_t          my_info;
+    phoneapi_metadata_t         metadata;
+    phoneapi_channel_t          channels[PHONEAPI_CHANNEL_COUNT];
+    phoneapi_node_t             nodes[PHONEAPI_NODES_CAP];
+    phoneapi_config_device_t    config_device;
+    phoneapi_config_lora_t      config_lora;
+    phoneapi_config_position_t  config_position;
+    phoneapi_config_display_t   config_display;
+    bool                        my_info_valid;
+    bool                        metadata_valid;
+    bool                        config_device_valid;
+    bool                        config_lora_valid;
+    bool                        config_position_valid;
+    bool                        config_display_valid;
 
     uint32_t change_seq;        // bump on every write
     uint32_t committed_seq;     // bump on phoneapi_cache_commit()
@@ -26,6 +34,30 @@ static struct {
 } s_cache;
 
 static SemaphoreHandle_t s_lock = NULL;
+
+/* SWD debug shadow — fixed-layout scratch that mirrors validity flags
+ * and a few representative field values from s_cache. Updated inside
+ * each set_config_*. Easy to read via mem32 without needing struct
+ * offsets / DWARF info. NOT used by any code path. */
+typedef struct {
+    uint32_t magic;            /* 'B3P1' = 0x42335031 */
+    uint8_t  config_device_valid;
+    uint8_t  config_lora_valid;
+    uint8_t  config_position_valid;
+    uint8_t  config_display_valid;
+    uint8_t  device_role;
+    uint8_t  device_rebroadcast_mode;
+    uint8_t  lora_region;
+    uint8_t  position_gps_mode;
+    uint8_t  display_oled;
+    uint8_t  display_use_12h_clock;
+    uint8_t  device_led_heartbeat_disabled;
+    uint8_t  lora_use_preset;
+    uint32_t lora_bandwidth;
+    uint32_t position_position_flags;
+} phoneapi_dbg_view_t;
+
+phoneapi_dbg_view_t g_phoneapi_dbg = { .magic = 0x42335031u };
 
 static void cache_lock(void)
 {
@@ -229,6 +261,98 @@ bool phoneapi_cache_get_node_by_id(uint32_t node_id, phoneapi_node_t *out)
             break;
         }
     }
+    cache_unlock();
+    return ok;
+}
+
+// ── Config sub-oneof writers / readers (B3-P1 / Cut B) ──────────────
+
+void phoneapi_cache_set_config_device(const phoneapi_config_device_t *cfg)
+{
+    if (cfg == NULL) return;
+    cache_lock();
+    s_cache.config_device       = *cfg;
+    s_cache.config_device_valid = true;
+    s_cache.change_seq++;
+    cache_unlock();
+    g_phoneapi_dbg.config_device_valid          = 1u;
+    g_phoneapi_dbg.device_role                  = cfg->role;
+    g_phoneapi_dbg.device_rebroadcast_mode      = cfg->rebroadcast_mode;
+    g_phoneapi_dbg.device_led_heartbeat_disabled = cfg->led_heartbeat_disabled ? 1u : 0u;
+}
+
+void phoneapi_cache_set_config_lora(const phoneapi_config_lora_t *cfg)
+{
+    if (cfg == NULL) return;
+    cache_lock();
+    s_cache.config_lora       = *cfg;
+    s_cache.config_lora_valid = true;
+    s_cache.change_seq++;
+    cache_unlock();
+    g_phoneapi_dbg.config_lora_valid = 1u;
+    g_phoneapi_dbg.lora_region       = cfg->region;
+    g_phoneapi_dbg.lora_use_preset   = cfg->use_preset ? 1u : 0u;
+    g_phoneapi_dbg.lora_bandwidth    = cfg->bandwidth;
+}
+
+void phoneapi_cache_set_config_position(const phoneapi_config_position_t *cfg)
+{
+    if (cfg == NULL) return;
+    cache_lock();
+    s_cache.config_position       = *cfg;
+    s_cache.config_position_valid = true;
+    s_cache.change_seq++;
+    cache_unlock();
+    g_phoneapi_dbg.config_position_valid     = 1u;
+    g_phoneapi_dbg.position_gps_mode         = cfg->gps_mode;
+    g_phoneapi_dbg.position_position_flags   = cfg->position_flags;
+}
+
+void phoneapi_cache_set_config_display(const phoneapi_config_display_t *cfg)
+{
+    if (cfg == NULL) return;
+    cache_lock();
+    s_cache.config_display       = *cfg;
+    s_cache.config_display_valid = true;
+    s_cache.change_seq++;
+    cache_unlock();
+    g_phoneapi_dbg.config_display_valid  = 1u;
+    g_phoneapi_dbg.display_oled          = cfg->oled;
+    g_phoneapi_dbg.display_use_12h_clock = cfg->use_12h_clock ? 1u : 0u;
+}
+
+bool phoneapi_cache_get_config_device(phoneapi_config_device_t *out)
+{
+    cache_lock();
+    bool ok = s_cache.config_device_valid;
+    if (ok && out != NULL) *out = s_cache.config_device;
+    cache_unlock();
+    return ok;
+}
+
+bool phoneapi_cache_get_config_lora(phoneapi_config_lora_t *out)
+{
+    cache_lock();
+    bool ok = s_cache.config_lora_valid;
+    if (ok && out != NULL) *out = s_cache.config_lora;
+    cache_unlock();
+    return ok;
+}
+
+bool phoneapi_cache_get_config_position(phoneapi_config_position_t *out)
+{
+    cache_lock();
+    bool ok = s_cache.config_position_valid;
+    if (ok && out != NULL) *out = s_cache.config_position;
+    cache_unlock();
+    return ok;
+}
+
+bool phoneapi_cache_get_config_display(phoneapi_config_display_t *out)
+{
+    cache_lock();
+    bool ok = s_cache.config_display_valid;
+    if (ok && out != NULL) *out = s_cache.config_display;
     cache_unlock();
     return ok;
 }

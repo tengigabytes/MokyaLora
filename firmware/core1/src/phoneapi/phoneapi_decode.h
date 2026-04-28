@@ -118,6 +118,34 @@ typedef struct {
 bool phoneapi_decode_queue_status(const uint8_t *buf, uint16_t len,
                                   phoneapi_queue_status_t *out);
 
+// ── Config sub-oneof decoders (B3-P1 / Cut B) ────────────────────────
+//
+// Each takes the *raw bytes of the sub-message* (e.g. DeviceConfig
+// bytes — without the outer Config oneof tag/length). Field numbers
+// are documented inside the implementation next to each parser, with
+// the source line in firmware/core0/meshtastic/protobufs/meshtastic/config.proto.
+
+bool phoneapi_decode_config_device(const uint8_t *buf, uint16_t len,
+                                   phoneapi_config_device_t *out);
+bool phoneapi_decode_config_lora(const uint8_t *buf, uint16_t len,
+                                 phoneapi_config_lora_t *out);
+bool phoneapi_decode_config_position(const uint8_t *buf, uint16_t len,
+                                     phoneapi_config_position_t *out);
+bool phoneapi_decode_config_display(const uint8_t *buf, uint16_t len,
+                                    phoneapi_config_display_t *out);
+
+// Walk the outer Config message and invoke `cb` once per LD sub-field
+// (each oneof variant lives inside one LD field — device=1, position=2,
+// power=3, network=4, display=5, lora=6, bluetooth=7, security=8,
+// sessionkey=9, device_ui=10 — see config.proto:1221–1232). Returns
+// false if the buffer is malformed; partial dispatch may still occur.
+typedef void (*phoneapi_config_field_cb)(uint32_t field_num,
+                                         const uint8_t *sub_buf,
+                                         uint16_t sub_len,
+                                         void *ctx);
+bool phoneapi_walk_config_oneof(const uint8_t *buf, uint16_t len,
+                                phoneapi_config_field_cb cb, void *ctx);
+
 // Helper to locate the variant payload within a FromRadio frame.
 // Returns pointer + length of the variant sub-message bytes, or NULL.
 // (For varint variants like config_complete_id, returns NULL — callers

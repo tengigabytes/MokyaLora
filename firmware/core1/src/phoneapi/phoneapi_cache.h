@@ -108,6 +108,72 @@ typedef struct {
     uint32_t phase_seq;              // matches cache.current_phase_seq if fresh
 } phoneapi_node_t;
 
+// ── Config sub-oneof caches (B3-P1 / Cut B) ────────────────────────
+//
+// Each struct mirrors the subset of the corresponding meshtastic
+// Config sub-message that B3-P1 exposes through settings_view.
+// Field numbers used by the decoder are documented in
+// firmware/core1/src/phoneapi/phoneapi_decode.c next to each parser.
+//
+// Buffers are populated by the cascade FR_TAG_CONFIG handler — every
+// `--info` request from a USB host (or our own want_config_id at
+// session start) replays the full Config tree, so the cache reflects
+// the device's current durable state without any extra IPC GETs.
+
+#define PHONEAPI_TZDEF_MAX  65u   // includes NUL — matches proto max_size
+
+typedef struct {
+    uint8_t  role;
+    uint8_t  rebroadcast_mode;
+    uint32_t node_info_broadcast_secs;
+    bool     double_tap_as_button_press;
+    bool     disable_triple_click;
+    bool     led_heartbeat_disabled;
+    char     tzdef[PHONEAPI_TZDEF_MAX];
+} phoneapi_config_device_t;
+
+typedef struct {
+    bool     use_preset;
+    uint8_t  modem_preset;
+    uint32_t bandwidth;
+    uint32_t spread_factor;
+    uint32_t coding_rate;
+    uint8_t  region;
+    uint32_t hop_limit;
+    bool     tx_enabled;
+    int32_t  tx_power;
+    uint32_t channel_num;
+    bool     override_duty_cycle;
+    bool     sx126x_rx_boosted_gain;
+    uint8_t  fem_lna_mode;
+} phoneapi_config_lora_t;
+
+typedef struct {
+    uint8_t  gps_mode;
+    uint32_t gps_update_interval;
+    uint32_t position_broadcast_secs;
+    bool     position_broadcast_smart_enabled;
+    bool     fixed_position;
+    uint32_t position_flags;
+    uint32_t broadcast_smart_minimum_distance;
+    uint32_t broadcast_smart_minimum_interval_secs;
+} phoneapi_config_position_t;
+
+typedef struct {
+    uint32_t screen_on_secs;
+    uint32_t auto_screen_carousel_secs;
+    bool     flip_screen;
+    uint8_t  units;
+    uint8_t  oled;
+    uint8_t  displaymode;
+    bool     heading_bold;
+    bool     wake_on_tap_or_motion;
+    uint8_t  compass_orientation;
+    bool     use_12h_clock;
+    bool     use_long_node_name;
+    bool     enable_message_bubbles;
+} phoneapi_config_display_t;
+
 // Decoded TEXT_MESSAGE_APP payload — published by the cascade decoder
 // when a FromRadio.packet with portnum==TEXT_MESSAGE_APP is seen.
 // Field shape matches `messages_inbox_entry_t` so messages_view can be
@@ -143,10 +209,23 @@ void phoneapi_cache_set_channel(uint8_t index, const phoneapi_channel_t *chan);
 // node->phase_seq is set internally; caller fills the rest.
 void phoneapi_cache_upsert_node(const phoneapi_node_t *node);
 
+// Config sub-oneof writers (B3-P1 / Cut B)
+void phoneapi_cache_set_config_device(const phoneapi_config_device_t *cfg);
+void phoneapi_cache_set_config_lora(const phoneapi_config_lora_t *cfg);
+void phoneapi_cache_set_config_position(const phoneapi_config_position_t *cfg);
+void phoneapi_cache_set_config_display(const phoneapi_config_display_t *cfg);
+
 // Readers — copy out under the mutex.
 bool phoneapi_cache_get_my_info(phoneapi_my_info_t *out);
 bool phoneapi_cache_get_metadata(phoneapi_metadata_t *out);
 bool phoneapi_cache_get_channel(uint8_t index, phoneapi_channel_t *out);
+
+// Config sub-oneof readers — return false if cascade hasn't yet
+// delivered that sub-message in the current session.
+bool phoneapi_cache_get_config_device(phoneapi_config_device_t *out);
+bool phoneapi_cache_get_config_lora(phoneapi_config_lora_t *out);
+bool phoneapi_cache_get_config_position(phoneapi_config_position_t *out);
+bool phoneapi_cache_get_config_display(phoneapi_config_display_t *out);
 uint32_t phoneapi_cache_node_count(void);
 // Copy node by relative index (0..count-1, ordered most-recent first).
 bool phoneapi_cache_take_node_at(uint32_t index, phoneapi_node_t *out);

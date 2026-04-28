@@ -111,6 +111,64 @@ static void wrap_write_channel(void *p) {
 static void wrap_write_node(void *p)
 { phoneapi_cache_upsert_node((const phoneapi_node_t *)p); }
 
+// Config oneof callback — Cut B FR_TAG_CONFIG dispatcher. Fields
+// 1, 2, 5, 6 land in the four sub-decoders we ship in B3-P1; the
+// rest (power, network, bluetooth, security, sessionkey, device_ui)
+// fall through to a tag-only trace and are deferred to later phases.
+static void config_oneof_cb(uint32_t field_num,
+                            const uint8_t *sub_buf, uint16_t sub_len,
+                            void *ctx)
+{
+    (void)ctx;
+    switch (field_num) {
+    case 1u: {
+        phoneapi_config_device_t cfg;
+        if (phoneapi_decode_config_device(sub_buf, sub_len, &cfg)) {
+            phoneapi_cache_set_config_device(&cfg);
+            TRACE("phapi", "cfg_device", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "cfg_device_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 2u: {
+        phoneapi_config_position_t cfg;
+        if (phoneapi_decode_config_position(sub_buf, sub_len, &cfg)) {
+            phoneapi_cache_set_config_position(&cfg);
+            TRACE("phapi", "cfg_position", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "cfg_position_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 5u: {
+        phoneapi_config_display_t cfg;
+        if (phoneapi_decode_config_display(sub_buf, sub_len, &cfg)) {
+            phoneapi_cache_set_config_display(&cfg);
+            TRACE("phapi", "cfg_display", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "cfg_display_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 6u: {
+        phoneapi_config_lora_t cfg;
+        if (phoneapi_decode_config_lora(sub_buf, sub_len, &cfg)) {
+            phoneapi_cache_set_config_lora(&cfg);
+            TRACE("phapi", "cfg_lora", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "cfg_lora_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    default:
+        // power / network / bluetooth / security / sessionkey / device_ui
+        TRACE("phapi", "cfg_skip",
+              "f=%u,len=%u", (unsigned)field_num, (unsigned)sub_len);
+        break;
+    }
+}
+
 static void on_frame(const uint8_t *payload, uint16_t len, void *user)
 {
     (void)user;
@@ -163,6 +221,20 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
         phoneapi_node_t nd;
         dispatch_to_cache_writer(payload, len, FR_TAG_NODE_INFO,
                                  wrap_decode_node_info, wrap_write_node, &nd);
+        break;
+    }
+    case FR_TAG_CONFIG: {
+        // Cascade replays the full Config tree on every want_config_id
+        // (and on every host --info).  We dispatch each sub-oneof field
+        // (device=1, position=2, display=5, lora=6) into its decoder
+        // and into phoneapi_cache so settings_view can read straight
+        // from cache without an IPC GET burst (M5F.3).
+        uint16_t cfg_len = 0;
+        const uint8_t *cfg = phoneapi_find_variant_payload(payload, len,
+                                                           FR_TAG_CONFIG,
+                                                           &cfg_len);
+        if (cfg == NULL) break;
+        (void)phoneapi_walk_config_oneof(cfg, cfg_len, config_oneof_cb, NULL);
         break;
     }
     case FR_TAG_CONFIG_COMPLETE_ID:

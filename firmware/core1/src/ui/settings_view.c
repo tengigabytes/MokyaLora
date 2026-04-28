@@ -13,6 +13,7 @@
 #include "settings_keys.h"
 #include "ime_task.h"
 #include "mie/utf8.h"
+#include "phoneapi_cache.h"
 
 /* Layout (landscape 320×240):
  *   y   0 .. 23   header  — "[Group X/Y] group_name [pending: N]"
@@ -67,6 +68,7 @@ static uint8_t   s_cur_row;       /* index in current group's row list (0 .. n_k
 static bool      s_dirty_load;    /* trigger GET burst on next refresh after activation */
 static uint32_t  s_last_render_seq;
 static uint32_t  s_render_seq;
+static uint32_t  s_last_phoneapi_seq;  /* phoneapi_cache_change_seq() last seen */
 
 /* Edit overlay working copy (raw u8/u32 representation in little-endian
  * bytes — same wire format we send via SET). */
@@ -208,6 +210,196 @@ static void send_get_burst(uint8_t group)
     if (!defs) return;
     for (uint8_t i = 0; i < n_keys; ++i) {
         (void)settings_client_send_get(defs[i].ipc_key);
+    }
+}
+
+/* ── M5F.3: cache-driven row population ──────────────────────────────── *
+ *
+ * Cascade FR_TAG_CONFIG handler (phoneapi_session.c) decodes the four
+ * Config sub-oneofs (Device / LoRa / Position / Display) into
+ * phoneapi_cache. settings_view pulls from the cache so opening a
+ * group renders immediately, instead of waiting for the GET-burst
+ * round-trips. Keys not in the cached groups (Power / Channel /
+ * Owner) still go through send_get_burst (B3-P2 / B3-P3 will move
+ * those into the cache too).
+ *
+ * Dirty rows (user-edited but not yet Apply'd) are skipped so a
+ * cascade refresh doesn't clobber pending edits. */
+
+static void cache_set_row_u8(int gidx, uint8_t v)
+{
+    if (gidx < 0 || gidx >= (int)KEY_CACHE_MAX) return;
+    if (s_cache[gidx].dirty) return;
+    s_cache[gidx].value[0]   = v;
+    s_cache[gidx].value_len  = 1;
+    s_cache[gidx].have_value = true;
+}
+
+static void cache_set_row_u32(int gidx, uint32_t v)
+{
+    if (gidx < 0 || gidx >= (int)KEY_CACHE_MAX) return;
+    if (s_cache[gidx].dirty) return;
+    value_from_u32(s_cache[gidx].value, 4, v);
+    s_cache[gidx].value_len  = 4;
+    s_cache[gidx].have_value = true;
+}
+
+static void cache_set_row_str(int gidx, const char *s, size_t maxlen)
+{
+    if (gidx < 0 || gidx >= (int)KEY_CACHE_MAX) return;
+    if (s_cache[gidx].dirty) return;
+    size_t n = strnlen(s, maxlen);
+    if (n > VAL_BUF_MAX) n = VAL_BUF_MAX;
+    memcpy(s_cache[gidx].value, s, n);
+    s_cache[gidx].value_len  = (uint8_t)n;
+    s_cache[gidx].have_value = true;
+}
+
+static bool populate_group_from_cache(uint8_t group)
+{
+    uint8_t n_keys = 0;
+    const settings_key_def_t *defs = settings_keys_in_group(group, &n_keys);
+    if (defs == NULL) return false;
+    int base = row_to_global_index(group, 0, n_keys + 1);
+    if (base < 0) return false;
+
+    switch (group) {
+    case SG_DEVICE: {
+        phoneapi_config_device_t d;
+        if (!phoneapi_cache_get_config_device(&d)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_DEVICE_ROLE:
+                cache_set_row_u8(idx, d.role); break;
+            case IPC_CFG_DEVICE_REBROADCAST_MODE:
+                cache_set_row_u8(idx, d.rebroadcast_mode); break;
+            case IPC_CFG_DEVICE_NODE_INFO_BCAST_SECS:
+                cache_set_row_u32(idx, d.node_info_broadcast_secs); break;
+            case IPC_CFG_DEVICE_DOUBLE_TAP_BTN:
+                cache_set_row_u8(idx, d.double_tap_as_button_press ? 1u : 0u); break;
+            case IPC_CFG_DEVICE_DISABLE_TRIPLE_CLICK:
+                cache_set_row_u8(idx, d.disable_triple_click ? 1u : 0u); break;
+            case IPC_CFG_DEVICE_TZDEF:
+                cache_set_row_str(idx, d.tzdef, PHONEAPI_TZDEF_MAX); break;
+            case IPC_CFG_DEVICE_LED_HEARTBEAT_DISABLED:
+                cache_set_row_u8(idx, d.led_heartbeat_disabled ? 1u : 0u); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_LORA: {
+        phoneapi_config_lora_t d;
+        if (!phoneapi_cache_get_config_lora(&d)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_LORA_REGION:
+                cache_set_row_u8(idx, d.region); break;
+            case IPC_CFG_LORA_MODEM_PRESET:
+                cache_set_row_u8(idx, d.modem_preset); break;
+            case IPC_CFG_LORA_TX_POWER:
+                cache_set_row_u8(idx, (uint8_t)(int8_t)d.tx_power); break;
+            case IPC_CFG_LORA_HOP_LIMIT:
+                cache_set_row_u8(idx, (uint8_t)d.hop_limit); break;
+            case IPC_CFG_LORA_CHANNEL_NUM:
+                cache_set_row_u8(idx, (uint8_t)d.channel_num); break;
+            case IPC_CFG_LORA_USE_PRESET:
+                cache_set_row_u8(idx, d.use_preset ? 1u : 0u); break;
+            case IPC_CFG_LORA_BANDWIDTH:
+                cache_set_row_u32(idx, d.bandwidth); break;
+            case IPC_CFG_LORA_SPREAD_FACTOR:
+                cache_set_row_u32(idx, d.spread_factor); break;
+            case IPC_CFG_LORA_CODING_RATE:
+                cache_set_row_u32(idx, d.coding_rate); break;
+            case IPC_CFG_LORA_TX_ENABLED:
+                cache_set_row_u8(idx, d.tx_enabled ? 1u : 0u); break;
+            case IPC_CFG_LORA_OVERRIDE_DUTY_CYCLE:
+                cache_set_row_u8(idx, d.override_duty_cycle ? 1u : 0u); break;
+            case IPC_CFG_LORA_SX126X_RX_BOOSTED_GAIN:
+                cache_set_row_u8(idx, d.sx126x_rx_boosted_gain ? 1u : 0u); break;
+            case IPC_CFG_LORA_FEM_LNA_MODE:
+                cache_set_row_u8(idx, d.fem_lna_mode); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_POSITION: {
+        phoneapi_config_position_t d;
+        if (!phoneapi_cache_get_config_position(&d)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_GPS_MODE:
+                cache_set_row_u8(idx, d.gps_mode); break;
+            case IPC_CFG_GPS_UPDATE_INTERVAL:
+                cache_set_row_u32(idx, d.gps_update_interval); break;
+            case IPC_CFG_POSITION_BCAST_SECS:
+                cache_set_row_u32(idx, d.position_broadcast_secs); break;
+            case IPC_CFG_POSITION_BCAST_SMART_ENABLED:
+                cache_set_row_u8(idx, d.position_broadcast_smart_enabled ? 1u : 0u); break;
+            case IPC_CFG_POSITION_FIXED_POSITION:
+                cache_set_row_u8(idx, d.fixed_position ? 1u : 0u); break;
+            case IPC_CFG_POSITION_FLAGS:
+                cache_set_row_u32(idx, d.position_flags); break;
+            case IPC_CFG_POSITION_BCAST_SMART_MIN_DIST:
+                cache_set_row_u32(idx, d.broadcast_smart_minimum_distance); break;
+            case IPC_CFG_POSITION_BCAST_SMART_MIN_INT_SECS:
+                cache_set_row_u32(idx, d.broadcast_smart_minimum_interval_secs); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_DISPLAY: {
+        phoneapi_config_display_t d;
+        if (!phoneapi_cache_get_config_display(&d)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_SCREEN_ON_SECS:
+                cache_set_row_u32(idx, d.screen_on_secs); break;
+            case IPC_CFG_UNITS_METRIC:
+                /* Meshtastic enum: 0=METRIC, 1=IMPERIAL → bool "metric". */
+                cache_set_row_u8(idx, (d.units == 0u) ? 1u : 0u); break;
+            case IPC_CFG_DISPLAY_AUTO_CAROUSEL_SECS:
+                cache_set_row_u32(idx, d.auto_screen_carousel_secs); break;
+            case IPC_CFG_DISPLAY_FLIP_SCREEN:
+                cache_set_row_u8(idx, d.flip_screen ? 1u : 0u); break;
+            case IPC_CFG_DISPLAY_OLED:
+                cache_set_row_u8(idx, d.oled); break;
+            case IPC_CFG_DISPLAY_DISPLAYMODE:
+                cache_set_row_u8(idx, d.displaymode); break;
+            case IPC_CFG_DISPLAY_HEADING_BOLD:
+                cache_set_row_u8(idx, d.heading_bold ? 1u : 0u); break;
+            case IPC_CFG_DISPLAY_WAKE_ON_TAP_OR_MOTION:
+                cache_set_row_u8(idx, d.wake_on_tap_or_motion ? 1u : 0u); break;
+            case IPC_CFG_DISPLAY_COMPASS_ORIENTATION:
+                cache_set_row_u8(idx, d.compass_orientation); break;
+            case IPC_CFG_DISPLAY_USE_12H_CLOCK:
+                cache_set_row_u8(idx, d.use_12h_clock ? 1u : 0u); break;
+            case IPC_CFG_DISPLAY_USE_LONG_NODE_NAME:
+                cache_set_row_u8(idx, d.use_long_node_name ? 1u : 0u); break;
+            case IPC_CFG_DISPLAY_ENABLE_MESSAGE_BUBBLES:
+                cache_set_row_u8(idx, d.enable_message_bubbles ? 1u : 0u); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+/* Seed group rows: try cache first, fall back to IPC GET burst for
+ * any group the cache doesn't cover (Power / Channel / Owner). */
+static void seed_group(uint8_t group)
+{
+    if (!populate_group_from_cache(group)) {
+        send_get_burst(group);
     }
 }
 
@@ -644,13 +836,13 @@ static void apply(const key_event_t *ev)
     case MOKYA_KEY_LEFT:
         s_cur_group = (uint8_t)((s_cur_group + SG_GROUP_COUNT - 1) % SG_GROUP_COUNT);
         s_cur_row = 0;
-        send_get_burst(s_cur_group);
+        seed_group(s_cur_group);
         s_render_seq++;
         break;
     case MOKYA_KEY_RIGHT:
         s_cur_group = (uint8_t)((s_cur_group + 1) % SG_GROUP_COUNT);
         s_cur_row = 0;
-        send_get_burst(s_cur_group);
+        seed_group(s_cur_group);
         s_render_seq++;
         break;
     case MOKYA_KEY_OK:
@@ -666,7 +858,7 @@ static void apply(const key_event_t *ev)
                 for (uint8_t i = 0; i < n_keys; ++i) s_cache[base + i].dirty = false;
             }
         }
-        send_get_burst(s_cur_group);   /* re-read truth from Core 0 */
+        seed_group(s_cur_group);   /* re-read truth from cache or Core 0 */
         s_render_seq++;
         break;
     }
@@ -684,9 +876,21 @@ static void refresh(void)
     drain_replies();
 
     if (s_dirty_load) {
-        send_get_burst(s_cur_group);
+        seed_group(s_cur_group);
         s_dirty_load = false;
+        s_last_phoneapi_seq = phoneapi_cache_change_seq();
         s_render_seq++;
+    } else {
+        /* When cascade pushes a fresh Config (e.g. host CLI just SET
+         * a value via cascade->AdminModule), phoneapi_cache_change_seq
+         * bumps. Re-populate the current group so the row reflects
+         * the new value within one LVGL tick. */
+        uint32_t seq = phoneapi_cache_change_seq();
+        if (seq != s_last_phoneapi_seq) {
+            s_last_phoneapi_seq = seq;
+            (void)populate_group_from_cache(s_cur_group);
+            s_render_seq++;
+        }
     }
 
     if (s_render_seq != s_last_render_seq) {
