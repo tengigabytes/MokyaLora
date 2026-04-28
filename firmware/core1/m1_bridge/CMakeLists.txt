@@ -261,6 +261,17 @@ add_executable(core1_bridge
 set_source_files_properties(${SEGGER_DIR}/RTT/SEGGER_RTT.c
     PROPERTIES COMPILE_OPTIONS "-Wno-cast-qual;-Wno-cast-align")
 
+# RTT up-buffer enlarged from default 1 KB → 4 KB so trace bursts during
+# host CLI `--info` / cascade Config replay (~10 KB of phapi rx_frame +
+# cfg_*/mc_* events) survive long enough for JLinkRTTLogger to drain
+# them. configTOTAL_HEAP_SIZE shrunk 56 → 53 KB in the same commit to
+# offset the +3 KB BSS — see docs/design-notes/core1-memory-budget.md
+# §4 (Notable static buffers) and the linker assertion at the bottom of
+# memmap_core1_bridge.ld.
+target_compile_definitions(core1_bridge PRIVATE
+    BUFFER_SIZE_UP=4096
+)
+
 # Font .bin is a flashable partition, not embedded in Core 1 image.
 # Build-time dep so the blob is regenerated when charlist.txt changes
 # — scripts/build_and_flash.sh then loadbin's it to 0x10A00000.

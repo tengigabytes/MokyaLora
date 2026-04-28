@@ -19,7 +19,7 @@ Physical SRAM on RP2350B is **520 KB** at `0x20000000 – 0x20082000`.
 |---|---|---|---|
 | Shared IPC window | 24 KB | Core 0 ↔ Core 1 | Fixed, reserved at link time — see firmware-architecture.md §5. |
 | Core 1 .text/.rodata/.data/.bss | ~300 KB | m1_bridge image | Driver/LVGL/FreeRTOS code + statics. |
-| FreeRTOS heap (heap_4) | **56 KB** | `configTOTAL_HEAP_SIZE` | Task stacks, TCBs, kernel objects. See §3. Bumped from 48 → 56 KB on 2026-04-27 after PSRAM relocation freed 15 KB of MSP-guard slack. **Measured `g_core1_boot_heap_free = 15,488 B (27.0 %)`** at boot, unchanged after 60-char IME stress (heap settles at the per-task allocation baseline). |
+| FreeRTOS heap (heap_4) | **53 KB** | `configTOTAL_HEAP_SIZE` | Task stacks, TCBs, kernel objects. See §3. Trajectory: 48 → 56 KB on 2026-04-27 (PSRAM relocation freed 15 KB of MSP-guard slack); 56 → **53 KB on 2026-04-29** to offset the 4 KB SEGGER RTT up-buffer enlargement (§4). **Measured `g_core1_boot_heap_free = 11,960 B (22.0 %)`** at boot — above the 20 % §5/§6 target. |
 | LVGL heap | **56 KB** | `LV_MEM_SIZE` in `lv_conf.h` | Separate from FreeRTOS. Widgets, styles, fonts, draw buffers. **Post 2026-04-27 view-system refactor (lazy create + LRU cache)**: pool usage decoupled from total view count. `view_router_init(screen, lru_capacity=3)` keeps at most 1 active + 3 cached widget trees alive; cycling past triggers `destroy()` on the oldest. **Direct A/B measurement** with `scripts/measure_view_pool.py` (FUNC-cycle 7 views × 2 rounds via SWD inject + RTT `lvgl_mem,stats`): see §4.1. Boot peak: **47,528 B (93 %) → 26,672 B (50 %)**, −20.9 KB. Saturated peak after a full cycle: **48,400 B (95 %) → 45,560 B (85 %)**, −2.8 KB. Free at saturation: **3,648 B → 6,360 B**. Architectural win for production: adding 30+ views grows the registry table only, not the LVGL pool. Each view defines `static const view_descriptor_t XXX_DESC` with `create()` / `destroy()` callbacks and registers via `g_view_registry[]` in `view_registry.c`. |
 | MCU main stack (MSP) | ~9 KB de facto (post 2026-04-27 heap bump) | linker `__StackTop` | Pre-scheduler + exception handlers. Effective MSP region = the slot between `__end__` and `__StackTop = 0x2007A000`. **Trajectory:** 2 KB (original) → 17 KB (after PSRAM relocation) → **9 KB** after `configTOTAL_HEAP_SIZE` 48 → 56 KB which absorbed 8 KB of the MSP slack. Linker assertion `__StackTop - __end__ >= 0x800` (in `memmap_core1_bridge.ld`) enforces a hard 2 KB minimum at link-time. Tracked at runtime by `msp_canary` (`firmware/core1/src/debug/msp_canary.{c,h}`): boot fills the slot with `0xDEADBEEF`, `wd_task` refreshes peak every 200 ms into `g_msp_peak_used` / `g_msp_low_water_addr`. **Measured 2026-04-27** under USB+IPC + 60-char IME stress: peak = **436 B (~5 % of available)** — comfortable ~20× headroom. |
 | LVGL framebuffer | 150 KB | `s_framebuffer` in `display/lvgl_glue.c`, dedicated `.framebuffer` NOLOAD section | DIRECT mode 240×320 RGB565. Largest single SRAM consumer (~48 % of Core 1 carve-out). |
@@ -104,7 +104,7 @@ link; compare against this table when the numbers drift.
 
 ---
 
-## 3. FreeRTOS heap budget (`configTOTAL_HEAP_SIZE = 48 KB`)
+## 3. FreeRTOS heap budget (`configTOTAL_HEAP_SIZE = 53 KB`)
 
 Heap is consumed by task stacks (4 bytes per word), TCBs (~88 B each on
 32-bit V11), and kernel objects (queues/mutexes/semaphores ~80-100 B
@@ -157,8 +157,14 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 | §3.2 Kernel tasks | 4,096 | 4,096 | 4,096 |
 | §3.3 Queues / TCBs / overhead | ~1,420 | ~1,700 | ~1,900 |
 | **Estimated** | **~34.4 KB** | **~38.8 KB** | **~40.9 KB** |
-| `configTOTAL_HEAP_SIZE` | 49,152 | 49,152 | 57,344 (post 2026-04-27 bump) |
-| **Reserve (threshold 15 %)** | **~14.7 KB (30 %)** ✓ | **~10.5 KB (21 %)** ✓ | **~15.5 KB (27 %)** ✓ |
+| `configTOTAL_HEAP_SIZE` | 49,152 | 49,152 | 54,272 (post 2026-04-29 RTT-buffer offset) |
+| **Reserve (threshold 15 %)** | **~14.7 KB (30 %)** ✓ | **~10.5 KB (21 %)** ✓ | **~11.7 KB (22 %)** ✓ |
+
+**Measured 2026-04-29 post `configTOTAL_HEAP_SIZE` 56 → 53 KB shrink (SWD, `g_core1_boot_heap_free`)**:
+`xFreeBytesRemaining = 11,960 B (22.0 %)` — above the 20 % §5/§6
+target. Heap shrunk to offset the 4 KB SEGGER RTT up-buffer
+enlargement (§4); net BSS unchanged so the `__StackTop − __end__ ≥
+0x800` linker assertion still passes with the same ~812 B margin.
 
 **Measured 2026-04-27 post `configTOTAL_HEAP_SIZE` 48 → 56 KB bump (SWD, `g_core1_boot_heap_free`)**:
 `xFreeBytesRemaining = 15,488 B (27.0 %)` — back to a healthy reserve
@@ -212,6 +218,7 @@ Not exhaustive — just the ones large enough (≥ 256 B) to care about.
 | `s_cache` (cascade PhoneAPI) | `src/phoneapi/phoneapi_cache.c` | ~3.1 KB | Phase B cache: my_info (~68 B) + metadata (~44 B) + 8 channels × 20 B + 32 nodes × 88 B. Phase D dropped node cap 64 → 32 to make room for `s_msgs`; can grow back when Core 1 RAM frees up. Only present when `MOKYA_PHONEAPI_CASCADE=ON`. |
 | `s_msgs` (cascade messages ring) | `src/phoneapi/phoneapi_cache.c` | ~864 B | Phase D inbound TEXT_MESSAGE_APP ring: 4 × phoneapi_text_msg_t (~216 B each). Cascade flag only. |
 | `s_framing` | `src/phoneapi/phoneapi_framing.c` | ~528 B | 512 B FromRadio frame buffer + state machine. Cascade flag only. |
+| `_acUpBuffer` (SEGGER RTT) | `pico-sdk SEGGER_RTT.c` | **4 KB** | RTT terminal up-channel ring. Enlarged from default 1 KB → 4 KB on 2026-04-29 (`BUFFER_SIZE_UP=4096` via `target_compile_definitions`) so a single `--info` cascade replay (~10 KB of phapi `rx_frame` / `cfg_*` / `mc_*` events) survives long enough for `JLinkRTTLogger` to drain. Compensated by `configTOTAL_HEAP_SIZE` 56 → 53 KB in the same commit (net BSS Δ = 0). Verified post-change: 13/13 cascade decoder events captured during `--info` (was 0/13 at 1 KB). |
 
 Shared-SRAM IPC buffers (SPSC rings + GPS double-buffer) live in the
 24 KB IPC window and are **not** in either heap — see §5 of
