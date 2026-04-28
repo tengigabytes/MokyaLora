@@ -55,8 +55,10 @@ void settings_client_init(void);
 
 /* ── Senders (called from LVGL task) ───────────────────────────────────── */
 
-bool settings_client_send_get(uint16_t ipc_key);
-bool settings_client_send_set(uint16_t ipc_key,
+/* channel_index is meaningful only for 0x06xx Channel keys (B3-P3). For
+ * all other keys it must be 0 — Core 0 ignores it. */
+bool settings_client_send_get(uint16_t ipc_key, uint8_t channel_index);
+bool settings_client_send_set(uint16_t ipc_key, uint8_t channel_index,
                               const void *value, uint16_t value_len);
 /** reboot=true → IPC_CMD_COMMIT_REBOOT, false → IPC_CMD_COMMIT_CONFIG */
 bool settings_client_send_commit(bool reboot);

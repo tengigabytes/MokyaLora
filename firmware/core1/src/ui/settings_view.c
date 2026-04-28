@@ -65,6 +65,7 @@ typedef enum {
 static ui_mode_t s_mode;
 static uint8_t   s_cur_group;     /* settings_group_t */
 static uint8_t   s_cur_row;       /* index in current group's row list (0 .. n_keys = Apply) */
+static uint8_t   s_cur_channel_index;  /* 0..PHONEAPI_CHANNEL_COUNT-1, only meaningful in SG_CHANNEL */
 static bool      s_dirty_load;    /* trigger GET burst on next refresh after activation */
 static uint32_t  s_last_render_seq;
 static uint32_t  s_render_seq;
@@ -222,8 +223,9 @@ static void send_get_burst(uint8_t group)
     uint8_t n_keys = 0;
     const settings_key_def_t *defs = settings_keys_in_group(group, &n_keys);
     if (!defs) return;
+    uint8_t ch = (group == SG_CHANNEL) ? s_cur_channel_index : 0u;
     for (uint8_t i = 0; i < n_keys; ++i) {
-        (void)settings_client_send_get(defs[i].ipc_key);
+        (void)settings_client_send_get(defs[i].ipc_key, ch);
     }
 }
 
@@ -450,10 +452,10 @@ static bool populate_group_from_cache(uint8_t group)
         return true;
     }
     case SG_CHANNEL: {
-        /* B3-P2 still primary-only — channel[0]. B3-P3 will use
-         * channel_index addressing. */
+        /* B3-P3: addressed by s_cur_channel_index (0..7). Cascade decoder
+         * fills all 8 channel cache slots from FromRadio.channel frames. */
         phoneapi_channel_t ch;
-        if (!phoneapi_cache_get_channel(0, &ch)) return false;
+        if (!phoneapi_cache_get_channel(s_cur_channel_index, &ch)) return false;
         for (uint8_t i = 0; i < n_keys; ++i) {
             int idx = base + i;
             switch (defs[i].ipc_key) {
@@ -509,6 +511,25 @@ static bool populate_group_from_cache(uint8_t group)
     }
 }
 
+/* Reset cache rows for the given group — cleared on channel switch so the
+ * next seed shows the new channel's values. (Across channels we keep dirty
+ * flags off because the underlying SETs targeted whichever channel was
+ * active when the user pressed OK; once switched, those edits are no
+ * longer addressable through this row's screen position.) */
+static void reset_group_cache(uint8_t group)
+{
+    uint8_t n_keys = 0;
+    const settings_key_def_t *defs = settings_keys_in_group(group, &n_keys);
+    if (!defs) return;
+    int base = row_to_global_index(group, 0, n_keys + 1);
+    if (base < 0) return;
+    for (uint8_t i = 0; i < n_keys; ++i) {
+        s_cache[base + i].have_value = false;
+        s_cache[base + i].dirty      = false;
+        s_cache[base + i].value_len  = 0;
+    }
+}
+
 /* Seed group rows: try cache first, fall back to IPC GET burst for
  * any group the cache doesn't cover (Power / Channel / Owner). */
 static void seed_group(uint8_t group)
@@ -525,19 +546,26 @@ static void render_browse(void)
     uint8_t n_keys = 0;
     const settings_key_def_t *defs = settings_keys_in_group(s_cur_group, &n_keys);
 
-    char hdr[64];
+    char hdr[80];
     uint8_t pending = pending_count_in_group(s_cur_group);
+    char ch_tag[16] = { 0 };
+    if (s_cur_group == SG_CHANNEL) {
+        snprintf(ch_tag, sizeof(ch_tag), " Ch %u/8",
+                 (unsigned)(s_cur_channel_index + 1));
+    }
     if (pending > 0) {
-        snprintf(hdr, sizeof(hdr), "[%u/%u] %s  *%u",
+        snprintf(hdr, sizeof(hdr), "[%u/%u] %s%s  *%u",
                  (unsigned)(s_cur_group + 1),
                  (unsigned)SG_GROUP_COUNT,
                  settings_group_name((settings_group_t)s_cur_group),
+                 ch_tag,
                  (unsigned)pending);
     } else {
-        snprintf(hdr, sizeof(hdr), "[%u/%u] %s",
+        snprintf(hdr, sizeof(hdr), "[%u/%u] %s%s",
                  (unsigned)(s_cur_group + 1),
                  (unsigned)SG_GROUP_COUNT,
-                 settings_group_name((settings_group_t)s_cur_group));
+                 settings_group_name((settings_group_t)s_cur_group),
+                 ch_tag);
     }
     lv_label_set_text(s_header, hdr);
 
@@ -573,9 +601,12 @@ static void render_browse(void)
 
     if (s_footer_msg[0]) {
         lv_label_set_text(s_footer, s_footer_msg);
+    } else if (s_cur_group == SG_CHANNEL) {
+        lv_label_set_text(s_footer,
+                          "UP/DN row  L/R Ch  TAB group  OK edit");
     } else {
         lv_label_set_text(s_footer,
-                          "UP/DN row  L/R group  OK edit  BACK clr");
+                          "UP/DN row  L/R group  TAB next  OK edit");
     }
 }
 
@@ -784,7 +815,8 @@ static void str_edit_done(bool committed, const char *utf8,
         s_cache[gidx].have_value = true;
         s_cache[gidx].dirty      = true;
     }
-    (void)settings_client_send_set(key, utf8, byte_len);
+    uint8_t ch = ((key & 0xFF00u) == 0x0600u) ? s_cur_channel_index : 0u;
+    (void)settings_client_send_set(key, ch, utf8, byte_len);
     s_render_seq++;
 }
 
@@ -806,7 +838,8 @@ static void confirm_edit(void)
 
     /* Push SET to Core 0 — handler accumulates pending_segments. The
      * actual flash write happens at Apply (COMMIT). */
-    (void)settings_client_send_set(s_edit_key, s_edit_buf, s_edit_len);
+    uint8_t ch = ((s_edit_key & 0xFF00u) == 0x0600u) ? s_cur_channel_index : 0u;
+    (void)settings_client_send_set(s_edit_key, ch, s_edit_buf, s_edit_len);
 
     s_mode = UI_BROWSE;
     s_render_seq++;
@@ -957,12 +990,32 @@ static void apply(const key_event_t *ev)
         s_render_seq++;
         break;
     case MOKYA_KEY_LEFT:
-        s_cur_group = (uint8_t)((s_cur_group + SG_GROUP_COUNT - 1) % SG_GROUP_COUNT);
-        s_cur_row = 0;
-        seed_group(s_cur_group);
+        if (s_cur_group == SG_CHANNEL) {
+            s_cur_channel_index =
+                (uint8_t)((s_cur_channel_index + PHONEAPI_CHANNEL_COUNT - 1u) % PHONEAPI_CHANNEL_COUNT);
+            reset_group_cache(s_cur_group);
+            seed_group(s_cur_group);
+        } else {
+            s_cur_group = (uint8_t)((s_cur_group + SG_GROUP_COUNT - 1) % SG_GROUP_COUNT);
+            s_cur_row = 0;
+            seed_group(s_cur_group);
+        }
         s_render_seq++;
         break;
     case MOKYA_KEY_RIGHT:
+        if (s_cur_group == SG_CHANNEL) {
+            s_cur_channel_index =
+                (uint8_t)((s_cur_channel_index + 1u) % PHONEAPI_CHANNEL_COUNT);
+            reset_group_cache(s_cur_group);
+            seed_group(s_cur_group);
+        } else {
+            s_cur_group = (uint8_t)((s_cur_group + 1) % SG_GROUP_COUNT);
+            s_cur_row = 0;
+            seed_group(s_cur_group);
+        }
+        s_render_seq++;
+        break;
+    case MOKYA_KEY_TAB:
         s_cur_group = (uint8_t)((s_cur_group + 1) % SG_GROUP_COUNT);
         s_cur_row = 0;
         seed_group(s_cur_group);

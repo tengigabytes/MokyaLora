@@ -27,12 +27,12 @@ void settings_client_init(void)
 
 /* ── Senders ─────────────────────────────────────────────────────────── */
 
-bool settings_client_send_get(uint16_t ipc_key)
+bool settings_client_send_get(uint16_t ipc_key, uint8_t channel_index)
 {
     IpcPayloadGetConfig p;
     memset(&p, 0, sizeof(p));
     p.key           = ipc_key;
-    p.channel_index = 0;  /* B3-P3 will fill for 0x06xx channel keys */
+    p.channel_index = channel_index;
     return ipc_ring_push(&g_ipc_shared.c1_to_c0_ctrl,
                          g_ipc_shared.c1_to_c0_slots,
                          IPC_RING_SLOT_COUNT,
@@ -42,7 +42,7 @@ bool settings_client_send_get(uint16_t ipc_key)
                          (uint16_t)sizeof(p));
 }
 
-bool settings_client_send_set(uint16_t ipc_key,
+bool settings_client_send_set(uint16_t ipc_key, uint8_t channel_index,
                               const void *value, uint16_t value_len)
 {
     if (value_len > SETTINGS_CLIENT_VALUE_MAX) value_len = SETTINGS_CLIENT_VALUE_MAX;
@@ -52,7 +52,7 @@ bool settings_client_send_set(uint16_t ipc_key,
     IpcPayloadConfigValue *cv = (IpcPayloadConfigValue *)buf;
     cv->key           = ipc_key;
     cv->value_len     = value_len;
-    cv->channel_index = 0;
+    cv->channel_index = channel_index;
     if (value_len > 0 && value != NULL) {
         memcpy(cv->value, value, value_len);
     }

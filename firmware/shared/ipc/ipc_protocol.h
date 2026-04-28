@@ -278,6 +278,33 @@ typedef enum {
     IPC_CFG_SECURITY_SERIAL_ENABLED        = 0x0802,  ///< bool, reboot=Y
     IPC_CFG_SECURITY_DEBUG_LOG_API_ENABLED = 0x0803,  ///< bool, reboot=Y
     IPC_CFG_SECURITY_ADMIN_CHANNEL_ENABLED = 0x0804,  ///< bool, reboot=N
+
+    /* ── 0x10xx — ModuleConfig.Telemetry (module_config.proto:625) ──────
+     * AdminModule.cpp:933 handleSetModuleConfig defaults shouldReboot=true
+     * but routes through saveChanges(SEGMENT_MODULECONFIG, ...).  Our IPC
+     * soft-reload calls service->reloadConfig(SEGMENT_MODULECONFIG) which
+     * fires the configChanged observer; TelemetryModule re-reads its
+     * config from there so reboot is not required. */
+    IPC_CFG_TELEM_DEVICE_UPDATE_INTERVAL    = 0x1000,  ///< uint32 s
+    IPC_CFG_TELEM_ENV_UPDATE_INTERVAL       = 0x1001,  ///< uint32 s
+    IPC_CFG_TELEM_ENV_MEASUREMENT_ENABLED   = 0x1002,  ///< bool
+    IPC_CFG_TELEM_ENV_SCREEN_ENABLED        = 0x1003,  ///< bool
+    IPC_CFG_TELEM_ENV_DISPLAY_FAHRENHEIT    = 0x1004,  ///< bool
+    IPC_CFG_TELEM_POWER_MEASUREMENT_ENABLED = 0x1005,  ///< bool
+    IPC_CFG_TELEM_POWER_UPDATE_INTERVAL     = 0x1006,  ///< uint32 s
+    IPC_CFG_TELEM_POWER_SCREEN_ENABLED      = 0x1007,  ///< bool
+    IPC_CFG_TELEM_DEVICE_TELEM_ENABLED      = 0x1008,  ///< bool
+
+    /* ── 0x11xx — ModuleConfig.NeighborInfo (module_config.proto:130) ─── */
+    IPC_CFG_NEIGHBOR_ENABLED            = 0x1100,  ///< bool
+    IPC_CFG_NEIGHBOR_UPDATE_INTERVAL    = 0x1101,  ///< uint32 s, min 14400
+    IPC_CFG_NEIGHBOR_TRANSMIT_OVER_LORA = 0x1102,  ///< bool
+
+    /* ── 0x12xx — ModuleConfig.RangeTest (module_config.proto:598) ─────
+     * Fields 3 (save) and 4 (clear_on_reboot) are ESP32-only; not
+     * exposed. */
+    IPC_CFG_RANGETEST_ENABLED = 0x1200,  ///< bool
+    IPC_CFG_RANGETEST_SENDER  = 0x1201,  ///< uint32 (0 = receiver-only)
 } IpcConfigKey;
 
 /** IPC_CMD_GET_CONFIG — request a config value by key.

@@ -44,6 +44,9 @@ typedef enum {
     SG_CHANNEL,
     SG_OWNER,
     SG_SECURITY,
+    SG_TELEMETRY,
+    SG_NEIGHBOR,
+    SG_RANGE_TEST,
     SG_GROUP_COUNT,
 } settings_group_t;
 

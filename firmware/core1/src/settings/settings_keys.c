@@ -291,6 +291,60 @@ static const settings_key_def_t k_keys[] = {
     { IPC_CFG_SECURITY_ADMIN_CHANNEL_ENABLED, SG_SECURITY, SK_KIND_BOOL,
       0, 1, /*reboot=*/0, "admin_ch",
       NULL, 0 },
+
+    /* ── Telemetry (B3-P3) ───────────────────────────────────────── *
+     * AdminModule.cpp:933 saveChanges(SEGMENT_MODULECONFIG, true) by
+     * default, but our IPC soft-reload via reloadConfig fires the
+     * configChanged observer; TelemetryModule re-reads its config so
+     * reboot is not required. */
+    { IPC_CFG_TELEM_DEVICE_UPDATE_INTERVAL, SG_TELEMETRY, SK_KIND_U32,
+      0, 86400, /*reboot=*/0, "dev_int_s",
+      NULL, 0 },
+    { IPC_CFG_TELEM_ENV_UPDATE_INTERVAL, SG_TELEMETRY, SK_KIND_U32,
+      0, 86400, /*reboot=*/0, "env_int_s",
+      NULL, 0 },
+    { IPC_CFG_TELEM_ENV_MEASUREMENT_ENABLED, SG_TELEMETRY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "env_meas",
+      NULL, 0 },
+    { IPC_CFG_TELEM_ENV_SCREEN_ENABLED, SG_TELEMETRY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "env_screen",
+      NULL, 0 },
+    { IPC_CFG_TELEM_ENV_DISPLAY_FAHRENHEIT, SG_TELEMETRY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "env_fahr",
+      NULL, 0 },
+    { IPC_CFG_TELEM_POWER_MEASUREMENT_ENABLED, SG_TELEMETRY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "pwr_meas",
+      NULL, 0 },
+    { IPC_CFG_TELEM_POWER_UPDATE_INTERVAL, SG_TELEMETRY, SK_KIND_U32,
+      0, 86400, /*reboot=*/0, "pwr_int_s",
+      NULL, 0 },
+    { IPC_CFG_TELEM_POWER_SCREEN_ENABLED, SG_TELEMETRY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "pwr_screen",
+      NULL, 0 },
+    { IPC_CFG_TELEM_DEVICE_TELEM_ENABLED, SG_TELEMETRY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "dev_telem",
+      NULL, 0 },
+
+    /* ── NeighborInfo (B3-P3) ────────────────────────────────────── *
+     * update_interval has a Meshtastic-side floor of 14400 s
+     * (4 h) per AdminModule.cpp:1008. */
+    { IPC_CFG_NEIGHBOR_ENABLED, SG_NEIGHBOR, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "enabled",
+      NULL, 0 },
+    { IPC_CFG_NEIGHBOR_UPDATE_INTERVAL, SG_NEIGHBOR, SK_KIND_U32,
+      14400, 86400, /*reboot=*/0, "int_s",
+      NULL, 0 },
+    { IPC_CFG_NEIGHBOR_TRANSMIT_OVER_LORA, SG_NEIGHBOR, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "tx_lora",
+      NULL, 0 },
+
+    /* ── RangeTest (B3-P3) ───────────────────────────────────────── */
+    { IPC_CFG_RANGETEST_ENABLED, SG_RANGE_TEST, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "enabled",
+      NULL, 0 },
+    { IPC_CFG_RANGETEST_SENDER, SG_RANGE_TEST, SK_KIND_U32,
+      0, 86400, /*reboot=*/0, "sender_s",
+      NULL, 0 },
 };
 
 #define KEY_COUNT  ((uint8_t)(sizeof(k_keys) / sizeof(k_keys[0])))
@@ -304,6 +358,9 @@ static const char *const k_group_names[SG_GROUP_COUNT] = {
     [SG_CHANNEL]  = "Channel",
     [SG_OWNER]    = "Owner",
     [SG_SECURITY] = "Security",
+    [SG_TELEMETRY]  = "Telemetry",
+    [SG_NEIGHBOR]   = "Neighbor",
+    [SG_RANGE_TEST] = "RangeTest",
 };
 
 const char *settings_group_name(settings_group_t g)
