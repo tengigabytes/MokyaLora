@@ -40,9 +40,9 @@ typedef struct {
  *
  * Map / canned / channels deferred — placeholders for now. */
 static tile_t s_tiles[ROWS * COLS] = {
-    { "Msg",    VIEW_ID_MESSAGES }, { "Nodes", VIEW_ID_NODES },    { "Map",  VIEW_ID_COUNT },
-    { "Set",    VIEW_ID_SETTINGS }, { "Keys",  VIEW_ID_KEYPAD },   { "-",    VIEW_ID_COUNT },
-    { "-",      VIEW_ID_COUNT    }, { "-",     VIEW_ID_COUNT    }, { "-",    VIEW_ID_COUNT },
+    { "Msg",    VIEW_ID_MESSAGES }, { "Nodes", VIEW_ID_NODES },    { "Map",   VIEW_ID_COUNT },
+    { "Set",    VIEW_ID_SETTINGS }, { "Tools", VIEW_ID_TOOLS },    { "-",     VIEW_ID_COUNT },
+    { "-",      VIEW_ID_COUNT    }, { "-",     VIEW_ID_COUNT    }, { "-",     VIEW_ID_COUNT },
 };
 
 typedef struct {

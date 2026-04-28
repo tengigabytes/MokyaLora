@@ -9,6 +9,7 @@
 
 #include "phoneapi_encode.h"
 #include "messages_tx_status.h"
+#include "dm_store.h"
 
 bool messages_send_text(uint32_t to_node_id,
                         uint8_t  channel_index,
@@ -34,6 +35,14 @@ bool messages_send_text(uint32_t to_node_id,
     /* Initial "sending" status — cascade ack handler updates to
      * delivered/failed when the corresponding FromRadio frame arrives. */
     messages_tx_status_publish(MESSAGES_TX_RESULT_SENDING, /*error=*/0u, pid);
+
+    /* Phase 3: mirror the outbound message into dm_store so the
+     * conversation view can render the bubble immediately and the ack
+     * status can land on the right entry later. Skip broadcasts —
+     * they don't fit the per-peer thread model. */
+    if (to_node_id != MESSAGES_SEND_BROADCAST) {
+        dm_store_ingest_outbound(to_node_id, pid, text, text_len);
+    }
 
     if (out_packet_id) *out_packet_id = pid;
     return true;

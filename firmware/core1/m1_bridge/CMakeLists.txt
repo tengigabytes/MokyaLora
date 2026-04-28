@@ -218,11 +218,13 @@ add_executable(core1_bridge
     ${UI_DIR}/global/hint_bar.c
     ${UI_DIR}/boot_home_view.c
     ${UI_DIR}/launcher_view.c
+    ${UI_DIR}/chat_list_view.c
+    ${UI_DIR}/conversation_view.c
+    ${UI_DIR}/tools_view.c
     ${UI_DIR}/keypad_view.c
     ${UI_DIR}/rf_debug_view.c
     ${UI_DIR}/font_test_view.c
     ${UI_DIR}/ime_view.c
-    ${UI_DIR}/messages_view.c
     ${UI_DIR}/nodes_view.c
     ${UI_DIR}/settings_view.c
     ${UI_DIR}/view_router.c
@@ -253,6 +255,7 @@ add_executable(core1_bridge
     ${IME_DIR}/draft_store.c
     ${MESSAGES_DIR}/messages_send.c
     ${MESSAGES_DIR}/messages_tx_status.c
+    ${MESSAGES_DIR}/dm_store.c
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_framing.c>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_decode.c>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_cache.c>

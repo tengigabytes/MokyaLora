@@ -4,6 +4,7 @@
  */
 
 #include "messages_tx_status.h"
+#include "dm_store.h"
 
 static messages_tx_status_t s_status;
 
@@ -17,6 +18,18 @@ void messages_tx_status_publish(uint8_t  result,
 
     uint32_t next = s_status.change_seq + 1u;
     __atomic_store_n(&s_status.change_seq, next, __ATOMIC_RELEASE);
+
+    /* Phase 3: mirror into dm_store so conversation_view bubbles can
+     * paint sending → delivered / failed without a second observer. */
+    dm_ack_state_t ack_state = DM_ACK_NONE;
+    switch (result) {
+        case MESSAGES_TX_RESULT_SENDING:   ack_state = DM_ACK_SENDING;   break;
+        case MESSAGES_TX_RESULT_DELIVERED: ack_state = DM_ACK_DELIVERED; break;
+        case MESSAGES_TX_RESULT_FAILED:    ack_state = DM_ACK_FAILED;    break;
+    }
+    if (ack_state != DM_ACK_NONE) {
+        dm_store_update_ack(packet_id, ack_state);
+    }
 }
 
 void messages_tx_status_get(messages_tx_status_t *out)

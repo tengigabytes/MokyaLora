@@ -14,6 +14,7 @@
 #include "phoneapi_encode.h"
 #include "phoneapi_framing.h"
 #include "phoneapi_tx.h"
+#include "dm_store.h"
 #include "messages_tx_status.h"
 #include "mokya_trace.h"
 
@@ -403,6 +404,19 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
         if (is_text) {
             phoneapi_msgs_publish(m.from_node_id, m.to_node_id,
                                   m.channel_index, m.text, m.text_len);
+            /* Phase 3: also publish into the per-peer DM store so
+             * chat_list / conversation_view can render thread history.
+             * Only DMs (to_node_id == own node num) are useful for
+             * conversation threading; broadcasts (to_node_id ==
+             * 0xFFFFFFFFu) and channel-only traffic don't fit the
+             * one-thread-per-peer model. */
+            if (m.to_node_id != 0xFFFFFFFFu) {
+                /* phoneapi_msgs_publish bumps an internal seq we can't
+                 * easily read without taking the cache mutex; pass 0
+                 * and let dm_store assign its own monotonic id from the
+                 * outbound counter (inbound seq isn't load-bearing). */
+                dm_store_ingest_inbound(m.from_node_id, 0u, m.text, m.text_len);
+            }
             TRACE("phapi", "rx_text",
                   "from=%u,len=%u",
                   (unsigned)m.from_node_id, (unsigned)m.text_len);

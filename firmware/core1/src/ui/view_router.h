@@ -50,11 +50,13 @@ extern "C" {
 typedef enum {
     VIEW_ID_BOOT_HOME = 0,    /* L-0 boot dashboard                       */
     VIEW_ID_LAUNCHER,         /* L-1 9-grid app menu (modal)              */
-    VIEW_ID_MESSAGES,         /* A-1 (Phase 1: legacy flat inbox)         */
+    VIEW_ID_MESSAGES,         /* A-1 chat list (Phase 3: chat_list_view)  */
+    VIEW_ID_MESSAGES_CHAT,    /* A-2 conversation thread (Phase 3)        */
     VIEW_ID_NODES,            /* C-1 node list                            */
     VIEW_ID_SETTINGS,         /* S-0 settings                             */
+    VIEW_ID_TOOLS,            /* T-0 tools / diagnostics list (Phase 3)   */
     VIEW_ID_IME,              /* G-3 IME modal-only                       */
-    VIEW_ID_KEYPAD,           /* legacy keypad debug grid (Phase 1: kept) */
+    VIEW_ID_KEYPAD,           /* legacy keypad debug grid (under Tools)   */
 #if MOKYA_DEBUG_VIEWS
     VIEW_ID_RF_DEBUG,
     VIEW_ID_FONT_TEST,

@@ -19,9 +19,11 @@
 
 #include "boot_home_view.h"
 #include "launcher_view.h"
+#include "chat_list_view.h"
+#include "conversation_view.h"
+#include "tools_view.h"
 #include "keypad_view.h"
 #include "ime_view.h"
-#include "messages_view.h"
 #include "nodes_view.h"
 #include "settings_view.h"
 #if MOKYA_DEBUG_VIEWS
@@ -33,15 +35,17 @@ const view_descriptor_t *g_view_registry[VIEW_ID_COUNT];
 
 void view_registry_populate(void)
 {
-    g_view_registry[VIEW_ID_BOOT_HOME] = boot_home_view_descriptor();
-    g_view_registry[VIEW_ID_LAUNCHER]  = launcher_view_descriptor();
-    g_view_registry[VIEW_ID_MESSAGES]  = messages_view_descriptor();
-    g_view_registry[VIEW_ID_NODES]     = nodes_view_descriptor();
-    g_view_registry[VIEW_ID_SETTINGS]  = settings_view_descriptor();
-    g_view_registry[VIEW_ID_IME]       = ime_view_descriptor();
-    g_view_registry[VIEW_ID_KEYPAD]    = keypad_view_descriptor();
+    g_view_registry[VIEW_ID_BOOT_HOME]      = boot_home_view_descriptor();
+    g_view_registry[VIEW_ID_LAUNCHER]       = launcher_view_descriptor();
+    g_view_registry[VIEW_ID_MESSAGES]       = chat_list_view_descriptor();
+    g_view_registry[VIEW_ID_MESSAGES_CHAT]  = conversation_view_descriptor();
+    g_view_registry[VIEW_ID_NODES]          = nodes_view_descriptor();
+    g_view_registry[VIEW_ID_SETTINGS]       = settings_view_descriptor();
+    g_view_registry[VIEW_ID_TOOLS]          = tools_view_descriptor();
+    g_view_registry[VIEW_ID_IME]            = ime_view_descriptor();
+    g_view_registry[VIEW_ID_KEYPAD]         = keypad_view_descriptor();
 #if MOKYA_DEBUG_VIEWS
-    g_view_registry[VIEW_ID_RF_DEBUG]  = rf_debug_view_descriptor();
-    g_view_registry[VIEW_ID_FONT_TEST] = font_test_view_descriptor();
+    g_view_registry[VIEW_ID_RF_DEBUG]       = rf_debug_view_descriptor();
+    g_view_registry[VIEW_ID_FONT_TEST]      = font_test_view_descriptor();
 #endif
 }

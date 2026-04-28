@@ -83,6 +83,7 @@
 #include "key_inject.h"
 #include "key_inject_rtt.h"
 #include "messages_tx_status.h"
+#include "dm_store.h"
 #include "settings_client.h"
 #include "watchdog_task.h"
 #ifdef MOKYA_PHONEAPI_CASCADE
@@ -662,6 +663,10 @@ int main(void)
      * key is held) finds the queue ready. Producer/consumer are both
      * future tasks; only the scan task enqueues in Phase B. */
     key_event_init();
+
+    /* Per-peer DM store (Phase 3). Pure BSS reset; mutex created lazily
+     * by the first writer call after the scheduler is up. */
+    dm_store_init();
 
     /* Settings reply queue — created before bridge_task starts dispatching
      * IPC_MSG_CONFIG_VALUE / IPC_MSG_CONFIG_RESULT into it. */
