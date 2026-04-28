@@ -14,6 +14,7 @@
  * SPDX-License-Identifier: MIT
  */
 #include "ime_task.h"
+#include "draft_store.h"
 #include "lru_persist.h"
 #include "mokya_trace.h"
 #include "view_router.h"
@@ -360,6 +361,13 @@ bool ime_task_start(const mie_dict_pointers_t *dict, UBaseType_t priority) {
      * engine runs with an empty cache — same as first-boot behaviour. */
     lru_persist_load(g_ime);
 
+    /* Phase 2 draft store init. The accompanying `draft_store_self_test`
+     * is intentionally NOT called here — it erases two flash sectors on
+     * every boot, which would compound the W25Q128JW endurance budget
+     * for no production benefit. Run it ad-hoc via gdb / a temporary
+     * call when regressing the partition format. */
+    (void)draft_store_init();
+
     g_snapshot_mutex = xSemaphoreCreateMutex();
     if (!g_snapshot_mutex) return false;
 
@@ -494,10 +502,12 @@ struct text_request_state_t {
     bool             active;
     uint16_t         max_bytes;
     uint8_t          flags;
+    uint8_t          layout;     /* IME_TEXT_LAYOUT_* */
+    uint32_t         draft_id;   /* 0 = no flash persistence */
     ime_text_done_fn done;
     void            *ctx;
 };
-static text_request_state_t s_text_req = {false, 0, 0, nullptr, nullptr};
+static text_request_state_t s_text_req = {false, 0, 0, 0, 0, nullptr, nullptr};
 
 static void seed_text_unsafe(const char *utf8, int byte_len)
 {
@@ -522,13 +532,28 @@ static void modal_trampoline(bool committed, void *ctx)
     ime_text_done_fn done       = s_text_req.done;
     void            *user_ctx   = s_text_req.ctx;
     uint16_t         max_bytes  = s_text_req.max_bytes;
-    s_text_req.active = false;
-    s_text_req.done   = nullptr;
-    s_text_req.ctx    = nullptr;
+    uint32_t         draft_id   = s_text_req.draft_id;
+    s_text_req.active   = false;
+    s_text_req.done     = nullptr;
+    s_text_req.ctx      = nullptr;
+    s_text_req.draft_id = 0;
+    s_text_req.layout   = 0;
 
     size_t len = (g_text_len < 0) ? 0 : (size_t)g_text_len;
     if (max_bytes > 0) {
         len = mie_utf8_truncate(g_text, len, (size_t)max_bytes);
+    }
+
+    /* Draft persistence:
+     *   committed = true (FUNC) → user finished, drop any saved draft.
+     *   committed = false (BACK) → user backed out; if there's content,
+     *     stash it for the next entry. Empty = same as clear.            */
+    if (draft_id != 0) {
+        if (committed) {
+            draft_store_clear(draft_id);
+        } else {
+            draft_store_save(draft_id, g_text, len);
+        }
     }
 
     if (done) done(committed, g_text, (uint16_t)len, user_ctx);
@@ -558,28 +583,64 @@ bool ime_request_text(const ime_text_request_t *req,
     if (xSemaphoreTake(g_snapshot_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
         return false;
     }
-    size_t initial_len = 0;
-    if (req->initial != nullptr) {
-        initial_len = std::strlen(req->initial);
-        if (req->max_bytes > 0) {
-            initial_len = mie_utf8_truncate(req->initial, initial_len,
-                                            (size_t)req->max_bytes);
+
+    /* Seed precedence:
+     *   1. Caller-supplied req->initial wins (explicit pre-fill).
+     *   2. If req->initial is NULL and a draft exists for req->draft_id,
+     *      restore it.
+     *   3. Otherwise empty.
+     *
+     * Draft load uses g_text directly to avoid the round-trip through a
+     * scratch buffer; we still UTF-8-truncate to max_bytes afterwards.   */
+    const char *seed_buf = req->initial;
+    size_t      seed_len = 0;
+    bool        seeded_from_draft = false;
+
+    if (seed_buf != nullptr) {
+        seed_len = std::strlen(seed_buf);
+    } else if (req->draft_id != 0u) {
+        size_t draft_len = 0;
+        if (draft_store_load(req->draft_id, g_text, kTextCapacity, &draft_len)) {
+            seed_buf = g_text;
+            seed_len = draft_len;
+            seeded_from_draft = true;
         }
     }
-    seed_text_unsafe(req->initial, (int)initial_len);
+
+    if (req->max_bytes > 0 && seed_len > (size_t)req->max_bytes) {
+        seed_len = mie_utf8_truncate(seed_buf, seed_len, (size_t)req->max_bytes);
+    }
+
+    if (seeded_from_draft) {
+        /* g_text already holds the draft bytes; just set length+cursor.  */
+        g_text_len         = (int)seed_len;
+        g_cursor           = (int)seed_len;
+        g_text[g_text_len] = '\0';
+    } else {
+        seed_text_unsafe(seed_buf, (int)seed_len);
+    }
     xSemaphoreGive(g_snapshot_mutex);
+
     /* Bump the dirty counter so the IME view's gated refresh repaints
      * the seeded prefill on first entry. */
     __atomic_add_fetch(&g_ime_dirty_counter, 1u, __ATOMIC_RELEASE);
 
     s_text_req.max_bytes = req->max_bytes;
     s_text_req.flags     = req->flags;
+    s_text_req.layout    = req->layout;
+    s_text_req.draft_id  = req->draft_id;
     s_text_req.done      = done;
     s_text_req.ctx       = ctx;
     s_text_req.active    = true;
 
     view_router_modal_enter(VIEW_ID_IME, modal_trampoline, nullptr);
     return true;
+}
+
+uint8_t ime_request_text_layout(void)
+{
+    return s_text_req.active ? s_text_req.layout
+                             : (uint8_t)IME_TEXT_LAYOUT_FULLSCREEN;
 }
 
 } // extern "C"

@@ -149,12 +149,27 @@ typedef enum {
     IME_TEXT_MODE_DIRECT   = 3,
 } ime_text_mode_hint_t;
 
+/* Visual layout for the IME submode. Mode A = inline 24 px strip parented
+ * to the bottom of the caller's view (used by A-2 conversation compose).
+ * Mode B = fullscreen 208 px panel (used by Settings text edit, message
+ * compose). Phase 2 records the layout end-to-end; the ime_view side
+ * still renders fullscreen for both, with Mode A's true inline geometry
+ * arriving when conversation_view in Phase 3 needs it. */
+typedef enum {
+    IME_TEXT_LAYOUT_FULLSCREEN = 0,         /* Mode B (default) */
+    IME_TEXT_LAYOUT_INLINE     = 1,         /* Mode A           */
+} ime_text_layout_t;
+
 typedef struct {
     const char *prompt;       /* TODO: header label, ignored for now */
     const char *initial;      /* pre-fill text (NULL = empty)        */
     uint16_t    max_bytes;    /* UTF-8-safe truncate before callback */
     uint8_t     mode_hint;    /* TODO: ime_text_mode_hint_t, ignored */
     uint8_t     flags;        /* ime_text_flags_t bitmask            */
+    /* Phase 2 additions (zero-init defaults preserve old behaviour) */
+    uint8_t     layout;       /* ime_text_layout_t — A inline / B full */
+    uint8_t     reserved[3];
+    uint32_t    draft_id;     /* 0 = no flash-backed draft persistence */
 } ime_text_request_t;
 
 typedef void (*ime_text_done_fn)(bool        committed,
@@ -170,6 +185,11 @@ bool ime_request_text(const ime_text_request_t *req,
  * its callback). Diagnostic; settings_view's modal flow reads this to
  * detect re-entry before pushing a new request. */
 bool ime_request_text_active(void);
+
+/* Layout flag of the in-flight request (IME_TEXT_LAYOUT_*). Read by
+ * ime_view to choose its render geometry. Returns
+ * IME_TEXT_LAYOUT_FULLSCREEN when no request is active. */
+uint8_t ime_request_text_layout(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

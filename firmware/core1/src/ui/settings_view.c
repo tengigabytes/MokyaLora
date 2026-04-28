@@ -900,6 +900,13 @@ static void enter_edit_for_row(uint8_t row)
             .max_bytes = (uint16_t)defs[row].max,
             .mode_hint = IME_TEXT_MODE_DEFAULT,
             .flags     = IME_TEXT_FLAG_NONE,
+            .layout    = IME_TEXT_LAYOUT_FULLSCREEN,
+            /* draft_id namespace for Settings = (1u << 31) | ipc_key, so
+             * drafts can't collide with future caller namespaces (e.g.
+             * conversation_view will use the peer node id directly). The
+             * existing prefill takes precedence; the draft only restores
+             * if no cached value is present. */
+            .draft_id  = (uint32_t)(0x80000000u | (uint32_t)defs[row].ipc_key),
         };
         snprintf(s_footer_msg, sizeof(s_footer_msg),
                  "type %s, FUNC = done", defs[row].label);

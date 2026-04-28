@@ -99,15 +99,24 @@ typedef struct {
  * complexity for a 2.4 KB save. Keeping in .bss is the simple call. */
 volatile ime_cand_full_t g_ime_cand_full __attribute__((used));
 
-/* ── Screen geometry (landscape 320×240) ─────────────────────────────── */
+/* ── Screen geometry ─────────────────────────────────────────────────── *
+ *
+ * Panel is 320 × 224, parented at y=16 by view_router (see
+ * view_router.c::make_panel — leaves the top 16 px for the global
+ * Status Bar). All offsets here are relative to the panel.
+ *
+ * Phase 2 keeps Mode A (inline) and Mode B (fullscreen) both rendered
+ * with this 224 px Mode B layout — the layout flag is recorded in
+ * `ime_request_text_layout()` and is read here as a stub for the
+ * Phase 3 conversation_view refactor.                                   */
 #define SCREEN_W            320
-#define SCREEN_H            240
+#define PANEL_H             224
 
 #define TEXT_Y                0
-#define TEXT_H              180
-#define DIVIDER_Y           181
+#define TEXT_H              164      /* was 180 (240 px screen) */
+#define DIVIDER_Y           165      /* was 181 */
 
-#define CAND_Y              184
+#define CAND_Y              168      /* was 184; ends at 224 with CAND_H=56 */
 #define CAND_H               56
 
 #define MODE_W               36
