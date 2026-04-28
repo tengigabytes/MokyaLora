@@ -58,6 +58,14 @@ IPC_CFG_LORA_BANDWIDTH=0x0206
 IPC_CFG_POSITION_FLAGS=0x0305
 IPC_CFG_DISPLAY_HEADING_BOLD=0x0506
 IPC_CFG_DISPLAY_USE_12H_CLOCK=0x0509
+# B3-P3 expansion
+IPC_CFG_CHANNEL_NAME=0x0600
+IPC_CFG_TELEM_DEVICE_UPDATE_INTERVAL=0x1000
+IPC_CFG_TELEM_ENV_DISPLAY_FAHRENHEIT=0x1004
+IPC_CFG_NEIGHBOR_ENABLED=0x1100
+IPC_CFG_NEIGHBOR_TRANSMIT_OVER_LORA=0x1102
+IPC_CFG_RANGETEST_ENABLED=0x1200
+IPC_CFG_RANGETEST_SENDER=0x1201
 # B3-P2 expansion
 IPC_CFG_POWER_SDS_SECS=0x0402
 IPC_CFG_POWER_LS_SECS=0x0403
@@ -548,6 +556,122 @@ test_b3p1() {
         "$(bytes_for_u32_le 0)"   position.position_flags "0"
 }
 
+test_b3p3() {
+    echo "── B3-P3: ModuleConfig (Telemetry/Neighbor/RangeTest) + per-channel index ──"
+
+    # Telemetry: device_update_interval (u32). Use NEW 8-byte header
+    # (settings_client.c on Core 1 emits this; ModuleConfig keys all
+    # land in 0x10xx so it's a fresh wire-format exercise).
+    b3p1_set_get_v2 0x90 0x91 $IPC_CFG_TELEM_DEVICE_UPDATE_INTERVAL \
+        "$(bytes_for_u32_le 1234)" telemetry.device_update_interval "1234"
+    b3p1_set_get_v2 0x92 0x93 $IPC_CFG_TELEM_DEVICE_UPDATE_INTERVAL \
+        "$(bytes_for_u32_le 0)" telemetry.device_update_interval "0"
+
+    # Telemetry: environment_display_fahrenheit (bool)
+    b3p1_set_get_v2 0x94 0x95 $IPC_CFG_TELEM_ENV_DISPLAY_FAHRENHEIT \
+        "0x01" telemetry.environment_display_fahrenheit "True"
+    b3p1_set_get_v2 0x96 0x97 $IPC_CFG_TELEM_ENV_DISPLAY_FAHRENHEIT \
+        "0x00" telemetry.environment_display_fahrenheit "False"
+
+    # NeighborInfo: enabled (bool)
+    b3p1_set_get_v2 0x98 0x99 $IPC_CFG_NEIGHBOR_ENABLED \
+        "0x01" neighbor_info.enabled "True"
+    b3p1_set_get_v2 0x9A 0x9B $IPC_CFG_NEIGHBOR_ENABLED \
+        "0x00" neighbor_info.enabled "False"
+
+    # NeighborInfo: transmit_over_lora (bool) — exercises a key that's
+    # not the first field, just to validate the field-number dispatch
+    b3p1_set_get_v2 0x9C 0x9D $IPC_CFG_NEIGHBOR_TRANSMIT_OVER_LORA \
+        "0x01" neighbor_info.transmit_over_lora "True"
+    b3p1_set_get_v2 0x9E 0x9F $IPC_CFG_NEIGHBOR_TRANSMIT_OVER_LORA \
+        "0x00" neighbor_info.transmit_over_lora "False"
+
+    # RangeTest: enabled (bool) + sender (u32)
+    b3p1_set_get_v2 0xA0 0xA1 $IPC_CFG_RANGETEST_ENABLED \
+        "0x01" range_test.enabled "True"
+    b3p1_set_get_v2 0xA2 0xA3 $IPC_CFG_RANGETEST_ENABLED \
+        "0x00" range_test.enabled "False"
+    b3p1_set_get_v2 0xA4 0xA5 $IPC_CFG_RANGETEST_SENDER \
+        "$(bytes_for_u32_le 60)" range_test.sender "60"
+    b3p1_set_get_v2 0xA6 0xA7 $IPC_CFG_RANGETEST_SENDER \
+        "$(bytes_for_u32_le 0)" range_test.sender "0"
+
+    # Per-channel discriminator: write a name to channel index 2 via
+    # IPC SET with channel_index=2.
+    #
+    # Host CLI `--info` filters channels with role=DISABLED (the default
+    # for index 1..7), so the JSON path used elsewhere in this script
+    # cannot see a name-only edit. Instead we SWD-dump the channelFile
+    # nanopb struct (located via `arm-none-eabi-nm | grep channelFile`,
+    # currently 0x2000c654, ~0x800 bytes) and grep for the magic string
+    # — the IPC handler writes directly into channelFile.channels[idx].
+    channel_name_present_in_sram() {
+        local needle="$1"
+        cat > /tmp/jlink_ch_dump_$$.jlink <<EOF
+connect
+h
+mem8 0x2000c654 0x800
+g
+qc
+EOF
+        "$JLINK" -device RP2350_M33_0 -if SWD -speed 4000 -autoconnect 1 \
+            -CommanderScript "$(cygpath -w /tmp/jlink_ch_dump_$$.jlink)" 2>&1 \
+            | python -c "
+import sys, re
+data = bytearray()
+for line in sys.stdin:
+    m = re.match(r'^([0-9A-F]{8})\s*=\s*([0-9A-F ]+)$', line.strip())
+    if m:
+        for b in m.group(2).split():
+            data.append(int(b, 16))
+print('FOUND' if b'$needle' in data else 'NOT_FOUND')
+"
+        rm -f /tmp/jlink_ch_dump_$$.jlink
+    }
+
+    echo "=== channel[2].name='B3P3CH2' ==="
+    local payload=$(build_set_payload_v2 $IPC_CFG_CHANNEL_NAME 2 "$(bytes_for_string "B3P3CH2")")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xA8 "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xA9 ""
+    sleep 3
+    if [ "$(channel_name_present_in_sram B3P3CH2)" = "FOUND" ]; then
+        echo "  ✓ channel[2].name=B3P3CH2 (SWD-verified in channelFile SRAM)"
+    else
+        echo "  ✗ channel[2].name 'B3P3CH2' not found in channelFile SRAM"
+        return 1
+    fi
+
+    echo "=== channel[2].name cleared ==="
+    payload=$(build_set_payload_v2 $IPC_CFG_CHANNEL_NAME 2 "")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xAA "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xAB ""
+    sleep 3
+    if [ "$(channel_name_present_in_sram B3P3CH2)" = "FOUND" ]; then
+        echo "  ✗ channel[2].name still has B3P3CH2 (clear failed)"
+        return 1
+    else
+        echo "  ✓ channel[2].name cleared from SRAM"
+    fi
+
+    # Per-channel out-of-range guard: channel_index=8 should be rejected
+    # at the Core 0 handler (kChannelMax=8, valid range 0..7) before the
+    # write reaches channelFile.channels[8] (which would clobber memory
+    # past the array). Inject a SET with an obviously distinctive name
+    # and verify nothing changes anywhere in channelFile SRAM.
+    echo "=== channel[8] write rejected (out-of-range) ==="
+    payload=$(build_set_payload_v2 $IPC_CFG_CHANNEL_NAME 8 "$(bytes_for_string "OOB_B3P3")")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" 0xAC "$payload"
+    sleep 2
+    if [ "$(channel_name_present_in_sram OOB_B3P3)" = "FOUND" ]; then
+        echo "  ✗ channel out-of-range write was NOT rejected"
+        return 1
+    else
+        echo "  ✓ channel_index=8 SET rejected (no OOB_B3P3 in channelFile SRAM)"
+    fi
+}
+
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 case "${1:-all}" in
@@ -559,6 +683,7 @@ case "${1:-all}" in
     b3p1)    test_b3p1; test_b3p1_v2_header ;;
     b3p1v2)  test_b3p1_v2_header ;;
     b3p2)    test_b3p2 ;;
+    b3p3)    test_b3p3 ;;
     all)
         test_lora_subset 15
         test_owner_long_name "MokyaTest"
