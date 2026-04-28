@@ -230,9 +230,14 @@ typedef enum {
     IPC_CFG_POSITION_BCAST_SMART_MIN_DIST     = 0x0306,  ///< uint32 m, reboot=Y
     IPC_CFG_POSITION_BCAST_SMART_MIN_INT_SECS = 0x0307,  ///< uint32 s, reboot=Y
 
-    /* 0x04xx — Power */
-    IPC_CFG_POWER_SAVING        = 0x0400,  ///< uint8 (bool)
-    IPC_CFG_SHUTDOWN_AFTER_SECS = 0x0401,  ///< uint32
+    /* 0x04xx — Power (config.proto: meshtastic.Config.PowerConfig) */
+    IPC_CFG_POWER_SAVING                  = 0x0400,  ///< bool, reboot=Y
+    IPC_CFG_SHUTDOWN_AFTER_SECS           = 0x0401,  ///< uint32, reboot=Y
+    IPC_CFG_POWER_SDS_SECS                = 0x0402,  ///< uint32 super-deep-sleep, reboot=Y
+    IPC_CFG_POWER_LS_SECS                 = 0x0403,  ///< uint32 light-sleep, reboot=Y
+    IPC_CFG_POWER_MIN_WAKE_SECS           = 0x0404,  ///< uint32, reboot=Y
+    IPC_CFG_POWER_BATTERY_INA_ADDRESS     = 0x0405,  ///< uint32 (I2C addr), reboot=Y
+    IPC_CFG_POWER_POWERMON_ENABLES        = 0x0406,  ///< uint32 (low 32 of u64), reboot=N
 
     /* 0x05xx — Display (config.proto: meshtastic.Config.DisplayConfig) */
     IPC_CFG_SCREEN_ON_SECS                  = 0x0500,  ///< uint32 (NOTE: reboot per
@@ -251,13 +256,28 @@ typedef enum {
     IPC_CFG_DISPLAY_USE_LONG_NODE_NAME       = 0x050A,  ///< bool, reboot=N
     IPC_CFG_DISPLAY_ENABLE_MESSAGE_BUBBLES   = 0x050B,  ///< bool, reboot=N
 
-    /* 0x06xx — Channel */
-    IPC_CFG_CHANNEL_NAME        = 0x0600,  ///< string, max 12 B
-    IPC_CFG_CHANNEL_PSK         = 0x0601,  ///< bytes, max 32 B
+    /* 0x06xx — Channel (channel.proto: meshtastic.ChannelSettings).
+     * IpcPayloadGetConfig.channel_index addresses 0..7 (B3-P3 enables
+     * non-primary; B3-P2 still primary-only via index 0). */
+    IPC_CFG_CHANNEL_NAME                      = 0x0600,  ///< string max 12 B, reboot=N
+    IPC_CFG_CHANNEL_PSK                       = 0x0601,  ///< bytes max 32 B, reboot=N
+    IPC_CFG_CHANNEL_MODULE_POSITION_PRECISION = 0x0602,  ///< uint32 (bits), reboot=N
+    IPC_CFG_CHANNEL_MODULE_IS_MUTED           = 0x0603,  ///< bool, reboot=N
 
-    /* 0x07xx — Owner */
-    IPC_CFG_OWNER_LONG_NAME     = 0x0700,  ///< string, max 40 B
-    IPC_CFG_OWNER_SHORT_NAME    = 0x0701,  ///< string, max 5 B
+    /* 0x07xx — Owner (mesh.proto: meshtastic.User) */
+    IPC_CFG_OWNER_LONG_NAME     = 0x0700,  ///< string, max 40 B, reboot=N
+    IPC_CFG_OWNER_SHORT_NAME    = 0x0701,  ///< string, max 5 B, reboot=N
+    IPC_CFG_OWNER_IS_LICENSED   = 0x0702,  ///< bool (HAM mode), reboot=N
+    IPC_CFG_OWNER_PUBLIC_KEY    = 0x0703,  ///< bytes max 32 B, RO
+
+    /* 0x08xx — Security (config.proto: meshtastic.Config.SecurityConfig).
+     * private_key + admin_key[] are intentionally NOT exposed —
+     * editing them on the device is unsafe (no confirmation flow). */
+    IPC_CFG_SECURITY_PUBLIC_KEY            = 0x0800,  ///< bytes max 32 B, RO
+    IPC_CFG_SECURITY_IS_MANAGED            = 0x0801,  ///< bool, reboot=N
+    IPC_CFG_SECURITY_SERIAL_ENABLED        = 0x0802,  ///< bool, reboot=Y
+    IPC_CFG_SECURITY_DEBUG_LOG_API_ENABLED = 0x0803,  ///< bool, reboot=Y
+    IPC_CFG_SECURITY_ADMIN_CHANNEL_ENABLED = 0x0804,  ///< bool, reboot=N
 } IpcConfigKey;
 
 /** IPC_CMD_GET_CONFIG — request a config value by key.

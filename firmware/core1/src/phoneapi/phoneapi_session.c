@@ -161,8 +161,30 @@ static void config_oneof_cb(uint32_t field_num,
         }
         break;
     }
+    case 3u: {  /* PowerConfig (B3-P2) */
+        phoneapi_config_power_t cfg;
+        if (phoneapi_decode_config_power(sub_buf, sub_len, &cfg)) {
+            phoneapi_cache_set_config_power(&cfg);
+            TRACE("phapi", "cfg_power", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "cfg_power_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 8u: {  /* SecurityConfig (B3-P2) */
+        phoneapi_config_security_t cfg;
+        if (phoneapi_decode_config_security(sub_buf, sub_len, &cfg)) {
+            phoneapi_cache_set_config_security(&cfg);
+            TRACE("phapi", "cfg_security",
+                  "len=%u,pkl=%u",
+                  (unsigned)sub_len, (unsigned)cfg.public_key_len);
+        } else {
+            TRACE("phapi", "cfg_security_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
     default:
-        // power / network / bluetooth / security / sessionkey / device_ui
+        // network / bluetooth / sessionkey / device_ui
         TRACE("phapi", "cfg_skip",
               "f=%u,len=%u", (unsigned)field_num, (unsigned)sub_len);
         break;

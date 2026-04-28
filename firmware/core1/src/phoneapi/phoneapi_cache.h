@@ -81,6 +81,10 @@ typedef struct {
     uint8_t  psk_len;                // 0 / 1 / 16 / 32
     uint32_t channel_id;             // fixed32 from settings.id
     char     name[PHONEAPI_CHANNEL_NAME_MAX];
+    // ChannelSettings.module_settings (B3-P2)
+    bool     has_module_settings;
+    uint32_t module_position_precision;
+    bool     module_is_muted;
 } phoneapi_channel_t;
 
 // NodeInfo subset (one entry per peer in the mesh)
@@ -104,6 +108,10 @@ typedef struct {
     uint8_t  channel_util_pct;
     uint8_t  air_util_tx_pct;
     uint32_t uptime_seconds;
+    // User extras (B3-P2 — User.is_licensed=6, User.public_key=8)
+    bool     is_licensed;
+    uint8_t  public_key_len;         // 0 if absent, else 32 (Curve25519)
+    uint8_t  public_key[32];
     // Bookkeeping
     uint32_t phase_seq;              // matches cache.current_phase_seq if fresh
 } phoneapi_node_t;
@@ -160,6 +168,26 @@ typedef struct {
 } phoneapi_config_position_t;
 
 typedef struct {
+    bool     is_power_saving;
+    uint32_t on_battery_shutdown_after_secs;
+    uint32_t wait_bluetooth_secs;
+    uint32_t sds_secs;
+    uint32_t ls_secs;
+    uint32_t min_wake_secs;
+    uint32_t device_battery_ina_address;
+    uint32_t powermon_enables_lo;     // low 32 bits of u64 powermon_enables
+} phoneapi_config_power_t;
+
+typedef struct {
+    uint8_t  public_key_len;          // 0 / 32
+    uint8_t  public_key[32];
+    bool     is_managed;
+    bool     serial_enabled;
+    bool     debug_log_api_enabled;
+    bool     admin_channel_enabled;
+} phoneapi_config_security_t;
+
+typedef struct {
     uint32_t screen_on_secs;
     uint32_t auto_screen_carousel_secs;
     bool     flip_screen;
@@ -214,6 +242,9 @@ void phoneapi_cache_set_config_device(const phoneapi_config_device_t *cfg);
 void phoneapi_cache_set_config_lora(const phoneapi_config_lora_t *cfg);
 void phoneapi_cache_set_config_position(const phoneapi_config_position_t *cfg);
 void phoneapi_cache_set_config_display(const phoneapi_config_display_t *cfg);
+// B3-P2 additions
+void phoneapi_cache_set_config_power(const phoneapi_config_power_t *cfg);
+void phoneapi_cache_set_config_security(const phoneapi_config_security_t *cfg);
 
 // Readers — copy out under the mutex.
 bool phoneapi_cache_get_my_info(phoneapi_my_info_t *out);
@@ -226,6 +257,8 @@ bool phoneapi_cache_get_config_device(phoneapi_config_device_t *out);
 bool phoneapi_cache_get_config_lora(phoneapi_config_lora_t *out);
 bool phoneapi_cache_get_config_position(phoneapi_config_position_t *out);
 bool phoneapi_cache_get_config_display(phoneapi_config_display_t *out);
+bool phoneapi_cache_get_config_power(phoneapi_config_power_t *out);
+bool phoneapi_cache_get_config_security(phoneapi_config_security_t *out);
 uint32_t phoneapi_cache_node_count(void);
 // Copy node by relative index (0..count-1, ordered most-recent first).
 bool phoneapi_cache_take_node_at(uint32_t index, phoneapi_node_t *out);

@@ -20,12 +20,16 @@ static struct {
     phoneapi_config_lora_t      config_lora;
     phoneapi_config_position_t  config_position;
     phoneapi_config_display_t   config_display;
+    phoneapi_config_power_t     config_power;
+    phoneapi_config_security_t  config_security;
     bool                        my_info_valid;
     bool                        metadata_valid;
     bool                        config_device_valid;
     bool                        config_lora_valid;
     bool                        config_position_valid;
     bool                        config_display_valid;
+    bool                        config_power_valid;
+    bool                        config_security_valid;
 
     uint32_t change_seq;        // bump on every write
     uint32_t committed_seq;     // bump on phoneapi_cache_commit()
@@ -40,7 +44,7 @@ static SemaphoreHandle_t s_lock = NULL;
  * each set_config_*. Easy to read via mem32 without needing struct
  * offsets / DWARF info. NOT used by any code path. */
 typedef struct {
-    uint32_t magic;            /* 'B3P1' = 0x42335031 */
+    uint32_t magic;            /* 'B3P1' = 0x42335031 (kept stable across P2) */
     uint8_t  config_device_valid;
     uint8_t  config_lora_valid;
     uint8_t  config_position_valid;
@@ -55,6 +59,17 @@ typedef struct {
     uint8_t  lora_use_preset;
     uint32_t lora_bandwidth;
     uint32_t position_position_flags;
+    /* B3-P2 additions */
+    uint8_t  config_power_valid;
+    uint8_t  config_security_valid;
+    uint8_t  power_is_power_saving;
+    uint8_t  security_is_managed;
+    uint32_t power_sds_secs;
+    uint32_t power_powermon_enables_lo;
+    uint8_t  security_serial_enabled;
+    uint8_t  security_debug_log_api_enabled;
+    uint8_t  security_admin_channel_enabled;
+    uint8_t  security_pubkey_len;
 } phoneapi_dbg_view_t;
 
 phoneapi_dbg_view_t g_phoneapi_dbg = { .magic = 0x42335031u };
@@ -353,6 +368,54 @@ bool phoneapi_cache_get_config_display(phoneapi_config_display_t *out)
     cache_lock();
     bool ok = s_cache.config_display_valid;
     if (ok && out != NULL) *out = s_cache.config_display;
+    cache_unlock();
+    return ok;
+}
+
+void phoneapi_cache_set_config_power(const phoneapi_config_power_t *cfg)
+{
+    if (cfg == NULL) return;
+    cache_lock();
+    s_cache.config_power       = *cfg;
+    s_cache.config_power_valid = true;
+    s_cache.change_seq++;
+    cache_unlock();
+    g_phoneapi_dbg.config_power_valid           = 1u;
+    g_phoneapi_dbg.power_is_power_saving        = cfg->is_power_saving ? 1u : 0u;
+    g_phoneapi_dbg.power_sds_secs               = cfg->sds_secs;
+    g_phoneapi_dbg.power_powermon_enables_lo    = cfg->powermon_enables_lo;
+}
+
+void phoneapi_cache_set_config_security(const phoneapi_config_security_t *cfg)
+{
+    if (cfg == NULL) return;
+    cache_lock();
+    s_cache.config_security       = *cfg;
+    s_cache.config_security_valid = true;
+    s_cache.change_seq++;
+    cache_unlock();
+    g_phoneapi_dbg.config_security_valid              = 1u;
+    g_phoneapi_dbg.security_is_managed                = cfg->is_managed ? 1u : 0u;
+    g_phoneapi_dbg.security_serial_enabled            = cfg->serial_enabled ? 1u : 0u;
+    g_phoneapi_dbg.security_debug_log_api_enabled     = cfg->debug_log_api_enabled ? 1u : 0u;
+    g_phoneapi_dbg.security_admin_channel_enabled     = cfg->admin_channel_enabled ? 1u : 0u;
+    g_phoneapi_dbg.security_pubkey_len                = cfg->public_key_len;
+}
+
+bool phoneapi_cache_get_config_power(phoneapi_config_power_t *out)
+{
+    cache_lock();
+    bool ok = s_cache.config_power_valid;
+    if (ok && out != NULL) *out = s_cache.config_power;
+    cache_unlock();
+    return ok;
+}
+
+bool phoneapi_cache_get_config_security(phoneapi_config_security_t *out)
+{
+    cache_lock();
+    bool ok = s_cache.config_security_valid;
+    if (ok && out != NULL) *out = s_cache.config_security;
     cache_unlock();
     return ok;
 }

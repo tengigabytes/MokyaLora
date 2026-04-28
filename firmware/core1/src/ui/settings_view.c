@@ -164,6 +164,20 @@ static void format_value(const settings_key_def_t *def,
     case SK_KIND_U32_FLAGS:
         snprintf(out, out_sz, "0x%08lX", (unsigned long)value_to_u32(buf, len));
         break;
+    case SK_KIND_BYTES_RO: {
+        /* First 6 bytes as hex, ellipsis for the rest. The full key is
+         * not on screen anywhere — UI is preview-only. */
+        size_t shown = (len > 6u) ? 6u : len;
+        size_t pos = 0;
+        for (size_t i = 0; i < shown && pos + 3 < out_sz; ++i) {
+            pos += (size_t)snprintf(&out[pos], out_sz - pos, "%02X", buf[i]);
+        }
+        if (len > shown && pos + 3 < out_sz) {
+            snprintf(&out[pos], out_sz - pos, "...");
+        }
+        if (len == 0u) snprintf(out, out_sz, "(empty)");
+        break;
+    }
     case SK_KIND_STR: {
         size_t n = (len < out_sz - 1) ? len : (out_sz - 1);
         memcpy(out, buf, n);
@@ -252,6 +266,19 @@ static void cache_set_row_str(int gidx, const char *s, size_t maxlen)
     if (n > VAL_BUF_MAX) n = VAL_BUF_MAX;
     memcpy(s_cache[gidx].value, s, n);
     s_cache[gidx].value_len  = (uint8_t)n;
+    s_cache[gidx].have_value = true;
+}
+
+static void cache_set_row_bytes(int gidx, const uint8_t *src, uint8_t src_len)
+{
+    if (gidx < 0 || gidx >= (int)KEY_CACHE_MAX) return;
+    if (s_cache[gidx].dirty) return;
+    /* VAL_BUF_MAX (12) is smaller than typical bytes fields (32B
+     * pubkey). Truncate to first 12 bytes — render layer shows them
+     * as hex prefix; full key is not needed for the UI. */
+    uint8_t n = (src_len < VAL_BUF_MAX) ? src_len : VAL_BUF_MAX;
+    memcpy(s_cache[gidx].value, src, n);
+    s_cache[gidx].value_len  = n;
     s_cache[gidx].have_value = true;
 }
 
@@ -348,6 +375,94 @@ static bool populate_group_from_cache(uint8_t group)
                 cache_set_row_u32(idx, d.broadcast_smart_minimum_distance); break;
             case IPC_CFG_POSITION_BCAST_SMART_MIN_INT_SECS:
                 cache_set_row_u32(idx, d.broadcast_smart_minimum_interval_secs); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_POWER: {
+        phoneapi_config_power_t d;
+        if (!phoneapi_cache_get_config_power(&d)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_POWER_SAVING:
+                cache_set_row_u8(idx, d.is_power_saving ? 1u : 0u); break;
+            case IPC_CFG_SHUTDOWN_AFTER_SECS:
+                cache_set_row_u32(idx, d.on_battery_shutdown_after_secs); break;
+            case IPC_CFG_POWER_SDS_SECS:
+                cache_set_row_u32(idx, d.sds_secs); break;
+            case IPC_CFG_POWER_LS_SECS:
+                cache_set_row_u32(idx, d.ls_secs); break;
+            case IPC_CFG_POWER_MIN_WAKE_SECS:
+                cache_set_row_u32(idx, d.min_wake_secs); break;
+            case IPC_CFG_POWER_BATTERY_INA_ADDRESS:
+                cache_set_row_u32(idx, d.device_battery_ina_address); break;
+            case IPC_CFG_POWER_POWERMON_ENABLES:
+                cache_set_row_u32(idx, d.powermon_enables_lo); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_SECURITY: {
+        phoneapi_config_security_t d;
+        if (!phoneapi_cache_get_config_security(&d)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_SECURITY_PUBLIC_KEY:
+                cache_set_row_bytes(idx, d.public_key, d.public_key_len); break;
+            case IPC_CFG_SECURITY_IS_MANAGED:
+                cache_set_row_u8(idx, d.is_managed ? 1u : 0u); break;
+            case IPC_CFG_SECURITY_SERIAL_ENABLED:
+                cache_set_row_u8(idx, d.serial_enabled ? 1u : 0u); break;
+            case IPC_CFG_SECURITY_DEBUG_LOG_API_ENABLED:
+                cache_set_row_u8(idx, d.debug_log_api_enabled ? 1u : 0u); break;
+            case IPC_CFG_SECURITY_ADMIN_CHANNEL_ENABLED:
+                cache_set_row_u8(idx, d.admin_channel_enabled ? 1u : 0u); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_OWNER: {
+        /* Owner = User record for our own node_num. Pull from
+         * phoneapi_cache_get_node_by_id(my_node_num). */
+        phoneapi_my_info_t mi;
+        if (!phoneapi_cache_get_my_info(&mi)) return false;
+        phoneapi_node_t self;
+        if (!phoneapi_cache_get_node_by_id(mi.my_node_num, &self)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_OWNER_LONG_NAME:
+                cache_set_row_str(idx, self.long_name, PHONEAPI_LONG_NAME_MAX); break;
+            case IPC_CFG_OWNER_SHORT_NAME:
+                cache_set_row_str(idx, self.short_name, PHONEAPI_SHORT_NAME_MAX); break;
+            case IPC_CFG_OWNER_IS_LICENSED:
+                cache_set_row_u8(idx, self.is_licensed ? 1u : 0u); break;
+            case IPC_CFG_OWNER_PUBLIC_KEY:
+                cache_set_row_bytes(idx, self.public_key, self.public_key_len); break;
+            default: break;
+            }
+        }
+        return true;
+    }
+    case SG_CHANNEL: {
+        /* B3-P2 still primary-only — channel[0]. B3-P3 will use
+         * channel_index addressing. */
+        phoneapi_channel_t ch;
+        if (!phoneapi_cache_get_channel(0, &ch)) return false;
+        for (uint8_t i = 0; i < n_keys; ++i) {
+            int idx = base + i;
+            switch (defs[i].ipc_key) {
+            case IPC_CFG_CHANNEL_NAME:
+                cache_set_row_str(idx, ch.name, PHONEAPI_CHANNEL_NAME_MAX); break;
+            case IPC_CFG_CHANNEL_MODULE_POSITION_PRECISION:
+                cache_set_row_u32(idx, ch.module_position_precision); break;
+            case IPC_CFG_CHANNEL_MODULE_IS_MUTED:
+                cache_set_row_u8(idx, ch.module_is_muted ? 1u : 0u); break;
             default: break;
             }
         }
@@ -590,6 +705,14 @@ static void enter_edit_for_row(uint8_t row)
     if (gidx < 0) return;
 
     s_edit_key = defs[row].ipc_key;
+
+    /* Read-only kinds bail out before allocating the edit overlay. */
+    if (defs[row].kind == SK_KIND_BYTES_RO) {
+        snprintf(s_footer_msg, sizeof(s_footer_msg),
+                 "%s is read-only", defs[row].label);
+        s_render_seq++;
+        return;
+    }
 
     /* Strings skip the numeric edit overlay entirely — hand off to the
      * generic ime_request_text helper (post-Stage 3 MIE-reuse pattern,

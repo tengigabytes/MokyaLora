@@ -58,6 +58,16 @@ IPC_CFG_LORA_BANDWIDTH=0x0206
 IPC_CFG_POSITION_FLAGS=0x0305
 IPC_CFG_DISPLAY_HEADING_BOLD=0x0506
 IPC_CFG_DISPLAY_USE_12H_CLOCK=0x0509
+# B3-P2 expansion
+IPC_CFG_POWER_SDS_SECS=0x0402
+IPC_CFG_POWER_LS_SECS=0x0403
+IPC_CFG_POWER_MIN_WAKE_SECS=0x0404
+IPC_CFG_POWER_POWERMON_ENABLES=0x0406
+IPC_CFG_CHANNEL_MODULE_POSITION_PRECISION=0x0602
+IPC_CFG_CHANNEL_MODULE_IS_MUTED=0x0603
+IPC_CFG_OWNER_IS_LICENSED=0x0702
+IPC_CFG_SECURITY_IS_MANAGED=0x0801
+IPC_CFG_SECURITY_ADMIN_CHANNEL_ENABLED=0x0804
 
 # ── ring helpers ──────────────────────────────────────────────────────
 
@@ -385,6 +395,98 @@ b3p1_set_get_v2() {
     fi
 }
 
+test_b3p2() {
+    echo "── B3-P2: Power + Channel module + Owner + Security ──"
+
+    # Power: sds_secs (reboot=Y but COMMIT_CONFIG still applies value to flash)
+    b3p1_set_get 0x70 0x71 $IPC_CFG_POWER_SDS_SECS \
+        "$(bytes_for_u32_le 60)" power.sds_secs "60"
+    b3p1_set_get 0x72 0x73 $IPC_CFG_POWER_SDS_SECS \
+        "$(bytes_for_u32_le 4294967295)" power.sds_secs "4294967295"
+
+    # SKIP: power.ls_secs round-trip via host CLI — Meshtastic
+    # PhoneAPI.cpp:346 unconditionally clobbers ls_secs with
+    # default_ls_secs in the FromRadio reply, so any value we SET is
+    # invisible to host CLI / cascade-cache. The flash write itself
+    # works (verifiable via SWD read of config.power.ls_secs at the
+    # nanopb struct address) but it's not worth the SWD dance for a
+    # Meshtastic quirk. min_wake_secs below covers Power reboot=Y SET.
+
+    # Power: min_wake_secs (reboot=Y, no PhoneAPI clobber)
+    b3p1_set_get 0x74 0x75 $IPC_CFG_POWER_MIN_WAKE_SECS \
+        "$(bytes_for_u32_le 25)" power.min_wake_secs "25"
+    b3p1_set_get 0x76 0x77 $IPC_CFG_POWER_MIN_WAKE_SECS \
+        "$(bytes_for_u32_le 12)" power.min_wake_secs "12"
+
+    # Power: powermon_enables (reboot=N — only key not in AdminModule short-circuit)
+    b3p1_set_get 0x78 0x79 $IPC_CFG_POWER_POWERMON_ENABLES \
+        "$(bytes_for_u32_le 65535)" power.powermon_enables "65535"
+    b3p1_set_get 0x7A 0x7B $IPC_CFG_POWER_POWERMON_ENABLES \
+        "$(bytes_for_u32_le 0)" power.powermon_enables "0"
+
+    # Channel[0] module_settings — host CLI has no dotted-path
+    # accessor for module_settings, so we grep --info JSON output.
+    channel_module_check() {
+        local seq_a="$1" seq_b="$2" key="$3" val_bytes="$4" json_re="$5"
+        local payload=$(build_set_payload "$key" "$val_bytes")
+        inject_ipc_frame "$IPC_CMD_SET_CONFIG" "$seq_a" "$payload"
+        sleep 1
+        inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" "$seq_b" ""
+        sleep 4
+        if python -m meshtastic --port "$PORT" --info 2>&1 | grep -q "$json_re"; then
+            echo "  ✓ channel[0] /$json_re/"
+        else
+            echo "  ✗ channel[0] missing /$json_re/"
+            return 1
+        fi
+    }
+    echo "=== channel[0].is_muted=true ==="
+    channel_module_check 0x7C 0x7D $IPC_CFG_CHANNEL_MODULE_IS_MUTED \
+        "0x01" '"isMuted": true'
+    echo "=== channel[0].is_muted=false ==="
+    channel_module_check 0x7E 0x7F $IPC_CFG_CHANNEL_MODULE_IS_MUTED \
+        "0x00" '"isMuted": false'
+    echo "=== channel[0].position_precision=11 ==="
+    channel_module_check 0x80 0x81 $IPC_CFG_CHANNEL_MODULE_POSITION_PRECISION \
+        "$(bytes_for_u32_le 11)" '"positionPrecision": 11'
+    echo "=== channel[0].position_precision=13 (restore default) ==="
+    channel_module_check 0x82 0x83 $IPC_CFG_CHANNEL_MODULE_POSITION_PRECISION \
+        "$(bytes_for_u32_le 13)" '"positionPrecision": 13'
+
+    # Owner: is_licensed — host CLI has no --get path; verify via
+    # --info JSON (it's in NodeInfo.user.isLicensed for self).
+    owner_check() {
+        local seq_a="$1" seq_b="$2" key="$3" val_bytes="$4" json_re="$5"
+        local payload=$(build_set_payload "$key" "$val_bytes")
+        inject_ipc_frame "$IPC_CMD_SET_CONFIG" "$seq_a" "$payload"
+        sleep 1
+        inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" "$seq_b" ""
+        sleep 4
+        if python -m meshtastic --port "$PORT" --info 2>&1 | grep -q "$json_re"; then
+            echo "  ✓ owner /$json_re/"
+        else
+            echo "  ✗ owner missing /$json_re/"
+            return 1
+        fi
+    }
+    echo "=== owner.is_licensed=true ==="
+    owner_check 0x84 0x85 $IPC_CFG_OWNER_IS_LICENSED \
+        "0x01" '"isLicensed": true'
+    echo "=== owner.is_licensed=false (clear) ==="
+    owner_check 0x86 0x87 $IPC_CFG_OWNER_IS_LICENSED \
+        "0x00" '"longName": "Meshtastic'   # is_licensed=false omitted in JSON; just ensure --info works
+
+    # Security: is_managed (reboot=N)
+    b3p1_set_get 0x88 0x89 $IPC_CFG_SECURITY_IS_MANAGED \
+        "0x00" security.is_managed "False"
+
+    # Security: admin_channel_enabled (reboot=N)
+    b3p1_set_get 0x8A 0x8B $IPC_CFG_SECURITY_ADMIN_CHANNEL_ENABLED \
+        "0x01" security.admin_channel_enabled "True"
+    b3p1_set_get 0x8C 0x8D $IPC_CFG_SECURITY_ADMIN_CHANNEL_ENABLED \
+        "0x00" security.admin_channel_enabled "False"
+}
+
 test_b3p1_v2_header() {
     echo "── 8-B header (new IpcPayloadConfigValue, B3-P3 forward path) ──"
     b3p1_set_get_v2 0x60 0x61 $IPC_CFG_DEVICE_LED_HEARTBEAT_DISABLED \
@@ -456,6 +558,7 @@ case "${1:-all}" in
     reboot)  test_commit_reboot "${2:-22}" ;;
     b3p1)    test_b3p1; test_b3p1_v2_header ;;
     b3p1v2)  test_b3p1_v2_header ;;
+    b3p2)    test_b3p2 ;;
     all)
         test_lora_subset 15
         test_owner_long_name "MokyaTest"

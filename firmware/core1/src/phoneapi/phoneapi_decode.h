@@ -133,6 +133,10 @@ bool phoneapi_decode_config_position(const uint8_t *buf, uint16_t len,
                                      phoneapi_config_position_t *out);
 bool phoneapi_decode_config_display(const uint8_t *buf, uint16_t len,
                                     phoneapi_config_display_t *out);
+bool phoneapi_decode_config_power(const uint8_t *buf, uint16_t len,
+                                  phoneapi_config_power_t *out);
+bool phoneapi_decode_config_security(const uint8_t *buf, uint16_t len,
+                                     phoneapi_config_security_t *out);
 
 // Walk the outer Config message and invoke `cb` once per LD sub-field
 // (each oneof variant lives inside one LD field — device=1, position=2,

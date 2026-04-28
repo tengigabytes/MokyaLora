@@ -32,6 +32,7 @@ typedef enum {
     SK_KIND_ENUM_U8,    ///< uint8_t mapped through enum_values[]
     SK_KIND_STR,        ///< UTF-8 string up to `max` bytes (Stage 3 — placeholder UI)
     SK_KIND_U32_FLAGS,  ///< uint32_t bitmask, displayed as 0x%08lX, ±step toggles bits
+    SK_KIND_BYTES_RO,   ///< read-only opaque bytes, displayed as base64; edit blocked
 } settings_kind_t;
 
 typedef enum {
@@ -42,6 +43,7 @@ typedef enum {
     SG_DISPLAY,
     SG_CHANNEL,
     SG_OWNER,
+    SG_SECURITY,
     SG_GROUP_COUNT,
 } settings_group_t;
 

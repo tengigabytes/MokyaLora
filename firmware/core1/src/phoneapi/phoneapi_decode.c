@@ -315,7 +315,37 @@ typedef struct {
     size_t    name_max;
     uint8_t  *psk_len;
     uint32_t *channel_id;
+    /* B3-P2 — ChannelSettings.module_settings (channel.proto:95) */
+    bool     *has_module_settings;
+    uint32_t *module_position_precision;
+    bool     *module_is_muted;
 } chan_settings_ctx_t;
+
+static bool decode_module_settings(const uint8_t *buf, uint16_t len, void *vctx)
+{
+    chan_settings_ctx_t *ctx = (chan_settings_ctx_t *)vctx;
+    *ctx->has_module_settings = true;
+    *ctx->module_position_precision = 0u;
+    *ctx->module_is_muted = false;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            *ctx->module_position_precision = (uint32_t)v;
+        } else if (f == 2u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            *ctx->module_is_muted = (v != 0u);
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
 
 static bool decode_channel_settings(const uint8_t *buf, uint16_t len, void *vctx)
 {
@@ -338,6 +368,9 @@ static bool decode_channel_settings(const uint8_t *buf, uint16_t len, void *vctx
                 return false;
         } else if (f == 4u && w == WT_I32) {
             if (!read_fixed32(buf, len, &pos, ctx->channel_id)) return false;
+        } else if (f == 7u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_module_settings, ctx))
+                return false;
         } else {
             if (!skip_field(buf, len, &pos, w)) return false;
         }
@@ -364,10 +397,13 @@ bool phoneapi_decode_channel(const uint8_t *buf, uint16_t len,
             out->index = (uint8_t)(v & 0xFFu);
         } else if (f == 2u && w == WT_LEN) {
             chan_settings_ctx_t ctx = {
-                .name       = out->name,
-                .name_max   = PHONEAPI_CHANNEL_NAME_MAX,
-                .psk_len    = &out->psk_len,
-                .channel_id = &out->channel_id,
+                .name                       = out->name,
+                .name_max                   = PHONEAPI_CHANNEL_NAME_MAX,
+                .psk_len                    = &out->psk_len,
+                .channel_id                 = &out->channel_id,
+                .has_module_settings        = &out->has_module_settings,
+                .module_position_precision  = &out->module_position_precision,
+                .module_is_muted            = &out->module_is_muted,
             };
             if (!dispatch_sub(buf, len, &pos, decode_channel_settings, &ctx))
                 return false;
@@ -404,9 +440,16 @@ static bool decode_user(const uint8_t *buf, uint16_t len, void *vctx)
         } else if (f == 5u && w == WT_VARINT) {
             uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
             out->hw_model = (uint8_t)v;
+        } else if (f == 6u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->is_licensed = (v != 0u);
         } else if (f == 7u && w == WT_VARINT) {
             uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
             out->role = (uint8_t)v;
+        } else if (f == 8u && w == WT_LEN) {
+            if (!read_bytes_into(buf, len, &pos, out->public_key,
+                                 (uint8_t)sizeof(out->public_key),
+                                 &out->public_key_len)) return false;
         } else if (f == 9u && w == WT_VARINT) {
             uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
             out->is_unmessagable = (v != 0u);
@@ -1015,6 +1058,94 @@ bool phoneapi_decode_config_display(const uint8_t *buf, uint16_t len,
         } else if (f == 14u && w == WT_VARINT) {
             uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
             out->enable_message_bubbles = (v != 0u);
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// PowerConfig — config.proto:433–490
+//   is_power_saving=1, on_battery_shutdown_after_secs=2,
+//   adc_multiplier_override=3 (float, skipped), wait_bluetooth_secs=4,
+//   sds_secs=6, ls_secs=7, min_wake_secs=8,
+//   device_battery_ina_address=9, powermon_enables=32 (uint64).
+bool phoneapi_decode_config_power(const uint8_t *buf, uint16_t len,
+                                  phoneapi_config_power_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->is_power_saving = (v != 0u);
+        } else if (f == 2u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->on_battery_shutdown_after_secs = (uint32_t)v;
+        } else if (f == 4u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->wait_bluetooth_secs = (uint32_t)v;
+        } else if (f == 6u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->sds_secs = (uint32_t)v;
+        } else if (f == 7u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->ls_secs = (uint32_t)v;
+        } else if (f == 8u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->min_wake_secs = (uint32_t)v;
+        } else if (f == 9u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->device_battery_ina_address = (uint32_t)v;
+        } else if (f == 32u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            /* uint64 — surface only low 32 bits to match IPC scope. */
+            out->powermon_enables_lo = (uint32_t)(v & 0xFFFFFFFFu);
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// SecurityConfig — config.proto:1172–1211
+//   public_key=1 (bytes), private_key=2 (bytes — NOT decoded into cache),
+//   admin_key=3 (repeated bytes — NOT decoded), is_managed=4,
+//   serial_enabled=5, debug_log_api_enabled=6, admin_channel_enabled=8.
+bool phoneapi_decode_config_security(const uint8_t *buf, uint16_t len,
+                                     phoneapi_config_security_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_LEN) {
+            if (!read_bytes_into(buf, len, &pos, out->public_key,
+                                 (uint8_t)sizeof(out->public_key),
+                                 &out->public_key_len)) return false;
+        } else if (f == 4u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->is_managed = (v != 0u);
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->serial_enabled = (v != 0u);
+        } else if (f == 6u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->debug_log_api_enabled = (v != 0u);
+        } else if (f == 8u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->admin_channel_enabled = (v != 0u);
         } else {
             if (!skip_field(buf, len, &pos, w)) return false;
         }

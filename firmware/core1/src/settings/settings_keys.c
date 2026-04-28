@@ -167,12 +167,32 @@ static const settings_key_def_t k_keys[] = {
       0, 86400, /*reboot=*/1, "smart_min_s",
       NULL, 0 },
 
-    /* ── Power ──────────────────────────────────────────────────────── */
+    /* ── Power ──────────────────────────────────────────────────────── *
+     * AdminModule.cpp:736–744 — short-circuit checks 7 fields; any
+     * change among {device_battery_ina_address, is_power_saving,
+     * ls_secs, min_wake_secs, on_battery_shutdown_after_secs, sds_secs,
+     * wait_bluetooth_secs} triggers reboot. powermon_enables is NOT
+     * in the comparison so it stays live. */
     { IPC_CFG_POWER_SAVING, SG_POWER, SK_KIND_BOOL,
       0, 1, /*reboot=*/1, "save_pwr",
       NULL, 0 },
     { IPC_CFG_SHUTDOWN_AFTER_SECS, SG_POWER, SK_KIND_U32,
       0, 86400, /*reboot=*/1, "shut_after_s",
+      NULL, 0 },
+    { IPC_CFG_POWER_SDS_SECS, SG_POWER, SK_KIND_U32,
+      0, 86400, /*reboot=*/1, "sds_s",
+      NULL, 0 },
+    { IPC_CFG_POWER_LS_SECS, SG_POWER, SK_KIND_U32,
+      0, 86400, /*reboot=*/1, "ls_s",
+      NULL, 0 },
+    { IPC_CFG_POWER_MIN_WAKE_SECS, SG_POWER, SK_KIND_U32,
+      0, 86400, /*reboot=*/1, "min_wake_s",
+      NULL, 0 },
+    { IPC_CFG_POWER_BATTERY_INA_ADDRESS, SG_POWER, SK_KIND_U32,
+      0, 0x7F, /*reboot=*/1, "ina_i2c",
+      NULL, 0 },
+    { IPC_CFG_POWER_POWERMON_ENABLES, SG_POWER, SK_KIND_U32_FLAGS,
+      0, (int32_t)0xFFFFFFFF, /*reboot=*/0, "pwrmon",
       NULL, 0 },
 
     /* ── Display ────────────────────────────────────────────────────── *
@@ -230,6 +250,12 @@ static const settings_key_def_t k_keys[] = {
     { IPC_CFG_CHANNEL_NAME, SG_CHANNEL, SK_KIND_STR,
       0, 11, /*reboot=*/0, "name",
       NULL, 0 },
+    { IPC_CFG_CHANNEL_MODULE_POSITION_PRECISION, SG_CHANNEL, SK_KIND_U32,
+      0, 32, /*reboot=*/0, "pos_prec",
+      NULL, 0 },
+    { IPC_CFG_CHANNEL_MODULE_IS_MUTED, SG_CHANNEL, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "muted",
+      NULL, 0 },
 
     /* ── Owner ──────────────────────────────────────────────────────── */
     { IPC_CFG_OWNER_LONG_NAME, SG_OWNER, SK_KIND_STR,
@@ -237,6 +263,33 @@ static const settings_key_def_t k_keys[] = {
       NULL, 0 },
     { IPC_CFG_OWNER_SHORT_NAME, SG_OWNER, SK_KIND_STR,
       0, 4, /*reboot=*/0, "short_name",
+      NULL, 0 },
+    { IPC_CFG_OWNER_IS_LICENSED, SG_OWNER, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "licensed",
+      NULL, 0 },
+    { IPC_CFG_OWNER_PUBLIC_KEY, SG_OWNER, SK_KIND_BYTES_RO,
+      0, 32, /*reboot=*/0, "pubkey",
+      NULL, 0 },
+
+    /* ── Security ───────────────────────────────────────────────────── *
+     * AdminModule.cpp:915–917 — only debug_log_api_enabled +
+     * serial_enabled gate the reboot=false short-circuit; changing
+     * either pushes reboot=true. is_managed / admin_channel_enabled
+     * stay live. private_key + admin_key[] intentionally NOT exposed. */
+    { IPC_CFG_SECURITY_PUBLIC_KEY, SG_SECURITY, SK_KIND_BYTES_RO,
+      0, 32, /*reboot=*/0, "pubkey",
+      NULL, 0 },
+    { IPC_CFG_SECURITY_IS_MANAGED, SG_SECURITY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "managed",
+      NULL, 0 },
+    { IPC_CFG_SECURITY_SERIAL_ENABLED, SG_SECURITY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/1, "serial",
+      NULL, 0 },
+    { IPC_CFG_SECURITY_DEBUG_LOG_API_ENABLED, SG_SECURITY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/1, "dbg_log",
+      NULL, 0 },
+    { IPC_CFG_SECURITY_ADMIN_CHANNEL_ENABLED, SG_SECURITY, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "admin_ch",
       NULL, 0 },
 };
 
@@ -250,6 +303,7 @@ static const char *const k_group_names[SG_GROUP_COUNT] = {
     [SG_DISPLAY]  = "Display",
     [SG_CHANNEL]  = "Channel",
     [SG_OWNER]    = "Owner",
+    [SG_SECURITY] = "Security",
 };
 
 const char *settings_group_name(settings_group_t g)
