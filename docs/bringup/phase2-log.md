@@ -2918,6 +2918,75 @@ one NodeInfo request, sleeps 8 s for the reply to land, and exits.
 Cascade is now the single source of truth for inbound text,
 NodeInfo, and routing-ack telemetry.
 
+#### B3 — IPC config surface expansion (2026-04-28)
+
+Plan: `~/.claude/plans/m5-ipcphoneapi-subclass-floating-cray.md`
+B3-P1..P4. Closes the IPC config gap that B2 left at ~15 keys; the
+Core 1 settings UI can now reach 88 keys spanning every Meshtastic
+config + ModuleConfig sub-message that's actually meaningful on the
+MokyaLora hardware.
+
+Per-phase coverage and corresponding commits:
+
+| Phase | Commit       | Keys added | Cumulative | Groups | Notes |
+|-------|--------------|-----------:|-----------:|-------:|-------|
+| B3-P1 | 4f9e7d8      | 30         |  45        |  7     | Device + LoRa + Position + Display extras + Cut B Config decoder/cache scaffold |
+| B3-P1 | 7e950cd      | (test)     |            |        | 8-byte IpcPayloadConfigValue header round-trip test (b3p1v2) |
+| B3-P1 | 582c213      | (cache)    |            |        | Cascade Config decoder + settings_view cache (M5F.3 Cut B partial) |
+| B3-P2 | b962573      | 14         |  59        |  8     | Power + Security + Owner extras + Channel module_settings on primary |
+| B3-P3 | d637bf5      | 14 + ch_idx|  73        | 11     | ModuleConfig (Telemetry / NeighborInfo / RangeTest) + per-channel discriminator on 0x06xx Channel keys |
+| B3-P3 | f2e5149      | (test)     |            |        | test_b3p3 — 15/15 SWD-injected round-trips PASS |
+| B3-P4 | 5c45c69      | 15         |  88        | 15     | DetectionSensor + CannedMessage + AmbientLighting + Paxcounter |
+
+Wire format invariant. The `IpcPayloadGetConfig` (4 B) and
+`IpcPayloadConfigValue` (8 B) headers introduced in B3-P1 are
+back-compat with legacy B2-era SWD scripts (`decode_set` /
+`decode_get` accept the older 2 B / 4 B layouts as
+`channel_index = 0`). The `channel_index` field is meaningful only
+for 0x06xx Channel keys; B3-P3 was the first phase where it actually
+addresses a non-zero index.
+
+Soft-reload semantics. Every B3 key is validated at SET against
+Meshtastic's AdminModule short-circuit table:
+`needs_reboot=1` keys send `IPC_CMD_COMMIT_REBOOT` (graceful reboot
+via P2-10 RebootNotifier), `needs_reboot=0` keys use
+`IPC_CMD_COMMIT_CONFIG` (soft `service->reloadConfig(SEGMENT_*)`).
+ModuleConfig SETs accumulate `SEGMENT_MODULECONFIG`; channel SETs
+accumulate `SEGMENT_CHANNELS`; owner SETs flip a separate
+`s_pending_owner` flag that triggers `service->reloadOwner()` at
+COMMIT.
+
+Cascade decoder coverage (M5F.3 Cut B). The Core 1 `phoneapi_cache`
+walks the `FromRadio.config` oneof for fields 1 (Device), 2
+(Position), 3 (Power), 5 (Display), 6 (LoRa), 8 (Security) — six of
+the ten Config sub-messages. Channel and Owner are read from the
+`FromRadio.channel` / `FromRadio.my_info`+NodeDB streams instead.
+`FR_TAG_MODULE_CONFIG` walk-down was deferred — `settings_view` falls
+back to the `send_get_burst` IPC GET path for the four ModuleConfig
+groups, which round-trips through Core 0's IPC handler. Adding the
+ModuleConfig cascade decoder is a natural follow-up but is not on
+the critical path; the user-visible behaviour is one extra round-trip
+of latency on first entry into a ModuleConfig group.
+
+Verification. `scripts/test_ipc_config.sh` `b3p1`, `b3p2`, `b3p3`,
+`b3p4` cover ≥1 round-trip per key plus boundary guards
+(channel_index=8, trigger_type=6). All cases PASS on Rev A hardware
+with rebootCount unchanged across `COMMIT_CONFIG` paths and
+incremented across `COMMIT_REBOOT` paths.
+
+Open follow-ups (deferred from B3, not blocking):
+
+- Cascade `FR_TAG_MODULE_CONFIG` walk-down decoder + cache (would
+  eliminate the GET-burst latency on Telemetry / NeighborInfo /
+  RangeTest / DetectionSensor / CannedMessage / AmbientLighting /
+  Paxcounter group entry).
+- PSK editing UI for `IPC_CFG_CHANNEL_PSK` (bytes max 32 — current
+  `SK_KIND_STR` cannot represent hex/base64 picker).
+- SecurityConfig `private_key` + `admin_key[]` are intentionally not
+  exposed; if exposed in a future phase, both need a confirmation
+  flow because a wrong write bricks PKI.
+- Out-of-scope per plan: float / GPIO pin / multi-admin-key.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)

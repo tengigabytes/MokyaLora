@@ -604,16 +604,16 @@ Enumerated in `firmware/shared/ipc/ipc_protocol.h`. **Direction** indicates the 
 
 | ID     | Name                   | Dir   | Ring  | Purpose                                    |
 |--------|------------------------|-------|-------|--------------------------------------------|
-| `0x01` | `IPC_MSG_RX_TEXT`      | C0→C1 | DATA  | Incoming text message received             |
-| `0x02` | `IPC_MSG_NODE_UPDATE`  | C0→C1 | DATA  | Node list entry added/updated              |
+| `0x01` | *(reserved)*           | —     | —     | Was `IPC_MSG_RX_TEXT`, retired M5E.3       |
+| `0x02` | *(reserved)*           | —     | —     | Was `IPC_MSG_NODE_UPDATE`, retired M5E.3   |
 | `0x03` | `IPC_MSG_DEVICE_STATUS`| C0→C1 | DATA  | Periodic status (batt, GPS, RSSI, uptime)  |
-| `0x04` | `IPC_MSG_TX_ACK`       | C0→C1 | DATA  | Tx ACK (sending/delivered/failed)          |
+| `0x04` | *(reserved)*           | —     | —     | Was `IPC_MSG_TX_ACK`, retired M5E.3        |
 | `0x05` | `IPC_MSG_CHANNEL_UPDATE`| C0→C1| DATA  | Channel config changed                     |
-| `0x06` | `IPC_MSG_SERIAL_BYTES` | C0→C1 | DATA  | Raw CLI bytes (M1 byte bridge)             |
+| `0x06` | `IPC_MSG_SERIAL_BYTES` | C0→C1 | DATA  | Raw CLI bytes (M1 byte bridge / cascade)   |
 | `0x07` | `IPC_MSG_CONFIG_VALUE` | C0→C1 | DATA  | Config get reply / unsolicited push        |
 | `0x08` | `IPC_MSG_CONFIG_RESULT`| C0→C1 | DATA  | Config set/commit OK/err                   |
 | `0x09` | `IPC_MSG_REBOOT_NOTIFY`| C0→C1 | DATA  | Core 0 about to reboot — detach USB        |
-| `0x81` | `IPC_CMD_SEND_TEXT`    | C1→C0 | CMD   | Send text message                          |
+| `0x81` | *(reserved)*           | —     | —     | Was `IPC_CMD_SEND_TEXT`, retired M5E.3     |
 | `0x82` | `IPC_CMD_SET_CHANNEL`  | C1→C0 | CMD   | Set active channel                         |
 | `0x83` | `IPC_CMD_SET_TX_POWER` | C1→C0 | CMD   | LoRa TX power (dBm)                        |
 | `0x84` | `IPC_CMD_REQUEST_STATUS`| C1→C0| CMD   | Immediate DEVICE_STATUS push               |
@@ -621,12 +621,77 @@ Enumerated in `firmware/shared/ipc/ipc_protocol.h`. **Direction** indicates the 
 | `0x86` | `IPC_CMD_POWER_STATE`  | C1→C0 | CMD   | Notify power FSM transition                |
 | `0x87` | `IPC_CMD_REBOOT`       | C1→C0 | CMD   | Request reboot                             |
 | `0x88` | `IPC_CMD_FACTORY_RESET`| C1→C0 | CMD   | Wipe persistent config                     |
-| `0x89` | `IPC_CMD_GET_CONFIG`   | C1→C0 | CMD   | Request config value by key                |
-| `0x8A` | `IPC_CMD_SET_CONFIG`   | C1→C0 | CMD   | Set config value by key                    |
-| `0x8B` | `IPC_CMD_COMMIT_CONFIG`| C1→C0 | CMD   | Commit pending (save + reboot if needed)   |
+| `0x89` | `IPC_CMD_GET_CONFIG`   | C1→C0 | CMD   | Request config value by key (B2 / B3)      |
+| `0x8A` | `IPC_CMD_SET_CONFIG`   | C1→C0 | CMD   | Set config value by key (B2 / B3)          |
+| `0x8B` | `IPC_CMD_COMMIT_CONFIG`| C1→C0 | CMD   | Commit pending — soft `reloadConfig` (B2)  |
+| `0x8C` | `IPC_CMD_COMMIT_REBOOT`| C1→C0 | CMD   | Commit + graceful reboot (P2-10 path)      |
 | `0xF0` | `IPC_MSG_LOG_LINE`     | both  | LOG   | Debug log, best-effort                     |
 | `0xFE` | `IPC_MSG_PANIC`        | both  | LOG   | Cross-core panic notification (M6)         |
 | `0xFF` | `IPC_BOOT_READY`       | both  | —     | Handshake (also written to shared region)  |
+
+After M5E.3 (2026-04-28) the cascade PhoneAPI client on Core 1 reads
+RX text / NodeInfo / Routing-ACK / QueueStatus directly from the
+`IPC_MSG_SERIAL_BYTES` byte stream, so the four retired IDs (0x01,
+0x02, 0x04, 0x81) above are no longer produced by anyone — their
+numeric values are reserved (do not reassign) so the wire format
+stays stable for SWD-injected B2-era test scripts.
+
+#### IpcConfigKey namespace (B2 — B3-P4)
+
+Config keys carried by `IPC_MSG_CONFIG_VALUE` / `IPC_CMD_SET_CONFIG`
+/ `IPC_CMD_GET_CONFIG` use a 16-bit category-major namespace (`0xCCNN`,
+`CC` = category, `NN` = field). 88 keys across 15 categories as of
+B3-P4 (2026-04-28); see `firmware/shared/ipc/ipc_protocol.h` for the
+full enum and `firmware/core1/src/settings/settings_keys.c` for
+labels / range hints / per-key reboot flags. Wire envelope:
+
+```c
+typedef struct {                              /* IPC_CMD_GET_CONFIG payload (4 B) */
+    uint16_t key;            /* IpcConfigKey */
+    uint8_t  channel_index;  /* 0..7 (only meaningful for 0x06xx) */
+    uint8_t  _pad;
+} IpcPayloadGetConfig;
+
+typedef struct {                              /* IPC_MSG_CONFIG_VALUE / IPC_CMD_SET_CONFIG (8 B + var) */
+    uint16_t key;
+    uint16_t value_len;
+    uint8_t  channel_index;
+    uint8_t  _pad[3];
+    uint8_t  value[];        /* type-dependent: u8 / i8 / u32 LE / string / bytes */
+} IpcPayloadConfigValue;
+```
+
+Both headers' decoders accept legacy 2 B / 4 B B2-era payloads as
+`channel_index = 0` for backward compatibility with SWD-injected test
+fixtures.
+
+| Cat    | Group           | Keys | Phase  | Notes                                                                   |
+|--------|-----------------|-----:|--------|-------------------------------------------------------------------------|
+| `0x01` | Device          |    7 | B2/B3-P1 | Role, rebroadcast, node-info BC, double-tap, triple-click, tzdef, LED HB |
+| `0x02` | LoRa            |   13 | B2/B3-P1 | Region, modem preset, TX power, hops, BW/SF/CR, FEM LNA, ...            |
+| `0x03` | Position        |    8 | B3-P1  | GPS mode/interval, broadcast secs, smart bcast, fixed pos, flags        |
+| `0x04` | Power           |    7 | B3-P2  | Saving, shutdown, SDS/LS/min-wake, INA addr, powermon (low 32 of u64)   |
+| `0x05` | Display         |   12 | B3-P1  | Screen on, units, carousel, flip, OLED type, mode, compass, 12 h, ...   |
+| `0x06` | Channel         |    4 | B3-P2/P3 | Per-channel-index (0..7) — name, PSK, module pos-precision, muted     |
+| `0x07` | Owner           |    4 | B3-P2  | Long/short name, is_licensed, public_key (read-only)                    |
+| `0x08` | Security        |    5 | B3-P2  | public_key (RO), is_managed, serial enabled, debug log API, admin chan  |
+| `0x10` | Telemetry       |    9 | B3-P3  | Device / env / power update intervals + measurement/screen toggles      |
+| `0x11` | NeighborInfo    |    3 | B3-P3  | Enabled, update interval (≥14400 s), transmit_over_lora                 |
+| `0x12` | RangeTest       |    2 | B3-P3  | Enabled, sender                                                         |
+| `0x13` | DetectionSensor |    6 | B3-P4  | Enabled, min/state bcast, name (≤19 B), trigger type (0..5), pull-up    |
+| `0x14` | CannedMessage   |    2 | B3-P4  | UpDown1 enabled, send_bell                                              |
+| `0x15` | AmbientLighting |    5 | B3-P4  | LED state, current/red/green/blue (each u8 0..255)                      |
+| `0x16` | Paxcounter      |    2 | B3-P4  | Enabled, update interval                                                |
+
+`requiresReboot` policy mirrors Meshtastic `AdminModule`'s
+short-circuit table at the time the key was added; per-key flags live
+in `settings_keys.c` so Core 1's settings UI knows whether to send
+`IPC_CMD_COMMIT_CONFIG` (soft `service->reloadConfig(SEGMENT_*)`) or
+`IPC_CMD_COMMIT_REBOOT` (graceful reboot via P2-10 RebootNotifier).
+ModuleConfig SETs accumulate `SEGMENT_MODULECONFIG`; channel SETs
+accumulate `SEGMENT_CHANNELS`; owner SETs flip a separate
+`s_pending_owner` flag that triggers `service->reloadOwner()` at
+COMMIT.
 
 ### 5.3 Ring API
 
