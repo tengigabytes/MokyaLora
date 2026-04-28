@@ -152,7 +152,9 @@ bytes_for_string() {
 }
 
 # build_set_payload <key_u16> <value_byte_string>
-# Returns header (key u16 LE + vlen u16 LE) + value bytes.
+# Returns LEGACY 4-byte IpcPayloadConfigValue header (key u16 LE +
+# vlen u16 LE) + value bytes. Used to verify decode_set's backward
+# compatibility with B2-era SWD scripts.
 build_set_payload() {
     local key=$1
     local value="$2"
@@ -166,6 +168,39 @@ build_set_payload() {
         $((vlen & 0xFF)) \
         $(((vlen >> 8) & 0xFF)) \
         "$value"
+}
+
+# build_set_payload_v2 <key_u16> <channel_index_u8> <value_byte_string>
+# Returns NEW 8-byte IpcPayloadConfigValue header (key u16 LE +
+# vlen u16 LE + channel_index u8 + 3 bytes pad) + value bytes. This
+# is the format settings_client.c on Core 1 emits as of B3-P1.
+build_set_payload_v2() {
+    local key=$1
+    local channel_index=$2
+    local value="$3"
+    local vlen=0
+    if [ -n "$value" ]; then
+        vlen=$(echo "$value" | wc -w)
+    fi
+    printf "0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x00 0x00 0x00 %s" \
+        $((key & 0xFF)) \
+        $(((key >> 8) & 0xFF)) \
+        $((vlen & 0xFF)) \
+        $(((vlen >> 8) & 0xFF)) \
+        $((channel_index & 0xFF)) \
+        "$value"
+}
+
+# build_get_payload_v2 <key_u16> <channel_index_u8>
+# Returns NEW 4-byte IpcPayloadGetConfig (key u16 LE + channel_index
+# u8 + 1 byte pad).
+build_get_payload_v2() {
+    local key=$1
+    local channel_index=$2
+    printf "0x%02X 0x%02X 0x%02X 0x00" \
+        $((key & 0xFF)) \
+        $(((key >> 8) & 0xFF)) \
+        $((channel_index & 0xFF))
 }
 
 # ── Test cases ───────────────────────────────────────────────────────
@@ -323,6 +358,47 @@ b3p1_set_get() {
     fi
 }
 
+# Same shape as b3p1_set_get but emits the NEW 8-byte SET header. Tests
+# the wire format settings_client.c on Core 1 actually sends.
+b3p1_set_get_v2() {
+    local seq_a="$1"
+    local seq_b="$2"
+    local key="$3"
+    local value_bytes="$4"
+    local cli_path="$5"
+    local expect="$6"
+
+    echo "=== $cli_path: SET via IPC (8-B header), COMMIT_CONFIG ==="
+    local payload=$(build_set_payload_v2 "$key" 0 "$value_bytes")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" "$seq_a" "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" "$seq_b" ""
+    sleep 3
+
+    local actual=$(python -m meshtastic --port "$PORT" --get "$cli_path" 2>&1 \
+        | grep "^$cli_path:" | awk '{print $2}')
+    if [ "$actual" = "$expect" ]; then
+        echo "  ✓ $cli_path=$actual"
+    else
+        echo "  ✗ expected $expect, got $actual"
+        return 1
+    fi
+}
+
+test_b3p1_v2_header() {
+    echo "── 8-B header (new IpcPayloadConfigValue, B3-P3 forward path) ──"
+    b3p1_set_get_v2 0x60 0x61 $IPC_CFG_DEVICE_LED_HEARTBEAT_DISABLED \
+        "0x01" device.led_heartbeat_disabled "True"
+    b3p1_set_get_v2 0x62 0x63 $IPC_CFG_DEVICE_LED_HEARTBEAT_DISABLED \
+        "0x00" device.led_heartbeat_disabled "False"
+    b3p1_set_get_v2 0x64 0x65 $IPC_CFG_LORA_USE_PRESET \
+        "0x01" lora.use_preset "True"
+    b3p1_set_get_v2 0x66 0x67 $IPC_CFG_LORA_BANDWIDTH \
+        "$(bytes_for_u32_le 125)" lora.bandwidth "125"
+    b3p1_set_get_v2 0x68 0x69 $IPC_CFG_LORA_BANDWIDTH \
+        "$(bytes_for_u32_le 0)"   lora.bandwidth "0"
+}
+
 test_b3p1() {
     # CLI paths drop the `config.` prefix; enum values come as decimal
     # numbers, booleans as Python-style "True"/"False".
@@ -378,7 +454,8 @@ case "${1:-all}" in
     display) test_display_screen_on_secs "${2:-90}" ;;
     power)   test_power_shutdown_secs "${2:-3600}" ;;
     reboot)  test_commit_reboot "${2:-22}" ;;
-    b3p1)    test_b3p1 ;;
+    b3p1)    test_b3p1; test_b3p1_v2_header ;;
+    b3p1v2)  test_b3p1_v2_header ;;
     all)
         test_lora_subset 15
         test_owner_long_name "MokyaTest"
