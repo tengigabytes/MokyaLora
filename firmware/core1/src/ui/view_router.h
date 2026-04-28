@@ -41,19 +41,24 @@ extern "C" {
 
 /* ── View identity ───────────────────────────────────────────────────── *
  *
- * Stable enum order = FUNC cycle order. Debug-only views are guarded by
- * MOKYA_DEBUG_VIEWS so production builds skip them and `VIEW_ID_COUNT`
- * adjusts automatically.                                                 */
+ * Post-Phase 1 router: FUNC short-press is no longer a cycle — it opens
+ * the L-1 launcher modal. App-to-app navigation is launcher-driven
+ * (`view_router_navigate()`), so enum order is purely for catalog
+ * stability. Debug-only views are guarded by MOKYA_DEBUG_VIEWS so
+ * production builds skip them and `VIEW_ID_COUNT` adjusts
+ * automatically.                                                         */
 typedef enum {
-    VIEW_ID_KEYPAD = 0,
+    VIEW_ID_BOOT_HOME = 0,    /* L-0 boot dashboard                       */
+    VIEW_ID_LAUNCHER,         /* L-1 9-grid app menu (modal)              */
+    VIEW_ID_MESSAGES,         /* A-1 (Phase 1: legacy flat inbox)         */
+    VIEW_ID_NODES,            /* C-1 node list                            */
+    VIEW_ID_SETTINGS,         /* S-0 settings                             */
+    VIEW_ID_IME,              /* G-3 IME modal-only                       */
+    VIEW_ID_KEYPAD,           /* legacy keypad debug grid (Phase 1: kept) */
 #if MOKYA_DEBUG_VIEWS
     VIEW_ID_RF_DEBUG,
     VIEW_ID_FONT_TEST,
 #endif
-    VIEW_ID_IME,
-    VIEW_ID_MESSAGES,
-    VIEW_ID_NODES,
-    VIEW_ID_SETTINGS,
     VIEW_ID_COUNT
 } view_id_t;
 

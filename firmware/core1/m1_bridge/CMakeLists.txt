@@ -213,6 +213,11 @@ add_executable(core1_bridge
     ${KEYPAD_DIR}/key_inject.c
     ${KEYPAD_DIR}/key_inject_frame.c
     ${KEYPAD_DIR}/key_inject_rtt.c
+    ${UI_DIR}/global/ui_theme.c
+    ${UI_DIR}/global/status_bar.c
+    ${UI_DIR}/global/hint_bar.c
+    ${UI_DIR}/boot_home_view.c
+    ${UI_DIR}/launcher_view.c
     ${UI_DIR}/keypad_view.c
     ${UI_DIR}/rf_debug_view.c
     ${UI_DIR}/font_test_view.c

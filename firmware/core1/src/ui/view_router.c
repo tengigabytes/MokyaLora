@@ -24,8 +24,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 #include "key_event.h"
 #include "mie/keycode.h"
+
+#include "global/status_bar.h"
+#include "global/hint_bar.h"
+#include "launcher_view.h"
 
 /* ── Runtime state per view ──────────────────────────────────────────── */
 
@@ -52,13 +59,27 @@ static uint32_t       s_lru_counter;
 static lv_obj_t      *s_screen;
 static lv_obj_t      *s_stash;       /* off-screen parent for cached views */
 
+/* FUNC long-press state machine */
+static uint32_t       s_func_press_ms;     /* 0 = not pressed */
+static bool           s_func_long_consumed;/* prevent short fire after long */
+#define FUNC_LONG_HOLD_MS  2000u
+
+static uint32_t now_ms_(void)
+{
+    return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+}
+
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
 static lv_obj_t *make_panel(lv_obj_t *parent)
 {
+    /* Content area sits BELOW the 16 px global Status Bar (G-1).
+     * Hint Bar (G-2) is an overlay that floats on top of the panel
+     * bottom 16 px when active; views that show it should reserve
+     * the bottom 16 px in their layout. */
     lv_obj_t *p = lv_obj_create(parent);
-    lv_obj_set_size(p, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_pos(p, 0, 0);
+    lv_obj_set_size(p, 320, 240 - 16);   /* 224 px */
+    lv_obj_set_pos(p, 0, 16);
     lv_obj_set_style_pad_all(p, 0, 0);
     lv_obj_set_style_border_width(p, 0, 0);
     lv_obj_set_style_radius(p, 0, 0);
@@ -177,9 +198,17 @@ void view_router_init(lv_obj_t *screen, uint8_t lru_capacity)
      * this stash are invisible to the refresh pipeline). */
     s_stash = lv_obj_create(NULL);
 
-    /* Boot view = first id (KEYPAD). */
+    /* Global chrome — created once on the screen, survives view swaps. */
+    status_bar_init(screen);
+    hint_bar_init(screen);
+
+    /* FUNC long-press state */
+    s_func_press_ms = 0;
+    s_func_long_consumed = false;
+
+    /* Boot view = L-0 home dashboard. */
     s_view_router_active = UINT32_MAX;
-    switch_active(VIEW_ID_KEYPAD);
+    switch_active(VIEW_ID_BOOT_HOME);
 }
 
 void view_router_navigate(view_id_t target)
@@ -222,26 +251,103 @@ bool view_router_in_modal(void)
     return s_modal_caller != UINT32_MAX;
 }
 
+/* Modal callback used when launcher commits — picks the focused tile's
+ * target view id and navigates to it after the modal returns control. */
+static void launcher_done_cb(bool committed, void *ctx)
+{
+    (void)ctx;
+    if (!committed) return;
+    view_id_t target = launcher_view_picked();
+    if (target < VIEW_ID_COUNT) {
+        view_router_navigate(target);
+    }
+}
+
+/* Handle FUNC press/release edge: short → open launcher modal (or
+ * commit existing modal); long ≥ 2 s → open status bar detail (TODO,
+ * stubbed). When inside the IME modal, FUNC is passed through to the
+ * IME view (which owns commit/cancel semantics for itself).         */
+static void handle_func_event(const key_event_t *ev)
+{
+    bool in_modal     = s_modal_caller != UINT32_MAX;
+    bool in_ime_modal = in_modal && s_view_router_active == VIEW_ID_IME;
+
+    if (ev->pressed) {
+        s_func_press_ms = now_ms_();
+        s_func_long_consumed = false;
+        if (in_ime_modal) {
+            /* Pass through to IME apply() */
+            const view_descriptor_t *d = desc_of(s_view_router_active);
+            if (d->apply) d->apply(ev);
+        }
+        return;
+    }
+
+    /* Release */
+    uint32_t held = (s_func_press_ms == 0) ? 0 : (now_ms_() - s_func_press_ms);
+    s_func_press_ms = 0;
+
+    if (in_ime_modal) {
+        const view_descriptor_t *d = desc_of(s_view_router_active);
+        if (d->apply) d->apply(ev);
+        return;
+    }
+
+    if (s_func_long_consumed) {
+        /* Long-press already fired on hold; ignore release. */
+        return;
+    }
+
+    if (held >= FUNC_LONG_HOLD_MS) {
+        /* Long-press: G-1 detail modal (stub). */
+        status_bar_show_alert(0, "FUNC long: G-1 detail (stub)", 1500);
+        return;
+    }
+
+    /* Short-press */
+    if (in_modal) {
+        modal_finish(true);
+    } else if (s_view_router_active == VIEW_ID_LAUNCHER) {
+        /* Should not happen — launcher is always entered as modal — but
+         * be safe. */
+    } else {
+        view_router_modal_enter(VIEW_ID_LAUNCHER, launcher_done_cb, NULL);
+    }
+}
+
 void view_router_tick(void)
 {
     /* Drain the view-observer mirror queue (see key_event.c). The IME
      * task owns the primary queue; popping it here would race. */
     key_event_t ev;
     while (key_event_view_pop(&ev, 0)) {
-        /* FUNC press edge: outside modal it cycles views; inside modal
-         * it commits the borrow and fires the on_done callback before
-         * snapping back to the caller view. */
-        if (ev.keycode == MOKYA_KEY_FUNC && ev.pressed) {
-            if (s_modal_caller != UINT32_MAX) {
-                modal_finish(true);
-            } else {
-                view_id_t next = (view_id_t)((s_view_router_active + 1) % VIEW_ID_COUNT);
-                switch_active(next);
-            }
+        if (ev.keycode == MOKYA_KEY_FUNC) {
+            handle_func_event(&ev);
+            continue;
+        }
+        /* OK in launcher = commit + navigate */
+        if (s_view_router_active == VIEW_ID_LAUNCHER &&
+            ev.keycode == MOKYA_KEY_OK && ev.pressed) {
+            modal_finish(true);
+            continue;
+        }
+        /* BACK in any modal cancels */
+        if (s_modal_caller != UINT32_MAX &&
+            ev.keycode == MOKYA_KEY_BACK && ev.pressed) {
+            modal_finish(false);
             continue;
         }
         const view_descriptor_t *d = desc_of(s_view_router_active);
         if (d->apply) d->apply(&ev);
+    }
+
+    /* FUNC long-press fires while still held. */
+    if (s_func_press_ms != 0 && !s_func_long_consumed &&
+        (now_ms_() - s_func_press_ms) >= FUNC_LONG_HOLD_MS &&
+        (s_modal_caller == UINT32_MAX ||
+         s_view_router_active != VIEW_ID_IME)) {
+        s_func_long_consumed = true;
+        status_bar_show_alert(0, "FUNC long: G-1 detail (stub)", 1500);
     }
 
     /* Active-only refresh: hidden views do nothing (was a per-view
@@ -250,4 +356,7 @@ void view_router_tick(void)
         const view_descriptor_t *d = desc_of(s_view_router_active);
         if (d->refresh) d->refresh();
     }
+
+    /* Status bar tick is independent of active view. */
+    status_bar_tick();
 }
