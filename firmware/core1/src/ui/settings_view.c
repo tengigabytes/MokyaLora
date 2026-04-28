@@ -38,7 +38,7 @@ static lv_obj_t *s_footer;
  * dirty = caller pressed OK in edit mode; pending until next Apply.
  * The Apply success clears dirty for all keys in the group.
  */
-#define KEY_CACHE_MAX  16u  /* must be ≥ settings_keys_total_count() */
+#define KEY_CACHE_MAX  96u  /* must be ≥ settings_keys_total_count() */
 /* Per-key cached value buffer. Owner long_name (39 B) is stored
  * truncated; full bytes flow through ime_request_text without
  * touching this cache. 12 B keeps total BSS bounded while still
@@ -158,6 +158,9 @@ static void format_value(const settings_key_def_t *def,
         break;
     case SK_KIND_U32:
         snprintf(out, out_sz, "%lu", (unsigned long)value_to_u32(buf, len));
+        break;
+    case SK_KIND_U32_FLAGS:
+        snprintf(out, out_sz, "0x%08lX", (unsigned long)value_to_u32(buf, len));
         break;
     case SK_KIND_STR: {
         size_t n = (len < out_sz - 1) ? len : (out_sz - 1);
@@ -368,6 +371,19 @@ static void edit_step(const settings_key_def_t *d, int step)
         s_edit_len = 4;
         break;
     }
+    case SK_KIND_U32_FLAGS: {
+        /* ±1 nudges the lowest bit; ±10 shifts a single bit up/down so
+         * the user can sweep through likely flag values without a real
+         * bit-picker. Full editor lands in a follow-up. */
+        uint32_t v = cur_u;
+        if (step >= 10)        v <<= 1;
+        else if (step <= -10)  v >>= 1;
+        else if (step > 0)     v ^= 1u;
+        else                   v = (v == 0u) ? 0u : (v - 1u);
+        value_from_u32(s_edit_buf, 4, v);
+        s_edit_len = 4;
+        break;
+    }
     default:
         break;
     }
@@ -421,7 +437,8 @@ static void enter_edit_for_row(uint8_t row)
     } else {
         memset(s_edit_buf, 0, sizeof(s_edit_buf));
         /* Default-size by kind so step math has somewhere to write. */
-        s_edit_len = (defs[row].kind == SK_KIND_U32) ? 4 : 1;
+        s_edit_len = (defs[row].kind == SK_KIND_U32 ||
+                      defs[row].kind == SK_KIND_U32_FLAGS) ? 4 : 1;
     }
     s_mode = UI_EDIT;
     s_render_seq++;

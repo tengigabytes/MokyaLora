@@ -30,7 +30,9 @@ void settings_client_init(void)
 bool settings_client_send_get(uint16_t ipc_key)
 {
     IpcPayloadGetConfig p;
-    p.key = ipc_key;
+    memset(&p, 0, sizeof(p));
+    p.key           = ipc_key;
+    p.channel_index = 0;  /* B3-P3 will fill for 0x06xx channel keys */
     return ipc_ring_push(&g_ipc_shared.c1_to_c0_ctrl,
                          g_ipc_shared.c1_to_c0_slots,
                          IPC_RING_SLOT_COUNT,
@@ -46,9 +48,11 @@ bool settings_client_send_set(uint16_t ipc_key,
     if (value_len > SETTINGS_CLIENT_VALUE_MAX) value_len = SETTINGS_CLIENT_VALUE_MAX;
 
     uint8_t buf[sizeof(IpcPayloadConfigValue) + SETTINGS_CLIENT_VALUE_MAX];
+    memset(buf, 0, sizeof(IpcPayloadConfigValue));
     IpcPayloadConfigValue *cv = (IpcPayloadConfigValue *)buf;
-    cv->key       = ipc_key;
-    cv->value_len = value_len;
+    cv->key           = ipc_key;
+    cv->value_len     = value_len;
+    cv->channel_index = 0;
     if (value_len > 0 && value != NULL) {
         memcpy(cv->value, value, value_len);
     }

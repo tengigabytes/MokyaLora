@@ -195,29 +195,61 @@ _Static_assert(sizeof(IpcGpsBuf) == 260, "IpcGpsBuf must be exactly 260 bytes");
  * the OWNER_* keys directly.
  */
 typedef enum {
-    /* 0x01xx — Device */
-    IPC_CFG_DEVICE_NAME         = 0x0100,  ///< string, max 40 B
-    IPC_CFG_DEVICE_ROLE         = 0x0101,  ///< uint8 (CLIENT, ROUTER, etc.)
+    /* 0x01xx — Device (config.proto: meshtastic.Config.DeviceConfig) */
+    IPC_CFG_DEVICE_NAME                   = 0x0100,  ///< alias → OWNER_LONG_NAME
+    IPC_CFG_DEVICE_ROLE                   = 0x0101,  ///< uint8 enum, reboot=Y
+    IPC_CFG_DEVICE_REBROADCAST_MODE       = 0x0102,  ///< uint8 enum 0..5, reboot=Y
+    IPC_CFG_DEVICE_NODE_INFO_BCAST_SECS   = 0x0103,  ///< uint32, reboot=N
+    IPC_CFG_DEVICE_DOUBLE_TAP_BTN         = 0x0104,  ///< bool, reboot=N
+    IPC_CFG_DEVICE_DISABLE_TRIPLE_CLICK   = 0x0105,  ///< bool, reboot=N
+    IPC_CFG_DEVICE_TZDEF                  = 0x0106,  ///< string up to 64 B, reboot=N
+    IPC_CFG_DEVICE_LED_HEARTBEAT_DISABLED = 0x0107,  ///< bool, reboot=N
 
-    /* 0x02xx — LoRa */
-    IPC_CFG_LORA_REGION         = 0x0200,  ///< uint8
-    IPC_CFG_LORA_MODEM_PRESET   = 0x0201,  ///< uint8 (LONG_FAST, SHORT_TURBO, etc.)
-    IPC_CFG_LORA_TX_POWER       = 0x0202,  ///< int8 (dBm)
-    IPC_CFG_LORA_HOP_LIMIT      = 0x0203,  ///< uint8 (1–7)
-    IPC_CFG_LORA_CHANNEL_NUM    = 0x0204,  ///< uint8
+    /* 0x02xx — LoRa (config.proto: meshtastic.Config.LoRaConfig) */
+    IPC_CFG_LORA_REGION                = 0x0200,  ///< uint8 enum, reboot=N
+    IPC_CFG_LORA_MODEM_PRESET          = 0x0201,  ///< uint8 enum, reboot=N
+    IPC_CFG_LORA_TX_POWER              = 0x0202,  ///< int8 dBm, reboot=N
+    IPC_CFG_LORA_HOP_LIMIT             = 0x0203,  ///< uint8 1..7, reboot=N
+    IPC_CFG_LORA_CHANNEL_NUM           = 0x0204,  ///< uint8, reboot=N
+    IPC_CFG_LORA_USE_PRESET            = 0x0205,  ///< bool, reboot=N
+    IPC_CFG_LORA_BANDWIDTH             = 0x0206,  ///< uint32 (kHz), reboot=N
+    IPC_CFG_LORA_SPREAD_FACTOR         = 0x0207,  ///< uint32 7..12, reboot=N
+    IPC_CFG_LORA_CODING_RATE           = 0x0208,  ///< uint32 5..8, reboot=N
+    IPC_CFG_LORA_TX_ENABLED            = 0x0209,  ///< bool, reboot=N
+    IPC_CFG_LORA_OVERRIDE_DUTY_CYCLE   = 0x020A,  ///< bool, reboot=N
+    IPC_CFG_LORA_SX126X_RX_BOOSTED_GAIN= 0x020B,  ///< bool, reboot=N
+    IPC_CFG_LORA_FEM_LNA_MODE          = 0x020C,  ///< uint8 enum 0..2, reboot=N
 
-    /* 0x03xx — Position / GPS */
-    IPC_CFG_GPS_MODE            = 0x0300,  ///< uint8 (DISABLED/ENABLED/NOT_PRESENT)
-    IPC_CFG_GPS_UPDATE_INTERVAL = 0x0301,  ///< uint32 (seconds)
-    IPC_CFG_POSITION_BCAST_SECS = 0x0302,  ///< uint32
+    /* 0x03xx — Position / GPS (config.proto: meshtastic.Config.PositionConfig) */
+    IPC_CFG_GPS_MODE                          = 0x0300,  ///< uint8 enum, reboot=Y
+    IPC_CFG_GPS_UPDATE_INTERVAL               = 0x0301,  ///< uint32 s, reboot=Y
+    IPC_CFG_POSITION_BCAST_SECS               = 0x0302,  ///< uint32, reboot=Y
+    IPC_CFG_POSITION_BCAST_SMART_ENABLED      = 0x0303,  ///< bool, reboot=Y
+    IPC_CFG_POSITION_FIXED_POSITION           = 0x0304,  ///< bool flag only, reboot=Y
+    IPC_CFG_POSITION_FLAGS                    = 0x0305,  ///< uint32 bitmask, reboot=Y
+    IPC_CFG_POSITION_BCAST_SMART_MIN_DIST     = 0x0306,  ///< uint32 m, reboot=Y
+    IPC_CFG_POSITION_BCAST_SMART_MIN_INT_SECS = 0x0307,  ///< uint32 s, reboot=Y
 
     /* 0x04xx — Power */
     IPC_CFG_POWER_SAVING        = 0x0400,  ///< uint8 (bool)
     IPC_CFG_SHUTDOWN_AFTER_SECS = 0x0401,  ///< uint32
 
-    /* 0x05xx — Display */
-    IPC_CFG_SCREEN_ON_SECS      = 0x0500,  ///< uint32 (0 = default 60 s)
-    IPC_CFG_UNITS_METRIC        = 0x0501,  ///< uint8 (bool)
+    /* 0x05xx — Display (config.proto: meshtastic.Config.DisplayConfig) */
+    IPC_CFG_SCREEN_ON_SECS                  = 0x0500,  ///< uint32 (NOTE: reboot per
+                                                       ///  AdminModule but legacy entry
+                                                       ///  marks reboot=N — known bug,
+                                                       ///  not fixed in B3-P1)
+    IPC_CFG_UNITS_METRIC                    = 0x0501,  ///< bool (mapped to enum)
+    IPC_CFG_DISPLAY_AUTO_CAROUSEL_SECS      = 0x0502,  ///< uint32, reboot=N
+    IPC_CFG_DISPLAY_FLIP_SCREEN              = 0x0503,  ///< bool, reboot=Y
+    IPC_CFG_DISPLAY_OLED                     = 0x0504,  ///< uint8 enum 0..4, reboot=Y
+    IPC_CFG_DISPLAY_DISPLAYMODE              = 0x0505,  ///< uint8 enum 0..3, reboot=Y
+    IPC_CFG_DISPLAY_HEADING_BOLD             = 0x0506,  ///< bool, reboot=N
+    IPC_CFG_DISPLAY_WAKE_ON_TAP_OR_MOTION    = 0x0507,  ///< bool, reboot=N
+    IPC_CFG_DISPLAY_COMPASS_ORIENTATION      = 0x0508,  ///< uint8 enum 0..7, reboot=N
+    IPC_CFG_DISPLAY_USE_12H_CLOCK            = 0x0509,  ///< bool, reboot=N
+    IPC_CFG_DISPLAY_USE_LONG_NODE_NAME       = 0x050A,  ///< bool, reboot=N
+    IPC_CFG_DISPLAY_ENABLE_MESSAGE_BUBBLES   = 0x050B,  ///< bool, reboot=N
 
     /* 0x06xx — Channel */
     IPC_CFG_CHANNEL_NAME        = 0x0600,  ///< string, max 12 B
@@ -228,17 +260,30 @@ typedef enum {
     IPC_CFG_OWNER_SHORT_NAME    = 0x0701,  ///< string, max 5 B
 } IpcConfigKey;
 
-/** IPC_CMD_GET_CONFIG — request a config value by key */
+/** IPC_CMD_GET_CONFIG — request a config value by key.
+ *
+ * channel_index is meaningful only for 0x06xx Channel keys (B3-P3).
+ * For all other keys it must be 0. Core 0 decoders accept the legacy
+ * 2-byte payload (no channel_index) and treat it as channel_index=0
+ * for backward compatibility with B2-era SWD test scripts. */
 typedef struct {
     uint16_t key;                ///< IpcConfigKey
-} IpcPayloadGetConfig;           /* 2 B */
+    uint8_t  channel_index;      ///< 0 for non-channel keys
+    uint8_t  _pad;
+} IpcPayloadGetConfig;           /* 4 B */
 
-/** IPC_MSG_CONFIG_VALUE / IPC_CMD_SET_CONFIG — config value envelope */
+/** IPC_MSG_CONFIG_VALUE / IPC_CMD_SET_CONFIG — config value envelope.
+ *
+ * Same channel_index semantics as IpcPayloadGetConfig. The legacy
+ * 4-byte header (no channel_index, no _pad) is also accepted on
+ * decode. New code uses the 8-byte header. */
 typedef struct {
     uint16_t key;                ///< IpcConfigKey
     uint16_t value_len;          ///< Byte length of value[]
+    uint8_t  channel_index;      ///< 0 for non-channel keys
+    uint8_t  _pad[3];
     uint8_t  value[];            ///< Type-dependent: uint8/int8/uint32/string/bytes
-} IpcPayloadConfigValue;         /* 4 B + variable */
+} IpcPayloadConfigValue;         /* 8 B + variable */
 
 /** IPC_MSG_CONFIG_RESULT — set/commit acknowledgement */
 typedef struct {

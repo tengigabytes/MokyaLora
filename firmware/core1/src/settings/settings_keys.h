@@ -25,12 +25,13 @@ extern "C" {
 #endif
 
 typedef enum {
-    SK_KIND_U8,        ///< uint8_t in [min, max]
-    SK_KIND_I8,        ///< int8_t in [min, max]
-    SK_KIND_U32,       ///< uint32_t in [min, max]
-    SK_KIND_BOOL,      ///< uint8_t 0/1
-    SK_KIND_ENUM_U8,   ///< uint8_t mapped through enum_values[]
-    SK_KIND_STR,       ///< UTF-8 string up to `max` bytes (Stage 3 — placeholder UI)
+    SK_KIND_U8,         ///< uint8_t in [min, max]
+    SK_KIND_I8,         ///< int8_t in [min, max]
+    SK_KIND_U32,        ///< uint32_t in [min, max]
+    SK_KIND_BOOL,       ///< uint8_t 0/1
+    SK_KIND_ENUM_U8,    ///< uint8_t mapped through enum_values[]
+    SK_KIND_STR,        ///< UTF-8 string up to `max` bytes (Stage 3 — placeholder UI)
+    SK_KIND_U32_FLAGS,  ///< uint32_t bitmask, displayed as 0x%08lX, ±step toggles bits
 } settings_kind_t;
 
 typedef enum {

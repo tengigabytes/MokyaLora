@@ -50,6 +50,14 @@ IPC_CFG_LORA_TX_POWER=0x0202
 IPC_CFG_LORA_HOP_LIMIT=0x0203
 IPC_CFG_SCREEN_ON_SECS=0x0500
 IPC_CFG_SHUTDOWN_AFTER_SECS=0x0401
+# B3-P1 expansion
+IPC_CFG_DEVICE_REBROADCAST_MODE=0x0102
+IPC_CFG_DEVICE_LED_HEARTBEAT_DISABLED=0x0107
+IPC_CFG_LORA_USE_PRESET=0x0205
+IPC_CFG_LORA_BANDWIDTH=0x0206
+IPC_CFG_POSITION_FLAGS=0x0305
+IPC_CFG_DISPLAY_HEADING_BOLD=0x0506
+IPC_CFG_DISPLAY_USE_12H_CLOCK=0x0509
 
 # ── ring helpers ──────────────────────────────────────────────────────
 
@@ -285,6 +293,83 @@ test_commit_reboot() {
     fi
 }
 
+# ── B3-P1 expansion tests ────────────────────────────────────────────
+
+# Round-trip a single B3-P1 key. SET via SWD-injected legacy 4-B header
+# (decode_set tolerates it), COMMIT_CONFIG, then host CLI --get. host
+# CLI parses Meshtastic's protobuf so the field path differs per group.
+b3p1_set_get() {
+    local seq_a="$1"      # uint8 hex, e.g. 0x40
+    local seq_b="$2"      # uint8 hex, e.g. 0x41
+    local key="$3"        # hex e.g. 0x0102
+    local value_bytes="$4"   # whitespace-separated hex bytes
+    local cli_path="$5"   # e.g. config.device.rebroadcast_mode
+    local expect="$6"     # what `--get` should print
+
+    echo "=== $cli_path: SET via IPC, COMMIT_CONFIG ==="
+    local payload=$(build_set_payload "$key" "$value_bytes")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" "$seq_a" "$payload"
+    sleep 1
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" "$seq_b" ""
+    sleep 3
+
+    local actual=$(python -m meshtastic --port "$PORT" --get "$cli_path" 2>&1 \
+        | grep "^$cli_path:" | awk '{print $2}')
+    if [ "$actual" = "$expect" ]; then
+        echo "  ✓ $cli_path=$actual"
+    else
+        echo "  ✗ expected $expect, got $actual"
+        return 1
+    fi
+}
+
+test_b3p1() {
+    # CLI paths drop the `config.` prefix; enum values come as decimal
+    # numbers, booleans as Python-style "True"/"False".
+
+    # Device: rebroadcast_mode (enum, AdminModule reload applies value
+    # immediately; the reboot flag only affects whether Meshtastic
+    # forces a chip reset, not whether the new value lands in flash).
+    b3p1_set_get 0x40 0x41 $IPC_CFG_DEVICE_REBROADCAST_MODE \
+        "0x02" device.rebroadcast_mode "2"
+    b3p1_set_get 0x42 0x43 $IPC_CFG_DEVICE_REBROADCAST_MODE \
+        "0x00" device.rebroadcast_mode "0"
+
+    # Device reboot=N: led_heartbeat_disabled (bool)
+    b3p1_set_get 0x44 0x45 $IPC_CFG_DEVICE_LED_HEARTBEAT_DISABLED \
+        "0x01" device.led_heartbeat_disabled "True"
+    b3p1_set_get 0x46 0x47 $IPC_CFG_DEVICE_LED_HEARTBEAT_DISABLED \
+        "0x00" device.led_heartbeat_disabled "False"
+
+    # LoRa reboot=N: use_preset (bool)
+    b3p1_set_get 0x48 0x49 $IPC_CFG_LORA_USE_PRESET \
+        "0x01" lora.use_preset "True"
+
+    # LoRa: bandwidth (u32 over wire, u16 in nanopb)
+    b3p1_set_get 0x4A 0x4B $IPC_CFG_LORA_BANDWIDTH \
+        "$(bytes_for_u32_le 250)" lora.bandwidth "250"
+    b3p1_set_get 0x4C 0x4D $IPC_CFG_LORA_BANDWIDTH \
+        "$(bytes_for_u32_le 0)"   lora.bandwidth "0"
+
+    # Display reboot=N: heading_bold (bool)
+    b3p1_set_get 0x4E 0x4F $IPC_CFG_DISPLAY_HEADING_BOLD \
+        "0x01" display.heading_bold "True"
+    b3p1_set_get 0x50 0x51 $IPC_CFG_DISPLAY_HEADING_BOLD \
+        "0x00" display.heading_bold "False"
+
+    # Display reboot=N: use_12h_clock (bool)
+    b3p1_set_get 0x52 0x53 $IPC_CFG_DISPLAY_USE_12H_CLOCK \
+        "0x01" display.use_12h_clock "True"
+    b3p1_set_get 0x54 0x55 $IPC_CFG_DISPLAY_USE_12H_CLOCK \
+        "0x00" display.use_12h_clock "False"
+
+    # Position: position_flags (u32 bitmask)
+    b3p1_set_get 0x56 0x57 $IPC_CFG_POSITION_FLAGS \
+        "$(bytes_for_u32_le 811)" position.position_flags "811"
+    b3p1_set_get 0x58 0x59 $IPC_CFG_POSITION_FLAGS \
+        "$(bytes_for_u32_le 0)"   position.position_flags "0"
+}
+
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 case "${1:-all}" in
@@ -293,16 +378,18 @@ case "${1:-all}" in
     display) test_display_screen_on_secs "${2:-90}" ;;
     power)   test_power_shutdown_secs "${2:-3600}" ;;
     reboot)  test_commit_reboot "${2:-22}" ;;
+    b3p1)    test_b3p1 ;;
     all)
         test_lora_subset 15
         test_owner_long_name "MokyaTest"
         test_display_screen_on_secs 90
         test_power_shutdown_secs 3600
+        test_b3p1
         # COMMIT_REBOOT goes last — chip reboots so don't run more after.
         test_commit_reboot 22
         ;;
     *)
-        echo "Usage: $0 [all|lora|owner|display|power|reboot] [value]"
+        echo "Usage: $0 [all|lora|owner|display|power|reboot|b3p1] [value]"
         exit 1
         ;;
 esac
