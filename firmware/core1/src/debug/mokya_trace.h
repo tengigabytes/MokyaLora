@@ -79,3 +79,24 @@ void mokya_trace_emit(unsigned long ts_us,
 #define TRACE_BARE(src, ev)                                                 \
     mokya_trace_emit((unsigned long)timer_hw->timerawl,                     \
                      (src), (ev), "")
+
+/* TRACE_VERBOSE / TRACE_BARE_VERBOSE — same shape as TRACE / TRACE_BARE
+ * but only compiled in when `MOKYA_TRACE_VERBOSE` is defined. Use for
+ * tight-loop trace points (≥ 50 Hz) where the steady-state event rate
+ * exceeds the JLinkRTTLogger drain (~2.5 KB/s) — at default verbosity
+ * those points are dead code, recovering buffer headroom for
+ * cascade-burst capture and per-keystroke profiling.
+ *
+ * Default OFF — the 4 KB up-buffer cannot keep up with sustained
+ * IME-tick traffic (174 evt/s × 24 B = 4.3 KB/s emit vs 2.5 KB/s
+ * drain). Set `-DMOKYA_TRACE_VERBOSE=1` in the CMake build only when
+ * specifically profiling the IME tick / LVGL flush cadence. See
+ * `scripts/rtt_stress_test.sh` and the e6866ee commit message for
+ * the measurement that motivates the gate. */
+#ifdef MOKYA_TRACE_VERBOSE
+#  define TRACE_VERBOSE(src, ev, fmt, ...) TRACE(src, ev, fmt, ##__VA_ARGS__)
+#  define TRACE_BARE_VERBOSE(src, ev)      TRACE_BARE(src, ev)
+#else
+#  define TRACE_VERBOSE(src, ev, fmt, ...) ((void)0)
+#  define TRACE_BARE_VERBOSE(src, ev)      ((void)0)
+#endif

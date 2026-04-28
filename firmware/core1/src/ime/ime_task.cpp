@@ -236,9 +236,11 @@ void ime_task_fn(void *) {
             g_ime->process_key(mev);
             TRACE_BARE("ime", "proc_end");
         }
-        TRACE_BARE("ime", "tick_start");
+        /* tick fires at ~50 Hz; gated behind MOKYA_TRACE_VERBOSE so the
+         * 174 evt/s idle floor doesn't saturate the RTT up-buffer. */
+        TRACE_BARE_VERBOSE("ime", "tick_start");
         g_ime->tick(now_ms());
-        TRACE_BARE("ime", "tick_end");
+        TRACE_BARE_VERBOSE("ime", "tick_end");
         xSemaphoreGive(g_snapshot_mutex);
 
         if (got_ev) {
