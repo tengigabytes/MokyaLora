@@ -94,6 +94,19 @@ typedef struct {
     uint8_t  module_canned_msg_valid;
     uint8_t  module_ambient_valid;
     uint8_t  module_paxcounter_valid;
+    /* Spot-check field shadows — one representative field per
+     * ModuleConfig sub-cache so SWD verification can confirm the
+     * decoder produced real values (not just `valid=1` after
+     * memset+return-true). See test_b3fu in test_ipc_config.sh. */
+    uint8_t  _pad_module;        /* align next u32 */
+    uint32_t module_telem_dev_int;       /* telemetry.device_update_interval */
+    uint32_t module_neighbor_int;        /* neighbor_info.update_interval */
+    uint32_t module_range_sender;        /* range_test.sender */
+    uint32_t module_detect_min_bc;       /* detection_sensor.minimum_broadcast_secs */
+    uint8_t  module_canned_send_bell;    /* canned_message.send_bell */
+    uint8_t  module_ambient_red;         /* ambient_lighting.red */
+    uint8_t  _pad_module2[2];
+    uint32_t module_pax_int;             /* paxcounter.paxcounter_update_interval */
 } phoneapi_dbg_view_t;
 
 phoneapi_dbg_view_t g_phoneapi_dbg = { .magic = 0x42335031u };
@@ -452,7 +465,7 @@ bool phoneapi_cache_get_config_security(phoneapi_config_security_t *out)
  * inspection.
  */
 
-#define MODULE_CACHE_RW(name, type)                                          \
+#define MODULE_CACHE_RW(name, type, shadow_stmt)                             \
     void phoneapi_cache_set_module_##name(const type *m)                     \
     {                                                                        \
         if (m == NULL) return;                                               \
@@ -462,6 +475,7 @@ bool phoneapi_cache_get_config_security(phoneapi_config_security_t *out)
         s_cache.change_seq++;                                                \
         cache_unlock();                                                      \
         g_phoneapi_dbg.module_##name##_valid = 1u;                           \
+        shadow_stmt;                                                         \
     }                                                                        \
     bool phoneapi_cache_get_module_##name(type *out)                         \
     {                                                                        \
@@ -472,13 +486,20 @@ bool phoneapi_cache_get_config_security(phoneapi_config_security_t *out)
         return ok;                                                           \
     }
 
-MODULE_CACHE_RW(telemetry,   phoneapi_module_telemetry_t)
-MODULE_CACHE_RW(neighbor,    phoneapi_module_neighbor_t)
-MODULE_CACHE_RW(range_test,  phoneapi_module_range_test_t)
-MODULE_CACHE_RW(detect,      phoneapi_module_detect_t)
-MODULE_CACHE_RW(canned_msg,  phoneapi_module_canned_msg_t)
-MODULE_CACHE_RW(ambient,     phoneapi_module_ambient_t)
-MODULE_CACHE_RW(paxcounter,  phoneapi_module_paxcounter_t)
+MODULE_CACHE_RW(telemetry,   phoneapi_module_telemetry_t,
+                g_phoneapi_dbg.module_telem_dev_int = m->device_update_interval)
+MODULE_CACHE_RW(neighbor,    phoneapi_module_neighbor_t,
+                g_phoneapi_dbg.module_neighbor_int = m->update_interval)
+MODULE_CACHE_RW(range_test,  phoneapi_module_range_test_t,
+                g_phoneapi_dbg.module_range_sender = m->sender)
+MODULE_CACHE_RW(detect,      phoneapi_module_detect_t,
+                g_phoneapi_dbg.module_detect_min_bc = m->minimum_broadcast_secs)
+MODULE_CACHE_RW(canned_msg,  phoneapi_module_canned_msg_t,
+                g_phoneapi_dbg.module_canned_send_bell = m->send_bell ? 1u : 0u)
+MODULE_CACHE_RW(ambient,     phoneapi_module_ambient_t,
+                g_phoneapi_dbg.module_ambient_red = m->red)
+MODULE_CACHE_RW(paxcounter,  phoneapi_module_paxcounter_t,
+                g_phoneapi_dbg.module_pax_int = m->paxcounter_update_interval)
 
 #undef MODULE_CACHE_RW
 
