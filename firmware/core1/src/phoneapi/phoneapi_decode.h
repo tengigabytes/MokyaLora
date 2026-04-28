@@ -93,8 +93,30 @@ bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
 // return true. For non-text packets returns false (caller should drop).
 // `out_msg->seq` is left zero — caller assigns when publishing.
 #define PHONEAPI_PORTNUM_TEXT_MESSAGE_APP 1u
+#define PHONEAPI_PORTNUM_ROUTING_APP     5u
 bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
                                  phoneapi_text_msg_t *out_msg);
+
+// MeshPacket carrying a Routing-app ACK (decoded.portnum == 5).
+//   - `out_request_id` ← Data.request_id (the original packet id we sent)
+//   - `out_error_reason` ← Routing.error_reason (0 = delivered OK,
+//     non-zero = meshtastic_Routing_Error)
+// Returns true only when the packet is a routing-ack with both fields
+// successfully extracted; false for non-routing packets / malformed.
+bool phoneapi_decode_routing_ack(const uint8_t *buf, uint16_t len,
+                                 uint32_t *out_request_id,
+                                 uint8_t  *out_error_reason);
+
+// FromRadio.queue_status (oneof tag 11).
+typedef struct {
+    int32_t  res;                    ///< meshtastic_Routing_Error (0 = ok)
+    uint32_t free;                   ///< Free packets in queue
+    uint32_t maxlen;                 ///< Queue capacity
+    uint32_t mesh_packet_id;         ///< Originating MeshPacket.id (0 if unknown)
+} phoneapi_queue_status_t;
+
+bool phoneapi_decode_queue_status(const uint8_t *buf, uint16_t len,
+                                  phoneapi_queue_status_t *out);
 
 // Helper to locate the variant payload within a FromRadio frame.
 // Returns pointer + length of the variant sub-message bytes, or NULL.

@@ -5,21 +5,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef MOKYA_PHONEAPI_CASCADE
 #include "phoneapi_cache.h"
 typedef phoneapi_text_msg_t  msgs_entry_t;
 #define msgs_take_at_offset(o, e)  phoneapi_msgs_take_at_offset((o), (e))
 #define msgs_count()               phoneapi_msgs_count()
 #define msgs_latest_seq()          phoneapi_msgs_latest_seq()
 #define MSGS_TEXT_MAX              PHONEAPI_MSG_TEXT_MAX
-#else
-#include "messages_inbox.h"
-typedef messages_inbox_entry_t msgs_entry_t;
-#define msgs_take_at_offset(o, e)  messages_inbox_take_at_offset((o), (e))
-#define msgs_count()               messages_inbox_count()
-#define msgs_latest_seq()          messages_inbox_latest_seq()
-#define MSGS_TEXT_MAX              MESSAGES_INBOX_TEXT_MAX
-#endif
 
 #include "messages_send.h"
 #include "messages_tx_status.h"
@@ -48,11 +39,11 @@ static bool     s_sticky_to_newest = true;
 static uint32_t s_displayed_seq;
 
 /* Outgoing-send tracking for footer overlay. While the user is waiting
- * on TX_ACK feedback for their last send, the footer shows status
+ * on TX ack feedback for their last send, the footer shows status
  * instead of the "msg N/M" navigation indicator. UP/DOWN clears the
  * pending state so navigation always wins back the footer. */
 static bool     s_pending_tx_active;
-static uint8_t  s_pending_tx_seq;
+static uint32_t s_pending_tx_packet_id;
 static uint32_t s_pending_tx_target;
 static uint32_t s_last_tx_change_seq;
 
@@ -67,11 +58,24 @@ static void render_offset(uint32_t offset)
         return;
     }
 
-    char hdr[64];
-    snprintf(hdr, sizeof(hdr),
-             "From 0x%08lx  ch%u",
-             (unsigned long)entry.from_node_id,
-             (unsigned)entry.channel_index);
+    /* If we have NodeInfo for the sender, show short_name; fall back to
+     * raw node id for unknown peers (which the cascade will catch up
+     * with on the next NodeInfo broadcast). */
+    phoneapi_node_t sender;
+    char hdr[80];
+    if (phoneapi_cache_get_node_by_id(entry.from_node_id, &sender) &&
+        sender.short_name[0] != '\0') {
+        snprintf(hdr, sizeof(hdr),
+                 "%s  /  0x%08lx  ch%u",
+                 sender.short_name,
+                 (unsigned long)entry.from_node_id,
+                 (unsigned)entry.channel_index);
+    } else {
+        snprintf(hdr, sizeof(hdr),
+                 "From 0x%08lx  ch%u",
+                 (unsigned long)entry.from_node_id,
+                 (unsigned)entry.channel_index);
+    }
     lv_label_set_text(s_header, hdr);
 
     char body[MSGS_TEXT_MAX + 1];
@@ -163,18 +167,18 @@ static void apply(const key_event_t *ev)
             return;
         }
 
-        uint8_t sent_seq = 0u;
+        uint32_t sent_pid = 0u;
         bool ok = messages_send_text(target.from_node_id,
                                      target.channel_index,
                                      /*want_ack=*/true,
                                      send_buf,
                                      send_len,
-                                     &sent_seq);
+                                     &sent_pid);
         if (ok) {
             ime_view_clear_text();
-            s_pending_tx_active = true;
-            s_pending_tx_seq    = sent_seq;
-            s_pending_tx_target = target.from_node_id;
+            s_pending_tx_active    = true;
+            s_pending_tx_packet_id = sent_pid;
+            s_pending_tx_target    = target.from_node_id;
             char foot[48];
             snprintf(foot, sizeof(foot),
                      "sending → 0x%08lx",
@@ -229,7 +233,7 @@ static bool maybe_render_tx_status_footer(void)
     }
     s_last_tx_change_seq = tx.change_seq;
 
-    if (tx.ipc_seq != s_pending_tx_seq) {
+    if (tx.packet_id != s_pending_tx_packet_id) {
         /* TX status is for a different send (shouldn't happen with our
          * single-message-at-a-time UX but be defensive). */
         return true;

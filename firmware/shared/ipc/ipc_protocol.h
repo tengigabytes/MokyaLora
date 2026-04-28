@@ -25,11 +25,16 @@ extern "C" {
 /* ── Message IDs ──────────────────────────────────────────────────────────── */
 
 typedef enum {
-    /* Core 0 → Core 1 (notifications) */
-    IPC_MSG_RX_TEXT        = 0x01,  ///< Incoming text message received
-    IPC_MSG_NODE_UPDATE    = 0x02,  ///< Node list entry added or updated
+    /* Core 0 → Core 1 (notifications)
+     *
+     * IDs 0x01 (RX_TEXT), 0x02 (NODE_UPDATE), 0x04 (TX_ACK) and
+     * 0x81 (CMD_SEND_TEXT) were retired in M5E.3 (2026-04-28). The
+     * Core 1 cascade PhoneAPI client now consumes those events
+     * directly from the FromRadio byte stream carried in
+     * IPC_MSG_SERIAL_BYTES, and emits ToRadio (text send) on the
+     * c1→c0 SERIAL_BYTES ring. The numeric values are reserved —
+     * do NOT reassign them. */
     IPC_MSG_DEVICE_STATUS  = 0x03,  ///< Periodic status update (battery, GPS, RSSI)
-    IPC_MSG_TX_ACK         = 0x04,  ///< Tx acknowledgement (sent / delivered / failed)
     IPC_MSG_CHANNEL_UPDATE = 0x05,  ///< Channel configuration changed
     IPC_MSG_SERIAL_BYTES   = 0x06,  ///< Raw serial byte stream (Phase 2 M1 byte bridge, ≤256 B payload)
     IPC_MSG_CONFIG_VALUE   = 0x07,  ///< Config value response or unsolicited push on change
@@ -37,7 +42,6 @@ typedef enum {
     IPC_MSG_REBOOT_NOTIFY  = 0x09,  ///< Core 0 about to reboot — Core 1 should disconnect USB
 
     /* Core 1 → Core 0 (commands) */
-    IPC_CMD_SEND_TEXT      = 0x81,  ///< Request to send a text message
     IPC_CMD_SET_CHANNEL    = 0x82,  ///< Set active channel
     IPC_CMD_SET_TX_POWER   = 0x83,  ///< Set LoRa TX power (dBm)
     IPC_CMD_REQUEST_STATUS = 0x84,  ///< Request an immediate IPC_MSG_DEVICE_STATUS
@@ -86,28 +90,10 @@ typedef struct {
 
 /* ── Payload structures ───────────────────────────────────────────────────── */
 
-/** IPC_MSG_RX_TEXT / IPC_CMD_SEND_TEXT */
-typedef struct {
-    uint32_t from_node_id;          ///< Sender node ID (0 = self for CMD_SEND_TEXT)
-    uint32_t to_node_id;            ///< Destination node ID (0xFFFFFFFF = broadcast)
-    uint8_t  channel_index;         ///< Channel index (0 = primary)
-    uint8_t  want_ack;              ///< 1 = request delivery ACK
-    uint16_t text_len;              ///< Byte length of text[] (UTF-8, no null terminator)
-    uint8_t  text[];                ///< Flexible array — variable length UTF-8 payload
-} IpcPayloadText;
-
-/** IPC_MSG_NODE_UPDATE */
-typedef struct {
-    uint32_t node_id;               ///< Meshtastic node ID
-    int16_t  rssi;                  ///< Last heard RSSI (dBm), INT16_MIN if unknown
-    int8_t   snr_x4;                ///< SNR × 4 (fixed-point), INT8_MIN if unknown
-    uint8_t  hops_away;             ///< Hop count, 0xFF if unknown
-    int32_t  lat_e7;                ///< Latitude  × 1e7 (degrees), INT32_MIN if no GPS
-    int32_t  lon_e7;                ///< Longitude × 1e7 (degrees), INT32_MIN if no GPS
-    uint16_t battery_mv;            ///< Battery voltage in mV, 0 if unknown
-    uint8_t  alias_len;             ///< Byte length of alias[] (0 = no alias set)
-    uint8_t  alias[];               ///< UTF-8 alias string (variable length)
-} IpcPayloadNodeUpdate;
+/* IpcPayloadText (RX_TEXT / CMD_SEND_TEXT) and IpcPayloadNodeUpdate
+ * (NODE_UPDATE) were retired in M5E.3. Cascade PhoneAPI client on
+ * Core 1 now reads/writes equivalent state via the FromRadio /
+ * ToRadio byte stream. */
 
 /** IPC_MSG_DEVICE_STATUS */
 typedef struct {
@@ -123,21 +109,9 @@ typedef struct {
     uint32_t uptime_s;              ///< System uptime in seconds
 } IpcPayloadDeviceStatus;
 
-/** IPC_MSG_TX_ACK
- *  Carries delivery status for an outbound IPC_CMD_SEND_TEXT. `seq` echoes
- *  the IPC msg seq we used when pushing the original CMD; `packet_id` is
- *  the Meshtastic mesh-level packet id so a Core 1 client that wants to
- *  associate ACKs across the mesh (logs / forwarding) can match them.
- *  When `result == 2 (failed)`, `error_reason` carries the
- *  meshtastic_Routing_Error value Meshtastic reported. */
-typedef struct {
-    uint8_t  seq;                   ///< IPC seq of the original CMD_SEND_TEXT
-    uint8_t  result;                ///< 0 = sending, 1 = delivered, 2 = failed
-    uint8_t  error_reason;          ///< meshtastic_Routing_Error (0 on success)
-    uint8_t  _pad;                  ///< Pads to a 4-byte boundary
-    uint32_t packet_id;             ///< Meshtastic packet id (32 bit)
-} IpcPayloadTxAck;
-_Static_assert(sizeof(IpcPayloadTxAck) == 8, "IpcPayloadTxAck must be exactly 8 bytes");
+/* IpcPayloadTxAck (TX_ACK) retired in M5E.3 — cascade decoder on
+ * Core 1 now extracts routing-layer ACK / queue_status from the
+ * FromRadio byte stream (see firmware/core1/src/phoneapi/). */
 
 /** IPC_CMD_SET_TX_POWER */
 typedef struct {

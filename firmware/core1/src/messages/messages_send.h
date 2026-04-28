@@ -1,9 +1,9 @@
-/* messages_send.h — Push outbound text onto the c1_to_c0 CMD ring.
+/* messages_send.h — Push outbound text via the cascade PhoneAPI client.
  *
- * Builds an IpcPayloadText and ipc_ring_pushes it as IPC_CMD_SEND_TEXT.
- * Core 0's mokya_handle_ipc_command() consumes it and hands it off to
- * MeshService::sendToMesh(). Returns true on success, false if the ring
- * is full (the caller can choose to retry on a later tick).
+ * Builds a ToRadio.packet (TEXT_MESSAGE_APP) directly through the cascade
+ * encoder and pushes the framed bytes onto the c1→c0 SERIAL_BYTES ring.
+ * Returns true on success, false if the TX queue is full (the caller can
+ * choose to retry on a later tick).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -14,23 +14,23 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define MESSAGES_SEND_TEXT_MAX  200u  /* must be <= IPC_MSG_PAYLOAD_MAX - sizeof(IpcPayloadText hdr) */
+#define MESSAGES_SEND_TEXT_MAX  200u
 #define MESSAGES_SEND_BROADCAST 0xFFFFFFFFu
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Returns true if the slot was pushed onto the ring. When true and
- * `out_seq != NULL`, *out_seq receives the IPC seq used in the
- * IpcMsgHeader so the caller can match the eventual IPC_MSG_TX_ACK
- * back to its send. */
+/* Returns true on a successful TX-ring push. When true and
+ * `out_packet_id != NULL`, *out_packet_id receives the locally-assigned,
+ * non-zero MeshPacket.id so the caller can match the eventual
+ * Routing-app ACK or QueueStatus back to this send. */
 bool messages_send_text(uint32_t to_node_id,
                         uint8_t  channel_index,
                         bool     want_ack,
                         const uint8_t *text,
                         uint16_t text_len,
-                        uint8_t *out_seq);
+                        uint32_t *out_packet_id);
 
 #ifdef __cplusplus
 }

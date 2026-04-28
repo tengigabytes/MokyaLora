@@ -14,6 +14,7 @@
 #include "phoneapi_encode.h"
 #include "phoneapi_framing.h"
 #include "phoneapi_tx.h"
+#include "messages_tx_status.h"
 #include "mokya_trace.h"
 
 static phoneapi_framing_t s_framing;
@@ -173,13 +174,28 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
         break;
     case FR_TAG_PACKET: {
         // Steady-state mesh traffic. Phase D extracts TEXT_MESSAGE_APP
-        // packets into the messages ring; other portnums are dropped
-        // (telemetry / position / routing — not displayed in v1 LVGL).
+        // packets into the messages ring; M5F.1 also extracts
+        // ROUTING_APP acks → messages_tx_status. Other portnums are
+        // dropped (telemetry / position — not displayed in v1 LVGL).
         uint16_t sub_len = 0;
         const uint8_t *sub = phoneapi_find_variant_payload(payload, len,
                                                            FR_TAG_PACKET,
                                                            &sub_len);
         if (sub == NULL) break;
+
+        uint32_t ack_pid = 0u;
+        uint8_t  ack_err = 0u;
+        if (phoneapi_decode_routing_ack(sub, sub_len, &ack_pid, &ack_err)) {
+            uint8_t result = (ack_err == 0u)
+                                 ? MESSAGES_TX_RESULT_DELIVERED
+                                 : MESSAGES_TX_RESULT_FAILED;
+            messages_tx_status_publish(result, ack_err, ack_pid);
+            TRACE("phapi", "rx_ack",
+                  "pid=%u,err=%u",
+                  (unsigned)ack_pid, (unsigned)ack_err);
+            break;
+        }
+
         phoneapi_text_msg_t m;
         bool is_text = phoneapi_decode_text_packet(sub, sub_len, &m);
         TRACE("phapi", "rx_packet",
@@ -193,6 +209,29 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
             TRACE("phapi", "rx_text",
                   "from=%u,len=%u",
                   (unsigned)m.from_node_id, (unsigned)m.text_len);
+        }
+        break;
+    }
+    case FR_TAG_QUEUE_STATUS: {
+        // Local Core 0 queue feedback for our last submission. If
+        // mesh_packet_id matches a still-pending send and `res` is
+        // non-zero, treat as a fast-fail (e.g. queue overflow,
+        // routing rejected before air). On res==0 we wait for the
+        // routing-ack instead — queue OK doesn't mean delivered.
+        uint16_t sub_len = 0;
+        const uint8_t *sub = phoneapi_find_variant_payload(payload, len,
+                                                           FR_TAG_QUEUE_STATUS,
+                                                           &sub_len);
+        if (sub == NULL) break;
+        phoneapi_queue_status_t qs;
+        if (!phoneapi_decode_queue_status(sub, sub_len, &qs)) break;
+        TRACE("phapi", "rx_queue",
+              "pid=%u,res=%d,free=%u",
+              (unsigned)qs.mesh_packet_id, (int)qs.res, (unsigned)qs.free);
+        if (qs.mesh_packet_id != 0u && qs.res != 0) {
+            messages_tx_status_publish(MESSAGES_TX_RESULT_FAILED,
+                                       (uint8_t)qs.res,
+                                       qs.mesh_packet_id);
         }
         break;
     }
@@ -268,17 +307,23 @@ void phoneapi_session_set_usb_connected(bool connected)
 phoneapi_mode_t phoneapi_session_mode(void)        { return s_mode; }
 uint32_t        phoneapi_session_last_nonce(void)  { return s_last_nonce; }
 
-// TinyUSB CDC line-state callback. Fires from the USB device task
-// whenever the host raises/lowers DTR (USB CDC's "port open" signal).
-// `connected` follows DTR. We override TinyUSB's weak default here;
-// putting it in phoneapi_session.c keeps the dependency gated by
-// MOKYA_PHONEAPI_CASCADE — the file is only compiled with the flag on.
-void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
+void phoneapi_session_close(void)
 {
-    (void)itf;
-    (void)rts;
-    phoneapi_session_set_usb_connected(dtr);
+    if (s_heartbeat_timer != NULL) {
+        xTimerStop(s_heartbeat_timer, 0);
+    }
+    if (phoneapi_encode_disconnect()) {
+        TRACE_BARE("phapi", "tx_disconnect");
+    }
+    s_last_nonce = 0u;
+    /* Cache preserved; next set_usb_connected(false) will re-arm. */
 }
+
+// M5E.4 (2026-04-28) — removed the tud_cdc_line_state_cb override.
+// bridge_task in main_core1_bridge.c now polls cdc_host_active() each
+// iteration and calls phoneapi_session_set_usb_connected() on edges.
+// That source of truth covers DTR-less hosts (Chrome WebSerial) which
+// the raw line-state callback could not detect.
 
 void phoneapi_session_feed_from_core0(const uint8_t *buf, size_t len)
 {

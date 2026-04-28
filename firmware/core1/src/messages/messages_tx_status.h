@@ -1,13 +1,13 @@
-/* messages_tx_status.h — Last outbound-message status reported by Core 0.
+/* messages_tx_status.h — Latest outbound-message ack status.
  *
- * Holds whatever the most recent IPC_MSG_TX_ACK said: which IPC seq it
- * was for, what status (sending / delivered / failed), and the
- * underlying meshtastic_Routing_Error if it failed. messages_view's
- * footer renders this.
+ * Holds whatever the cascade ack handler last said about the most
+ * recent send: which packet id it was for, what status (sending /
+ * delivered / failed), and the underlying meshtastic_Routing_Error if
+ * it failed. messages_view's footer renders this.
  *
- * Single producer (bridge_task IPC dispatcher), single consumer
- * (lvgl_task via messages_view_refresh). Atomic seq gate, no mutex —
- * same SPSC pattern as messages_inbox.
+ * Single producer (phoneapi_session ack handler / messages_send seed),
+ * single consumer (lvgl_task via messages_view_refresh). Atomic seq
+ * gate, no mutex.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -28,14 +28,12 @@ extern "C" {
 
 typedef struct {
     uint32_t change_seq;       ///< Bumps every time anything below changes
-    uint8_t  ipc_seq;          ///< IPC seq the original CMD_SEND_TEXT carried
     uint8_t  result;           ///< MESSAGES_TX_RESULT_*
     uint8_t  error_reason;     ///< meshtastic_Routing_Error (0 on success)
-    uint32_t packet_id;        ///< Meshtastic packet id (32 bit), 0 if unknown
+    uint32_t packet_id;        ///< Locally-assigned MeshPacket.id (non-zero)
 } messages_tx_status_t;
 
-void messages_tx_status_publish(uint8_t  ipc_seq,
-                                uint8_t  result,
+void messages_tx_status_publish(uint8_t  result,
                                 uint8_t  error_reason,
                                 uint32_t packet_id);
 

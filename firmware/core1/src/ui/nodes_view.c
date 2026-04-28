@@ -1,4 +1,12 @@
-/* nodes_view.c — see nodes_view.h. */
+/* nodes_view.c — see nodes_view.h.
+ *
+ * M5F.2 (2026-04-28): switched data source from nodes_db (fed by the
+ * retired IPC_MSG_NODE_UPDATE producer) to phoneapi_cache (cascade
+ * decoder). Layout unchanged — the on-screen fields the cascade can
+ * supply (long_name / short_name, SNR, hops, last_heard, battery) are
+ * a strict subset of what nodes_db exposed; lat/lon are not currently
+ * decoded by cascade so the GPS line is replaced with last-heard.
+ */
 
 #include "nodes_view.h"
 
@@ -6,7 +14,7 @@
 #include <string.h>
 #include <limits.h>
 
-#include "nodes_db.h"
+#include "phoneapi_cache.h"
 #include "mie_font.h"
 #include "mie/keycode.h"
 #include "mokya_trace.h"
@@ -22,39 +30,30 @@ static bool     s_sticky_to_newest = true;
 
 static void render_offset(uint32_t offset)
 {
-    nodes_db_entry_t e;
-    if (!nodes_db_take_at(offset, &e)) {
+    phoneapi_node_t e;
+    if (!phoneapi_cache_take_node_at(offset, &e)) {
         lv_label_set_text(s_header, "(no nodes seen yet)");
         lv_label_set_text(s_body, "");
         lv_label_set_text(s_footer, "node 0/0");
         return;
     }
 
-    char alias_buf[NODES_DB_ALIAS_MAX + 1];
-    uint8_t alias_len = e.alias_len;
-    if (alias_len > NODES_DB_ALIAS_MAX) alias_len = NODES_DB_ALIAS_MAX;
-    memcpy(alias_buf, e.alias, alias_len);
-    alias_buf[alias_len] = '\0';
-
     char hdr[80];
-    if (alias_len > 0) {
-        snprintf(hdr, sizeof(hdr), "%s  /  0x%08lx",
-                 alias_buf, (unsigned long)e.node_id);
+    if (e.short_name[0] != '\0' || e.long_name[0] != '\0') {
+        snprintf(hdr, sizeof(hdr), "%s (%s)  /  0x%08lx",
+                 e.long_name[0] ? e.long_name : "?",
+                 e.short_name[0] ? e.short_name : "??",
+                 (unsigned long)e.num);
     } else {
-        snprintf(hdr, sizeof(hdr), "0x%08lx",
-                 (unsigned long)e.node_id);
+        snprintf(hdr, sizeof(hdr), "0x%08lx", (unsigned long)e.num);
     }
     lv_label_set_text(s_header, hdr);
 
-    /* Body — multiline. Use printf-ish layout; the MIEF 16 px font
-     * fits ~20 chars/line at 320 px so this stays inside the panel. */
-    char body[256];
     char snr_str[16];
-    if (e.snr_x4 == (int8_t)INT8_MIN) {
+    if (e.snr_x100 == INT32_MIN) {
         snprintf(snr_str, sizeof(snr_str), "--");
     } else {
-        snprintf(snr_str, sizeof(snr_str), "%+.1f dB",
-                 e.snr_x4 / 4.0);
+        snprintf(snr_str, sizeof(snr_str), "%+.1f dB", e.snr_x100 / 100.0);
     }
     char hops_str[8];
     if (e.hops_away == 0xFFu) {
@@ -63,33 +62,30 @@ static void render_offset(uint32_t offset)
         snprintf(hops_str, sizeof(hops_str), "%u", (unsigned)e.hops_away);
     }
     char batt_str[16];
-    if (e.battery_mv == 0u) {
+    if (e.battery_level == 0xFFu) {
         snprintf(batt_str, sizeof(batt_str), "--");
     } else {
-        snprintf(batt_str, sizeof(batt_str), "%u.%02u V",
-                 (unsigned)(e.battery_mv / 1000u),
-                 (unsigned)((e.battery_mv % 1000u) / 10u));
+        snprintf(batt_str, sizeof(batt_str), "%u%%",
+                 (unsigned)e.battery_level);
     }
-
-    char pos_str[64];
-    if (e.lat_e7 == INT32_MIN || e.lon_e7 == INT32_MIN) {
-        snprintf(pos_str, sizeof(pos_str), "no GPS");
+    char heard_str[24];
+    if (e.last_heard == 0u) {
+        snprintf(heard_str, sizeof(heard_str), "--");
     } else {
-        /* Render as decimal degrees with 5 d.p. (~1.1 m). */
-        double lat = e.lat_e7 / 1.0e7;
-        double lon = e.lon_e7 / 1.0e7;
-        snprintf(pos_str, sizeof(pos_str), "%.5f, %.5f", lat, lon);
+        snprintf(heard_str, sizeof(heard_str), "%lu",
+                 (unsigned long)e.last_heard);
     }
 
+    char body[256];
     snprintf(body, sizeof(body),
              "SNR  : %s\n"
              "hops : %s\n"
              "batt : %s\n"
-             "pos  : %s",
-             snr_str, hops_str, batt_str, pos_str);
+             "heard: %s",
+             snr_str, hops_str, batt_str, heard_str);
     lv_label_set_text(s_body, body);
 
-    uint32_t total = nodes_db_count();
+    uint32_t total = phoneapi_cache_node_count();
     uint32_t shown = (offset < total) ? (total - offset) : 0u;
     char foot[32];
     snprintf(foot, sizeof(foot), "node %lu/%lu",
@@ -135,7 +131,7 @@ static void apply(const key_event_t *ev)
 {
     if (!ev || !ev->pressed) return;
 
-    uint32_t total = nodes_db_count();
+    uint32_t total = phoneapi_cache_node_count();
     if (total == 0) return;
 
     if (ev->keycode == MOKYA_KEY_UP) {
@@ -160,7 +156,7 @@ static void refresh(void)
     /* Active-only refresh: router no longer calls us when hidden. */
     if (s_panel == NULL) return;
 
-    uint32_t cur = nodes_db_change_seq();
+    uint32_t cur = phoneapi_cache_change_seq();
     if (cur == s_last_change_seq) return;
     s_last_change_seq = cur;
 

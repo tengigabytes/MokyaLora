@@ -608,6 +608,184 @@ bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
     return true;
 }
 
+// ── Routing(ACK) decoder ────────────────────────────────────────────
+// Wire layout (Meshtastic mesh.proto):
+//   MeshPacket {
+//     fixed32 from = 1;
+//     fixed32 to   = 2;
+//     uint32  channel = 3;
+//     Data    decoded = 4;       // LD, sub-message
+//     ...
+//   }
+//   Data {
+//     PortNum portnum = 1;        // varint; 5 = ROUTING_APP
+//     bytes   payload = 2;        // LD; Routing protobuf
+//     bool    want_response = 3;
+//     fixed32 dest = 4;
+//     fixed32 source = 5;
+//     fixed32 request_id = 6;     // the packet id this ack refers to
+//     ...
+//   }
+//   Routing {                     // payload bytes inside Data.payload
+//     oneof variant {
+//       RouteDiscovery route_request = 1;
+//       RouteDiscovery route_reply  = 2;
+//       Error          error_reason = 3;  // varint; 0 = NONE (delivered ok)
+//     }
+//   }
+
+typedef struct {
+    uint32_t portnum;
+    const uint8_t *payload;
+    uint16_t       payload_len;
+    uint32_t       request_id;
+    bool           have_request_id;
+} routing_data_view_t;
+
+static bool decode_routing_data(const uint8_t *buf, uint16_t len, void *vctx)
+{
+    routing_data_view_t *out = (routing_data_view_t *)vctx;
+    out->portnum = 0;
+    out->payload = NULL;
+    out->payload_len = 0;
+    out->request_id = 0;
+    out->have_request_id = false;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->portnum = (uint32_t)v;
+        } else if (f == 2u && w == WT_LEN) {
+            uint64_t plen;
+            if (!read_varint(buf, len, &pos, &plen)) return false;
+            if (plen > (uint64_t)(len - pos)) return false;
+            out->payload     = &buf[pos];
+            out->payload_len = (uint16_t)plen;
+            pos += (uint16_t)plen;
+        } else if (f == 6u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->request_id = v;
+            out->have_request_id = true;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+static bool decode_routing_inner(const uint8_t *buf, uint16_t len,
+                                 uint8_t *out_error_reason)
+{
+    *out_error_reason = 0u;
+    uint16_t pos = 0;
+    bool found = false;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            *out_error_reason = (uint8_t)v;
+            found = true;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return found;
+}
+
+bool phoneapi_decode_routing_ack(const uint8_t *buf, uint16_t len,
+                                 uint32_t *out_request_id,
+                                 uint8_t  *out_error_reason)
+{
+    *out_request_id = 0u;
+    *out_error_reason = 0u;
+
+    routing_data_view_t data = { 0, NULL, 0, 0, false };
+    bool have_data = false;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 4u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_routing_data, &data))
+                return false;
+            have_data = true;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+
+    if (!have_data) return false;
+    if (data.portnum != PHONEAPI_PORTNUM_ROUTING_APP) return false;
+    if (!data.have_request_id) return false;
+    if (data.payload == NULL || data.payload_len == 0u) {
+        // Routing with empty payload = error_reason field absent = NONE.
+        *out_request_id = data.request_id;
+        *out_error_reason = 0u;
+        return true;
+    }
+    uint8_t err = 0u;
+    (void)decode_routing_inner(data.payload, data.payload_len, &err);
+    *out_request_id = data.request_id;
+    *out_error_reason = err;
+    return true;
+}
+
+// ── QueueStatus decoder ─────────────────────────────────────────────
+// Wire (mesh.proto):
+//   message QueueStatus {
+//     int32  res = 1;             // varint, signed (Routing.Error)
+//     uint32 free = 2;            // varint
+//     uint32 maxlen = 3;          // varint
+//     uint32 mesh_packet_id = 4;  // varint
+//   }
+
+bool phoneapi_decode_queue_status(const uint8_t *buf, uint16_t len,
+                                  phoneapi_queue_status_t *out)
+{
+    if (out == NULL) return false;
+    out->res = 0;
+    out->free = 0u;
+    out->maxlen = 0u;
+    out->mesh_packet_id = 0u;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->res = (int32_t)(uint32_t)v;
+        } else if (f == 2u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->free = (uint32_t)v;
+        } else if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->maxlen = (uint32_t)v;
+        } else if (f == 4u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->mesh_packet_id = (uint32_t)v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
 const char *phoneapi_from_radio_tag_name(from_radio_tag_t tag)
 {
     switch (tag) {

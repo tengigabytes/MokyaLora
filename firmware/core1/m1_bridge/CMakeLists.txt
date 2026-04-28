@@ -56,11 +56,13 @@ option(MOKYA_GPS_DUMMY_NMEA
 
 # M5 Phase 2 — Cascade PhoneAPI client. Core 1 parses FromRadio bytes
 # flowing from Core 0 in parallel with the existing USB CDC pass-through.
-# Phase A: framing parser + tag-level RTT trace only (no cache, no
-# stub replacement). Default OFF until Phase E flips it permanently.
+# Phase A–D landed; M5E.1 (2026-04-28) flips the default to ON. The
+# stub IPC paths (IPC_MSG_RX_TEXT / IPC_CMD_SEND_TEXT / IPC_MSG_TX_ACK
+# / IPC_MSG_NODE_UPDATE) get deleted in M5E.3, after which this option
+# becomes a no-op and can be removed.
 option(MOKYA_PHONEAPI_CASCADE
     "Enable Core 1 cascade PhoneAPI byte-stream parser (M5 Phase 2)"
-    OFF)
+    ON)
 
 pico_sdk_init()
 
@@ -243,10 +245,8 @@ add_executable(core1_bridge
     ${MIE_SRC_DIR}/lru_cache.cpp
     ${IME_DIR}/flash_safety_wrap.c
     ${IME_DIR}/lru_persist.cpp
-    ${MESSAGES_DIR}/messages_inbox.c
     ${MESSAGES_DIR}/messages_send.c
     ${MESSAGES_DIR}/messages_tx_status.c
-    ${MESSAGES_DIR}/nodes_db.c
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_framing.c>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_decode.c>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_cache.c>

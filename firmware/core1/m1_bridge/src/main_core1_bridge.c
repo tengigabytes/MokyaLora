@@ -82,9 +82,7 @@
 #include "key_event.h"
 #include "key_inject.h"
 #include "key_inject_rtt.h"
-#include "messages_inbox.h"
 #include "messages_tx_status.h"
-#include "nodes_db.h"
 #include "settings_client.h"
 #include "watchdog_task.h"
 #ifdef MOKYA_PHONEAPI_CASCADE
@@ -264,6 +262,13 @@ static void bridge_task(void *pv)
     uint8_t tx_seq = 0;
     bool reboot_pending = false;
 
+    /* Cascade session FORWARD/STANDALONE follows cdc_host_active(), the
+     * authoritative liveness signal that combines DTR (USB CDC default)
+     * with recent CDC OUT activity (covers Chrome WebSerial which never
+     * raises DTR). M5E.4 — replaces the raw tud_cdc_line_state_cb hook
+     * that only saw DTR. */
+    bool prev_cdc_active = false;
+
     /* Enable doorbell IRQ now that the FreeRTOS scheduler is running and
      * PendSV/SVC handlers are installed.  Any pending doorbells from
      * Core 0 during the pre-scheduler busy-wait will fire immediately. */
@@ -275,6 +280,15 @@ static void bridge_task(void *pv)
         if (reboot_pending) {
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
+        }
+
+        /* Drive cascade FSM from cdc_host_active(). Edge-triggered so
+         * phoneapi_session_set_usb_connected() only runs when state
+         * actually changes. */
+        bool now_cdc_active = cdc_host_active();
+        if (now_cdc_active != prev_cdc_active) {
+            phoneapi_session_set_usb_connected(now_cdc_active);
+            prev_cdc_active = now_cdc_active;
         }
 
         bool did_work = false;
@@ -299,42 +313,6 @@ static void bridge_task(void *pv)
                 continue;   /* skip the rest of this iteration */
             }
 
-            if (hdr.msg_id == IPC_MSG_NODE_UPDATE &&
-                hdr.payload_len >= sizeof(IpcPayloadNodeUpdate)) {
-                const IpcPayloadNodeUpdate *u =
-                    (const IpcPayloadNodeUpdate *)scratch;
-                uint16_t header_size =
-                    (uint16_t)offsetof(IpcPayloadNodeUpdate, alias);
-                uint8_t alias_len = u->alias_len;
-                if ((uint16_t)header_size + alias_len > hdr.payload_len) {
-                    /* defend against producer-side length lie */
-                    alias_len = (uint8_t)(hdr.payload_len - header_size);
-                }
-                nodes_db_upsert(u->node_id,
-                                u->rssi,
-                                u->snr_x4,
-                                u->hops_away,
-                                u->lat_e7,
-                                u->lon_e7,
-                                u->battery_mv,
-                                u->alias,
-                                alias_len);
-                did_work = true;
-                continue;
-            }
-
-            if (hdr.msg_id == IPC_MSG_TX_ACK &&
-                hdr.payload_len >= sizeof(IpcPayloadTxAck)) {
-                const IpcPayloadTxAck *a =
-                    (const IpcPayloadTxAck *)scratch;
-                messages_tx_status_publish(a->seq,
-                                           a->result,
-                                           a->error_reason,
-                                           a->packet_id);
-                did_work = true;
-                continue;
-            }
-
             if (hdr.msg_id == IPC_MSG_CONFIG_VALUE ||
                 hdr.msg_id == IPC_MSG_CONFIG_RESULT) {
                 settings_client_dispatch_reply(hdr.msg_id,
@@ -344,29 +322,13 @@ static void bridge_task(void *pv)
                 continue;
             }
 
-            if (hdr.msg_id == IPC_MSG_RX_TEXT &&
-                hdr.payload_len >= sizeof(IpcPayloadText)) {
-                /* Structured RX text from Core 0 — surface in LVGL inbox.
-                 * Snapshot stays valid only until the next RX_TEXT push,
-                 * which is fine for the current "show latest" view.
-                 * Multi-message backlog is M5 Phase 2 work. */
-                const IpcPayloadText *t =
-                    (const IpcPayloadText *)scratch;
-                uint16_t header_size = (uint16_t)offsetof(IpcPayloadText, text);
-                uint16_t text_in_payload =
-                    (hdr.payload_len > header_size)
-                        ? (uint16_t)(hdr.payload_len - header_size)
-                        : 0u;
-                uint16_t text_len = t->text_len;
-                if (text_len > text_in_payload) text_len = text_in_payload;
-                messages_inbox_publish(t->from_node_id,
-                                       t->to_node_id,
-                                       t->channel_index,
-                                       t->text,
-                                       text_len);
-                did_work = true;
-                continue;
-            }
+            /* M5E.3: RX_TEXT / NODE_UPDATE / TX_ACK dispatch arms removed.
+             * Cascade (phoneapi_session) is now the sole source for those
+             * events, decoding them out of the FromRadio byte stream that
+             * arrives via IPC_MSG_SERIAL_BYTES. The enum IDs themselves
+             * are retired in ipc_protocol.h. nodes_view temporarily
+             * reads stale data until M5F.2 migrates it to
+             * phoneapi_cache_take_node_at(). */
 
             if (hdr.msg_id == IPC_MSG_SERIAL_BYTES && hdr.payload_len > 0u) {
 #ifdef MOKYA_PHONEAPI_CASCADE

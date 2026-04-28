@@ -46,6 +46,14 @@ void phoneapi_session_set_usb_connected(bool connected);
 phoneapi_mode_t phoneapi_session_mode(void);
 uint32_t        phoneapi_session_last_nonce(void);
 
+// Close the cascade session: tell Core 0 we're going away (one-shot
+// disconnect), stop the heartbeat timer, and reset internal state. The
+// in-memory cache is preserved so LVGL keeps showing the last-known
+// snapshot. Next RX / UI action that needs fresh data should call
+// phoneapi_session_set_usb_connected(false) to flow back through the
+// STANDALONE re-arm path (issues want_config_id and restarts heartbeat).
+void phoneapi_session_close(void);
+
 #ifdef __cplusplus
 }
 #endif

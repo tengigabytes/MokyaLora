@@ -7,12 +7,10 @@
 
 static messages_tx_status_t s_status;
 
-void messages_tx_status_publish(uint8_t  ipc_seq,
-                                uint8_t  result,
+void messages_tx_status_publish(uint8_t  result,
                                 uint8_t  error_reason,
                                 uint32_t packet_id)
 {
-    s_status.ipc_seq      = ipc_seq;
     s_status.result       = result;
     s_status.error_reason = error_reason;
     s_status.packet_id    = packet_id;

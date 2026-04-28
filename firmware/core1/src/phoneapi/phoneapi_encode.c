@@ -5,6 +5,8 @@
 
 #include <string.h>
 
+#include "hardware/timer.h"
+
 #include "phoneapi_tx.h"
 
 #define MAGIC1 0x94u
@@ -130,6 +132,7 @@ typedef struct {
     uint32_t to_node_id;
     uint8_t  channel_index;
     bool     want_ack;
+    uint32_t packet_id;
     const uint8_t *text;
     uint16_t text_len;
 } mesh_packet_ctx_t;
@@ -156,6 +159,11 @@ static size_t write_mesh_packet_body(uint8_t *dst, size_t cap, void *vctx)
     };
     if (!put_ld_with_2byte_len(dst, cap, &pos, 4u, write_data_body, &data_ctx))
         return SIZE_MAX;
+    // MeshPacket.id = field 6, varint (uint32). Self-assigned so we can
+    // correlate the eventual Routing-app ACK / QueueStatus back to this
+    // send. Core 0's Router honours a non-zero host-supplied id.
+    if (!put_tag(dst, cap, &pos, 6u, 0u)) return SIZE_MAX;
+    if (!put_varint(dst, cap, &pos, ctx->packet_id)) return SIZE_MAX;
     // MeshPacket.want_ack = field 10, varint (bool)
     if (ctx->want_ack) {
         if (!put_tag(dst, cap, &pos, 10u, 0u)) return SIZE_MAX;
@@ -164,16 +172,35 @@ static size_t write_mesh_packet_body(uint8_t *dst, size_t cap, void *vctx)
     return pos;
 }
 
+// Local packet_id allocator. Seeded from timer_hw->timerawl on the
+// first call so two MokyaLora units don't collide in the air, and
+// monotonically increments thereafter (skipping zero, which Meshtastic
+// treats as "router, please assign").
+static uint32_t next_packet_id(void)
+{
+    static uint32_t s_next = 0u;
+    if (s_next == 0u) {
+        s_next = timer_hw->timerawl;
+        if (s_next == 0u) s_next = 1u;
+    }
+    uint32_t id = s_next++;
+    if (s_next == 0u) s_next = 1u;
+    return id;
+}
+
 bool phoneapi_encode_text_packet(uint32_t to_node_id,
                                   uint8_t  channel_index,
                                   bool     want_ack,
                                   const uint8_t *text,
-                                  uint16_t text_len)
+                                  uint16_t text_len,
+                                  uint32_t *out_packet_id)
 {
     // Cap at a safe single-frame size: stream-protocol max payload is
     // 512 B, and the protobuf scaffolding around the text adds ~16 B.
     if (text == NULL && text_len > 0u) return false;
     if (text_len > 256u) text_len = 256u;
+
+    uint32_t packet_id = next_packet_id();
 
     uint8_t buf[384];                        // ToRadio body buffer
     size_t  pos = 0;
@@ -181,6 +208,7 @@ bool phoneapi_encode_text_packet(uint32_t to_node_id,
         .to_node_id    = to_node_id,
         .channel_index = channel_index,
         .want_ack      = want_ack,
+        .packet_id     = packet_id,
         .text          = text,
         .text_len      = text_len,
     };
@@ -189,5 +217,11 @@ bool phoneapi_encode_text_packet(uint32_t to_node_id,
                                write_mesh_packet_body, &mp)) {
         return false;
     }
-    return frame_and_push(buf, pos);
+    if (!frame_and_push(buf, pos)) {
+        return false;
+    }
+    if (out_packet_id != NULL) {
+        *out_packet_id = packet_id;
+    }
+    return true;
 }

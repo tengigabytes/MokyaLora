@@ -2750,6 +2750,174 @@ stub branch, and the corresponding bridge_task dispatch arms; flip
 `messages_send.c` get their `#ifdef` scaffolding removed and become
 cascade-only.
 
+#### M5 closure — Phase E + Phase F partial (2026-04-28)
+
+Plan: `~/.claude/plans/m5-ipcphoneapi-subclass-floating-cray.md`.
+Path chosen: keep cascade as the single source of truth, fill
+remaining gaps; explicitly NOT a `IPCPhoneAPI : public PhoneAPI`
+subclass (rejected 2026-04-27, see above).
+
+- **M5E.1** ✅ `MOKYA_PHONEAPI_CASCADE` default flipped OFF→ON
+  (`firmware/core1/m1_bridge/CMakeLists.txt:61`). `--info` parity
+  confirmed.
+- **M5E.2** ✅ Removed Core 1 dual-path `#ifdef` scaffolding from
+  `messages_view.c` / `messages_send.c`; deleted
+  `firmware/core1/src/messages/messages_inbox.{c,h}` and the
+  bridge_task `IPC_MSG_RX_TEXT` / `IPC_MSG_TX_ACK` dispatch arms.
+  `arm-none-eabi-nm` confirms `messages_inbox_*` symbols absent;
+  `phoneapi_msgs_*` present.
+- **M5E.3** ✅ Deleted on Core 0:
+  `ipc_text_observer.{cpp,h}`, `ipc_node_observer.cpp`,
+  `ipc_ack_observer.cpp`, `ipc_command_handler.h`, the
+  `handle_send_text` branch + `mokya_push_tx_ack` helper +
+  outbound tracker in `ipc_command_handler.cpp`. Removed the
+  `mokya_register_ipc_observers()` boot-time call from
+  `main.cpp` (line 308 + 909). Retired four enum IDs
+  (`IPC_MSG_RX_TEXT` 0x01, `IPC_MSG_NODE_UPDATE` 0x02,
+  `IPC_MSG_TX_ACK` 0x04, `IPC_CMD_SEND_TEXT` 0x81) and the
+  `IpcPayloadText` / `IpcPayloadTxAck` / `IpcPayloadNodeUpdate`
+  structs in `firmware/shared/ipc/ipc_protocol.h`. The numeric
+  enum values are reserved (do NOT reassign — old binaries may
+  still reference them on the wire). Build clean both cores;
+  `--info` and host `--sendtext` paths work.
+- **M5E.4** ✅ Cascade FSM now driven by `cdc_host_active()`
+  edge detection in `bridge_task` (`main_core1_bridge.c`)
+  rather than the raw `tud_cdc_line_state_cb` hook. Chrome
+  WebSerial (which never raises DTR) now correctly enters
+  FORWARD mode via the CDC-OUT activity grace window.
+  `phoneapi_session.c` no longer overrides `tud_cdc_line_state_cb`.
+- **M5F.1** ✅ Routing(ACK) + QueueStatus field-level decoders
+  added to `phoneapi_decode.{h,c}`. `phoneapi_encode_text_packet()`
+  now self-assigns a non-zero `MeshPacket.id` (seeded from
+  `timer_hw->timerawl`, monotonic counter) and returns it via
+  `out_packet_id`. `messages_send.c` seeds
+  `messages_tx_status_publish(SENDING, packet_id)` immediately;
+  cascade `on_frame` dispatches `FR_TAG_PACKET` to the routing-ack
+  decoder before falling through to the text decoder, and
+  `FR_TAG_QUEUE_STATUS` likewise feeds `messages_tx_status` on
+  failures. `messages_view`'s pending-tx tracker switched from
+  `ipc_seq` to `packet_id` (`s_pending_tx_packet_id`). Visual
+  ACK indicator (⌛/✅/❌) deferred — current footer text already
+  conveys it. End-to-end ACK path build-clean; functional check
+  needs hardware OK-press DM (PKI sync between MokyaLora and
+  stock pico still in flux).
+- **M5F.2** ✅ `nodes_view.c` migrated to read `phoneapi_cache`
+  (`phoneapi_cache_node_count` / `phoneapi_cache_take_node_at` /
+  `phoneapi_cache_change_seq`) instead of `nodes_db`.
+  `messages_view`'s sender header now shows `short_name` when the
+  cascade has NodeInfo for the peer. Deleted
+  `firmware/core1/src/messages/nodes_db.{c,h}` (no producer left
+  after M5E.3). `arm-none-eabi-nm` confirms `nodes_db_*` absent;
+  `--info` parity preserved.
+- **M5F.3** ❎ DEFERRED. Full `Config` + `ModuleConfig` field-level
+  decoder + cache + `settings_view` migration is multi-hour scope
+  with 30+ proto field numbers to verify. The B2 `IPC_CMD_GET_CONFIG`
+  path (already shipped) covers settings UX adequately. Revisit
+  when adding new settings groups or hitting GET latency issues.
+- **M5F.4** ✅ Cascade session lifecycle complete. Heartbeat at
+  5 min in STANDALONE, paused in FORWARD (Phase C). `want_config_id`
+  re-issued on STANDALONE entry (incl. USB unplug). New
+  `phoneapi_session_close()` API sends a one-shot disconnect,
+  stops the heartbeat, clears nonce; cache preserved for LVGL.
+  Cascade does NOT issue `want_config_id` while in FORWARD mode
+  (verified by code trace; no double-want_config on the wire).
+
+**End-to-end DM verification (2026-04-28)**: After PKI sync (see
+PKI procedure below), bidirectional DMs between the MokyaLora and a
+stock Pico Meshtastic node both `Received an ACK`. SWD readback of
+the cascade state on Core 1 confirmed:
+
+| Cache field | Address | Reading |
+|---|---|---|
+| `s_msgs[0].seq` | `0x200560a8` | `0x00000001` |
+| `s_msgs[0].from_node_id` | +4 | `0x538EEBE7` (stock) |
+| `s_msgs[0].to_node_id` | +8 | `0xB15DB862` (MokyaLora) |
+| `s_msgs[0].text_len` | +0xE | `0x0029` (41 B) |
+| `s_msgs[0].text[]` | +0x10 | byte-perfect UTF-8 of `"M5 cascade: stock→Mokya 哈囉中文 DM"` (incl. U+2192 arrow + 4 CJK chars) |
+| `s_status.change_seq` | `0x2006a848` | `0x00000008` (8 ack events) |
+| `s_status.result` | +4 | `0x01 = DELIVERED` |
+| `s_status.error_reason` | +5 | `0x00 = NONE` |
+| `s_status.packet_id` | +8 | `0x4489A130` |
+
+This proves the full cascade RX path (`phoneapi_session_feed_from_core0`
+→ framing → `phoneapi_decode_text_packet` → `phoneapi_msgs_publish`)
+and the full cascade routing-ack path
+(`phoneapi_decode_routing_ack` → `messages_tx_status_publish`) work
+end-to-end on real RF traffic, including outbound DMs initiated by
+the host CLI (which still get their routing-app ACK observed via
+the cascade tap because the byte stream is fed unconditionally).
+
+#### PKI sync procedure (required after each MokyaLora flash)
+
+Each `bash scripts/build_and_flash.sh` resets Core 0 / Core 1 / dict
+/ font flash regions, but `security.public_key` lives in the
+deviceState region and **survives**. However, peer nodes' cached
+records of MokyaLora's pubkey may drift over time, and MokyaLora's
+own NodeDB drops peer pubkeys when those peers are out of range,
+so a one-time PKI sync is needed before DM testing whenever:
+
+- The peer node has been re-flashed (its pubkey rotated)
+- The MokyaLora has been factory-reset
+- Either side's NodeDB has been cleared via `--reset-nodedb`
+- Time since last contact > NodeInfo broadcast period (3600 s default)
+
+The "Meshtastic mobile app: tap to add contact" flow is just a
+NodeInfo-app packet with `want_response=true`, which the receiving
+node replies to with its full User record (incl. `public_key`).
+CLI doesn't expose this directly, so we use a Python helper:
+
+```sh
+# 1. Make sure both sides know each other's IDs (lite NodeInfo).
+#    Traceroute is the cleanest way to force this even when they
+#    aren't direct neighbours — it also confirms RF connectivity.
+python -m meshtastic --port COM7  --traceroute '!b15db862'
+python -m meshtastic --port COM16 --traceroute '!538eebe7'
+
+# 2. Trigger full NodeInfo (with pubkey) exchange both directions.
+python scripts/nodeinfo_request.py COM16 '!538eebe7'   # Mokya asks stock
+python scripts/nodeinfo_request.py COM7  '!b15db862'   # stock asks Mokya
+
+# 3. Verify pubkeys appear in both --info dumps:
+python -m meshtastic --port COM16 --info | grep -A12 '"!538eebe7"'
+python -m meshtastic --port COM7  --info | grep -A12 '"!b15db862"'
+# Both should show a non-empty publicKey field.
+
+# 4. DM both ways — should each return "Received an ACK".
+python -m meshtastic --port COM7  --sendtext "test" --dest '!b15db862'
+python -m meshtastic --port COM16 --sendtext "test" --dest '!538eebe7'
+```
+
+**Notes on observed asymmetries**:
+- Meshtastic 2.7.x uses two NodeInfo flavours. The periodic broadcast
+  is "lite" — long_name / short_name / hw_model only, **no
+  public_key**. Only a NodeInfo reply with `want_response=true`
+  carries the pubkey. So the Python helper above is essential, the
+  natural broadcast is not.
+- Meshtastic 2.7.20 (stock) vs 2.7.21 (MokyaLora submodule head)
+  differ in whether traceroute *replies* include pubkey. Per testing
+  on 2026-04-28: 2.7.21 reply does include pubkey (stock learns
+  Mokya's key from a single Mokya-initiated traceroute), 2.7.20
+  reply does NOT (Mokya does not learn stock's key from a
+  Mokya-initiated traceroute). The `nodeinfo_request.py` helper
+  works regardless of version.
+- DM NAK error codes seen during diagnosis:
+  `PKI_SEND_FAIL_PUBLIC_KEY` = sender has no pubkey on file for
+    destination. Run helper from sender to dest.
+  `PKI_UNKNOWN_PUBKEY` = sender has destination's key, but
+    destination can't verify sender's signature (it lacks the
+    sender's pubkey). Run helper from dest to sender.
+
+The `scripts/nodeinfo_request.py` helper is generic — first arg is
+the local port, second is the target node id. It connects, fires
+one NodeInfo request, sleeps 8 s for the reply to land, and exits.
+
+**Net deletions**: Core 0 `ipc_text/node/ack_observer` (3 files),
+`ipc_command_handler.h`, `mokya_register_ipc_observers` chain,
+`handle_send_text` + tracker. Core 1 `messages_inbox.{c,h}`,
+`nodes_db.{c,h}`. IPC protocol shrunk by 4 IDs + 3 structs.
+Cascade is now the single source of truth for inbound text,
+NodeInfo, and routing-ack telemetry.
+
 ---
 
 ## Cross-cutting Decisions (2026-04-15)
