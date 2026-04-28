@@ -142,6 +142,11 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
     // OK — short-press semantics:
     //   - has candidates    → commit selected
     //   - multi-tap pending → commit it
+    //   - unmatched key_seq → discard (mirrors SmartEn SPACE-pending fallback
+    //                          in ime_smart.cpp; OK on a non-decodable tail
+    //                          must NOT emit "\n", which would otherwise
+    //                          stream "\n" on every subsequent OK because
+    //                          the unmatched tail is never consumed)
     //   - otherwise (idle)  → emit "\n" (Phase 1.4 Task C, mirrors the
     //                          SPACE-when-idle convention)
     if (kc == MOKYA_KEY_OK) {
@@ -157,6 +162,18 @@ bool ImeLogic::process_key(const KeyEvent& ev) {
         }
         if (multitap_.keycode != MOKYA_KEY_NONE) {
             multitap_commit();
+            notify_changed();
+            return true;
+        }
+        if (key_seq_len_ > 0) {
+            key_seq_len_          = 0;
+            key_seq_[0]           = '\0';
+            std::memset(phoneme_hint_, 0, sizeof(phoneme_hint_));
+            display_clear();
+            pending_style_        = PendingStyle::None;
+            matched_prefix_bytes_ = 0;
+            matched_prefix_keys_  = 0;
+            lp_cycle_             = {};
             notify_changed();
             return true;
         }

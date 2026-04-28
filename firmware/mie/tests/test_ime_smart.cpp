@@ -205,6 +205,39 @@ TEST(SmartZh, OKCommitsSelectedCandidate) {
     EXPECT_FALSE(ime.has_pending());
 }
 
+TEST(SmartZh, OKOnUnmatchedKeySeqMustNotEmitNewline) {
+    // Regression: random phoneme bytes that don't decode to any dict
+    // candidate must not cause OK to emit "\n". Earlier behaviour fell
+    // through to the idle "\n" path because has_candidates() == false
+    // and multitap == NONE, ignoring the non-empty key_seq_; the
+    // unmatched tail then remained in key_seq_ and every subsequent OK
+    // streamed another "\n".
+    TrieSearcher ts;  // empty dict — no candidates regardless of input
+    ImeLogic ime(ts);
+    MockListener L; ime.set_listener(&L);
+
+    // Build a non-decodable key_seq.
+    press(ime, MOKYA_KEY_G);
+    press(ime, MOKYA_KEY_D);
+    press(ime, MOKYA_KEY_T);
+    press(ime, MOKYA_KEY_U);
+    press(ime, MOKYA_KEY_E);
+    press(ime, MOKYA_KEY_Q);
+    ASSERT_EQ(ime.candidate_count(), 0);
+    ASSERT_TRUE(ime.has_pending());
+
+    // First OK: discard unmatched tail, commit nothing.
+    press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "");
+    EXPECT_FALSE(ime.has_pending());
+
+    // Subsequent OK presses on a now-truly-idle state legitimately emit
+    // "\n" (the existing idle convention) — exercise a few to confirm
+    // no stray runaway behaviour remains.
+    for (int i = 0; i < 5; ++i) press(ime, MOKYA_KEY_OK);
+    EXPECT_EQ(L.committed, "\n\n\n\n\n");
+}
+
 TEST(SmartZh, PartialCommitKeepsUnmatchedTail) {
     // Two keys pressed; dict matches only the first. OK commits that match
     // and leaves the second key in pending.
