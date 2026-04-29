@@ -216,6 +216,7 @@ add_executable(core1_bridge
     ${UI_DIR}/global/ui_theme.c
     ${UI_DIR}/global/status_bar.c
     ${UI_DIR}/global/hint_bar.c
+    ${UI_DIR}/global/global_alert.c
     ${UI_DIR}/boot_home_view.c
     ${UI_DIR}/launcher_view.c
     ${UI_DIR}/chat_list_view.c

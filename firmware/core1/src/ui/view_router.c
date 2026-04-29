@@ -32,6 +32,7 @@
 
 #include "global/status_bar.h"
 #include "global/hint_bar.h"
+#include "global/global_alert.h"
 #include "conversation_view.h"
 #include "launcher_view.h"
 
@@ -232,6 +233,7 @@ void view_router_init(lv_obj_t *screen, uint8_t lru_capacity)
     /* Global chrome — created once on the screen, survives view swaps. */
     status_bar_init(screen);
     hint_bar_init(screen);
+    global_alert_init();
 
     /* FUNC long-press state */
     s_func_press_ms = 0;
@@ -465,4 +467,8 @@ void view_router_tick(void)
 
     /* Status bar tick is independent of active view. */
     status_bar_tick();
+    /* G-4 cross-view notifications — drives status_bar alert from
+     * dm_store + bq25622. Runs after status_bar_tick so any auto-clear
+     * landed first. */
+    global_alert_tick();
 }
