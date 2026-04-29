@@ -160,11 +160,17 @@ static size_t write_mesh_packet_body(uint8_t *dst, size_t cap, void *vctx)
     };
     if (!put_ld_with_2byte_len(dst, cap, &pos, 4u, write_data_body, &data_ctx))
         return SIZE_MAX;
-    // MeshPacket.id = field 6, varint (uint32). Self-assigned so we can
-    // correlate the eventual Routing-app ACK / QueueStatus back to this
-    // send. Core 0's Router honours a non-zero host-supplied id.
-    if (!put_tag(dst, cap, &pos, 6u, 0u)) return SIZE_MAX;
-    if (!put_varint(dst, cap, &pos, ctx->packet_id)) return SIZE_MAX;
+    // MeshPacket.id = field 6, FIXED32 (wire type 5) per mesh.proto.
+    // Self-assigned so we can correlate the eventual Routing-app ACK /
+    // QueueStatus back to this send. Core 0's Router honours a non-zero
+    // host-supplied id. Encoding it as varint causes nanopb on Core 0
+    // to reject the whole frame with "wrong wire type" (P0-1, 2026-04-29).
+    if (!put_tag(dst, cap, &pos, 6u, 5u)) return SIZE_MAX;
+    if (pos + 4u > cap) return SIZE_MAX;
+    dst[pos++] = (uint8_t)(ctx->packet_id        & 0xFFu);
+    dst[pos++] = (uint8_t)((ctx->packet_id >> 8)  & 0xFFu);
+    dst[pos++] = (uint8_t)((ctx->packet_id >> 16) & 0xFFu);
+    dst[pos++] = (uint8_t)((ctx->packet_id >> 24) & 0xFFu);
     // MeshPacket.want_ack = field 10, varint (bool)
     if (ctx->want_ack) {
         if (!put_tag(dst, cap, &pos, 10u, 0u)) return SIZE_MAX;
