@@ -149,7 +149,31 @@ typedef void (*view_router_modal_done_t)(bool committed, void *ctx);
 void view_router_modal_enter(view_id_t target,
                              view_router_modal_done_t on_done,
                              void *ctx);
+
+/* Variant: modal opens as an OVERLAY — caller's panel stays on the
+ * screen tree, NOT hidden / NOT reparented to the off-screen stash.
+ * Used by the A-2 conversation IME inline submode (G-3 Mode A) so the
+ * chat history above the 24 px IME strip stays visible while typing.
+ *
+ * The caller's `apply()` hook is still suppressed (router only forwards
+ * keys to the active = modal target), and the caller's `refresh()` is
+ * allowed via `view_router_caller_refreshable()` so unread / status
+ * updates can paint behind the overlay.
+ *
+ * On modal_finish, the overlay flag is cleared and the caller comes
+ * back as active without a re-create (it never went away).            */
+void view_router_modal_enter_overlay(view_id_t target,
+                                     view_router_modal_done_t on_done,
+                                     void *ctx);
+
 bool view_router_in_modal(void);
+
+/* While in overlay-modal, the caller view's `refresh` should still be
+ * called by the router so background updates (e.g. dm_store ack
+ * transitions in conv_view) repaint the visible area below the IME
+ * strip. Returns true iff the active modal is overlay-style and the
+ * given id is the caller pinned underneath. */
+bool view_router_caller_refreshable(view_id_t id);
 
 #ifdef __cplusplus
 } /* extern "C" */

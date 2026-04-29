@@ -139,6 +139,17 @@ static lv_obj_t *s_mode_lbl;
 static lv_obj_t *s_page_lbl;
 static lv_obj_t *s_cand_box;
 
+/* Mode A inline overlay widgets — single-row strip at bottom of panel.
+ * When `s_inline_mode` is true, create()/refresh()/destroy() take a
+ * different path: caller's panel stays visible above; we only paint a
+ * 24 px strip at y=200..223 with pending preedit + top candidates. */
+#define IME_INLINE_PANEL_Y    200
+#define IME_INLINE_PANEL_H     24
+#define IME_INLINE_PEND_W      80   /* left side: preedit display    */
+static bool      s_inline_mode;
+static lv_obj_t *s_inline_pending_lbl;
+static lv_obj_t *s_inline_cands_lbl;
+
 /* ── Dirty tracking ──────────────────────────────────────────────────── */
 static uint32_t s_last_counter = (uint32_t)-1;
 
@@ -216,7 +227,97 @@ static void make_divider(lv_obj_t *parent, int y)
 
 /* ── Init ────────────────────────────────────────────────────────────── */
 
+/* Mode A inline strip — 320 × 24 at y=200, sits above the hint bar
+ * (y=224..239) and below the caller view's content (y=16..199 still
+ * visible since view_router opened us as overlay). One row only:
+ *   [pending preedit | top-N candidates concatenated]
+ *
+ * Skips the candidate-cell flex layout (that needs 40 cells × ~440 B
+ * = 17 KB of LVGL memory) — we just stuff a single label with the
+ * top candidates space-joined. Fast to repaint, fits the 24 px
+ * vertical budget exactly.
+ *
+ * The view_router already shrunk-then-foreground'd the panel for us
+ * via overlay-modal entry; here we just resize the panel's geometry
+ * and parent the labels. */
+static void create_inline(lv_obj_t *panel)
+{
+    const lv_font_t *f16 = mie_font_unifont_sm_16();
+
+    /* Override view_router's default 320×224 sizing. Panel becomes a
+     * thin strip aligned to the bottom of the content area. */
+    lv_obj_set_pos(panel, 0, IME_INLINE_PANEL_Y);
+    lv_obj_set_size(panel, SCREEN_W, IME_INLINE_PANEL_H);
+    lv_obj_set_style_bg_color(panel, COL_BG, 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_border_color(panel, COL_DIVIDER, 0);
+    /* Top-edge separator so the chat history above doesn't bleed into
+     * the strip. */
+    lv_obj_set_style_border_side(panel, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_pad_all(panel, 2, 0);
+    lv_obj_set_style_text_color(panel, COL_TEXT, 0);
+
+    /* Pending preedit on the left — orange to match Mode B's Preedit
+     * styling, fixed-width pad so candidates start in a stable column. */
+    s_inline_pending_lbl = lv_label_create(panel);
+    lv_obj_set_pos(s_inline_pending_lbl, 4, 2);
+    lv_obj_set_size(s_inline_pending_lbl, IME_INLINE_PEND_W, 18);
+    if (f16) lv_obj_set_style_text_font(s_inline_pending_lbl, f16, 0);
+    lv_obj_set_style_text_color(s_inline_pending_lbl, COL_SEL_BG, 0);
+    lv_label_set_long_mode(s_inline_pending_lbl, LV_LABEL_LONG_CLIP);
+    lv_label_set_text(s_inline_pending_lbl, "");
+
+    /* Candidates on the right — single line, clipped if overflow.
+     * Selected candidate prefixed with > and orange. */
+    s_inline_cands_lbl = lv_label_create(panel);
+    lv_obj_set_pos(s_inline_cands_lbl, 4 + IME_INLINE_PEND_W + 4, 2);
+    lv_obj_set_size(s_inline_cands_lbl,
+                    SCREEN_W - (4 + IME_INLINE_PEND_W + 4) - 4, 18);
+    if (f16) lv_obj_set_style_text_font(s_inline_cands_lbl, f16, 0);
+    lv_obj_set_style_text_color(s_inline_cands_lbl, COL_TEXT, 0);
+    lv_label_set_long_mode(s_inline_cands_lbl, LV_LABEL_LONG_CLIP);
+    lv_label_set_text(s_inline_cands_lbl, "");
+
+    /* Make sure the SWD debug header magic is set so external tooling
+     * works in inline mode too. */
+    g_dbg->magic = IME_VIEW_DEBUG_MAGIC;
+    g_dbg->seq   = 0;
+    g_ime_cand_full.magic = IME_CAND_FULL_MAGIC;
+    g_ime_cand_full.seq   = 0;
+
+    /* Wipe non-inline widget pointers so refresh() / destroy() know
+     * which path we took. */
+    s_ta = NULL;
+    s_mode_lbl = NULL;
+    s_page_lbl = NULL;
+    s_cand_box = NULL;
+    for (int i = 0; i < CAND_MAX; ++i) {
+        s_cand_cells[i] = NULL;
+        s_cand_lbls[i]  = NULL;
+        s_last_cell_text[i][0] = '\0';
+    }
+    s_last_counter = (uint32_t)-1;
+    s_cell_valid = 0;
+}
+
+static void create_fullscreen(lv_obj_t *panel);
+
 static void create(lv_obj_t *panel)
+{
+    /* Layout flag is set by ime_request_text(); read it once and lock
+     * for this view instance so refresh / destroy take the matching
+     * path even if a follow-up request changes the global later. */
+    s_inline_mode = (ime_request_text_layout() == IME_TEXT_LAYOUT_INLINE);
+    if (s_inline_mode) {
+        create_inline(panel);
+        return;
+    }
+    create_fullscreen(panel);
+}
+
+static void create_fullscreen(lv_obj_t *panel)
 {
     /* Force re-snapshot on first refresh after recreate. */
     s_last_counter = (uint32_t)-1;
@@ -692,9 +793,110 @@ static void render_candidates(void)
     }
 }
 
+/* SWD-readable view-state mirror — the fullscreen render_candidates
+ * does this inline as part of its draw loop; the inline path needs
+ * its own copy so external test scripts (inject_keys.py --status,
+ * stress_p0_2.py debug dumps) keep working in Mode A. Subset of the
+ * fullscreen update — focuses on text + pending + mode + first 8
+ * candidates which is what diagnostic tools actually consult. */
+static void update_swd_dbg_inline(void)
+{
+    g_dbg->magic = IME_VIEW_DEBUG_MAGIC;
+    g_dbg->seq   = g_dbg->seq + 1u;     /* odd = write in progress */
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    g_dbg->refresh_count = g_dbg->refresh_count + 1u;
+    g_dbg->cand_count    = s_cand_count;
+    g_dbg->selected      = s_selected;
+    for (int i = 0; i < 8; ++i) {
+        const char *src = (i < s_cand_count) ? s_cand_buf[i] : "";
+        int j = 0;
+        for (; j < (int)sizeof g_dbg->words[0] - 1 && src[j]; ++j) {
+            g_dbg->words[i][j] = src[j];
+        }
+        g_dbg->words[i][j] = '\0';
+    }
+    static int s_prev_text_len_inline = -1;
+    if (s_text_len != s_prev_text_len_inline) {
+        g_dbg->commit_count = g_dbg->commit_count + 1u;
+        s_prev_text_len_inline = s_text_len;
+    }
+    g_dbg->text_len   = s_text_len;
+    g_dbg->cursor_pos = s_cursor_bytes;
+    {
+        int n = s_text_len;
+        if (n < 0) n = 0;
+        if (n > (int)sizeof g_dbg->text_buf - 1)
+            n = (int)sizeof g_dbg->text_buf - 1;
+        while (n > 0 && ((unsigned char)s_text_buf[n] & 0xC0) == 0x80) --n;
+        for (int j = 0; j < n; ++j) g_dbg->text_buf[j] = s_text_buf[j];
+        g_dbg->text_buf[n] = '\0';
+    }
+    {
+        int plen = (int)strlen(s_pending_buf);
+        if (plen > (int)sizeof g_dbg->pending_buf - 1)
+            plen = (int)sizeof g_dbg->pending_buf - 1;
+        for (int j = 0; j < plen; ++j) g_dbg->pending_buf[j] = s_pending_buf[j];
+        g_dbg->pending_buf[plen] = '\0';
+        g_dbg->pending_len = plen;
+    }
+    g_dbg->mode = (uint8_t)ime_view_mode_byte();
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    g_dbg->seq = g_dbg->seq + 1u;       /* even = stable */
+}
+
+/* Inline-mode render: build "preedit" + "cand0 cand1 cand2 ..." and
+ * paint into the two strip labels. The selected candidate is wrapped
+ * in '>' '<' so it stands out without needing per-cell styling. */
+static void render_inline(void)
+{
+    update_swd_dbg_inline();
+    /* Pending preedit (e.g. "ㄋㄧˇ"). Empty when nothing typed. */
+    lv_label_set_text(s_inline_pending_lbl,
+                      s_pending_buf[0] != '\0' ? s_pending_buf : "");
+
+    /* Candidates concatenated, '>cand<' marks selection. Cap to a
+     * fixed budget so we never overflow the line. */
+    char buf[160];
+    size_t off = 0;
+    int shown = 0;
+    if (s_cand_total > 0 && s_cand_count > 0) {
+        for (int i = 0; i < s_cand_count && off < sizeof(buf) - 8; ++i) {
+            const char *w = s_cand_buf[i];
+            if (w[0] == '\0') continue;
+            const char *prefix = (i == s_selected) ? ">" : " ";
+            const char *suffix = (i == s_selected) ? "<" : " ";
+            int n = snprintf(buf + off, sizeof(buf) - off,
+                             "%s%s%s", prefix, w, suffix);
+            if (n < 0) break;
+            if ((size_t)n >= sizeof(buf) - off) break;
+            off += (size_t)n;
+            shown++;
+        }
+    }
+    if (shown == 0) {
+        if (s_text_len > 0) {
+            /* Show committed text preview when no live candidates so the
+             * user still sees what they've typed. */
+            snprintf(buf, sizeof(buf), "%.*s",
+                     (int)(sizeof(buf) - 1),
+                     s_text_buf);
+        } else {
+            buf[0] = '\0';
+        }
+    }
+    lv_label_set_text(s_inline_cands_lbl, buf);
+}
+
 static void refresh(void)
 {
-    if (s_ta == NULL) return;          /* destroyed; recreate pending */
+    /* Pick the right "is the widget tree still alive" handle for the
+     * active layout. Both create paths null the OTHER layout's handles
+     * so this branch is unambiguous. */
+    if (s_inline_mode) {
+        if (s_inline_cands_lbl == NULL) return;
+    } else {
+        if (s_ta == NULL) return;
+    }
     uint32_t cur = __atomic_load_n(&g_ime_dirty_counter, __ATOMIC_ACQUIRE);
     if (cur == s_last_counter) return;
 
@@ -702,6 +904,12 @@ static void refresh(void)
 
     if (!snapshot()) return;
     s_last_counter = cur;
+
+    if (s_inline_mode) {
+        render_inline();
+        TRACE("lvgl", "render_end", "n_cand=%d inline", s_cand_count);
+        return;
+    }
 
     render_text();
     lv_label_set_text(s_mode_lbl, s_mode_buf);
@@ -723,6 +931,8 @@ static void refresh(void)
 static void destroy(void)
 {
     s_ta = s_mode_lbl = s_page_lbl = s_cand_box = NULL;
+    s_inline_pending_lbl = s_inline_cands_lbl = NULL;
+    s_inline_mode = false;
     for (int i = 0; i < CAND_MAX; ++i) {
         s_cand_cells[i] = NULL;
         s_cand_lbls[i]  = NULL;

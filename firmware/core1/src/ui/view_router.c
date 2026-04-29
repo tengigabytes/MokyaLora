@@ -49,6 +49,10 @@ static view_runtime_t s_rt[VIEW_ID_COUNT];
  * "no view active" sentinel (UINT32_MAX). */
 static uint32_t       s_view_router_active = UINT32_MAX;
 static uint32_t       s_modal_caller = UINT32_MAX;
+/* When true, the active modal is an overlay: caller's panel was NOT
+ * hidden / NOT reparented to the stash. modal_finish must skip the
+ * usual unhide-and-reparent path because there's nothing to undo. */
+static bool           s_modal_is_overlay = false;
 
 static view_router_modal_done_t s_modal_on_done;
 static void                    *s_modal_ctx;
@@ -138,17 +142,23 @@ static void enforce_lru_cap(void)
 
 /* Move target to active. Creates if destroyed; promotes if cached.
  * Demotes the previous active to cache (unless the new target IS the
- * previous active, in which case this is a no-op). */
-static void switch_active(view_id_t target)
+ * previous active, in which case this is a no-op).
+ *
+ * `keep_prev_visible` skips the hide-and-reparent of the previous
+ * active panel. Used by the overlay-modal entry path: caller stays
+ * on screen so the IME inline strip can render above it. */
+static void switch_active_with_flags(view_id_t target, bool keep_prev_visible)
 {
     if (target == s_view_router_active) {
         s_rt[target].lru_seq = ++s_lru_counter;
         return;
     }
 
-    /* Demote old active to cache (if any) */
+    /* Demote old active to cache (if any) — unless we're being told to
+     * keep it visible underneath an overlay modal. */
     view_id_t prev = s_view_router_active;
-    if (prev != UINT32_MAX && s_rt[prev].panel != NULL) {
+    if (!keep_prev_visible &&
+        prev != UINT32_MAX && s_rt[prev].panel != NULL) {
         lv_obj_add_flag(s_rt[prev].panel, LV_OBJ_FLAG_HIDDEN);
         if (s_stash != NULL && lv_obj_get_parent(s_rt[prev].panel) != s_stash) {
             lv_obj_set_parent(s_rt[prev].panel, s_stash);
@@ -167,11 +177,20 @@ static void switch_active(view_id_t target)
         }
         lv_obj_clear_flag(s_rt[target].panel, LV_OBJ_FLAG_HIDDEN);
     }
+    /* Overlay modals must paint ABOVE the kept-visible caller. */
+    if (keep_prev_visible) {
+        lv_obj_move_foreground(s_rt[target].panel);
+    }
     s_rt[target].in_cache = false;
     s_rt[target].lru_seq = ++s_lru_counter;
     s_view_router_active = target;
 
     enforce_lru_cap();
+}
+
+static void switch_active(view_id_t target)
+{
+    switch_active_with_flags(target, /*keep_prev_visible=*/false);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────── */
@@ -227,16 +246,40 @@ static void modal_finish(bool committed)
     view_id_t caller = s_modal_caller;
     view_router_modal_done_t cb = s_modal_on_done;
     void *ctx = s_modal_ctx;
+    bool was_overlay = s_modal_is_overlay;
     s_modal_caller  = UINT32_MAX;
     s_modal_on_done = NULL;
     s_modal_ctx     = NULL;
+    s_modal_is_overlay = false;
     /* Restore the caller FIRST so an LRU-evicted caller view is rebuilt
      * before the callback fires. Then run the callback — which may
      * `view_router_navigate()` to a different target (e.g. launcher_view
      * picking VIEW_ID_MESSAGES). The callback's navigate overwrites the
-     * restored active view, leaving the caller cached in LRU.            */
-    if (caller != UINT32_MAX) switch_active(caller);
+     * restored active view, leaving the caller cached in LRU.
+     *
+     * For overlay modals the caller never went away — its panel was
+     * kept on screen the whole time. We still call switch_active so
+     * the active-view bookkeeping (s_view_router_active, LRU seq) gets
+     * back to the caller, but with keep_prev_visible=true to avoid
+     * hiding the modal panel before its own destroy / del. */
+    if (caller != UINT32_MAX) {
+        switch_active_with_flags(caller, /*keep_prev_visible=*/was_overlay);
+    }
     if (cb) cb(committed, ctx);
+}
+
+/* The IME view's widget tree is sized differently for inline (320×24)
+ * vs fullscreen (320×224). When the cached panel is the wrong shape
+ * for the new request, switch_active just unhides it instead of
+ * calling create() — leaving the geometry stale and the inline-mode
+ * flag wrong. Force a destroy on modal entry so the create path
+ * always runs against the requester's current layout. Cheap (the
+ * pre-alloc cells re-allocate in single-digit ms). */
+static void ensure_fresh_modal_target(view_id_t target)
+{
+    if (target == VIEW_ID_IME && s_rt[target].panel != NULL) {
+        destroy_view(target);
+    }
 }
 
 void view_router_modal_enter(view_id_t target,
@@ -248,7 +291,30 @@ void view_router_modal_enter(view_id_t target,
     s_modal_caller  = s_view_router_active;
     s_modal_on_done = on_done;
     s_modal_ctx     = ctx;
+    s_modal_is_overlay = false;
+    ensure_fresh_modal_target(target);
     switch_active(target);
+}
+
+void view_router_modal_enter_overlay(view_id_t target,
+                                     view_router_modal_done_t on_done,
+                                     void *ctx)
+{
+    if (s_modal_caller != UINT32_MAX) return;          /* reject re-entry */
+    if (target >= VIEW_ID_COUNT) return;
+    s_modal_caller  = s_view_router_active;
+    s_modal_on_done = on_done;
+    s_modal_ctx     = ctx;
+    s_modal_is_overlay = true;
+    ensure_fresh_modal_target(target);
+    switch_active_with_flags(target, /*keep_prev_visible=*/true);
+}
+
+bool view_router_caller_refreshable(view_id_t id)
+{
+    if (!s_modal_is_overlay) return false;
+    if (s_modal_caller == UINT32_MAX) return false;
+    return ((view_id_t)s_modal_caller == id);
 }
 
 bool view_router_in_modal(void)
@@ -361,6 +427,15 @@ void view_router_tick(void)
     if (s_view_router_active != UINT32_MAX) {
         const view_descriptor_t *d = desc_of(s_view_router_active);
         if (d->refresh) d->refresh();
+    }
+
+    /* Overlay-modal extra: caller view is still on screen underneath
+     * the modal panel; tick its refresh so unread / status changes
+     * keep painting (e.g. dm_store ack arriving while compose is open
+     * needs the bubble to repaint behind the IME strip). */
+    if (s_modal_is_overlay && s_modal_caller != UINT32_MAX) {
+        const view_descriptor_t *cd = desc_of(s_modal_caller);
+        if (cd->refresh) cd->refresh();
     }
 
     /* Status bar tick is independent of active view. */

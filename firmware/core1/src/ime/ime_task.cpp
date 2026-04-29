@@ -633,7 +633,15 @@ bool ime_request_text(const ime_text_request_t *req,
     s_text_req.ctx       = ctx;
     s_text_req.active    = true;
 
-    view_router_modal_enter(VIEW_ID_IME, modal_trampoline, nullptr);
+    /* Overlay-modal entry for Mode A inline so the caller view (e.g.
+     * A-2 conversation history) stays visible behind the 24 px IME
+     * strip. Mode B keeps the legacy fullscreen entry that hides and
+     * stashes the caller. */
+    if (req->layout == IME_TEXT_LAYOUT_INLINE) {
+        view_router_modal_enter_overlay(VIEW_ID_IME, modal_trampoline, nullptr);
+    } else {
+        view_router_modal_enter(VIEW_ID_IME, modal_trampoline, nullptr);
+    }
     return true;
 }
 

@@ -195,7 +195,11 @@ static void open_compose(void)
         .max_bytes = (uint16_t)MESSAGES_SEND_TEXT_MAX,
         .mode_hint = IME_TEXT_MODE_DEFAULT,
         .flags     = IME_TEXT_FLAG_NONE,
-        .layout    = IME_TEXT_LAYOUT_FULLSCREEN,   /* Mode B baseline */
+        /* G-3 Mode A: 24 px strip at y=200 overlays the bottom of
+         * this conv panel, chat history above stays visible. The
+         * router enters as overlay so this view's panel is not
+         * hidden / stashed. */
+        .layout    = IME_TEXT_LAYOUT_INLINE,
         .draft_id  = s.peer_node_id,               /* per-peer draft */
     };
     (void)ime_request_text(&req, compose_done, NULL);
