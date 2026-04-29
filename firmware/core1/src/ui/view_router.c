@@ -230,8 +230,13 @@ static void modal_finish(bool committed)
     s_modal_caller  = UINT32_MAX;
     s_modal_on_done = NULL;
     s_modal_ctx     = NULL;
-    if (cb) cb(committed, ctx);
+    /* Restore the caller FIRST so an LRU-evicted caller view is rebuilt
+     * before the callback fires. Then run the callback — which may
+     * `view_router_navigate()` to a different target (e.g. launcher_view
+     * picking VIEW_ID_MESSAGES). The callback's navigate overwrites the
+     * restored active view, leaving the caller cached in LRU.            */
     if (caller != UINT32_MAX) switch_active(caller);
+    if (cb) cb(committed, ctx);
 }
 
 void view_router_modal_enter(view_id_t target,
