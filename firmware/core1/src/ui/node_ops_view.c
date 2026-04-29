@@ -41,11 +41,14 @@ typedef enum {
     OP_REMOTE_ADMIN  = 6,
 } op_id_t;
 
+/* Static portion of each label. FAVORITE / IGNORE rows append a
+ * dynamic "[on]" / "[off]" suffix in render() based on the cached
+ * NodeInfo bits. */
 static const char *const s_op_labels[MAX_ENTRIES] = {
     "DM (open conversation)",
     "Set alias",
-    "Favorite toggle    (TBD)",
-    "Ignore toggle      (TBD)",
+    "Favorite",
+    "Ignore",
     "Traceroute (send)",
     "Request position",
     "Remote admin       (TBD)",
@@ -58,6 +61,8 @@ static bool op_is_active(uint8_t i)
     switch ((op_id_t)i) {
         case OP_DM:
         case OP_ALIAS:
+        case OP_FAVORITE:
+        case OP_IGNORE:
         case OP_TRACEROUTE:
         case OP_REQUEST_POS:
             return true;
@@ -71,6 +76,9 @@ typedef struct {
     lv_obj_t *rows[MAX_ENTRIES];
     uint8_t   cursor;
     uint32_t  active_num;
+    uint32_t  last_change_seq;     /* re-render gate — favorite/ignore
+                                    * labels follow phoneapi_cache state
+                                    * which mutates after self-admin */
 } ops_t;
 
 /* PSRAM-resident (single-core access, low frequency) — saves ~40 B
@@ -94,8 +102,10 @@ static void render(void)
 {
     char hdr[80];
     phoneapi_node_t e;
+    bool have_node = false;
     if (s.active_num != 0u &&
         phoneapi_cache_get_node_by_id(s.active_num, &e)) {
+        have_node = true;
         char nm[24];
         node_alias_format_display(s.active_num, e.short_name,
                                   nm, sizeof(nm));
@@ -113,8 +123,20 @@ static void render(void)
 
     char buf[80];
     for (uint8_t i = 0; i < MAX_ENTRIES; ++i) {
-        snprintf(buf, sizeof(buf), "%s %s",
-                 i == s.cursor ? ">" : " ", s_op_labels[i]);
+        const char *suffix = "";
+        /* FAVORITE / IGNORE show current state so OK shows a "toggle"
+         * intent rather than a permanent action. "(?)" when the cache
+         * has no entry for the active node — happens briefly between
+         * config-replays after a self-admin write. */
+        if (i == OP_FAVORITE) {
+            suffix = have_node ? (e.is_favorite ? "  [on]" : "  [off]")
+                               : "  [?]";
+        } else if (i == OP_IGNORE) {
+            suffix = have_node ? (e.is_unmessagable ? "  [on]" : "  [off]")
+                                : "  [?]";
+        }
+        snprintf(buf, sizeof(buf), "%s %s%s",
+                 i == s.cursor ? ">" : " ", s_op_labels[i], suffix);
         lv_label_set_text(s.rows[i], buf);
         bool placeholder = !op_is_active(i);
         lv_obj_set_style_text_color(s.rows[i],
@@ -217,6 +239,55 @@ static void apply(const key_event_t *ev)
                     (void)ime_request_text(&req, on_alias_done, NULL);
                     break;
                 }
+                case OP_FAVORITE: {
+                    if (s.active_num == 0u) break;
+                    /* Decide direction off the cached bit so a stale
+                     * cache (no entry) defaults to "set" — safer than
+                     * defaulting to clear. */
+                    phoneapi_node_t e;
+                    bool currently_set =
+                        phoneapi_cache_get_node_by_id(s.active_num, &e) &&
+                        e.is_favorite;
+                    uint32_t pid = 0u;
+                    bool ok = phoneapi_encode_admin_set_favorite(s.active_num,
+                                                                  !currently_set,
+                                                                  &pid);
+                    char buf[80];
+                    if (ok) {
+                        snprintf(buf, sizeof(buf),
+                                 "%s favorite (pid=%#lx)",
+                                 currently_set ? "Cleared" : "Set",
+                                 (unsigned long)pid);
+                    } else {
+                        snprintf(buf, sizeof(buf),
+                                 "Favorite push failed (no my_node?)");
+                    }
+                    lv_label_set_text(s.header, buf);
+                    break;
+                }
+                case OP_IGNORE: {
+                    if (s.active_num == 0u) break;
+                    phoneapi_node_t e;
+                    bool currently_set =
+                        phoneapi_cache_get_node_by_id(s.active_num, &e) &&
+                        e.is_unmessagable;
+                    uint32_t pid = 0u;
+                    bool ok = phoneapi_encode_admin_set_ignored(s.active_num,
+                                                                 !currently_set,
+                                                                 &pid);
+                    char buf[80];
+                    if (ok) {
+                        snprintf(buf, sizeof(buf),
+                                 "%s ignore (pid=%#lx)",
+                                 currently_set ? "Cleared" : "Set",
+                                 (unsigned long)pid);
+                    } else {
+                        snprintf(buf, sizeof(buf),
+                                 "Ignore push failed (no my_node?)");
+                    }
+                    lv_label_set_text(s.header, buf);
+                    break;
+                }
                 case OP_TRACEROUTE: {
                     if (s.active_num == 0u) break;
                     uint32_t pid = 0u;
@@ -266,7 +337,17 @@ static void apply(const key_event_t *ev)
     }
 }
 
-static void refresh(void) {}
+static void refresh(void)
+{
+    if (s.header == NULL) return;
+    uint32_t cur = phoneapi_cache_change_seq();
+    if (cur == s.last_change_seq) return;
+    s.last_change_seq = cur;
+    /* render() rebuilds row labels using fresh is_favorite /
+     * is_unmessagable from the cache, plus updates the header alias.
+     * Cheap (snprintf + label_set_text per row). */
+    render();
+}
 
 static const view_descriptor_t NODE_OPS_DESC = {
     .id      = VIEW_ID_NODE_OPS,

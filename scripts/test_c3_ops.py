@@ -138,7 +138,8 @@ def rtt_drain_up(swd, ctx, sink_bytes):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('op', choices=['traceroute', 'position', 'navonly'])
+    ap.add_argument('op', choices=['traceroute', 'position', 'favorite',
+                                   'ignore', 'navonly'])
     ap.add_argument('--peer', default=None,
                     help='hex node_num to verify exists in cache (optional)')
     ap.add_argument('--out', default='/tmp/rtt_a1.log')
@@ -181,8 +182,18 @@ def main():
         if v != V_NODE_OPS:
             raise RuntimeError(f"DETAIL OK did not navigate to NODE_OPS (active={v})")
 
-        # Step 4: DOWN to target row (OP_TRACEROUTE=4, OP_REQUEST_POS=5).
-        if args.op == 'traceroute':
+        # Step 4: DOWN to target row.
+        # OP_DM=0, OP_ALIAS=1, OP_FAVORITE=2, OP_IGNORE=3,
+        # OP_TRACEROUTE=4, OP_REQUEST_POS=5, OP_REMOTE_ADMIN=6
+        if args.op == 'favorite':
+            target_idx = 2
+            # P0-3: tx_app uses label=admin_set_fav or admin_clr_fav
+            # depending on cached toggle direction.
+            label_match = b'_fav'
+        elif args.op == 'ignore':
+            target_idx = 3
+            label_match = b'_ign'
+        elif args.op == 'traceroute':
             target_idx = 4
             label_match = b'label=traceroute'
         elif args.op == 'position':

@@ -64,6 +64,31 @@ bool phoneapi_encode_position_request(uint32_t to_node_id,
                                       uint8_t  channel_index,
                                       uint32_t *out_packet_id);
 
+/* P0-3 OP_FAVORITE / OP_IGNORE: send an AdminMessage (portnum 6,
+ * ADMIN_APP) to OURSELVES (MeshPacket.to = my_node_num from
+ * phoneapi_cache.my_info) carrying a single AdminMessage field that
+ * targets `peer_node_num`. The local AdminModule processes it and
+ * mutates the matching NodeInfo entry (is_favorite / is_unmessagable),
+ * then re-emits NodeInfo through the cascade so phoneapi_cache picks
+ * up the change.
+ *
+ *   set=true  → set_favorite_node    (admin.proto field 39, varint)
+ *   set=false → remove_favorite_node (admin.proto field 40, varint)
+ *
+ * Returns false if my_info isn't cached yet (no my_node_num to address
+ * the self-admin packet to).
+ */
+bool phoneapi_encode_admin_set_favorite(uint32_t peer_node_num,
+                                        bool     set,
+                                        uint32_t *out_packet_id);
+
+/* Same as set_favorite but for the ignore list (set_ignored_node = 47,
+ * remove_ignored_node = 48). NodeInfo.is_unmessagable mirrors the
+ * resulting state. */
+bool phoneapi_encode_admin_set_ignored(uint32_t peer_node_num,
+                                       bool     set,
+                                       uint32_t *out_packet_id);
+
 #ifdef __cplusplus
 }
 #endif

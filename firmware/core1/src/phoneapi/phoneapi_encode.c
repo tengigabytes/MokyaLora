@@ -7,6 +7,7 @@
 
 #include "hardware/timer.h"
 
+#include "phoneapi_cache.h"
 #include "phoneapi_tx.h"
 #include "mokya_trace.h"
 
@@ -331,4 +332,92 @@ bool phoneapi_encode_position_request(uint32_t to_node_id,
                              /*want_response=*/true,
                              out_packet_id,
                              "pos_req");
+}
+
+/* P0-3 helper: build an AdminMessage payload containing one varint
+ * field {field_num, value}. Returns the byte length written into
+ * `dst`, or 0 on overflow. AdminMessage in admin.proto only ever
+ * carries one oneof variant per packet, so a single field is the
+ * whole body. */
+static size_t encode_admin_single_varint(uint8_t *dst, size_t cap,
+                                          uint32_t field_num, uint64_t value)
+{
+    size_t pos = 0;
+    if (!put_tag(dst, cap, &pos, field_num, /*WT_VARINT=*/0u)) return 0u;
+    if (!put_varint(dst, cap, &pos, value)) return 0u;
+    return pos;
+}
+
+/* Common path for self-admin packets that carry one varint field. */
+static bool send_self_admin_varint(uint32_t peer_node_num,
+                                   uint32_t admin_field,
+                                   const char *trace_label,
+                                   uint32_t *out_packet_id)
+{
+    phoneapi_my_info_t mi;
+    if (!phoneapi_cache_get_my_info(&mi) || mi.my_node_num == 0u) {
+        return false;
+    }
+    /* KNOWN BUG (P0-3.1, 2026-04-29): cascade FromRadio.my_info ships
+     * a *peer's* node_num in MyNodeInfo.my_node_num (set_my_info
+     * RTT trace — num=2975709282 on a board where host `--info`
+     * reports 1401875431). Bytes-on-wire genuinely carry the wrong
+     * varint at field 1 — Core 0 Meshtastic-side dual-PhoneAPI-session
+     * interference (the "PhoneAPI internal globals + dual-session
+     * race" cited in CLAUDE.md). AdminMessage payload + local
+     * AdminModule both verified working once MeshPacket.to is the
+     * real node_num, so this single-board hardcode unblocks the C-3
+     * favorite/ignore feature on the dev unit while a proper fix is
+     * scoped (probably IPC_CMD_GET_MY_NODE_NUM on Core 0).            */
+    TRACE("phapi", "self_admin_my_node",
+          "cached=%lu (using hardcode for P0-3.1 bug)",
+          (unsigned long)mi.my_node_num);
+    mi.my_node_num = 1401875431u;  /* TNGBpicoC-ebe7-T (this dev unit) */
+    /* AdminMessage body: one varint field, ≤ 7 bytes for the largest
+     * field number we use (47/48). */
+    uint8_t admin_body[8];
+    size_t  body_len = encode_admin_single_varint(admin_body,
+                                                   sizeof(admin_body),
+                                                   admin_field,
+                                                   peer_node_num);
+    if (body_len == 0u) return false;
+
+    /* Wrap as MeshPacket.decoded.payload, portnum 6 (ADMIN_APP). To
+     * = self, so AdminModule on Core 0 picks it up locally. want_ack
+     * = false (self-admin doesn't generate a routing-app ack), and
+     * want_response = false (AdminMessage variants 39/40/47/48 do
+     * not request a return-trip AdminMessage). */
+    return encode_app_packet(mi.my_node_num,
+                             /*channel_index=*/0u,
+                             /*portnum=*/6u,
+                             admin_body,
+                             (uint16_t)body_len,
+                             /*want_ack=*/false,
+                             /*want_response=*/false,
+                             out_packet_id,
+                             trace_label);
+}
+
+bool phoneapi_encode_admin_set_favorite(uint32_t peer_node_num,
+                                        bool     set,
+                                        uint32_t *out_packet_id)
+{
+    if (peer_node_num == 0u) return false;
+    /* admin.proto: set_favorite_node = 39, remove_favorite_node = 40 */
+    return send_self_admin_varint(peer_node_num,
+                                  set ? 39u : 40u,
+                                  set ? "admin_set_fav" : "admin_clr_fav",
+                                  out_packet_id);
+}
+
+bool phoneapi_encode_admin_set_ignored(uint32_t peer_node_num,
+                                       bool     set,
+                                       uint32_t *out_packet_id)
+{
+    if (peer_node_num == 0u) return false;
+    /* admin.proto: set_ignored_node = 47, remove_ignored_node = 48 */
+    return send_self_admin_varint(peer_node_num,
+                                  set ? 47u : 48u,
+                                  set ? "admin_set_ign" : "admin_clr_ign",
+                                  out_packet_id);
 }

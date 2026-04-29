@@ -103,7 +103,15 @@ static bool wrap_decode_node_info(const uint8_t *b, uint16_t l, void *p)
 { return phoneapi_decode_node_info(b, l, (phoneapi_node_t *)p); }
 
 static void wrap_write_my_info(void *p)
-{ phoneapi_cache_set_my_info((const phoneapi_my_info_t *)p); }
+{
+    const phoneapi_my_info_t *mi = (const phoneapi_my_info_t *)p;
+    TRACE("phapi", "set_my_info",
+          "num=%lu reboots=%u nodedb=%u",
+          (unsigned long)mi->my_node_num,
+          (unsigned)mi->reboot_count,
+          (unsigned)mi->nodedb_count);
+    phoneapi_cache_set_my_info(mi);
+}
 static void wrap_write_metadata(void *p)
 { phoneapi_cache_set_metadata((const phoneapi_metadata_t *)p); }
 static void wrap_write_channel(void *p) {
