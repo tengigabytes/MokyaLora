@@ -104,6 +104,9 @@ static bool wrap_decode_node_info(const uint8_t *b, uint16_t l, void *p)
 
 static void wrap_write_my_info(void *p)
 {
+    /* TRACE captures the as-decoded my_node_num for P0-3.1
+     * (cascade my_info ships peer's node_num bug). Keep until
+     * root cause + fix lands. */
     const phoneapi_my_info_t *mi = (const phoneapi_my_info_t *)p;
     TRACE("phapi", "set_my_info",
           "num=%lu reboots=%u nodedb=%u",

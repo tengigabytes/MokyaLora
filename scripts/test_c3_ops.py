@@ -142,6 +142,10 @@ def main():
                                    'ignore', 'navonly'])
     ap.add_argument('--peer', default=None,
                     help='hex node_num to verify exists in cache (optional)')
+    ap.add_argument('--cursor', type=int, default=0,
+                    help='nodes_view cursor row to OK on (0 = first '
+                         'cache entry, typically self; >=1 picks a peer). '
+                         'Used for P0-3.2 peer-favorite verification.')
     ap.add_argument('--out', default='/tmp/rtt_a1.log')
     args = ap.parse_args()
 
@@ -162,6 +166,15 @@ def main():
         print('[step] FUNC + RIGHT*2 + OK → NODES', flush=True)
         navigate_to_nodes_via_launcher(swd, addrs)
         rtt_drain_up(swd, rtt, sink)
+
+        # Step 1.5: optionally DOWN×N to land on a peer instead of self.
+        if args.cursor > 0:
+            print(f'[step] DOWN x {args.cursor} → cursor row {args.cursor}',
+                  flush=True)
+            for _ in range(args.cursor):
+                queue_events_swd(swd, addrs, press(KEY_DOWN))
+                time.sleep(0.10)
+            rtt_drain_up(swd, rtt, sink)
 
         # Step 2: OK enters NODE_DETAIL (also stashes active_num).
         print('[step] OK → NODE_DETAIL', flush=True)

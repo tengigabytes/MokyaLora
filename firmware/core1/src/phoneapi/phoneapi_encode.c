@@ -383,17 +383,18 @@ static bool send_self_admin_varint(uint32_t peer_node_num,
     if (body_len == 0u) return false;
 
     /* Wrap as MeshPacket.decoded.payload, portnum 6 (ADMIN_APP). To
-     * = self, so AdminModule on Core 0 picks it up locally. want_ack
-     * = false (self-admin doesn't generate a routing-app ack), and
-     * want_response = false (AdminMessage variants 39/40/47/48 do
-     * not request a return-trip AdminMessage). */
+     * = self, so AdminModule on Core 0 picks it up locally. Match
+     * host CLI's --set-favorite-node envelope: want_ack=true,
+     * want_response=true. AdminModule's local-from=0 path doesn't
+     * actually require these but matching CLI form rules out subtle
+     * router-side filtering as a P0-3.2 failure cause. */
     return encode_app_packet(mi.my_node_num,
                              /*channel_index=*/0u,
                              /*portnum=*/6u,
                              admin_body,
                              (uint16_t)body_len,
-                             /*want_ack=*/false,
-                             /*want_response=*/false,
+                             /*want_ack=*/true,
+                             /*want_response=*/true,
                              out_packet_id,
                              trace_label);
 }

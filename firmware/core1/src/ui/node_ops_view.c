@@ -26,6 +26,7 @@
 #include "node_alias.h"
 #include "ime_task.h"
 #include "phoneapi_encode.h"
+#include "mokya_trace.h"
 
 #define ROW_H        24
 #define HEADER_H     16
@@ -245,9 +246,12 @@ static void apply(const key_event_t *ev)
                      * cache (no entry) defaults to "set" — safer than
                      * defaulting to clear. */
                     phoneapi_node_t e;
-                    bool currently_set =
-                        phoneapi_cache_get_node_by_id(s.active_num, &e) &&
-                        e.is_favorite;
+                    bool have = phoneapi_cache_get_node_by_id(s.active_num, &e);
+                    bool currently_set = have && e.is_favorite;
+                    TRACE("nodops", "fav_fire",
+                          "active=%lu have=%u cur=%u",
+                          (unsigned long)s.active_num,
+                          (unsigned)have, (unsigned)currently_set);
                     uint32_t pid = 0u;
                     bool ok = phoneapi_encode_admin_set_favorite(s.active_num,
                                                                   !currently_set,
