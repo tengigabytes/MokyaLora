@@ -32,17 +32,19 @@ bool messages_send_text(uint32_t to_node_id,
                                           text, text_len, &pid);
     if (!ok) return false;
 
-    /* Initial "sending" status — cascade ack handler updates to
-     * delivered/failed when the corresponding FromRadio frame arrives. */
-    messages_tx_status_publish(MESSAGES_TX_RESULT_SENDING, /*error=*/0u, pid);
-
-    /* Phase 3: mirror the outbound message into dm_store so the
-     * conversation view can render the bubble immediately and the ack
-     * status can land on the right entry later. Skip broadcasts —
+    /* Phase 3: mirror the outbound message into dm_store FIRST so the
+     * subsequent tx_status_publish(SENDING) finds an entry to update.
+     * (ingest_outbound already initialises ack_state=SENDING, so the
+     * publish is effectively a no-op for dm_store, but it keeps
+     * messages_tx_status_get observers in sync.) Skip broadcasts —
      * they don't fit the per-peer thread model. */
     if (to_node_id != MESSAGES_SEND_BROADCAST) {
         dm_store_ingest_outbound(to_node_id, pid, text, text_len);
     }
+
+    /* Initial "sending" status — cascade ack handler updates to
+     * delivered/failed when the corresponding FromRadio frame arrives. */
+    messages_tx_status_publish(MESSAGES_TX_RESULT_SENDING, /*error=*/0u, pid);
 
     if (out_packet_id) *out_packet_id = pid;
     return true;

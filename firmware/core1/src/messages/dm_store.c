@@ -18,6 +18,8 @@
 #include "semphr.h"
 #include "task.h"
 
+#include "mokya_trace.h"
+
 /* ── Peer table ──────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -192,6 +194,8 @@ void dm_store_update_ack(uint32_t packet_id, dm_ack_state_t state)
     /* Linear scan — small fixed bound. Update the most recent matching
      * outbound message. */
     bool changed = false;
+    int  matches = 0;
+    uint32_t matched_peer = 0u;
     for (int i = 0; i < (int)DM_STORE_PEER_CAP; ++i) {
         peer_slot_t *p = &s_peers[i];
         if (!p->in_use) continue;
@@ -199,10 +203,16 @@ void dm_store_update_ack(uint32_t packet_id, dm_ack_state_t state)
             if (p->ring[j].outbound && p->ring[j].packet_id == packet_id) {
                 if (p->ring[j].ack_state != (uint8_t)state) changed = true;
                 p->ring[j].ack_state = (uint8_t)state;
+                matches++;
+                matched_peer = p->peer_node_id;
             }
         }
     }
     unlock();
+    TRACE("dm", "update_ack",
+          "pid=%#lx state=%u matches=%u peer=%lu changed=%u",
+          (unsigned long)packet_id, (unsigned)state, (unsigned)matches,
+          (unsigned long)matched_peer, (unsigned)changed);
     if (changed) bump_change_seq();
 }
 
