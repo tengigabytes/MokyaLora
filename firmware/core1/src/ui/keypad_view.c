@@ -280,6 +280,7 @@ static const view_descriptor_t KEYPAD_DESC = {
     .apply   = apply,
     .refresh = NULL,
     .flags   = 0,
+    .hints   = { NULL, NULL, NULL },  /* debug overlay; no nav hints */
 };
 
 const view_descriptor_t *keypad_view_descriptor(void)

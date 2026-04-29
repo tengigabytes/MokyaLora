@@ -340,6 +340,9 @@ static const view_descriptor_t RF_DEBUG_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    /* RF view draws its own status footer at y=224 (panel-relative);
+     * suppress hint_bar to avoid double-drawing the same strip. */
+    .hints   = { NULL, NULL, NULL },
 };
 
 const view_descriptor_t *rf_debug_view_descriptor(void)

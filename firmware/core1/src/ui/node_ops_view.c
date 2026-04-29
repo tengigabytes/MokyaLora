@@ -18,7 +18,6 @@
 
 #include "phoneapi_cache.h"
 #include "global/ui_theme.h"
-#include "global/hint_bar.h"
 #include "key_event.h"
 #include "mie/keycode.h"
 #include "nodes_view.h"
@@ -189,14 +188,12 @@ static void create(lv_obj_t *panel)
     }
 
     render();
-    hint_bar_set("up/dn pick", "OK do", "BACK detail");
 }
 
 static void destroy(void)
 {
     s.header = NULL;
     for (uint8_t i = 0; i < MAX_ENTRIES; ++i) s.rows[i] = NULL;
-    hint_bar_clear();
 }
 
 static void apply(const key_event_t *ev)
@@ -361,6 +358,7 @@ static const view_descriptor_t NODE_OPS_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { "up/dn pick", "OK do", "BACK detail" },
 };
 
 const view_descriptor_t *node_ops_view_descriptor(void)

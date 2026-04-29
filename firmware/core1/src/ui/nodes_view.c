@@ -22,7 +22,6 @@
 
 #include "phoneapi_cache.h"
 #include "global/ui_theme.h"
-#include "global/hint_bar.h"
 #include "key_event.h"
 #include "mie/keycode.h"
 #include "mokya_trace.h"
@@ -164,14 +163,12 @@ static void create(lv_obj_t *panel)
     }
 
     render();
-    hint_bar_set("up/dn pick", "OK detail", "BACK home");
 }
 
 static void destroy(void)
 {
     s.header = NULL;
     for (int i = 0; i < MAX_VISIBLE; ++i) s.rows[i] = NULL;
-    hint_bar_clear();
 }
 
 static void apply(const key_event_t *ev)
@@ -225,6 +222,7 @@ static const view_descriptor_t NODES_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { "up/dn pick", "OK detail", "BACK home" },
 };
 
 const view_descriptor_t *nodes_view_descriptor(void)

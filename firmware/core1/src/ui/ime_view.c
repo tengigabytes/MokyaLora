@@ -953,6 +953,9 @@ static const view_descriptor_t IME_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    /* IME draws its own candidate strip + status; hint_bar would
+     * compete for screen real estate during compose. Suppress. */
+    .hints   = { NULL, NULL, NULL },
 };
 
 const view_descriptor_t *ime_view_descriptor(void)

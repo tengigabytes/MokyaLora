@@ -17,7 +17,6 @@
 #include <string.h>
 
 #include "global/ui_theme.h"
-#include "global/hint_bar.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -163,14 +162,12 @@ static void create(lv_obj_t *panel)
     }
 
     rebuild_rows();
-    hint_bar_set("up/dn pick", "OK chat", "BACK home");
 }
 
 static void destroy(void)
 {
     s.header = NULL;
     for (int i = 0; i < MAX_VISIBLE; ++i) s.rows[i] = NULL;
-    hint_bar_clear();
 }
 
 static void apply(const key_event_t *ev)
@@ -224,6 +221,7 @@ static const view_descriptor_t CHAT_LIST_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { "up/dn pick", "OK chat", "BACK home" },
 };
 
 const view_descriptor_t *chat_list_view_descriptor(void)

@@ -28,7 +28,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-#include "global/hint_bar.h"
 #include "global/ui_theme.h"
 #include "key_event.h"
 #include "mie/keycode.h"
@@ -172,13 +171,11 @@ static void create(lv_obj_t *panel)
     lv_label_set_text(s.body, "");
 
     render();
-    hint_bar_set("", "", "BACK close");
 }
 
 static void destroy(void)
 {
     s.header = s.body = NULL;
-    hint_bar_clear();
 }
 
 static void apply(const key_event_t *ev)
@@ -218,6 +215,7 @@ static const view_descriptor_t MESSAGE_DETAIL_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { NULL, NULL, "BACK close" },
 };
 
 const view_descriptor_t *message_detail_view_descriptor(void)

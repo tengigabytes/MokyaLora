@@ -6,7 +6,6 @@
 #include <string.h>
 
 #include "global/ui_theme.h"
-#include "global/hint_bar.h"
 
 #include "key_event.h"
 #include "mie/keycode.h"
@@ -391,9 +390,6 @@ static void create(lv_obj_t *panel)
                                ui_color(UI_COLOR_TEXT_PRIMARY));
     }
 
-    /* Per spec: Settings App hides the Hint Bar. */
-    hint_bar_clear();
-
     render_browse();
 }
 
@@ -480,6 +476,7 @@ static const view_descriptor_t SETTINGS_APP_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { NULL, NULL, NULL },  /* per spec: Settings hides hint bar */
 };
 
 const view_descriptor_t *settings_app_view_descriptor(void)

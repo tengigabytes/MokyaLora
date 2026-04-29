@@ -2,11 +2,18 @@
  *
  * 16 px tall overlay parented to the active screen at y=224. Shows
  * D-pad / OK / contextual hints for the current view. Hidden on Home,
- * Launcher, and throughout Settings.
+ * Launcher, IME, and throughout Settings (per spec).
  *
- * Each view sets its hints in its `create()` (or on focus change) via
- * `hint_bar_set()`. The router calls `hint_bar_clear()` between view
- * swaps so a stale hint never leaks across views.
+ * Static hints are declared in each view's `view_descriptor_t.hints`
+ * field (left / ok / right strings; NULL or "" suppresses a column;
+ * all-empty suppresses the bar entirely). The router applies them on
+ * every `switch_active`, so hints refresh correctly on cold create AND
+ * warm cache promotion.
+ *
+ * Views may override the static hint at runtime via `hint_bar_set()`
+ * from `apply()` (e.g. submode-specific hints inside a view). The
+ * override is bounded — the router rewrites the static hints on the
+ * next switch.
  *
  * SPDX-License-Identifier: Apache-2.0
  */

@@ -18,7 +18,6 @@
 #include <string.h>
 
 #include "global/ui_theme.h"
-#include "global/hint_bar.h"
 #include "key_event.h"
 #include "mie/keycode.h"
 
@@ -119,13 +118,11 @@ static void create(lv_obj_t *panel)
     }
 
     paint_focus();
-    hint_bar_set("DPad pick", "OK launch", "BACK cancel");
 }
 
 static void destroy(void)
 {
     memset(s.cells, 0, sizeof(s.cells));
-    hint_bar_clear();
 }
 
 static void apply(const key_event_t *ev)
@@ -159,6 +156,7 @@ static const view_descriptor_t LAUNCHER_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { "DPad pick", "OK launch", "BACK cancel" },
 };
 
 const view_descriptor_t *launcher_view_descriptor(void)

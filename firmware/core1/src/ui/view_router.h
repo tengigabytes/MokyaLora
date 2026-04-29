@@ -75,6 +75,22 @@ typedef enum {
  * uses this today; reserved for future IME picker overlay etc. */
 #define VIEW_FLAG_ALWAYS_RESIDENT  (1u << 0)
 
+/* ── Hint bar declarative hints ───────────────────────────────────────── *
+ *
+ * Static hints rendered by global hint_bar at y=224 whenever this view
+ * becomes active. NULL or "" suppresses a column; all-empty suppresses
+ * the bar entirely. Applied by the router on every switch_active so
+ * cached-view promotion (which skips create()) refreshes the hint.
+ *
+ * For dynamic hints (e.g. submode-specific) the view may override via
+ * hint_bar_set() from apply(); the router will rewrite back to the
+ * static hint when the view loses focus.                              */
+typedef struct {
+    const char *left;
+    const char *ok;
+    const char *right;
+} view_hints_t;
+
 /* ── Descriptor ──────────────────────────────────────────────────────── *
  *
  * Each view owns one `static const view_descriptor_t` in its `.c`. The
@@ -96,13 +112,14 @@ typedef enum {
  *                     Hidden views do NOT receive refresh.
  */
 typedef struct {
-    view_id_t   id;
-    const char *name;
-    void      (*create)(lv_obj_t *panel);
-    void      (*destroy)(void);
-    void      (*apply)(const key_event_t *ev);
-    void      (*refresh)(void);
-    uint32_t    flags;
+    view_id_t    id;
+    const char  *name;
+    void       (*create)(lv_obj_t *panel);
+    void       (*destroy)(void);
+    void       (*apply)(const key_event_t *ev);
+    void       (*refresh)(void);
+    uint32_t     flags;
+    view_hints_t hints;
 } view_descriptor_t;
 
 /* Registry table; index is `view_id_t`. Populated by

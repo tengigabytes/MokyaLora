@@ -20,7 +20,6 @@
 
 #include "phoneapi_cache.h"
 #include "global/ui_theme.h"
-#include "global/hint_bar.h"
 #include "key_event.h"
 #include "mie/keycode.h"
 
@@ -131,13 +130,11 @@ static void create(lv_obj_t *panel)
     lv_label_set_text(s.body, "");
 
     render();
-    hint_bar_set("", "(edit in Settings)", "BACK home");
 }
 
 static void destroy(void)
 {
     s.header = s.body = NULL;
-    hint_bar_clear();
 }
 
 static void apply(const key_event_t *ev)
@@ -165,6 +162,7 @@ static const view_descriptor_t MY_NODE_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { NULL, "(edit in Settings)", "BACK home" },
 };
 
 const view_descriptor_t *my_node_view_descriptor(void)

@@ -2,8 +2,8 @@
  *
  * Layout (panel 320 × 224):
  *   y   0..15  header: peer short_name + node_id
- *   y  16..199 message rows (8 visible × 24 px)
- *   y 200..223 footer: "OK compose | BACK list"
+ *   y  16..207 message rows (8 visible × 24 px)
+ *   y 208..223 reserved for global hint_bar overlay (G-2)
  *
  * Bubble rendering is simplified to row-aligned text in this Phase 3
  * baseline: outbound rows are right-aligned and orange; inbound rows
@@ -28,7 +28,6 @@
 #include <string.h>
 
 #include "global/ui_theme.h"
-#include "global/hint_bar.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -49,14 +48,12 @@
 #define ROW_H        24
 #define MAX_VISIBLE   8
 #define HEADER_H     16
-#define FOOTER_H     24
 
 /* ── State ──────────────────────────────────────────────────────────── */
 
 typedef struct {
     lv_obj_t *header;
     lv_obj_t *rows[MAX_VISIBLE];
-    lv_obj_t *footer;
     uint32_t  peer_node_id;
     uint32_t  last_count;       /* used to gate rebuilds */
     uint32_t  last_change_seq;
@@ -229,22 +226,12 @@ static void create(lv_obj_t *panel)
         s.rows[i] = make_row(panel, HEADER_H + i * ROW_H);
     }
 
-    s.footer = lv_label_create(panel);
-    lv_obj_set_pos(s.footer, 4, HEADER_H + MAX_VISIBLE * ROW_H);
-    lv_obj_set_size(s.footer, 320 - 8, FOOTER_H);
-    lv_obj_set_style_text_font(s.footer, ui_font_sm16(), 0);
-    lv_obj_set_style_text_color(s.footer,
-        ui_color(UI_COLOR_TEXT_SECONDARY), 0);
-    lv_obj_set_style_pad_all(s.footer, 0, 0);
-    lv_label_set_text(s.footer, "OK compose  BACK list   (in IME: SET=send / BACK=cancel)");
-
     rebuild_rows();
-    hint_bar_clear();   /* footer carries the hint */
 }
 
 static void destroy(void)
 {
-    s.header = s.footer = NULL;
+    s.header = NULL;
     for (int i = 0; i < MAX_VISIBLE; ++i) s.rows[i] = NULL;
 }
 
@@ -303,6 +290,7 @@ static const view_descriptor_t CONV_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { NULL, "OK compose", "BACK list" },
 };
 
 const view_descriptor_t *conversation_view_descriptor(void)

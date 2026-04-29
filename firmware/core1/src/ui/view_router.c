@@ -186,6 +186,17 @@ static void switch_active_with_flags(view_id_t target, bool keep_prev_visible)
     s_rt[target].lru_seq = ++s_lru_counter;
     s_view_router_active = target;
 
+    /* G-2: refresh global hint_bar from the new view's static hints.
+     * Done unconditionally on every switch (cold create OR warm cache
+     * promotion) so cached-view promotion — which skips create() —
+     * doesn't leak the previous view's hint. Views may override via
+     * hint_bar_set() from apply() for submode-specific hints; the
+     * override is bounded because the next switch rewrites here.    */
+    {
+        const view_descriptor_t *d = desc_of(target);
+        hint_bar_set(d->hints.left, d->hints.ok, d->hints.right);
+    }
+
     enforce_lru_cap();
 }
 

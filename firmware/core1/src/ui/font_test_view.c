@@ -91,6 +91,7 @@ static const view_descriptor_t FONT_TEST_DESC = {
     .apply   = apply,
     .refresh = NULL,
     .flags   = 0,
+    .hints   = { NULL, NULL, NULL },
 };
 
 const view_descriptor_t *font_test_view_descriptor(void)

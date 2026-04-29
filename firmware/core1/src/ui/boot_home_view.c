@@ -22,7 +22,6 @@
 #include <string.h>
 
 #include "global/ui_theme.h"
-#include "global/hint_bar.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -251,9 +250,6 @@ static void create(lv_obj_t *panel)
     refresh_net();
     refresh_msg_rows();
     refresh_evt_row();
-
-    /* L-0 hides the hint bar per spec. */
-    hint_bar_clear();
 }
 
 static void destroy(void)
@@ -293,6 +289,7 @@ static const view_descriptor_t BOOT_HOME_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
+    .hints   = { NULL, NULL, NULL },  /* L-0 hides the hint bar per spec */
 };
 
 const view_descriptor_t *boot_home_view_descriptor(void)
