@@ -204,15 +204,14 @@ static void apply(const key_event_t *ev)
 
 static void refresh(void)
 {
-    /* Cheap poll: peer count + total unread → if either changed, rebuild.
-     * Avoids redrawing every tick when no new traffic. */
-    static uint32_t last_n = 0;
-    static uint32_t last_u = 0;
-    uint32_t n = dm_store_peer_count();
-    uint32_t u = dm_store_total_unread();
-    if (n != last_n || u != last_u) {
-        last_n = n;
-        last_u = u;
+    /* Single source of truth: dm_store_change_seq bumps on every mutation
+     * path (ingest_inbound / ingest_outbound / update_ack / mark_read).
+     * Saves a peer_count + total_unread mutex round-trip every tick when
+     * nothing changed, AND avoids the function-static ghost values that
+     * could persist across LRU evictions. */
+    uint32_t seq = dm_store_change_seq();
+    if (seq != s.last_change_seq) {
+        s.last_change_seq = seq;
         rebuild_rows();
     }
 }

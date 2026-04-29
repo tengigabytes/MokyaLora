@@ -41,6 +41,7 @@
 #include "ime_task.h"
 #include "messages_send.h"
 #include "phoneapi_cache.h"
+#include "mokya_trace.h"
 
 /* ── Layout ─────────────────────────────────────────────────────────── */
 
@@ -168,13 +169,18 @@ static void compose_done(bool committed,
                          void       *ctx)
 {
     (void)ctx;
+    TRACE("conv", "compose_done", "committed=%u len=%u peer=%lu",
+          (unsigned)committed, (unsigned)byte_len,
+          (unsigned long)s.peer_node_id);
     if (!committed || byte_len == 0u || s.peer_node_id == 0u) return;
     /* Send via the cascade encoder; messages_send_text mirrors the
      * outbound bubble into dm_store automatically. */
     uint32_t pid = 0u;
-    (void)messages_send_text(s.peer_node_id, /*channel=*/0u,
-                             /*want_ack=*/true,
-                             (const uint8_t *)utf8, byte_len, &pid);
+    bool ok = messages_send_text(s.peer_node_id, /*channel=*/0u,
+                                 /*want_ack=*/true,
+                                 (const uint8_t *)utf8, byte_len, &pid);
+    TRACE("conv", "send", "ok=%u pid=%#lx",
+          (unsigned)ok, (unsigned long)pid);
     /* Force a redraw on the next refresh. */
     s.last_count = 0;
 }
@@ -253,12 +259,13 @@ static void apply(const key_event_t *ev)
 
 static void refresh(void)
 {
-    /* Detect new messages or ack changes by comparing the peer's count
-     * + a coarse "any change" tick. */
     if (s.peer_node_id == 0u) return;
-    dm_peer_summary_t p;
-    if (!dm_store_get_peer(s.peer_node_id, &p)) return;
-    if (p.count != s.last_count || p.unread != 0) {
+    /* Use dm_store_change_seq as the single rebuild gate (same pattern
+     * as chat_list_view). Catches new inbound, new outbound, ack state
+     * change, and mark_read all in one cheap atomic load. */
+    uint32_t seq = dm_store_change_seq();
+    if (seq != s.last_change_seq) {
+        s.last_change_seq = seq;
         rebuild_rows();
     }
 }

@@ -37,6 +37,12 @@ typedef struct {
 static peer_slot_t       s_peers[DM_STORE_PEER_CAP] __attribute__((section(".psram_bss")));
 static SemaphoreHandle_t s_mutex;
 static uint32_t          s_next_local_seq;
+static volatile uint32_t s_change_seq;
+
+static inline void bump_change_seq(void)
+{
+    __atomic_add_fetch(&s_change_seq, 1u, __ATOMIC_RELEASE);
+}
 
 /* ── Locking helpers ─────────────────────────────────────────────────── */
 
@@ -152,6 +158,7 @@ void dm_store_ingest_inbound(uint32_t  from_node_id,
     push_msg_unlocked(p, &m);
     if (p->unread < 0xFFu) p->unread++;
     unlock();
+    bump_change_seq();
 }
 
 void dm_store_ingest_outbound(uint32_t  to_node_id,
@@ -175,6 +182,7 @@ void dm_store_ingest_outbound(uint32_t  to_node_id,
     memcpy(m.text, text, m.text_len);
     push_msg_unlocked(p, &m);
     unlock();
+    bump_change_seq();
 }
 
 void dm_store_update_ack(uint32_t packet_id, dm_ack_state_t state)
@@ -183,16 +191,19 @@ void dm_store_update_ack(uint32_t packet_id, dm_ack_state_t state)
     if (!lock()) return;
     /* Linear scan — small fixed bound. Update the most recent matching
      * outbound message. */
+    bool changed = false;
     for (int i = 0; i < (int)DM_STORE_PEER_CAP; ++i) {
         peer_slot_t *p = &s_peers[i];
         if (!p->in_use) continue;
         for (int j = 0; j < (int)DM_STORE_MSGS_PER; ++j) {
             if (p->ring[j].outbound && p->ring[j].packet_id == packet_id) {
+                if (p->ring[j].ack_state != (uint8_t)state) changed = true;
                 p->ring[j].ack_state = (uint8_t)state;
             }
         }
     }
     unlock();
+    if (changed) bump_change_seq();
 }
 
 uint32_t dm_store_peer_count(void)
@@ -276,10 +287,15 @@ bool dm_store_get_msg(uint32_t peer_node_id, uint8_t idx, dm_msg_t *out)
 
 void dm_store_mark_read(uint32_t peer_node_id)
 {
+    bool changed = false;
     if (!lock()) return;
     int idx = find_peer_unlocked(peer_node_id);
-    if (idx >= 0) s_peers[idx].unread = 0;
+    if (idx >= 0 && s_peers[idx].unread != 0) {
+        s_peers[idx].unread = 0;
+        changed = true;
+    }
     unlock();
+    if (changed) bump_change_seq();
 }
 
 uint32_t dm_store_total_unread(void)
@@ -291,4 +307,9 @@ uint32_t dm_store_total_unread(void)
     }
     unlock();
     return n;
+}
+
+uint32_t dm_store_change_seq(void)
+{
+    return __atomic_load_n(&s_change_seq, __ATOMIC_ACQUIRE);
 }

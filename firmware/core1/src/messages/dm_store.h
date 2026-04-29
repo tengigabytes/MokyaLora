@@ -98,6 +98,12 @@ void     dm_store_mark_read(uint32_t peer_node_id);
 /* Aggregate unread across all peers. */
 uint32_t dm_store_total_unread(void);
 
+/* Monotonic change counter. Bumps on every ingest_inbound /
+ * ingest_outbound / update_ack / mark_read. Views should remember the
+ * last value seen and rebuild when it changes — covers all mutation
+ * paths in one cheap atomic load. */
+uint32_t dm_store_change_seq(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
