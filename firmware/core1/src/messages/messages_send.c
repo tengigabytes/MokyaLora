@@ -10,6 +10,7 @@
 #include "phoneapi_encode.h"
 #include "messages_tx_status.h"
 #include "dm_store.h"
+#include "global/status_bar.h"
 
 bool messages_send_text(uint32_t to_node_id,
                         uint8_t  channel_index,
@@ -45,6 +46,11 @@ bool messages_send_text(uint32_t to_node_id,
     /* Initial "sending" status — cascade ack handler updates to
      * delivered/failed when the corresponding FromRadio frame arrives. */
     messages_tx_status_publish(MESSAGES_TX_RESULT_SENDING, /*error=*/0u, pid);
+
+    /* G-1 status bar: pulse TX activity indicator (250 ms). Cosmetic;
+     * fires per cascade send so the user sees Mokya talking even when
+     * the bubble's still grey "sending". */
+    status_bar_pulse_tx();
 
     if (out_packet_id) *out_packet_id = pid;
     return true;

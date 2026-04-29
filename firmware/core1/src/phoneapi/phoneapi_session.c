@@ -16,6 +16,7 @@
 #include "phoneapi_tx.h"
 #include "dm_store.h"
 #include "messages_tx_status.h"
+#include "global/status_bar.h"
 #include "mokya_trace.h"
 
 static phoneapi_framing_t s_framing;
@@ -420,6 +421,8 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
             TRACE("phapi", "rx_text",
                   "from=%u,len=%u",
                   (unsigned)m.from_node_id, (unsigned)m.text_len);
+            /* G-1 status bar: pulse RX activity (250 ms). Cosmetic. */
+            status_bar_pulse_rx();
         }
         break;
     }
