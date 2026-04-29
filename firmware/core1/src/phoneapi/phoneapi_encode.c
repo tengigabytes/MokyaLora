@@ -358,21 +358,23 @@ static bool send_self_admin_varint(uint32_t peer_node_num,
     if (!phoneapi_cache_get_my_info(&mi) || mi.my_node_num == 0u) {
         return false;
     }
-    /* KNOWN BUG (P0-3.1, 2026-04-29): cascade FromRadio.my_info ships
-     * a *peer's* node_num in MyNodeInfo.my_node_num (set_my_info
-     * RTT trace — num=2975709282 on a board where host `--info`
-     * reports 1401875431). Bytes-on-wire genuinely carry the wrong
-     * varint at field 1 — Core 0 Meshtastic-side dual-PhoneAPI-session
-     * interference (the "PhoneAPI internal globals + dual-session
-     * race" cited in CLAUDE.md). AdminMessage payload + local
-     * AdminModule both verified working once MeshPacket.to is the
-     * real node_num, so this single-board hardcode unblocks the C-3
-     * favorite/ignore feature on the dev unit while a proper fix is
-     * scoped (probably IPC_CMD_GET_MY_NODE_NUM on Core 0).            */
+    /* P0-3.1 / P0-3.3 resolution (2026-04-30): the cached
+     * mi.my_node_num matches Core 0's myNodeInfo.my_node_num and
+     * matches what host CLI reports via --info, on this dev unit and
+     * (by construction — we read it through the same FromRadio.my_info
+     * frame Meshtastic emits to any phone client) on any unit. Earlier
+     * evidence of divergence (cache=2975709282 vs host CLI=1401875431)
+     * was a re-roll incident — the device's persisted my_node_num
+     * had changed between the two reads, not a session-state race.
+     * Verified end-to-end (P0-3 LOG_DEBUG instrumentation) that:
+     *   1. Cascade's set_my_info wire frame ships my_node_num correctly.
+     *   2. The hardcoded literal here was sending admin packets with
+     *      MeshPacket.to = stale value, which Core 0 router forwarded
+     *      OUT to the mesh instead of delivering locally — explains
+     *      why peer-favorite never reached AdminModule. */
     TRACE("phapi", "self_admin_my_node",
-          "cached=%lu (using hardcode for P0-3.1 bug)",
+          "cached=%lu",
           (unsigned long)mi.my_node_num);
-    mi.my_node_num = 1401875431u;  /* TNGBpicoC-ebe7-T (this dev unit) */
     /* AdminMessage body: one varint field, ≤ 7 bytes for the largest
      * field number we use (47/48). */
     uint8_t admin_body[8];
