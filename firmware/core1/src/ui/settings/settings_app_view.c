@@ -17,6 +17,7 @@
 #include "template_toggle.h"
 #include "template_enum.h"
 #include "template_number.h"
+#include "template_text.h"
 #include "phoneapi_cache.h"
 #include "ipc_protocol.h"
 
@@ -37,6 +38,7 @@ typedef enum {
     SAV_MODE_EDIT_TOGGLE = 1,
     SAV_MODE_EDIT_ENUM   = 2,
     SAV_MODE_EDIT_NUMBER = 3,
+    SAV_MODE_EDIT_TEXT   = 4,    /* IME owns the screen; we poll done */
 } sav_mode_t;
 
 typedef struct {
@@ -197,6 +199,19 @@ static void enter_number_edit(settings_tree_node_t *leaf)
     template_number_open(s.panel, kd, read_i32_current(kd));
 }
 
+static void enter_text_edit(settings_tree_node_t *leaf)
+{
+    const settings_key_def_t *kd = settings_tree_node_key(leaf);
+    if (!kd || kd->kind != SK_KIND_STR) return;
+
+    s.mode      = SAV_MODE_EDIT_TEXT;
+    s.edit_leaf = leaf;
+    /* template_text fires ime_request_text immediately; the IME modal
+     * will hide our panel via the existing modal_enter path. We don't
+     * need to show_browse_widgets(false) — view_router does it. */
+    template_text_open(kd);
+}
+
 static void exit_toggle_edit(void)
 {
     if (template_toggle_committed()) {
@@ -225,6 +240,24 @@ static void exit_enum_edit(void)
         }
     }
     template_enum_close();
+    s.mode      = SAV_MODE_BROWSE;
+    s.edit_leaf = NULL;
+    show_browse_widgets(true);
+    render_browse();
+}
+
+static void exit_text_edit(void)
+{
+    if (template_text_committed()) {
+        const settings_key_def_t *kd = settings_tree_node_key(s.edit_leaf);
+        if (kd) {
+            const char *t = template_text_value();
+            uint16_t    n = template_text_value_len();
+            settings_client_send_set(kd->ipc_key, /*channel*/0u, t, n);
+            settings_client_send_commit(kd->needs_reboot != 0u);
+        }
+    }
+    template_text_close();
     s.mode      = SAV_MODE_BROWSE;
     s.edit_leaf = NULL;
     show_browse_widgets(true);
@@ -300,6 +333,9 @@ static void browse_open_child(void)
                 case SK_KIND_U32_FLAGS:
                     enter_number_edit(child);
                     return;
+                case SK_KIND_STR:
+                    enter_text_edit(child);
+                    return;
                 default: break;
             }
         }
@@ -369,6 +405,7 @@ static void destroy(void)
     if (s.mode == SAV_MODE_EDIT_TOGGLE) template_toggle_close();
     if (s.mode == SAV_MODE_EDIT_ENUM)   template_enum_close();
     if (s.mode == SAV_MODE_EDIT_NUMBER) template_number_close();
+    if (s.mode == SAV_MODE_EDIT_TEXT)   template_text_close();
     s.bc_lbl = NULL;
     for (uint16_t i = 0; i < MAX_VISIBLE; ++i) s.rows[i] = NULL;
     s.panel = NULL;
@@ -425,8 +462,14 @@ static void apply(const key_event_t *ev)
 
 static void refresh(void)
 {
-    /* Idle: nothing to do in either mode. List updates happen on
-     * key events (BROWSE) or template-driven re-render (EDIT). */
+    /* Async exit poll for SAV_MODE_EDIT_TEXT: the IME modal owns the
+     * screen during text edit, so neither apply() nor template_*_done
+     * is reachable during the modal. When view_router restores us as
+     * active after the IME closes, refresh() runs and we pick up the
+     * commit/cancel result here. */
+    if (s.mode == SAV_MODE_EDIT_TEXT && template_text_done()) {
+        exit_text_edit();
+    }
 }
 
 static const view_descriptor_t SETTINGS_APP_DESC = {

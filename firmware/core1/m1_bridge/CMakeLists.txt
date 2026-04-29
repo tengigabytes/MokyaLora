@@ -231,6 +231,7 @@ add_executable(core1_bridge
     ${UI_DIR}/settings/template_toggle.c
     ${UI_DIR}/settings/template_enum.c
     ${UI_DIR}/settings/template_number.c
+    ${UI_DIR}/settings/template_text.c
     ${UI_DIR}/view_router.c
     ${UI_DIR}/view_registry.c
     ${SETTINGS_DIR}/settings_keys.c
