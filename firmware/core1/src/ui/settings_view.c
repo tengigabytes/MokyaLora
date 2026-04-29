@@ -909,7 +909,7 @@ static void enter_edit_for_row(uint8_t row)
             .draft_id  = (uint32_t)(0x80000000u | (uint32_t)defs[row].ipc_key),
         };
         snprintf(s_footer_msg, sizeof(s_footer_msg),
-                 "type %s, FUNC = done", defs[row].label);
+                 "type %s, SET = save (or FUNC)", defs[row].label);
         s_render_seq++;
         if (!ime_request_text(&req, str_edit_done,
                               (void *)(uintptr_t)defs[row].ipc_key)) {

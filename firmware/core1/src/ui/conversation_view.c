@@ -225,7 +225,7 @@ static void create(lv_obj_t *panel)
     lv_obj_set_style_text_color(s.footer,
         ui_color(UI_COLOR_TEXT_SECONDARY), 0);
     lv_obj_set_style_pad_all(s.footer, 0, 0);
-    lv_label_set_text(s.footer, "OK reply  BACK back to list");
+    lv_label_set_text(s.footer, "OK compose  BACK list   (in IME: SET=send / BACK=cancel)");
 
     rebuild_rows();
     hint_bar_clear();   /* footer carries the hint */

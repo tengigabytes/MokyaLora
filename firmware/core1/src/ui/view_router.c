@@ -270,33 +270,23 @@ static void launcher_done_cb(bool committed, void *ctx)
 
 /* Handle FUNC press/release edge: short → open launcher modal (or
  * commit existing modal); long ≥ 2 s → open status bar detail (TODO,
- * stubbed). When inside the IME modal, FUNC is passed through to the
- * IME view (which owns commit/cancel semantics for itself).         */
+ * stubbed). Legacy: settings_view's str_edit + new conversation_view
+ * compose both rely on FUNC short to commit the IME modal — preserved
+ * here. SET press in IME modal is an alternate explicit commit (see
+ * view_router_tick). */
 static void handle_func_event(const key_event_t *ev)
 {
-    bool in_modal     = s_modal_caller != UINT32_MAX;
-    bool in_ime_modal = in_modal && s_view_router_active == VIEW_ID_IME;
+    bool in_modal = s_modal_caller != UINT32_MAX;
 
     if (ev->pressed) {
         s_func_press_ms = now_ms_();
         s_func_long_consumed = false;
-        if (in_ime_modal) {
-            /* Pass through to IME apply() */
-            const view_descriptor_t *d = desc_of(s_view_router_active);
-            if (d->apply) d->apply(ev);
-        }
         return;
     }
 
     /* Release */
     uint32_t held = (s_func_press_ms == 0) ? 0 : (now_ms_() - s_func_press_ms);
     s_func_press_ms = 0;
-
-    if (in_ime_modal) {
-        const view_descriptor_t *d = desc_of(s_view_router_active);
-        if (d->apply) d->apply(ev);
-        return;
-    }
 
     if (s_func_long_consumed) {
         /* Long-press already fired on hold; ignore release. */
@@ -333,6 +323,17 @@ void view_router_tick(void)
         /* OK in launcher = commit + navigate */
         if (s_view_router_active == VIEW_ID_LAUNCHER &&
             ev.keycode == MOKYA_KEY_OK && ev.pressed) {
+            modal_finish(true);
+            continue;
+        }
+        /* SET in IME modal = explicit "send / apply" commit. Spec-clean
+         * alternative to the legacy FUNC-short-as-commit; conversation
+         * compose calls this "send", settings text-edit calls it "save".
+         * Outside the IME modal, SET keeps its normal per-view semantic
+         * (handled by the active view's apply hook). */
+        if (s_modal_caller != UINT32_MAX &&
+            s_view_router_active == VIEW_ID_IME &&
+            ev.keycode == MOKYA_KEY_SET && ev.pressed) {
             modal_finish(true);
             continue;
         }
