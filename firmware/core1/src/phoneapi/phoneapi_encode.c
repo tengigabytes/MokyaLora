@@ -109,22 +109,32 @@ static bool put_ld_with_2byte_len(uint8_t *dst, size_t cap, size_t *pos,
 
 typedef struct {
     uint32_t       portnum;
-    const uint8_t *text;
-    uint16_t       text_len;
+    const uint8_t *payload;
+    uint16_t       payload_len;
+    bool           want_response;     /* Data.want_response (field 3) */
 } data_body_ctx_t;
 
 static size_t write_data_body(uint8_t *dst, size_t cap, void *vctx)
 {
     data_body_ctx_t *ctx = (data_body_ctx_t *)vctx;
     size_t pos = 0;
-    if (!put_tag(dst, cap, &pos, 1u, 0u)) return SIZE_MAX;       // Data.portnum
+    // Data.portnum (field 1, varint)
+    if (!put_tag(dst, cap, &pos, 1u, 0u)) return SIZE_MAX;
     if (!put_varint(dst, cap, &pos, ctx->portnum)) return SIZE_MAX;
-    if (!put_tag(dst, cap, &pos, 2u, 2u)) return SIZE_MAX;       // Data.payload
-    if (!put_varint(dst, cap, &pos, ctx->text_len)) return SIZE_MAX;
-    if (pos + ctx->text_len > cap) return SIZE_MAX;
-    if (ctx->text_len > 0u) {
-        memcpy(dst + pos, ctx->text, ctx->text_len);
-        pos += ctx->text_len;
+    // Data.payload (field 2, LD). Always emit, even if zero-length —
+    // empty bytes is a valid encoding (e.g. traceroute carries an
+    // empty RouteDiscovery on initial send).
+    if (!put_tag(dst, cap, &pos, 2u, 2u)) return SIZE_MAX;
+    if (!put_varint(dst, cap, &pos, ctx->payload_len)) return SIZE_MAX;
+    if (pos + ctx->payload_len > cap) return SIZE_MAX;
+    if (ctx->payload_len > 0u && ctx->payload != NULL) {
+        memcpy(dst + pos, ctx->payload, ctx->payload_len);
+        pos += ctx->payload_len;
+    }
+    // Data.want_response (field 3, varint bool) — emit only when true
+    if (ctx->want_response) {
+        if (!put_tag(dst, cap, &pos, 3u, 0u)) return SIZE_MAX;
+        if (!put_varint(dst, cap, &pos, 1u)) return SIZE_MAX;
     }
     return pos;
 }
@@ -134,8 +144,11 @@ typedef struct {
     uint8_t  channel_index;
     bool     want_ack;
     uint32_t packet_id;
-    const uint8_t *text;
-    uint16_t text_len;
+    /* Sub-message contents */
+    uint32_t       portnum;
+    const uint8_t *payload;
+    uint16_t       payload_len;
+    bool           want_response;
 } mesh_packet_ctx_t;
 
 static size_t write_mesh_packet_body(uint8_t *dst, size_t cap, void *vctx)
@@ -154,9 +167,10 @@ static size_t write_mesh_packet_body(uint8_t *dst, size_t cap, void *vctx)
     if (!put_varint(dst, cap, &pos, ctx->channel_index)) return SIZE_MAX;
     // MeshPacket.decoded = field 4, LD (Data sub-message)
     data_body_ctx_t data_ctx = {
-        .portnum  = 1u,                       // TEXT_MESSAGE_APP
-        .text     = ctx->text,
-        .text_len = ctx->text_len,
+        .portnum       = ctx->portnum,
+        .payload       = ctx->payload,
+        .payload_len   = ctx->payload_len,
+        .want_response = ctx->want_response,
     };
     if (!put_ld_with_2byte_len(dst, cap, &pos, 4u, write_data_body, &data_ctx))
         return SIZE_MAX;
@@ -216,8 +230,10 @@ bool phoneapi_encode_text_packet(uint32_t to_node_id,
         .channel_index = channel_index,
         .want_ack      = want_ack,
         .packet_id     = packet_id,
-        .text          = text,
-        .text_len      = text_len,
+        .portnum       = 1u,                 // TEXT_MESSAGE_APP
+        .payload       = text,
+        .payload_len   = text_len,
+        .want_response = false,              // text packets don't request app-level reply
     };
     // ToRadio.packet = field 1, LD (MeshPacket)
     if (!put_ld_with_2byte_len(buf, sizeof(buf), &pos, 1u,
@@ -235,4 +251,84 @@ bool phoneapi_encode_text_packet(uint32_t to_node_id,
         *out_packet_id = packet_id;
     }
     return true;
+}
+
+/* Helper that hides the buf + ToRadio scaffolding so additional
+ * portnum-specific encoders stay short. Returns the resulting
+ * packet_id via out param; pushes the framed bytes onto the c1→c0
+ * SERIAL_BYTES ring under the cascade tx mutex. */
+static bool encode_app_packet(uint32_t to_node_id,
+                              uint8_t  channel_index,
+                              uint32_t portnum,
+                              const uint8_t *payload,
+                              uint16_t payload_len,
+                              bool     want_ack,
+                              bool     want_response,
+                              uint32_t *out_packet_id,
+                              const char *trace_label)
+{
+    if (payload_len > 256u) payload_len = 256u;
+    uint32_t packet_id = next_packet_id();
+    uint8_t  buf[384];
+    size_t   pos = 0;
+    mesh_packet_ctx_t mp = {
+        .to_node_id    = to_node_id,
+        .channel_index = channel_index,
+        .want_ack      = want_ack,
+        .packet_id     = packet_id,
+        .portnum       = portnum,
+        .payload       = payload,
+        .payload_len   = payload_len,
+        .want_response = want_response,
+    };
+    if (!put_ld_with_2byte_len(buf, sizeof(buf), &pos, 1u,
+                               write_mesh_packet_body, &mp)) {
+        return false;
+    }
+    bool pushed = frame_and_push(buf, pos);
+    TRACE("phapi", "tx_app",
+          "label=%s to=%lu pn=%lu ack=%u wr=%u pid=%#lx body=%u pushed=%u",
+          trace_label ? trace_label : "?",
+          (unsigned long)to_node_id, (unsigned long)portnum,
+          (unsigned)want_ack, (unsigned)want_response,
+          (unsigned long)packet_id, (unsigned)pos, (unsigned)pushed);
+    if (!pushed) return false;
+    if (out_packet_id) *out_packet_id = packet_id;
+    return true;
+}
+
+/* Traceroute (TRACEROUTE_APP = portnum 70).  Initial packet carries
+ * an empty RouteDiscovery body; the destination fills it on reply.
+ * want_response=true so the destination's TraceRouteModule sends a
+ * response back. want_ack=false because the response itself stands
+ * in for the ack. */
+bool phoneapi_encode_traceroute(uint32_t to_node_id,
+                                uint8_t  channel_index,
+                                uint32_t *out_packet_id)
+{
+    return encode_app_packet(to_node_id, channel_index,
+                             /*portnum=*/70u,
+                             /*payload=*/NULL,
+                             /*payload_len=*/0u,
+                             /*want_ack=*/false,
+                             /*want_response=*/true,
+                             out_packet_id,
+                             "traceroute");
+}
+
+/* Position request (POSITION_APP = portnum 3).  Empty Data.payload
+ * with want_response=true triggers PositionModule on the peer to
+ * reply with its current Position. */
+bool phoneapi_encode_position_request(uint32_t to_node_id,
+                                      uint8_t  channel_index,
+                                      uint32_t *out_packet_id)
+{
+    return encode_app_packet(to_node_id, channel_index,
+                             /*portnum=*/3u,
+                             /*payload=*/NULL,
+                             /*payload_len=*/0u,
+                             /*want_ack=*/false,
+                             /*want_response=*/true,
+                             out_packet_id,
+                             "pos_req");
 }

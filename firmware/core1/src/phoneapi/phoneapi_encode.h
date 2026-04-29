@@ -46,6 +46,24 @@ bool phoneapi_encode_text_packet(uint32_t to_node_id,
                                   uint16_t text_len,
                                   uint32_t *out_packet_id);
 
+/* C-3 OP_TRACEROUTE: send an empty TRACEROUTE_APP (portnum 70)
+ * packet with want_response=true to `to_node_id`. The destination's
+ * TraceRouteModule replies with a populated RouteDiscovery payload
+ * carrying hop list + SNRs. Initial outgoing payload is empty —
+ * Meshtastic Router fills route hops as the packet propagates.
+ * out_packet_id receives the self-assigned MeshPacket.id so the
+ * caller can match the eventual reply via cascade rx_packet. */
+bool phoneapi_encode_traceroute(uint32_t to_node_id,
+                                uint8_t  channel_index,
+                                uint32_t *out_packet_id);
+
+/* C-3 OP_REQUEST_POS: send an empty POSITION_APP (portnum 3) packet
+ * with want_response=true to `to_node_id`. The destination's
+ * PositionModule replies with its current Position payload. */
+bool phoneapi_encode_position_request(uint32_t to_node_id,
+                                      uint8_t  channel_index,
+                                      uint32_t *out_packet_id);
+
 #ifdef __cplusplus
 }
 #endif

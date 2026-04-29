@@ -25,6 +25,7 @@
 #include "chat_list_view.h"
 #include "node_alias.h"
 #include "ime_task.h"
+#include "phoneapi_encode.h"
 
 #define ROW_H        24
 #define HEADER_H     16
@@ -45,8 +46,8 @@ static const char *const s_op_labels[MAX_ENTRIES] = {
     "Set alias",
     "Favorite toggle    (TBD)",
     "Ignore toggle      (TBD)",
-    "Traceroute         (TBD)",
-    "Request position   (TBD)",
+    "Traceroute (send)",
+    "Request position",
     "Remote admin       (TBD)",
 };
 
@@ -57,6 +58,8 @@ static bool op_is_active(uint8_t i)
     switch ((op_id_t)i) {
         case OP_DM:
         case OP_ALIAS:
+        case OP_TRACEROUTE:
+        case OP_REQUEST_POS:
             return true;
         default:
             return false;
@@ -212,6 +215,41 @@ static void apply(const key_event_t *ev)
                         .draft_id  = s.active_num | 0x80000000u,
                     };
                     (void)ime_request_text(&req, on_alias_done, NULL);
+                    break;
+                }
+                case OP_TRACEROUTE: {
+                    if (s.active_num == 0u) break;
+                    uint32_t pid = 0u;
+                    bool ok = phoneapi_encode_traceroute(s.active_num, 0u, &pid);
+                    /* Surface immediate feedback in the header — the
+                     * actual route reply lands later via cascade
+                     * rx_packet (RouteDiscovery) and shows up in the
+                     * RTT trace; v1 doesn't render the route in-UI. */
+                    if (ok) {
+                        char buf[80];
+                        snprintf(buf, sizeof(buf),
+                                 "Traceroute sent (pid=%#lx) — see RTT for reply",
+                                 (unsigned long)pid);
+                        lv_label_set_text(s.header, buf);
+                    } else {
+                        lv_label_set_text(s.header, "Traceroute push failed");
+                    }
+                    break;
+                }
+                case OP_REQUEST_POS: {
+                    if (s.active_num == 0u) break;
+                    uint32_t pid = 0u;
+                    bool ok = phoneapi_encode_position_request(s.active_num,
+                                                               0u, &pid);
+                    if (ok) {
+                        char buf[80];
+                        snprintf(buf, sizeof(buf),
+                                 "Position request sent (pid=%#lx)",
+                                 (unsigned long)pid);
+                        lv_label_set_text(s.header, buf);
+                    } else {
+                        lv_label_set_text(s.header, "Position request failed");
+                    }
                     break;
                 }
                 default:
