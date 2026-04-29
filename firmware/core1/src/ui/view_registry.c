@@ -25,7 +25,7 @@
 #include "keypad_view.h"
 #include "ime_view.h"
 #include "nodes_view.h"
-#include "settings_view.h"
+#include "settings/settings_app_view.h"
 #if MOKYA_DEBUG_VIEWS
 #include "rf_debug_view.h"
 #include "font_test_view.h"
@@ -40,7 +40,7 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_MESSAGES]       = chat_list_view_descriptor();
     g_view_registry[VIEW_ID_MESSAGES_CHAT]  = conversation_view_descriptor();
     g_view_registry[VIEW_ID_NODES]          = nodes_view_descriptor();
-    g_view_registry[VIEW_ID_SETTINGS]       = settings_view_descriptor();
+    g_view_registry[VIEW_ID_SETTINGS]       = settings_app_view_descriptor();
     g_view_registry[VIEW_ID_TOOLS]          = tools_view_descriptor();
     g_view_registry[VIEW_ID_IME]            = ime_view_descriptor();
     g_view_registry[VIEW_ID_KEYPAD]         = keypad_view_descriptor();

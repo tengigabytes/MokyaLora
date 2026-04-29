@@ -226,7 +226,9 @@ add_executable(core1_bridge
     ${UI_DIR}/font_test_view.c
     ${UI_DIR}/ime_view.c
     ${UI_DIR}/nodes_view.c
-    ${UI_DIR}/settings_view.c
+    ${UI_DIR}/settings/settings_tree.c
+    ${UI_DIR}/settings/settings_app_view.c
+    ${UI_DIR}/settings/template_toggle.c
     ${UI_DIR}/view_router.c
     ${UI_DIR}/view_registry.c
     ${SETTINGS_DIR}/settings_keys.c
