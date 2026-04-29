@@ -15,6 +15,7 @@
 #include "settings_keys.h"
 #include "settings_client.h"
 #include "template_toggle.h"
+#include "template_enum.h"
 #include "phoneapi_cache.h"
 #include "ipc_protocol.h"
 
@@ -33,6 +34,7 @@
 typedef enum {
     SAV_MODE_BROWSE      = 0,
     SAV_MODE_EDIT_TOGGLE = 1,
+    SAV_MODE_EDIT_ENUM   = 2,
 } sav_mode_t;
 
 typedef struct {
@@ -126,17 +128,24 @@ static void render_browse(void)
 
 /* ── BROWSE → EDIT_TOGGLE transition ────────────────────────────────── */
 
-/* Best-effort current-value lookup for a BOOL key. Reads phoneapi
- * cache where possible; falls back to false if unknown. */
-static bool read_bool_current(const settings_key_def_t *kd)
+/* Best-effort current-value lookup for a leaf key. Reads phoneapi
+ * cache where possible; falls back to 0 if unknown. */
+static uint8_t read_u8_current(const settings_key_def_t *kd)
 {
     /* phoneapi_cache exposes a small set of mirrored config sub-fields
-     * via per-section accessors. For the long-tail of BOOL keys we
-     * don't have a uniform accessor here — return false until each
-     * sub-section getter is wired. (This is a render-time hint only;
-     * the IPC SET on apply is correct regardless.) */
+     * via per-section accessors. For the long-tail of keys we don't
+     * have a uniform accessor here — return 0 until each sub-section
+     * getter is wired. (This is a render-time hint only; the IPC SET
+     * on apply is correct regardless.) */
     (void)kd;
-    return false;
+    return 0u;
+}
+
+static void update_breadcrumb_to_leaf(settings_tree_node_t *leaf)
+{
+    char bc_buf[80];
+    settings_tree_format_breadcrumb(leaf, bc_buf, sizeof(bc_buf));
+    lv_label_set_text(s.bc_lbl, bc_buf);
 }
 
 static void enter_toggle_edit(settings_tree_node_t *leaf)
@@ -146,14 +155,21 @@ static void enter_toggle_edit(settings_tree_node_t *leaf)
 
     s.mode      = SAV_MODE_EDIT_TOGGLE;
     s.edit_leaf = leaf;
-
-    /* Update breadcrumb to include the leaf so the user sees the path. */
-    char bc_buf[80];
-    settings_tree_format_breadcrumb(leaf, bc_buf, sizeof(bc_buf));
-    lv_label_set_text(s.bc_lbl, bc_buf);
-
+    update_breadcrumb_to_leaf(leaf);
     show_browse_widgets(false);
-    template_toggle_open(s.panel, kd, read_bool_current(kd));
+    template_toggle_open(s.panel, kd, read_u8_current(kd) != 0u);
+}
+
+static void enter_enum_edit(settings_tree_node_t *leaf)
+{
+    const settings_key_def_t *kd = settings_tree_node_key(leaf);
+    if (!kd || kd->kind != SK_KIND_ENUM_U8) return;
+
+    s.mode      = SAV_MODE_EDIT_ENUM;
+    s.edit_leaf = leaf;
+    update_breadcrumb_to_leaf(leaf);
+    show_browse_widgets(false);
+    template_enum_open(s.panel, kd, read_u8_current(kd));
 }
 
 static void exit_toggle_edit(void)
@@ -173,6 +189,23 @@ static void exit_toggle_edit(void)
     render_browse();
 }
 
+static void exit_enum_edit(void)
+{
+    if (template_enum_committed()) {
+        const settings_key_def_t *kd = settings_tree_node_key(s.edit_leaf);
+        if (kd) {
+            uint8_t v = template_enum_value();
+            settings_client_send_set(kd->ipc_key, /*channel*/0u, &v, 1u);
+            settings_client_send_commit(kd->needs_reboot != 0u);
+        }
+    }
+    template_enum_close();
+    s.mode      = SAV_MODE_BROWSE;
+    s.edit_leaf = NULL;
+    show_browse_widgets(true);
+    render_browse();
+}
+
 /* ── BROWSE OK handler ──────────────────────────────────────────────── */
 
 static void browse_open_child(void)
@@ -185,9 +218,16 @@ static void browse_open_child(void)
 
     if (settings_tree_node_kind(child) == ST_NODE_LEAF) {
         const settings_key_def_t *kd = settings_tree_node_key(child);
-        if (kd && kd->kind == SK_KIND_BOOL) {
-            enter_toggle_edit(child);
-            return;
+        if (kd) {
+            switch (kd->kind) {
+                case SK_KIND_BOOL:
+                    enter_toggle_edit(child);
+                    return;
+                case SK_KIND_ENUM_U8:
+                    enter_enum_edit(child);
+                    return;
+                default: break;
+            }
         }
         /* Other kinds — not yet implemented in Phase 4. Flash the
          * breadcrumb so OK still feels responsive. */
@@ -249,12 +289,11 @@ static void create(lv_obj_t *panel)
 
 static void destroy(void)
 {
-    /* If we left the view mid-edit, drop the toggle template's widgets
+    /* If we left the view mid-edit, drop the active template's widgets
      * without committing — they live as siblings of our rows under
      * `s.panel`, which the router is about to lv_obj_del. */
-    if (s.mode == SAV_MODE_EDIT_TOGGLE) {
-        template_toggle_close();
-    }
+    if (s.mode == SAV_MODE_EDIT_TOGGLE) template_toggle_close();
+    if (s.mode == SAV_MODE_EDIT_ENUM)   template_enum_close();
     s.bc_lbl = NULL;
     for (uint16_t i = 0; i < MAX_VISIBLE; ++i) s.rows[i] = NULL;
     s.panel = NULL;
@@ -270,6 +309,13 @@ static void apply(const key_event_t *ev)
         (void)template_toggle_apply_key(ev);
         if (template_toggle_done()) {
             exit_toggle_edit();
+        }
+        return;
+    }
+    if (s.mode == SAV_MODE_EDIT_ENUM) {
+        (void)template_enum_apply_key(ev);
+        if (template_enum_done()) {
+            exit_enum_edit();
         }
         return;
     }
