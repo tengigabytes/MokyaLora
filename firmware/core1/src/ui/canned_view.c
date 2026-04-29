@@ -174,6 +174,17 @@ static void refresh(void) {}
 void canned_view_set_target_peer(uint32_t peer_node_id)
 {
     s.target_peer = peer_node_id;
+    /* Reset cursor: conversation_view calls this every time before
+     * re-opening the picker, but the LRU cache may skip create() on a
+     * warm promote, leaving cursor at the last-picked row. Pinning it
+     * to 0 here means the picker always opens at the first preset.
+     * Re-render only if the widget tree is alive (warm-cached) — on a
+     * cold open `s.header == NULL` and create() will render once it
+     * builds the tree. */
+    s.cursor = 0u;
+    if (s.header != NULL) {
+        render();
+    }
 }
 
 static const view_descriptor_t CANNED_DESC = {
