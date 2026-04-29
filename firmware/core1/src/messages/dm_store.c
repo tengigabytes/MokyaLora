@@ -22,24 +22,27 @@
 
 /* ── Peer table ──────────────────────────────────────────────────────── */
 
-/* On-air struct sizes (verified via `arm-none-eabi-nm --print-size`):
+/* On-air struct sizes (post-A3 — verified via `arm-none-eabi-nm --print-size`):
  *
- *   sizeof(dm_msg_t)    = 216 B
+ *   sizeof(dm_msg_t)    = 232 B
  *     u32 seq + u32 epoch + u32 packet_id    = 12
  *     bool outbound + u8 ack_state +
  *       u16 text_len                          = 4   (no padding — already aligned)
  *     char text[200]                          = 200
+ *     u32 ack_epoch                           = 4
+ *     i16 rx_snr_x4 + i16 rx_rssi             = 4
+ *     u8 hop_limit + u8 hop_start +
+ *       u8 want_ack + u8 _pad                 = 4
  *
- *   sizeof(peer_slot_t) = 1744 B
+ *   sizeof(peer_slot_t) = 1872 B (8 × 232 + 16 metadata)
  *     bool in_use + 3 B pad                   = 4
  *     u32 peer_node_id + u32 last_activity_ms = 8
  *     u8 unread + u8 count + u8 head + 1 pad  = 4
- *     dm_msg_t ring[8] = 8 × 216              = 1728
+ *     dm_msg_t ring[8] = 8 × 232              = 1856
  *
- *   sizeof(s_peers)     = 8 × 1744 = 13 952 B (= 0x3680)
+ *   sizeof(s_peers)     = 8 × 1872 = 14 976 B (~ +1 KB vs pre-A3)
  *
- * SWD readers walking ring[] should advance by 216 B per slot (NOT
- * sizeof an aligned-to-multiple-of-8 stride). */
+ * SWD readers walking ring[] should advance by 232 B per slot. */
 typedef struct {
     bool     in_use;
     uint32_t peer_node_id;
@@ -160,7 +163,8 @@ void dm_store_init(void)
 void dm_store_ingest_inbound(uint32_t  from_node_id,
                              uint32_t  seq,
                              const uint8_t *text,
-                             uint16_t  text_len)
+                             uint16_t  text_len,
+                             const dm_msg_meta_t *meta)
 {
     if (from_node_id == 0u || text == NULL || text_len == 0u) return;
     if (!lock()) return;
@@ -175,6 +179,17 @@ void dm_store_ingest_inbound(uint32_t  from_node_id,
     m.text_len  = text_len > DM_STORE_TEXT_MAX
                   ? (uint16_t)DM_STORE_TEXT_MAX : text_len;
     memcpy(m.text, text, m.text_len);
+    if (meta != NULL) {
+        m.rx_snr_x4 = meta->rx_snr_x4;
+        m.rx_rssi   = meta->rx_rssi;
+        m.hop_limit = meta->hop_limit;
+        m.hop_start = meta->hop_start;
+    } else {
+        m.rx_snr_x4 = INT16_MIN;
+        m.rx_rssi   = 0;
+        m.hop_limit = 0xFFu;
+        m.hop_start = 0xFFu;
+    }
     push_msg_unlocked(p, &m);
     if (p->unread < 0xFFu) p->unread++;
     unlock();
@@ -183,6 +198,7 @@ void dm_store_ingest_inbound(uint32_t  from_node_id,
 
 void dm_store_ingest_outbound(uint32_t  to_node_id,
                               uint32_t  packet_id,
+                              bool      want_ack,
                               const uint8_t *text,
                               uint16_t  text_len)
 {
@@ -197,6 +213,10 @@ void dm_store_ingest_outbound(uint32_t  to_node_id,
     m.packet_id = packet_id;
     m.outbound  = true;
     m.ack_state = DM_ACK_SENDING;
+    m.want_ack  = want_ack ? 1u : 0u;
+    m.rx_snr_x4 = INT16_MIN;   /* not applicable to outbound */
+    m.hop_limit = 0xFFu;
+    m.hop_start = 0xFFu;
     m.text_len  = text_len > DM_STORE_TEXT_MAX
                   ? (uint16_t)DM_STORE_TEXT_MAX : text_len;
     memcpy(m.text, text, m.text_len);
@@ -214,6 +234,7 @@ void dm_store_update_ack(uint32_t packet_id, dm_ack_state_t state)
     bool changed = false;
     int  matches = 0;
     uint32_t matched_peer = 0u;
+    uint32_t now = now_ms();
     for (int i = 0; i < (int)DM_STORE_PEER_CAP; ++i) {
         peer_slot_t *p = &s_peers[i];
         if (!p->in_use) continue;
@@ -221,6 +242,13 @@ void dm_store_update_ack(uint32_t packet_id, dm_ack_state_t state)
             if (p->ring[j].outbound && p->ring[j].packet_id == packet_id) {
                 if (p->ring[j].ack_state != (uint8_t)state) changed = true;
                 p->ring[j].ack_state = (uint8_t)state;
+                /* Stamp ack_epoch only on the first transition into a
+                 * terminal state so we keep the original arrival time
+                 * even if a duplicate ack lands later. */
+                if (p->ring[j].ack_epoch == 0u &&
+                    (state == DM_ACK_DELIVERED || state == DM_ACK_FAILED)) {
+                    p->ring[j].ack_epoch = now;
+                }
                 matches++;
                 matched_peer = p->peer_node_id;
             }

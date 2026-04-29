@@ -22,6 +22,7 @@
 #ifndef MOKYA_CORE1_DM_STORE_H
 #define MOKYA_CORE1_DM_STORE_H
 
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -51,7 +52,28 @@ typedef struct {
     uint8_t  ack_state;       ///< dm_ack_state_t
     uint16_t text_len;
     char     text[DM_STORE_TEXT_MAX];
+    /* A3 — radio metadata. Appended at the end so existing on-air
+     * struct offsets don't shift (SWD readers ignore the trailing
+     * bytes). Inbound only for snr/rssi/hop_*; outbound only for
+     * want_ack + ack_epoch. */
+    uint32_t ack_epoch;       ///< now_ms() when the ack landed (outbound, 0 if pending)
+    int16_t  rx_snr_x4;       ///< inbound; INT16_MIN = unknown (dB × 4)
+    int16_t  rx_rssi;         ///< inbound; 0 = unknown (dBm signed)
+    uint8_t  hop_limit;       ///< inbound; 0xFF = unknown (hops still allowed at receive)
+    uint8_t  hop_start;       ///< inbound; 0xFF = unknown (hops the sender set)
+    uint8_t  want_ack;        ///< outbound; 0/1
+    uint8_t  _pad;            ///< natural alignment to 4 B
 } dm_msg_t;
+
+/* Radio metadata pulled off MeshPacket envelope at decode time. */
+typedef struct {
+    int16_t  rx_snr_x4;       ///< INT16_MIN = unknown
+    int16_t  rx_rssi;         ///< 0 = unknown
+    uint8_t  hop_limit;       ///< 0xFF = unknown
+    uint8_t  hop_start;       ///< 0xFF = unknown
+} dm_msg_meta_t;
+
+#define DM_MSG_META_UNKNOWN { INT16_MIN, 0, 0xFFu, 0xFFu }
 
 typedef struct {
     uint32_t peer_node_id;
@@ -65,16 +87,19 @@ typedef struct {
  * the first writer call after scheduler start). */
 void dm_store_init(void);
 
-/* Inbound = the cascade saw a TEXT_MESSAGE_APP from `from_node_id`. */
+/* Inbound = the cascade saw a TEXT_MESSAGE_APP from `from_node_id`.
+ * `meta` is optional (NULL = all-unknown). */
 void dm_store_ingest_inbound(uint32_t  from_node_id,
                              uint32_t  seq,
                              const uint8_t *text,
-                             uint16_t  text_len);
+                             uint16_t  text_len,
+                             const dm_msg_meta_t *meta);
 
 /* Outbound = we just pushed a SEND to the peer. `packet_id` is the local
  * MeshPacket.id assigned by messages_send_text. State starts as SENDING. */
 void dm_store_ingest_outbound(uint32_t  to_node_id,
                               uint32_t  packet_id,
+                              bool      want_ack,
                               const uint8_t *text,
                               uint16_t  text_len);
 

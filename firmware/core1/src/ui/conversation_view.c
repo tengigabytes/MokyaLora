@@ -40,6 +40,7 @@
 #include "dm_store.h"
 #include "ime_task.h"
 #include "messages_send.h"
+#include "message_detail_view.h"
 #include "phoneapi_cache.h"
 #include "mokya_trace.h"
 
@@ -259,6 +260,26 @@ static void apply(const key_event_t *ev)
             break;
         default: break;
     }
+}
+
+void conversation_view_open_msg_detail(void)
+{
+    /* Don't fight an open compose IME — the FUNC long-press handler
+     * in view_router already gates on VIEW_ID_IME, but be defensive in
+     * case the IME flow opens directly without going through the
+     * router stash (e.g. settings text-edit was the last modal). */
+    if (s.peer_node_id == 0u) return;
+    if (ime_request_text_active()) return;
+    /* Resolve "most recent" = last message in the ring (highest idx). */
+    dm_peer_summary_t pp;
+    if (!dm_store_get_peer(s.peer_node_id, &pp)) return;
+    if (pp.count == 0u) return;
+    uint8_t newest_offset = (uint8_t)(pp.count - 1u);
+    message_detail_view_set_target(s.peer_node_id, newest_offset);
+    /* Use the overlay variant so we don't tear down conv_view's panel
+     * — when the user BACKs out, dm_store ack updates that landed in
+     * the meantime are immediately visible (no rebuild flash). */
+    view_router_modal_enter_overlay(VIEW_ID_MESSAGE_DETAIL, NULL, NULL);
 }
 
 static void refresh(void)

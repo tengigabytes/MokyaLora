@@ -17,6 +17,11 @@ extern "C" {
 
 const view_descriptor_t *conversation_view_descriptor(void);
 
+/* A3: invoked by view_router when FUNC long-press fires while
+ * VIEW_ID_MESSAGES_CHAT is active and IME is not in compose. Opens
+ * the A-3 message detail modal targeting the most-recent message. */
+void conversation_view_open_msg_detail(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

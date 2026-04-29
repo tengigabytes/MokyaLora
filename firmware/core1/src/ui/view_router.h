@@ -52,6 +52,7 @@ typedef enum {
     VIEW_ID_LAUNCHER,         /* L-1 9-grid app menu (modal)              */
     VIEW_ID_MESSAGES,         /* A-1 chat list (Phase 3: chat_list_view)  */
     VIEW_ID_MESSAGES_CHAT,    /* A-2 conversation thread (Phase 3)        */
+    VIEW_ID_MESSAGE_DETAIL,   /* A-3 single DM detail modal (FUNC long)   */
     VIEW_ID_NODES,            /* C-1 node list                            */
     VIEW_ID_NODE_DETAIL,      /* C-2 single-node full detail              */
     VIEW_ID_NODE_OPS,         /* C-3 per-node operations menu             */

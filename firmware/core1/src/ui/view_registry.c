@@ -21,6 +21,7 @@
 #include "launcher_view.h"
 #include "chat_list_view.h"
 #include "conversation_view.h"
+#include "message_detail_view.h"
 #include "tools_view.h"
 #include "keypad_view.h"
 #include "ime_view.h"
@@ -42,6 +43,7 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_LAUNCHER]       = launcher_view_descriptor();
     g_view_registry[VIEW_ID_MESSAGES]       = chat_list_view_descriptor();
     g_view_registry[VIEW_ID_MESSAGES_CHAT]  = conversation_view_descriptor();
+    g_view_registry[VIEW_ID_MESSAGE_DETAIL] = message_detail_view_descriptor();
     g_view_registry[VIEW_ID_NODES]          = nodes_view_descriptor();
     g_view_registry[VIEW_ID_NODE_DETAIL]    = node_detail_view_descriptor();
     g_view_registry[VIEW_ID_NODE_OPS]       = node_ops_view_descriptor();

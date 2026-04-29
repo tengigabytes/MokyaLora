@@ -40,7 +40,7 @@ bool messages_send_text(uint32_t to_node_id,
      * messages_tx_status_get observers in sync.) Skip broadcasts —
      * they don't fit the per-peer thread model. */
     if (to_node_id != MESSAGES_SEND_BROADCAST) {
-        dm_store_ingest_outbound(to_node_id, pid, text, text_len);
+        dm_store_ingest_outbound(to_node_id, pid, want_ack, text, text_len);
     }
 
     /* Initial "sending" status — cascade ack handler updates to

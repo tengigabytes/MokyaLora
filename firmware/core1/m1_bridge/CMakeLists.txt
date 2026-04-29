@@ -220,6 +220,7 @@ add_executable(core1_bridge
     ${UI_DIR}/launcher_view.c
     ${UI_DIR}/chat_list_view.c
     ${UI_DIR}/conversation_view.c
+    ${UI_DIR}/message_detail_view.c
     ${UI_DIR}/tools_view.c
     ${UI_DIR}/keypad_view.c
     ${UI_DIR}/rf_debug_view.c

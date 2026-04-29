@@ -32,6 +32,7 @@
 
 #include "global/status_bar.h"
 #include "global/hint_bar.h"
+#include "conversation_view.h"
 #include "launcher_view.h"
 
 /* ── Runtime state per view ──────────────────────────────────────────── */
@@ -413,13 +414,20 @@ void view_router_tick(void)
         if (d->apply) d->apply(&ev);
     }
 
-    /* FUNC long-press fires while still held. */
+    /* FUNC long-press fires while still held. View-specific overrides
+     * land before the generic G-1 stub: e.g. conversation_view opens
+     * the A-3 message detail modal. */
     if (s_func_press_ms != 0 && !s_func_long_consumed &&
         (now_ms_() - s_func_press_ms) >= FUNC_LONG_HOLD_MS &&
         (s_modal_caller == UINT32_MAX ||
          s_view_router_active != VIEW_ID_IME)) {
         s_func_long_consumed = true;
-        status_bar_show_alert(0, "FUNC long: G-1 detail (stub)", 1500);
+        if (s_modal_caller == UINT32_MAX &&
+            s_view_router_active == VIEW_ID_MESSAGES_CHAT) {
+            conversation_view_open_msg_detail();
+        } else {
+            status_bar_show_alert(0, "FUNC long: G-1 detail (stub)", 1500);
+        }
     }
 
     /* Active-only refresh: hidden views do nothing (was a per-view
