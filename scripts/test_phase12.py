@@ -57,7 +57,23 @@ def jlink(cmds, timeout=30):
 
 
 def reset_target():
-    """Hardware reset via SYSRESETREQ; takes ~1 s."""
+    """Hardware reset via SYSRESETREQ; takes ~1 s.
+
+    NOTE (2026-04-29): T2..T5 (router navigation tests) currently fail
+    consistently with active=UINT32_MAX after the FUNC inject —
+    suspected race between JLink connect/halt cycles and the FreeRTOS
+    scheduler / view_router_init. T1/T6/T7/T8 still pass.
+
+    Tried but didn't help: scrubbing g_key_inject_buf at reset time;
+    longer post-reset sleep; longer post-inject sleep. Each subsequent
+    JLink session opens a fresh `connect` which may halt the CPU at
+    an unfortunate point in init. Real fix likely needs a single
+    long-lived JLink session (or pyOCD with persistent target
+    connection) instead of one Commander process per command.
+
+    Until then, treat this harness as boot-only verification (T1, T6,
+    T7, T8) and validate router navigation manually via
+    `inject_keys.py` smoke tests."""
     jlink(['r', 'g'])
     time.sleep(2.0)
 
