@@ -8,6 +8,7 @@
 #include "hardware/timer.h"
 
 #include "phoneapi_tx.h"
+#include "mokya_trace.h"
 
 #define MAGIC1 0x94u
 #define MAGIC2 0xC3u
@@ -217,9 +218,13 @@ bool phoneapi_encode_text_packet(uint32_t to_node_id,
                                write_mesh_packet_body, &mp)) {
         return false;
     }
-    if (!frame_and_push(buf, pos)) {
-        return false;
-    }
+    bool pushed = frame_and_push(buf, pos);
+    TRACE("phapi", "tx_text",
+          "to=%lu chan=%u ack=%u pid=%#lx body=%u pushed=%u",
+          (unsigned long)to_node_id, (unsigned)channel_index,
+          (unsigned)want_ack, (unsigned long)packet_id,
+          (unsigned)pos, (unsigned)pushed);
+    if (!pushed) return false;
     if (out_packet_id != NULL) {
         *out_packet_id = packet_id;
     }
