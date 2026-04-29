@@ -34,12 +34,13 @@ struct settings_tree_node {
 };
 
 /* Bound check: 1 (root) + 15 (groups) + 88 (current keys) = 104.
- * Pad to 108 (= 4 slots headroom) — Phase 4's templates eat the BSS
- * margin so we can't afford a generous overshoot here. Each node
- * = 16 B → 1.69 KB BSS. If `_Static_assert` below trips later,
- * either bump cap + free RAM elsewhere or merge templates' state
- * structs into a single union (they're mutually exclusive at runtime). */
-#define ST_NODE_MAX  108
+ * Capped exactly at 104 (zero headroom) — Core 1 BSS is tight after
+ * the C-2/C-3/C-4 view structs landed and we already moved their
+ * state into PSRAM. Each node = 16 B → 1.62 KB BSS. Adding a key
+ * to settings_keys.c WILL trip build_once()'s ST_NODE_MAX guard
+ * silently (extra keys past the cap are dropped); raise this cap
+ * AND free more RAM elsewhere when that happens. */
+#define ST_NODE_MAX  104
 
 static struct settings_tree_node s_nodes[ST_NODE_MAX];
 static uint8_t                   s_node_count;

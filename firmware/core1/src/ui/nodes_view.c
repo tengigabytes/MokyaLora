@@ -1,11 +1,17 @@
 /* nodes_view.c — see nodes_view.h.
  *
- * M5F.2 (2026-04-28): switched data source from nodes_db (fed by the
- * retired IPC_MSG_NODE_UPDATE producer) to phoneapi_cache (cascade
- * decoder). Layout unchanged — the on-screen fields the cascade can
- * supply (long_name / short_name, SNR, hops, last_heard, battery) are
- * a strict subset of what nodes_db exposed; lat/lon are not currently
- * decoded by cascade so the GPS line is replaced with last-heard.
+ * C-1 list view (multi-row). 8 visible rows × 24 px below a 16 px
+ * header, sourced from phoneapi_cache (cascade NodeInfo decoder).
+ *
+ * Each row format: "[focus] short_name  long_name  SNR  hops  age"
+ *
+ * Sort: most-recently-active first (phoneapi_cache_take_node_at(0) =
+ * the node we last heard from). Cursor stays put when new nodes
+ * arrive — sticky-to-newest behaviour from the previous single-node
+ * variant is dropped because it would jump the user out of their
+ * current focus when a new node appears.
+ *
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "nodes_view.h"
@@ -15,163 +21,196 @@
 #include <limits.h>
 
 #include "phoneapi_cache.h"
-#include "mie_font.h"
+#include "global/ui_theme.h"
+#include "global/hint_bar.h"
+#include "key_event.h"
 #include "mie/keycode.h"
 #include "mokya_trace.h"
 
-static lv_obj_t *s_panel;
-static lv_obj_t *s_header;
-static lv_obj_t *s_body;
-static lv_obj_t *s_footer;
+/* ── Layout ─────────────────────────────────────────────────────────── */
 
-static uint32_t s_offset;            /* 0 = most recently touched */
-static uint32_t s_last_change_seq;
-static bool     s_sticky_to_newest = true;
+#define ROW_H        24
+#define MAX_VISIBLE   8
+#define HEADER_H     16
+#define LIST_END    (HEADER_H + ROW_H * MAX_VISIBLE)   /* 16 + 192 = 208 */
 
-static void render_offset(uint32_t offset)
+/* ── State ──────────────────────────────────────────────────────────── */
+
+typedef struct {
+    lv_obj_t *header;
+    lv_obj_t *rows[MAX_VISIBLE];
+    uint32_t  cursor;            /* node-list offset 0..total-1   */
+    uint32_t  scroll_top;        /* first visible offset          */
+    uint32_t  last_change_seq;
+} nodes_t;
+
+static nodes_t s;
+
+/* Cross-view stash for C-2 / C-3 hand-off. */
+static uint32_t s_active_node;
+
+void     nodes_view_set_active_node(uint32_t n) { s_active_node = n; }
+uint32_t nodes_view_get_active_node(void)        { return s_active_node; }
+
+/* ── Helpers ────────────────────────────────────────────────────────── */
+
+static lv_obj_t *make_row(lv_obj_t *parent, int y)
 {
-    phoneapi_node_t e;
-    if (!phoneapi_cache_take_node_at(offset, &e)) {
-        lv_label_set_text(s_header, "(no nodes seen yet)");
-        lv_label_set_text(s_body, "");
-        lv_label_set_text(s_footer, "node 0/0");
-        return;
-    }
+    lv_obj_t *l = lv_label_create(parent);
+    lv_obj_set_pos(l, 4, y);
+    lv_obj_set_size(l, 320 - 8, ROW_H);
+    lv_obj_set_style_text_font(l, ui_font_sm16(), 0);
+    lv_obj_set_style_text_color(l, ui_color(UI_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_pad_all(l, 0, 0);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_CLIP);
+    lv_label_set_text(l, "");
+    return l;
+}
 
-    char hdr[80];
-    if (e.short_name[0] != '\0' || e.long_name[0] != '\0') {
-        snprintf(hdr, sizeof(hdr), "%s (%s)  /  0x%08lx",
-                 e.long_name[0] ? e.long_name : "?",
-                 e.short_name[0] ? e.short_name : "??",
-                 (unsigned long)e.num);
-    } else {
-        snprintf(hdr, sizeof(hdr), "0x%08lx", (unsigned long)e.num);
-    }
-    lv_label_set_text(s_header, hdr);
-
+static void format_row(char *buf, size_t cap, bool focused,
+                       const phoneapi_node_t *e)
+{
     char snr_str[16];
-    if (e.snr_x100 == INT32_MIN) {
-        snprintf(snr_str, sizeof(snr_str), "--");
+    if (e->snr_x100 == INT32_MIN) {
+        snprintf(snr_str, sizeof(snr_str), "-- ");
     } else {
-        snprintf(snr_str, sizeof(snr_str), "%+.1f dB", e.snr_x100 / 100.0);
+        snprintf(snr_str, sizeof(snr_str), "%+.1fdB", e->snr_x100 / 100.0);
     }
     char hops_str[8];
-    if (e.hops_away == 0xFFu) {
-        snprintf(hops_str, sizeof(hops_str), "?");
-    } else {
-        snprintf(hops_str, sizeof(hops_str), "%u", (unsigned)e.hops_away);
-    }
-    char batt_str[16];
-    if (e.battery_level == 0xFFu) {
-        snprintf(batt_str, sizeof(batt_str), "--");
-    } else {
-        snprintf(batt_str, sizeof(batt_str), "%u%%",
-                 (unsigned)e.battery_level);
-    }
-    char heard_str[24];
-    if (e.last_heard == 0u) {
-        snprintf(heard_str, sizeof(heard_str), "--");
-    } else {
-        snprintf(heard_str, sizeof(heard_str), "%lu",
-                 (unsigned long)e.last_heard);
-    }
+    if (e->hops_away == 0xFFu) snprintf(hops_str, sizeof(hops_str), "?");
+    else snprintf(hops_str, sizeof(hops_str), "%uh", (unsigned)e->hops_away);
 
-    char body[256];
-    snprintf(body, sizeof(body),
-             "SNR  : %s\n"
-             "hops : %s\n"
-             "batt : %s\n"
-             "heard: %s",
-             snr_str, hops_str, batt_str, heard_str);
-    lv_label_set_text(s_body, body);
-
-    uint32_t total = phoneapi_cache_node_count();
-    uint32_t shown = (offset < total) ? (total - offset) : 0u;
-    char foot[32];
-    snprintf(foot, sizeof(foot), "node %lu/%lu",
-             (unsigned long)shown,
-             (unsigned long)total);
-    lv_label_set_text(s_footer, foot);
+    const char *sn = e->short_name[0] ? e->short_name : "????";
+    snprintf(buf, cap, "%s%-4s  %-12s  %s %s",
+             focused ? ">" : " ",
+             sn,
+             e->long_name[0] ? e->long_name : "(no name)",
+             snr_str, hops_str);
 }
+
+static void clamp_scroll(uint32_t total)
+{
+    if (total == 0u) {
+        s.cursor = 0u;
+        s.scroll_top = 0u;
+        return;
+    }
+    if (s.cursor >= total) s.cursor = total - 1u;
+    if (s.cursor < s.scroll_top) s.scroll_top = s.cursor;
+    if (s.cursor >= s.scroll_top + MAX_VISIBLE) {
+        s.scroll_top = s.cursor - MAX_VISIBLE + 1u;
+    }
+    if (s.scroll_top + MAX_VISIBLE > total) {
+        s.scroll_top = (total > MAX_VISIBLE) ? (total - MAX_VISIBLE) : 0u;
+    }
+}
+
+static void render(void)
+{
+    uint32_t total = phoneapi_cache_node_count();
+
+    char hdr[64];
+    snprintf(hdr, sizeof(hdr), "Nodes  (%lu total)",
+             (unsigned long)total);
+    lv_label_set_text(s.header, hdr);
+
+    clamp_scroll(total);
+
+    char buf[96];
+    for (uint32_t i = 0; i < MAX_VISIBLE; ++i) {
+        uint32_t off = s.scroll_top + i;
+        if (off >= total) {
+            lv_label_set_text(s.rows[i], "");
+            continue;
+        }
+        phoneapi_node_t e;
+        if (!phoneapi_cache_take_node_at(off, &e)) {
+            lv_label_set_text(s.rows[i], "");
+            continue;
+        }
+        bool focused = (off == s.cursor);
+        format_row(buf, sizeof(buf), focused, &e);
+        lv_label_set_text(s.rows[i], buf);
+        lv_obj_set_style_text_color(s.rows[i],
+            focused ? ui_color(UI_COLOR_ACCENT_FOCUS)
+                    : ui_color(UI_COLOR_TEXT_PRIMARY), 0);
+    }
+}
+
+/* ── Lifecycle ──────────────────────────────────────────────────────── */
 
 static void create(lv_obj_t *panel)
 {
-    const lv_font_t *f16 = mie_font_unifont_sm_16();
-    s_panel = panel;
+    memset(&s, 0, sizeof(s));
 
-    lv_obj_set_style_bg_color(panel, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(panel, ui_color(UI_COLOR_BG_PRIMARY), 0);
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(panel, 4, 0);
 
-    s_header = lv_label_create(panel);
-    if (f16) lv_obj_set_style_text_font(s_header, f16, 0);
-    lv_obj_set_style_text_color(s_header, lv_color_hex(0x00FFFF), 0);
-    lv_label_set_text(s_header, "(no nodes seen yet)");
-    lv_obj_set_pos(s_header, 0, 0);
-    lv_obj_set_width(s_header, 312);
+    s.header = lv_label_create(panel);
+    lv_obj_set_pos(s.header, 4, 0);
+    lv_obj_set_size(s.header, 320 - 8, HEADER_H);
+    lv_obj_set_style_text_font(s.header, ui_font_sm16(), 0);
+    lv_obj_set_style_text_color(s.header,
+        ui_color(UI_COLOR_TEXT_SECONDARY), 0);
+    lv_obj_set_style_pad_all(s.header, 0, 0);
+    lv_label_set_text(s.header, "Nodes");
 
-    s_body = lv_label_create(panel);
-    if (f16) lv_obj_set_style_text_font(s_body, f16, 0);
-    lv_obj_set_style_text_color(s_body, lv_color_white(), 0);
-    lv_label_set_long_mode(s_body, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_line_space(s_body, 4, 0);
-    lv_label_set_text(s_body, "");
-    lv_obj_set_pos(s_body, 0, 24);
-    lv_obj_set_size(s_body, 312, 240 - 24 - 24);
+    for (int i = 0; i < MAX_VISIBLE; ++i) {
+        s.rows[i] = make_row(panel, HEADER_H + i * ROW_H);
+    }
 
-    s_footer = lv_label_create(panel);
-    if (f16) lv_obj_set_style_text_font(s_footer, f16, 0);
-    lv_obj_set_style_text_color(s_footer, lv_color_hex(0x808080), 0);
-    lv_label_set_text(s_footer, "node 0/0");
-    lv_obj_set_pos(s_footer, 0, 240 - 24);
-    lv_obj_set_width(s_footer, 312);
+    render();
+    hint_bar_set("up/dn pick", "OK detail", "BACK home");
+}
+
+static void destroy(void)
+{
+    s.header = NULL;
+    for (int i = 0; i < MAX_VISIBLE; ++i) s.rows[i] = NULL;
+    hint_bar_clear();
 }
 
 static void apply(const key_event_t *ev)
 {
-    if (!ev || !ev->pressed) return;
-
+    if (!ev->pressed) return;
     uint32_t total = phoneapi_cache_node_count();
-    if (total == 0) return;
 
-    if (ev->keycode == MOKYA_KEY_UP) {
-        if (s_offset + 1u < total) {
-            s_offset++;
+    switch (ev->keycode) {
+        case MOKYA_KEY_UP:
+            if (total > 0u && s.cursor > 0u) {
+                s.cursor--;
+                render();
+            }
+            break;
+        case MOKYA_KEY_DOWN:
+            if (total > 0u && s.cursor + 1u < total) {
+                s.cursor++;
+                render();
+            }
+            break;
+        case MOKYA_KEY_OK: {
+            if (total == 0u) break;
+            phoneapi_node_t e;
+            if (phoneapi_cache_take_node_at(s.cursor, &e)) {
+                nodes_view_set_active_node(e.num);
+                view_router_navigate(VIEW_ID_NODE_DETAIL);
+            }
+            break;
         }
-        s_sticky_to_newest = false;
-        render_offset(s_offset);
-    } else if (ev->keycode == MOKYA_KEY_DOWN) {
-        if (s_offset > 0u) {
-            s_offset--;
-        }
-        if (s_offset == 0u) {
-            s_sticky_to_newest = true;
-        }
-        render_offset(s_offset);
+        case MOKYA_KEY_BACK:
+            view_router_navigate(VIEW_ID_BOOT_HOME);
+            break;
+        default: break;
     }
 }
 
 static void refresh(void)
 {
-    /* Active-only refresh: router no longer calls us when hidden. */
-    if (s_panel == NULL) return;
-
+    if (s.header == NULL) return;
     uint32_t cur = phoneapi_cache_change_seq();
-    if (cur == s_last_change_seq) return;
-    s_last_change_seq = cur;
-
-    /* Sticky-to-newest re-renders at offset 0 on every fresh upsert.
-     * If the user has navigated away with UP, leave them at their
-     * offset until they DOWN-back to 0. */
-    if (s_sticky_to_newest) s_offset = 0u;
-    render_offset(s_offset);
-}
-
-static void destroy(void)
-{
-    s_panel = s_header = s_body = s_footer = NULL;
-    s_last_change_seq = 0u;        /* force re-render on next activation */
-    /* s_offset / s_sticky_to_newest persist across destroy. */
+    if (cur == s.last_change_seq) return;
+    s.last_change_seq = cur;
+    render();
 }
 
 static const view_descriptor_t NODES_DESC = {
