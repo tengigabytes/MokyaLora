@@ -1,16 +1,17 @@
 /* boot_home_view.c — see boot_home_view.h.
  *
- * Phase 1 minimum-viable layout: 4 telemetry rows (identity, GPS, power,
- * network) + message zone (1 row + header) + event zone (1 row + header).
- * The full spec calls for 5 telemetry rows + 3 messages + 1 event, but
- * Phase 1 panel height is 224 px (240 - status bar 16) which doesn't fit
- * the entire spec; iterate in a later phase. The router hides the hint
- * bar while this view is active.
+ * Spec-aligned layout (docs/ui/20-launcher-home.md):
+ *   5 telemetry rows  — identity / GPS / power / environment / network
+ *   3 message rows    — most-recent inbox previews
+ *   1 event row       — node up/down/position-request feed (stub)
  *
- * Refresh strategy: 1 Hz tick refreshes telemetry; messages list re-pulls
- * each tick from `phoneapi_msgs_take_at_offset(0)`. The view is
- * non-interactive in this baseline (D-pad / OK / etc. are routed to
- * apply() but ignored — focus model lives in a future phase).
+ * Total content height = 5×20 + 18 + 3×20 + 18 + 1×20 + 2 dividers =
+ *   100 + 18 + 60 + 18 + 20 + 2 = 218 px (within 224 px panel; trailing
+ *   6 px stays clear matching the spec's "5 px 留白" target).
+ *
+ * Refresh strategy: 1 Hz tick refreshes telemetry; message rows re-pull
+ * each tick from `phoneapi_msgs_take_at_offset(0..2)`. Non-interactive
+ * baseline — focus / scroll model lives in a future phase.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -28,33 +29,39 @@
 
 #include "bq25622.h"
 #include "teseo_liv3fl.h"
+#include "lps22hh.h"
 #include "phoneapi_cache.h"
 
 /* ── Geometry ────────────────────────────────────────────────────────── */
 #define PANEL_W       320
 #define PANEL_H       224     /* full content area below status bar */
 #define ROW_H          20
+#define HDR_H          18
 
-/* y offsets within the panel */
-#define Y_IDENT         0
-#define Y_GPS          (Y_IDENT + ROW_H)
-#define Y_POWER        (Y_GPS   + ROW_H)
-#define Y_NET          (Y_POWER + ROW_H)
-#define Y_DIV1         (Y_NET   + ROW_H)            /* 80 */
-#define Y_MSG_HDR      (Y_DIV1  + 2)                /* 82 */
-#define Y_MSG_ROW      (Y_MSG_HDR + 18)             /* 100 */
-#define Y_DIV2         (Y_MSG_ROW + ROW_H + 1)      /* 121 */
-#define Y_EVT_HDR      (Y_DIV2  + 2)                /* 123 */
-#define Y_EVT_ROW      (Y_EVT_HDR + 18)             /* 141 */
+/* y offsets within the panel — spec mapping */
+#define Y_IDENT         0                            /* 0..19   identity+date */
+#define Y_GPS          (Y_IDENT + ROW_H)             /* 20..39  GPS           */
+#define Y_POWER        (Y_GPS   + ROW_H)             /* 40..59  power         */
+#define Y_ENV          (Y_POWER + ROW_H)             /* 60..79  environment   */
+#define Y_NET          (Y_ENV   + ROW_H)             /* 80..99  network       */
+#define Y_DIV1         (Y_NET   + ROW_H)             /* 100     divider 1 px  */
+#define Y_MSG_HDR      (Y_DIV1  + 1)                 /* 101..118 msg header   */
+#define Y_MSG_ROW0     (Y_MSG_HDR + HDR_H)           /* 119..138 msg 0        */
+#define Y_MSG_ROW1     (Y_MSG_ROW0 + ROW_H)          /* 139..158 msg 1        */
+#define Y_MSG_ROW2     (Y_MSG_ROW1 + ROW_H)          /* 159..178 msg 2        */
+#define Y_DIV2         (Y_MSG_ROW2 + ROW_H)          /* 179     divider 1 px  */
+#define Y_EVT_HDR      (Y_DIV2  + 1)                 /* 180..197 evt header   */
+#define Y_EVT_ROW      (Y_EVT_HDR + HDR_H)           /* 198..217 evt 0        */
 
 typedef struct {
     lv_obj_t *bg;
     lv_obj_t *ident_lbl;
     lv_obj_t *gps_lbl;
     lv_obj_t *power_lbl;
+    lv_obj_t *env_lbl;
     lv_obj_t *net_lbl;
     lv_obj_t *msg_hdr;
-    lv_obj_t *msg_row;
+    lv_obj_t *msg_rows[3];
     lv_obj_t *evt_hdr;
     lv_obj_t *evt_row;
     uint32_t  last_refresh_ms;
@@ -138,6 +145,30 @@ static void refresh_power(void)
     lv_label_set_text(s.power_lbl, buf);
 }
 
+static void refresh_env(void)
+{
+    char buf[64];
+    const lps22hh_state_t *p = lps22hh_get_state();
+    const teseo_state_t   *t = teseo_get_state();
+    if (p && p->online) {
+        unsigned hpa_int = p->pressure_hpa_x100 / 100u;
+        unsigned hpa_dec = p->pressure_hpa_x100 % 100u;
+        int      tc      = p->temperature_cx10 / 10;
+        int      td      = (p->temperature_cx10 < 0
+                            ? -p->temperature_cx10 : p->temperature_cx10) % 10;
+        if (t && t->fix_valid) {
+            snprintf(buf, sizeof(buf), "ENV  %d.%01dC %u.%02uhPa  alt=%dm",
+                     tc, td, hpa_int, hpa_dec, (int)t->altitude_m);
+        } else {
+            snprintf(buf, sizeof(buf), "ENV  %d.%01dC %u.%02uhPa",
+                     tc, td, hpa_int, hpa_dec);
+        }
+    } else {
+        snprintf(buf, sizeof(buf), "ENV  baro offline");
+    }
+    lv_label_set_text(s.env_lbl, buf);
+}
+
 static void refresh_net(void)
 {
     char buf[64];
@@ -147,20 +178,30 @@ static void refresh_net(void)
     lv_label_set_text(s.net_lbl, buf);
 }
 
-static void refresh_msg_row(void)
+static void refresh_msg_rows(void)
 {
-    phoneapi_text_msg_t m;
-    if (phoneapi_msgs_count() > 0 && phoneapi_msgs_take_at_offset(0, &m)) {
-        char preview[64];
-        size_t n = m.text_len < sizeof(preview) - 1 ? m.text_len : sizeof(preview) - 1;
-        memcpy(preview, m.text, n);
-        preview[n] = '\0';
-        char buf[96];
-        snprintf(buf, sizeof(buf), "  !%08lx  %s",
-                 (unsigned long)m.from_node_id, preview);
-        lv_label_set_text(s.msg_row, buf);
-    } else {
-        lv_label_set_text(s.msg_row, "  (no messages)");
+    /* Render 3 most-recent message previews. phoneapi_msgs_take_at_offset
+     * accepts 0 = newest. Empty rows show " " (clears stale text from
+     * before a new message arrived). */
+    uint32_t total = phoneapi_msgs_count();
+    for (int i = 0; i < 3; ++i) {
+        phoneapi_text_msg_t m;
+        if ((uint32_t)i < total &&
+            phoneapi_msgs_take_at_offset((uint32_t)i, &m)) {
+            char preview[64];
+            size_t n = m.text_len < sizeof(preview) - 1
+                       ? m.text_len : sizeof(preview) - 1;
+            memcpy(preview, m.text, n);
+            preview[n] = '\0';
+            char buf[96];
+            snprintf(buf, sizeof(buf), "  !%08lx  %s",
+                     (unsigned long)m.from_node_id, preview);
+            lv_label_set_text(s.msg_rows[i], buf);
+        } else if (i == 0) {
+            lv_label_set_text(s.msg_rows[i], "  (no messages)");
+        } else {
+            lv_label_set_text(s.msg_rows[i], "");
+        }
     }
 }
 
@@ -186,15 +227,18 @@ static void create(lv_obj_t *panel)
     s.ident_lbl = make_label(panel, 4, Y_IDENT, PANEL_W - 8, ROW_H, white);
     s.gps_lbl   = make_label(panel, 4, Y_GPS,   PANEL_W - 8, ROW_H, white);
     s.power_lbl = make_label(panel, 4, Y_POWER, PANEL_W - 8, ROW_H, white);
+    s.env_lbl   = make_label(panel, 4, Y_ENV,   PANEL_W - 8, ROW_H, white);
     s.net_lbl   = make_label(panel, 4, Y_NET,   PANEL_W - 8, ROW_H, white);
 
-    s.msg_hdr = make_label(panel, 4, Y_MSG_HDR, PANEL_W - 8, 18, dim);
+    s.msg_hdr = make_label(panel, 4, Y_MSG_HDR, PANEL_W - 8, HDR_H, dim);
     lv_label_set_text(s.msg_hdr, "v Inbox");
     lv_obj_set_style_text_color(s.msg_hdr, green, 0);
 
-    s.msg_row = make_label(panel, 4, Y_MSG_ROW, PANEL_W - 8, ROW_H, white);
+    s.msg_rows[0] = make_label(panel, 4, Y_MSG_ROW0, PANEL_W - 8, ROW_H, white);
+    s.msg_rows[1] = make_label(panel, 4, Y_MSG_ROW1, PANEL_W - 8, ROW_H, white);
+    s.msg_rows[2] = make_label(panel, 4, Y_MSG_ROW2, PANEL_W - 8, ROW_H, white);
 
-    s.evt_hdr = make_label(panel, 4, Y_EVT_HDR, PANEL_W - 8, 18, dim);
+    s.evt_hdr = make_label(panel, 4, Y_EVT_HDR, PANEL_W - 8, HDR_H, dim);
     lv_label_set_text(s.evt_hdr, "o Events");
 
     s.evt_row = make_label(panel, 4, Y_EVT_ROW, PANEL_W - 8, ROW_H, white);
@@ -203,8 +247,9 @@ static void create(lv_obj_t *panel)
     refresh_ident();
     refresh_gps();
     refresh_power();
+    refresh_env();
     refresh_net();
-    refresh_msg_row();
+    refresh_msg_rows();
     refresh_evt_row();
 
     /* L-0 hides the hint bar per spec. */
@@ -213,8 +258,9 @@ static void create(lv_obj_t *panel)
 
 static void destroy(void)
 {
-    s.ident_lbl = s.gps_lbl = s.power_lbl = s.net_lbl = NULL;
-    s.msg_hdr = s.msg_row = s.evt_hdr = s.evt_row = NULL;
+    s.ident_lbl = s.gps_lbl = s.power_lbl = s.env_lbl = s.net_lbl = NULL;
+    s.msg_hdr = s.evt_hdr = s.evt_row = NULL;
+    s.msg_rows[0] = s.msg_rows[1] = s.msg_rows[2] = NULL;
 }
 
 static void apply(const key_event_t *ev)
@@ -233,8 +279,9 @@ static void refresh(void)
     refresh_ident();
     refresh_gps();
     refresh_power();
+    refresh_env();
     refresh_net();
-    refresh_msg_row();
+    refresh_msg_rows();
     refresh_evt_row();
 }
 
