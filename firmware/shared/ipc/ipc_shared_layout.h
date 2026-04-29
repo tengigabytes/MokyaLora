@@ -153,13 +153,15 @@ typedef struct {
 
     /* _tail_pad_pre: zeroed by ipc_shared_init, fills space up to the
      * postmortem slots. The postmortem block now sits at absolute
-     * address 0x2007FC00..0x2007FDFF — 512 bytes total since the
-     * struct grew to 256 B per slot (was 128 B; bumped to carry a
-     * 32-word stack snapshot for fault forensics). Region still ends
-     * BEFORE the ime_view_debug snapshot at 0x2007FE00..0x2007FFBF
-     * (firmware/core1/src/ui/ime_view.c) and BEFORE the bridge
-     * breadcrumbs at the last 64 B (0x2007FFC0..0x2007FFFF, registered
-     * in firmware-architecture §9.3). */
+     * address 0x2007FB00..0x2007FDFF — 768 bytes total since the
+     * struct grew to 384 B per slot (was 256 B; bumped again to carry
+     * a 64-word stack snapshot, sized to clear the 18-word FP register
+     * save area when EXC_RETURN.FType=0 plus enough caller frames for
+     * a back-trace). Region still ends BEFORE the ime_view_debug
+     * snapshot at 0x2007FE00..0x2007FFBF (firmware/core1/src/ui/
+     * ime_view.c) and BEFORE the bridge breadcrumbs at the last 64 B
+     * (0x2007FFC0..0x2007FFFF, registered in firmware-architecture
+     * §9.3). */
     uint8_t           _tail_pad_pre[IPC_SHARED_SIZE
                                 - 28                                    /* magic + ready/lock + flash_lock_c0 + heartbeat + wd_pause */
                                 - 4                                     /* _pad_to_0x20[1] */

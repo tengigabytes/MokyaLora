@@ -108,18 +108,25 @@ typedef struct {
 
     uint32_t _rsv3[4];       /* +0x70..0x7F */
 
-    /* Stack snapshot — 32 words (128 B) starting at SP at fault entry.
+    /* Stack snapshot — 64 words (256 B) starting at SP at fault entry.
      * For Cortex-M the stack descends, so stack[0] is the lowest address
      * (the stacked exception frame's r0 word) and stack[N] is at higher
      * addresses (older frames / locals).  The capture path bounds-checks
      * against the originating core's SRAM range so stack[] is always
-     * valid memory; if the available range is shorter than 128 B
+     * valid memory; if the available range is shorter than 256 B
      * (stack overflow / SP near the top of SRAM), `stack_words` is set
-     * to the actual count and trailing entries stay zero. */
-    uint32_t stack[32];      /* +0x80..0xFF */
+     * to the actual count and trailing entries stay zero.
+     *
+     * Layout note: when EXC_RETURN's FType bit (bit 4) is 0, the CPU
+     * stacked an EXTENDED frame with S0..S15 + FPSCR (16+1+1 words)
+     * after the basic 8-word frame, so the first ~26 stack[] entries
+     * are register-save context — true caller frames start around
+     * stack[26] in that case. Decoder scripts should check exc_return
+     * before treating mid-snapshot words as code addresses. */
+    uint32_t stack[64];      /* +0x80..0x17F */
 } mokya_postmortem_t;
 
-_Static_assert(sizeof(mokya_postmortem_t) == 256, "mokya_postmortem_t must be 256 B");
+_Static_assert(sizeof(mokya_postmortem_t) == 384, "mokya_postmortem_t must be 384 B");
 
 #ifdef __cplusplus
 }
