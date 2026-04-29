@@ -28,15 +28,18 @@ KEY_RIGHT = 0x22
 KEY_OK    = 0x23
 
 # View IDs from firmware/core1/src/ui/view_router.h.
+# NOTE: A-4 (commit 97a47b3) inserted VIEW_ID_CANNED at slot 5, shifting
+# everything below it by one. Keep this in sync with the enum.
 V_BOOT_HOME       = 0
 V_LAUNCHER        = 1
 V_MESSAGES        = 2
 V_MESSAGES_CHAT   = 3
-V_MESSAGE_DETAIL  = 4   # A3 — added between MESSAGES_CHAT and NODES
-V_NODES           = 5
-V_NODE_DETAIL     = 6
-V_NODE_OPS        = 7
-V_MY_NODE         = 8
+V_MESSAGE_DETAIL  = 4
+V_CANNED          = 5
+V_NODES           = 6
+V_NODE_DETAIL     = 7
+V_NODE_OPS        = 8
+V_MY_NODE         = 9
 
 # Launcher 3x3 grid (row, col) — (firmware/core1/src/ui/launcher_view.c:47).
 #   (0,0) Msg     (0,1) Chan    (0,2) Nodes
@@ -168,7 +171,15 @@ def main():
         rtt_drain_up(swd, rtt, sink)
 
         # Step 1.5: optionally DOWN×N to land on a peer instead of self.
+        # NODES view is LRU-cached so its cursor persists across launcher
+        # round-trips — reset to row 0 with UP×N (UP clamps at 0) before
+        # DOWN-ing to the desired row, otherwise the OK on entry-detail
+        # below would target whatever node was selected last time.
         if args.cursor > 0:
+            for _ in range(40):
+                queue_events_swd(swd, addrs, press(KEY_UP))
+                time.sleep(0.03)
+            time.sleep(0.10)
             print(f'[step] DOWN x {args.cursor} → cursor row {args.cursor}',
                   flush=True)
             for _ in range(args.cursor):
@@ -232,8 +243,14 @@ def main():
             print(f'[step] OK → fire {args.op} (cursor row {target_idx})',
                   flush=True)
             queue_events_swd(swd, addrs, press(KEY_OK))
-            # Drain aggressively for 5 s — cover both tx_app + any peer reply.
-            for _ in range(50):
+            # Drain for 5 s for fast ops (favorite/ignore/position 0-hop)
+            # or 40 s for traceroute. RouteDiscovery requests can take
+            # tens of seconds end-to-end on a busy mesh: each hop is
+            # ~1-2 s of LoRa airtime + the peer composes + the reply
+            # walks back. 0-hop replies usually land in 1-2 s, but at
+            # ≥2 hops we've measured >20 s round-trips.
+            drain_secs = 40 if args.op == 'traceroute' else 5
+            for _ in range(drain_secs * 10):
                 time.sleep(0.1)
                 rtt_drain_up(swd, rtt, sink)
         else:
@@ -252,8 +269,12 @@ def main():
         print(f'\n=== tx_app matches for {args.op}: {len(hits)} ===')
         for h in hits:
             print(h)
-        rx = [l for l in text.splitlines() if 'rx_packet' in l]
-        print(f'\n=== rx_packet lines: {len(rx)} ===')
+        # phoneapi_session.c dispatches RouteDiscovery (portnum 70) via
+        # phapi,rx_route and Position (portnum 3) via phapi,rx_pos BEFORE
+        # falling through to the text path's rx_packet trace.
+        rx = [l for l in text.splitlines()
+              if any(k in l for k in ('rx_packet', 'rx_route', 'rx_pos'))]
+        print(f'\n=== rx_* lines: {len(rx)} ===')
         for h in rx:
             print(h)
 
