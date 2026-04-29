@@ -334,6 +334,12 @@ bool view_router_in_modal(void)
     return s_modal_caller != UINT32_MAX;
 }
 
+void view_router_modal_finish(bool committed)
+{
+    if (s_modal_caller == UINT32_MAX) return;
+    modal_finish(committed);
+}
+
 /* Modal callback used when launcher commits — picks the focused tile's
  * target view id and navigates to it after the modal returns control. */
 static void launcher_done_cb(bool committed, void *ctx)

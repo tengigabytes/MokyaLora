@@ -53,6 +53,7 @@ typedef enum {
     VIEW_ID_MESSAGES,         /* A-1 chat list (Phase 3: chat_list_view)  */
     VIEW_ID_MESSAGES_CHAT,    /* A-2 conversation thread (Phase 3)        */
     VIEW_ID_MESSAGE_DETAIL,   /* A-3 single DM detail modal (FUNC long)   */
+    VIEW_ID_CANNED,           /* A-4 canned-message picker modal          */
     VIEW_ID_NODES,            /* C-1 node list                            */
     VIEW_ID_NODE_DETAIL,      /* C-2 single-node full detail              */
     VIEW_ID_NODE_OPS,         /* C-3 per-node operations menu             */
@@ -188,6 +189,14 @@ void view_router_modal_enter_overlay(view_id_t target,
                                      void *ctx);
 
 bool view_router_in_modal(void);
+
+/* Public modal commit / cancel. Used by views (e.g. A-4 canned_view)
+ * where OK or some other key naturally means "commit this picker" —
+ * the router's built-in commit triggers (FUNC short, OK in launcher,
+ * SET in IME) don't cover every modal's UX. No-op when not currently
+ * in a modal. Calls the registered `on_done(committed, ctx)` and
+ * restores the caller view. */
+void view_router_modal_finish(bool committed);
 
 /* While in overlay-modal, the caller view's `refresh` should still be
  * called by the router so background updates (e.g. dm_store ack

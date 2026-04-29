@@ -40,6 +40,7 @@
 #include "ime_task.h"
 #include "messages_send.h"
 #include "message_detail_view.h"
+#include "canned_view.h"
 #include "phoneapi_cache.h"
 #include "mokya_trace.h"
 
@@ -242,6 +243,16 @@ static void apply(const key_event_t *ev)
         case MOKYA_KEY_OK:
             open_compose();
             break;
+        case MOKYA_KEY_LEFT:
+            /* A-4: open canned-message picker for this peer. The picker
+             * fires `messages_send_text` on OK and modal-finishes back
+             * here; on BACK the router cancels the modal and we resume
+             * with no send. */
+            if (s.peer_node_id != 0u && !ime_request_text_active()) {
+                canned_view_set_target_peer(s.peer_node_id);
+                view_router_modal_enter(VIEW_ID_CANNED, NULL, NULL);
+            }
+            break;
         case MOKYA_KEY_BACK:
             view_router_navigate(VIEW_ID_MESSAGES);
             break;
@@ -290,7 +301,7 @@ static const view_descriptor_t CONV_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
-    .hints   = { NULL, "OK compose", "BACK list" },
+    .hints   = { "<- canned", "OK compose", "BACK list" },
 };
 
 const view_descriptor_t *conversation_view_descriptor(void)
