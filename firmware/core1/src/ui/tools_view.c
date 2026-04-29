@@ -19,20 +19,34 @@ typedef struct {
     view_id_t   target;     /* VIEW_ID_COUNT = placeholder */
 } tool_entry_t;
 
-#define MAX_ENTRIES  6
+/* Tools T-0..T-8 per docs/ui/01-page-architecture.md spec, plus the
+ * existing debug overlays (Keypad / RF / Font test) at the bottom.
+ * 11 rows = 11 × 18 = 198 px content + 16 px header = 214 px (within
+ * the 224 px panel area). All spec entries land as placeholders for
+ * now; the existing debug overlays stay as the only working entries. */
+#define MAX_ENTRIES  11
 
 static const tool_entry_t s_entries[MAX_ENTRIES] = {
-    { "Keypad debug grid",   VIEW_ID_KEYPAD     },
+    /* Spec entries (T-1..T-8) — all TBD until each lands. */
+    { "T-1 Traceroute",      VIEW_ID_COUNT      },
+    { "T-2 Range Test",      VIEW_ID_COUNT      },
+    { "T-3 Spectrum",        VIEW_ID_COUNT      },
+    { "T-4 Sniffer",         VIEW_ID_COUNT      },
+    { "T-5 LoRa Self-test",  VIEW_ID_COUNT      },
+    { "T-6 GNSS Sat",        VIEW_ID_COUNT      },
+    { "T-7 Pairing Code",    VIEW_ID_COUNT      },
+    { "T-8 Firmware Info",   VIEW_ID_COUNT      },
+    /* Existing debug overlays — release builds drop the debug-only
+     * entries and the cells render as placeholders so the layout
+     * stays stable for muscle memory. */
+    { "Dbg: Keypad grid",    VIEW_ID_KEYPAD     },
 #if MOKYA_DEBUG_VIEWS
-    { "RF debug overlay",    VIEW_ID_RF_DEBUG   },
-    { "Font glyph test",     VIEW_ID_FONT_TEST  },
+    { "Dbg: RF overlay",     VIEW_ID_RF_DEBUG   },
+    { "Dbg: Font glyph",     VIEW_ID_FONT_TEST  },
 #else
-    { "(RF debug — release)",  VIEW_ID_COUNT },
-    { "(Font test — release)", VIEW_ID_COUNT },
+    { "Dbg: RF (release)",   VIEW_ID_COUNT      },
+    { "Dbg: Font (release)", VIEW_ID_COUNT      },
 #endif
-    { "(traceroute — TBD)",  VIEW_ID_COUNT      },
-    { "(self-test — TBD)",   VIEW_ID_COUNT      },
-    { "(firmware info — TBD)", VIEW_ID_COUNT    },
 };
 
 typedef struct {
@@ -43,11 +57,16 @@ typedef struct {
 
 static tools_t s;
 
+/* 18 px per row so 11 entries fit the 224 px panel area
+ * (16 px header + 11 × 18 = 214 px, leaves 10 px slack at the bottom).
+ * 16 px font + 2 px padding stays readable. */
+#define TOOLS_ROW_H  18
+
 static lv_obj_t *make_row(lv_obj_t *parent, int y)
 {
     lv_obj_t *l = lv_label_create(parent);
     lv_obj_set_pos(l, 4, y);
-    lv_obj_set_size(l, 320 - 8, 24);
+    lv_obj_set_size(l, 320 - 8, TOOLS_ROW_H);
     lv_obj_set_style_text_font(l, ui_font_sm16(), 0);
     lv_obj_set_style_text_color(l, ui_color(UI_COLOR_TEXT_PRIMARY), 0);
     lv_obj_set_style_pad_all(l, 0, 0);
@@ -89,7 +108,7 @@ static void create(lv_obj_t *panel)
     lv_label_set_text(s.header, "Tools / Diagnostics");
 
     for (int i = 0; i < MAX_ENTRIES; ++i) {
-        s.rows[i] = make_row(panel, 16 + i * 24);
+        s.rows[i] = make_row(panel, 16 + i * TOOLS_ROW_H);
     }
 
     rebuild_rows();
