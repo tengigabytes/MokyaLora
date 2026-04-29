@@ -34,9 +34,12 @@ struct settings_tree_node {
 };
 
 /* Bound check: 1 (root) + 15 (groups) + 88 (current keys) = 104.
- * Pad to 112 so adding a new key doesn't immediately blow the table.
- * Each node = 16 B → 1.75 KB BSS, vs 2 KB at the previous 128 cap. */
-#define ST_NODE_MAX  112
+ * Pad to 108 (= 4 slots headroom) — Phase 4's templates eat the BSS
+ * margin so we can't afford a generous overshoot here. Each node
+ * = 16 B → 1.69 KB BSS. If `_Static_assert` below trips later,
+ * either bump cap + free RAM elsewhere or merge templates' state
+ * structs into a single union (they're mutually exclusive at runtime). */
+#define ST_NODE_MAX  108
 
 static struct settings_tree_node s_nodes[ST_NODE_MAX];
 static uint8_t                   s_node_count;

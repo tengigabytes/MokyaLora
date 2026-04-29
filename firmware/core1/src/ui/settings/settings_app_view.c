@@ -16,6 +16,7 @@
 #include "settings_client.h"
 #include "template_toggle.h"
 #include "template_enum.h"
+#include "template_number.h"
 #include "phoneapi_cache.h"
 #include "ipc_protocol.h"
 
@@ -35,6 +36,7 @@ typedef enum {
     SAV_MODE_BROWSE      = 0,
     SAV_MODE_EDIT_TOGGLE = 1,
     SAV_MODE_EDIT_ENUM   = 2,
+    SAV_MODE_EDIT_NUMBER = 3,
 } sav_mode_t;
 
 typedef struct {
@@ -172,6 +174,29 @@ static void enter_enum_edit(settings_tree_node_t *leaf)
     template_enum_open(s.panel, kd, read_u8_current(kd));
 }
 
+/* Best-effort current i32 lookup for numeric kinds. Until phoneapi
+ * cache exposes uniform per-key getters, fall back to min so the
+ * user sees a stable starting point (clamped by template_number). */
+static int32_t read_i32_current(const settings_key_def_t *kd)
+{
+    if (!kd) return 0;
+    return kd->min;
+}
+
+static void enter_number_edit(settings_tree_node_t *leaf)
+{
+    const settings_key_def_t *kd = settings_tree_node_key(leaf);
+    if (!kd) return;
+    if (kd->kind != SK_KIND_U8 && kd->kind != SK_KIND_I8 &&
+        kd->kind != SK_KIND_U32 && kd->kind != SK_KIND_U32_FLAGS) return;
+
+    s.mode      = SAV_MODE_EDIT_NUMBER;
+    s.edit_leaf = leaf;
+    update_breadcrumb_to_leaf(leaf);
+    show_browse_widgets(false);
+    template_number_open(s.panel, kd, read_i32_current(kd));
+}
+
 static void exit_toggle_edit(void)
 {
     if (template_toggle_committed()) {
@@ -206,6 +231,49 @@ static void exit_enum_edit(void)
     render_browse();
 }
 
+static void exit_number_edit(void)
+{
+    if (template_number_committed()) {
+        const settings_key_def_t *kd = settings_tree_node_key(s.edit_leaf);
+        if (kd) {
+            int32_t v32 = template_number_value();
+            /* Pack to wire-width matching the key kind. Little-endian
+             * matches Core 0's IPC config decoder convention. */
+            switch (kd->kind) {
+                case SK_KIND_U8: {
+                    uint8_t b = (uint8_t)(v32 < 0 ? 0 : (v32 > 0xFF ? 0xFF : v32));
+                    settings_client_send_set(kd->ipc_key, 0u, &b, 1u);
+                    break;
+                }
+                case SK_KIND_I8: {
+                    int8_t  b = (int8_t)(v32 < -128 ? -128 : (v32 > 127 ? 127 : v32));
+                    settings_client_send_set(kd->ipc_key, 0u, &b, 1u);
+                    break;
+                }
+                case SK_KIND_U32:
+                case SK_KIND_U32_FLAGS: {
+                    uint32_t u = (uint32_t)v32;
+                    uint8_t  buf[4] = {
+                        (uint8_t)(u & 0xFFu),
+                        (uint8_t)((u >> 8)  & 0xFFu),
+                        (uint8_t)((u >> 16) & 0xFFu),
+                        (uint8_t)((u >> 24) & 0xFFu),
+                    };
+                    settings_client_send_set(kd->ipc_key, 0u, buf, 4u);
+                    break;
+                }
+                default: break;
+            }
+            settings_client_send_commit(kd->needs_reboot != 0u);
+        }
+    }
+    template_number_close();
+    s.mode      = SAV_MODE_BROWSE;
+    s.edit_leaf = NULL;
+    show_browse_widgets(true);
+    render_browse();
+}
+
 /* ── BROWSE OK handler ──────────────────────────────────────────────── */
 
 static void browse_open_child(void)
@@ -225,6 +293,12 @@ static void browse_open_child(void)
                     return;
                 case SK_KIND_ENUM_U8:
                     enter_enum_edit(child);
+                    return;
+                case SK_KIND_U8:
+                case SK_KIND_I8:
+                case SK_KIND_U32:
+                case SK_KIND_U32_FLAGS:
+                    enter_number_edit(child);
                     return;
                 default: break;
             }
@@ -294,6 +368,7 @@ static void destroy(void)
      * `s.panel`, which the router is about to lv_obj_del. */
     if (s.mode == SAV_MODE_EDIT_TOGGLE) template_toggle_close();
     if (s.mode == SAV_MODE_EDIT_ENUM)   template_enum_close();
+    if (s.mode == SAV_MODE_EDIT_NUMBER) template_number_close();
     s.bc_lbl = NULL;
     for (uint16_t i = 0; i < MAX_VISIBLE; ++i) s.rows[i] = NULL;
     s.panel = NULL;
@@ -316,6 +391,13 @@ static void apply(const key_event_t *ev)
         (void)template_enum_apply_key(ev);
         if (template_enum_done()) {
             exit_enum_edit();
+        }
+        return;
+    }
+    if (s.mode == SAV_MODE_EDIT_NUMBER) {
+        (void)template_number_apply_key(ev);
+        if (template_number_done()) {
+            exit_number_edit();
         }
         return;
     }
