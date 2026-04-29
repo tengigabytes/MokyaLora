@@ -152,9 +152,11 @@ typedef struct {
     IpcGpsBuf         gps_buf;
 
     /* _tail_pad_pre: zeroed by ipc_shared_init, fills space up to the
-     * postmortem slots. The postmortem block sits at absolute address
-     * 0x2007FD00..0x2007FDFF — chosen specifically to land BEFORE the
-     * existing ime_view_debug snapshot at 0x2007FE00..0x2007FFBF
+     * postmortem slots. The postmortem block now sits at absolute
+     * address 0x2007FC00..0x2007FDFF — 512 bytes total since the
+     * struct grew to 256 B per slot (was 128 B; bumped to carry a
+     * 32-word stack snapshot for fault forensics). Region still ends
+     * BEFORE the ime_view_debug snapshot at 0x2007FE00..0x2007FFBF
      * (firmware/core1/src/ui/ime_view.c) and BEFORE the bridge
      * breadcrumbs at the last 64 B (0x2007FFC0..0x2007FFFF, registered
      * in firmware-architecture §9.3). */
@@ -169,7 +171,7 @@ typedef struct {
                                 - 512u];                                /* _tail_pad_post = ime_view_debug (448 B) + breadcrumbs (64 B) */
 
     /* Postmortem slots — survive watchdog/SYSRESETREQ; cleared only by
-     * POR/BOR. ipc_shared_init() skips this 256-byte window. */
+     * POR/BOR. ipc_shared_init() skips this 512-byte window. */
     mokya_postmortem_t postmortem_c0;
     mokya_postmortem_t postmortem_c1;
 

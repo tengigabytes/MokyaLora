@@ -22,6 +22,24 @@
 
 /* ── Peer table ──────────────────────────────────────────────────────── */
 
+/* On-air struct sizes (verified via `arm-none-eabi-nm --print-size`):
+ *
+ *   sizeof(dm_msg_t)    = 216 B
+ *     u32 seq + u32 epoch + u32 packet_id    = 12
+ *     bool outbound + u8 ack_state +
+ *       u16 text_len                          = 4   (no padding — already aligned)
+ *     char text[200]                          = 200
+ *
+ *   sizeof(peer_slot_t) = 1744 B
+ *     bool in_use + 3 B pad                   = 4
+ *     u32 peer_node_id + u32 last_activity_ms = 8
+ *     u8 unread + u8 count + u8 head + 1 pad  = 4
+ *     dm_msg_t ring[8] = 8 × 216              = 1728
+ *
+ *   sizeof(s_peers)     = 8 × 1744 = 13 952 B (= 0x3680)
+ *
+ * SWD readers walking ring[] should advance by 216 B per slot (NOT
+ * sizeof an aligned-to-multiple-of-8 stride). */
 typedef struct {
     bool     in_use;
     uint32_t peer_node_id;

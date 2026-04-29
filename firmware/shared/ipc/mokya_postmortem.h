@@ -78,7 +78,7 @@ typedef struct {
     uint32_t timestamp_us;   /* +0x08 */
     uint8_t  core;           /* +0x0C */
     uint8_t  _rsv0;          /* +0x0D */
-    uint16_t _rsv1;          /* +0x0E */
+    uint16_t stack_words;    /* +0x0E — number of valid u32 entries in stack[] */
 
     uint32_t pc;             /* +0x10 */
     uint32_t lr;             /* +0x14 */
@@ -106,10 +106,20 @@ typedef struct {
 
     char     task_name[MOKYA_PM_TASK_NAME_MAX];  /* +0x60..0x6F */
 
-    uint32_t _rsv3[4];       /* +0x70..0x7F — fill to 128 B */
+    uint32_t _rsv3[4];       /* +0x70..0x7F */
+
+    /* Stack snapshot — 32 words (128 B) starting at SP at fault entry.
+     * For Cortex-M the stack descends, so stack[0] is the lowest address
+     * (the stacked exception frame's r0 word) and stack[N] is at higher
+     * addresses (older frames / locals).  The capture path bounds-checks
+     * against the originating core's SRAM range so stack[] is always
+     * valid memory; if the available range is shorter than 128 B
+     * (stack overflow / SP near the top of SRAM), `stack_words` is set
+     * to the actual count and trailing entries stay zero. */
+    uint32_t stack[32];      /* +0x80..0xFF */
 } mokya_postmortem_t;
 
-_Static_assert(sizeof(mokya_postmortem_t) == 128, "mokya_postmortem_t must be 128 B");
+_Static_assert(sizeof(mokya_postmortem_t) == 256, "mokya_postmortem_t must be 256 B");
 
 #ifdef __cplusplus
 }

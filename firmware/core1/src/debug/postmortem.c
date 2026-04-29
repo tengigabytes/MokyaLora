@@ -128,6 +128,25 @@ void mokya_pm_fault_capture(uint32_t *frame, uint32_t cause,
      * own snapshot path for non-fault causes. */
     copy_task_name(pm->task_name);
 
+    /* Stack snapshot — copy 32 words (128 B) starting at the active SP.
+     * Cortex-M stack descends, so frame[0..7] is the lowest-address
+     * exception frame; addresses ABOVE frame are older stack content
+     * (caller frames, locals, return addresses). Bounds-check against
+     * the SRAM end (0x20082000 on RP2350) so a near-overflow stack
+     * doesn't wander into unmapped memory and re-fault inside the
+     * handler. Words past the available range stay zero (memset above). */
+    {
+        const uint32_t k_sram_end = 0x20082000u;
+        uint32_t *src = frame;
+        uint32_t avail_bytes = (k_sram_end > (uint32_t)src)
+                               ? (k_sram_end - (uint32_t)src) : 0u;
+        uint32_t avail_words = avail_bytes / 4u;
+        uint32_t want = sizeof(pm->stack) / sizeof(pm->stack[0]);
+        uint32_t n = (avail_words < want) ? avail_words : want;
+        for (uint32_t i = 0; i < n; ++i) pm->stack[i] = src[i];
+        pm->stack_words = (uint16_t)n;
+    }
+
     __atomic_store_n(&pm->magic, MOKYA_PM_MAGIC, __ATOMIC_RELEASE);
 
     /* Reset the chip. SYSRESETREQ also clears Core 1 fully; the
@@ -179,6 +198,25 @@ static void surface_one(const char *slot_name, mokya_postmortem_t *pm)
           (unsigned)pm->c0_heartbeat, (unsigned)pm->wd_state,
           (unsigned)pm->wd_silent_max, (unsigned)pm->wd_pause,
           pm->task_name);
+
+    /* Stack snapshot — emit in 4-word chunks so each TRACE line stays
+     * readable. Walk addr in ascending order (that's how the array was
+     * captured: stack[0] = SRAM at SP, stack[N] = SP + 4N). Words
+     * with values that look like thumb code addresses (low half of
+     * flash, bit 0 set) are likely return addresses — the analyser
+     * can post-process. Skip if no words captured. */
+    if (pm->stack_words > 0u) {
+        for (uint16_t i = 0; i < pm->stack_words; i += 4u) {
+            uint32_t w0 = pm->stack[i];
+            uint32_t w1 = (i + 1 < pm->stack_words) ? pm->stack[i + 1] : 0u;
+            uint32_t w2 = (i + 2 < pm->stack_words) ? pm->stack[i + 2] : 0u;
+            uint32_t w3 = (i + 3 < pm->stack_words) ? pm->stack[i + 3] : 0u;
+            TRACE("pm", "stk",
+                  "off=0x%02x %08x %08x %08x %08x",
+                  (unsigned)(i * 4u),
+                  (unsigned)w0, (unsigned)w1, (unsigned)w2, (unsigned)w3);
+        }
+    }
 
     /* Clear magic so this event is logged at most once. The rest of
      * the slot stays intact for SWD inspection. */
