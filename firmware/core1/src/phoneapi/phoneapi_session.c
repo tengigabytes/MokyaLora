@@ -395,6 +395,43 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
             break;
         }
 
+        /* C-3 OP_TRACEROUTE / OP_REQUEST_POS reply dispatch.  Tried
+         * before the text path because traceroute / position payloads
+         * can't masquerade as TEXT_MESSAGE_APP (different portnum).  */
+        {
+            uint32_t from_tr = 0u;
+            phoneapi_last_route_t r;
+            if (phoneapi_decode_traceroute_packet(sub, sub_len,
+                                                  &from_tr, &r)) {
+                /* RouteDiscovery has no wire timestamp. Stamp epoch=1
+                 * as a sentinel so render code can distinguish "no
+                 * reply yet" (epoch==0) from "0-hop direct neighbour"
+                 * (epoch==1, hop_count==0). */
+                if (r.epoch == 0u) r.epoch = 1u;
+                phoneapi_cache_set_last_route(from_tr, &r);
+                TRACE("phapi", "rx_route",
+                      "from=%u,fwd_hops=%u,back_hops=%u",
+                      (unsigned)from_tr, (unsigned)r.hop_count,
+                      (unsigned)r.hops_back_count);
+                break;
+            }
+            uint32_t from_pos = 0u;
+            phoneapi_last_position_t p;
+            if (phoneapi_decode_position_packet(sub, sub_len,
+                                                &from_pos, &p)) {
+                /* Position carries time on the wire. If absent (peer
+                 * has no GPS-derived timestamp), stamp epoch=1 so
+                 * render still treats it as "have data". */
+                if (p.epoch == 0u) p.epoch = 1u;
+                phoneapi_cache_set_last_position(from_pos, &p);
+                TRACE("phapi", "rx_pos",
+                      "from=%u,lat=%d,lon=%d,alt=%d,t=%u",
+                      (unsigned)from_pos, (int)p.lat_e7,
+                      (int)p.lon_e7, (int)p.alt_m, (unsigned)p.epoch);
+                break;
+            }
+        }
+
         phoneapi_text_msg_t m;
         bool is_text = phoneapi_decode_text_packet(sub, sub_len, &m);
         TRACE("phapi", "rx_packet",
@@ -415,8 +452,18 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                 /* phoneapi_msgs_publish bumps an internal seq we can't
                  * easily read without taking the cache mutex; pass 0
                  * and let dm_store assign its own monotonic id from the
-                 * outbound counter (inbound seq isn't load-bearing). */
-                dm_store_ingest_inbound(m.from_node_id, 0u, m.text, m.text_len);
+                 * outbound counter (inbound seq isn't load-bearing).
+                 * Forward the radio metadata pulled off the MeshPacket
+                 * envelope so the long-press detail modal (A3) can
+                 * surface SNR / RSSI / hops. */
+                dm_msg_meta_t meta = {
+                    .rx_snr_x4 = m.rx_snr_x4,
+                    .rx_rssi   = m.rx_rssi,
+                    .hop_limit = m.hop_limit,
+                    .hop_start = m.hop_start,
+                };
+                dm_store_ingest_inbound(m.from_node_id, 0u,
+                                        m.text, m.text_len, &meta);
             }
             TRACE("phapi", "rx_text",
                   "from=%u,len=%u",

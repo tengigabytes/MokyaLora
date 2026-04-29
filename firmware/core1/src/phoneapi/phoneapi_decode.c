@@ -3,6 +3,7 @@
 
 #include "phoneapi_decode.h"
 
+#include <limits.h>
 #include <string.h>
 
 // Protobuf wire types (https://protobuf.dev/programming-guides/encoding/)
@@ -611,6 +612,12 @@ bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
                                  phoneapi_text_msg_t *out_msg)
 {
     memset(out_msg, 0, sizeof(*out_msg));
+    /* A3 — sentinels for "field absent on wire". */
+    out_msg->rx_snr_x4 = INT16_MIN;
+    out_msg->rx_rssi   = 0;
+    out_msg->hop_limit = 0xFFu;
+    out_msg->hop_start = 0xFFu;
+
     data_subview_t data = { 0, NULL, 0 };
     bool           have_data = false;
 
@@ -633,6 +640,37 @@ bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
         } else if (f == 4u && w == WT_LEN) {
             if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
             have_data = true;
+        } else if (f == 8u && w == WT_I32) {
+            /* MeshPacket.rx_snr (mesh.proto:1591) — float dB.
+             * Stored as int16 × 4 dB so dm_msg has uniform metadata
+             * without bringing float into the on-air struct. */
+            float snr;
+            if (!read_float(buf, len, &pos, &snr)) return false;
+            float scaled = snr * 4.0f;
+            int32_t v = (int32_t)(scaled >= 0.0f ? scaled + 0.5f
+                                                  : scaled - 0.5f);
+            if (v >  32767) v =  32767;
+            if (v < -32768) v = -32768;
+            out_msg->rx_snr_x4 = (int16_t)v;
+        } else if (f == 9u && w == WT_VARINT) {
+            /* MeshPacket.hop_limit (mesh.proto:1599) — uint32. */
+            uint64_t v;
+            if (!read_varint(buf, len, &pos, &v)) return false;
+            out_msg->hop_limit = (v > 0xFFu) ? 0xFFu : (uint8_t)v;
+        } else if (f == 12u && w == WT_VARINT) {
+            /* MeshPacket.rx_rssi (mesh.proto:1623) — int32 dBm signed
+             * varint (two's complement). */
+            uint64_t v;
+            if (!read_varint(buf, len, &pos, &v)) return false;
+            int32_t s = (int32_t)(int64_t)v;
+            if (s >  32767) s =  32767;
+            if (s < -32768) s = -32768;
+            out_msg->rx_rssi = (int16_t)s;
+        } else if (f == 15u && w == WT_VARINT) {
+            /* MeshPacket.hop_start (mesh.proto:1639) — uint32. */
+            uint64_t v;
+            if (!read_varint(buf, len, &pos, &v)) return false;
+            out_msg->hop_start = (v > 0xFFu) ? 0xFFu : (uint8_t)v;
         } else {
             if (!skip_field(buf, len, &pos, w)) return false;
         }
@@ -824,6 +862,238 @@ bool phoneapi_decode_queue_status(const uint8_t *buf, uint16_t len,
             out->mesh_packet_id = (uint32_t)v;
         } else {
             if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+// ── RouteDiscovery decoder (TRACEROUTE_APP, portnum 70) ─────────────
+//
+// RouteDiscovery (mesh.proto):
+//   repeated fixed32 route        = 1;  // forward-path node nums
+//   repeated int32   snr_towards  = 2;  // dB × 4, parallel to route[]
+//   repeated fixed32 route_back   = 3;  // return-path node nums
+//   repeated int32   snr_back     = 4;  // dB × 4, parallel to route_back[]
+//
+// Repeated scalar fields are usually **packed** on the wire (single LD
+// element with a concatenated stream of values), but Meshtastic's older
+// senders sometimes emit non-packed (one LD/varint per element). We
+// handle both forms.
+
+static int8_t saturate_snr_x4_to_i8(int32_t v)
+{
+    if (v >  127) return  127;
+    if (v < -128) return -128;
+    return (int8_t)v;
+}
+
+static bool decode_route_discovery_inner(const uint8_t *buf, uint16_t len,
+                                         phoneapi_last_route_t *out)
+{
+    /* Caller pre-zeroed *out. We append into hops_full / hops_back_full /
+     * snr arrays in source order, capping at PHONEAPI_ROUTE_HOPS_MAX. */
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if ((f == 1u || f == 3u) && w == WT_LEN) {
+            // Packed repeated fixed32 — N × 4 bytes.
+            uint64_t plen;
+            if (!read_varint(buf, len, &pos, &plen)) return false;
+            if (plen > (uint64_t)(len - pos)) return false;
+            uint16_t end = pos + (uint16_t)plen;
+            uint32_t *dst = (f == 1u) ? out->hops_full : out->hops_back_full;
+            uint8_t  *cnt = (f == 1u) ? &out->hop_count : &out->hops_back_count;
+            while (pos + 4u <= end) {
+                uint32_t v;
+                if (!read_fixed32(buf, len, &pos, &v)) return false;
+                if (*cnt < PHONEAPI_ROUTE_HOPS_MAX) {
+                    dst[*cnt] = v;
+                    (*cnt)++;
+                }
+            }
+            if (pos != end) return false;
+        } else if ((f == 1u || f == 3u) && w == WT_I32) {
+            // Non-packed repeated fixed32 — single value.
+            uint32_t v;
+            if (!read_fixed32(buf, len, &pos, &v)) return false;
+            uint32_t *dst = (f == 1u) ? out->hops_full : out->hops_back_full;
+            uint8_t  *cnt = (f == 1u) ? &out->hop_count : &out->hops_back_count;
+            if (*cnt < PHONEAPI_ROUTE_HOPS_MAX) {
+                dst[*cnt] = v;
+                (*cnt)++;
+            }
+        } else if ((f == 2u || f == 4u) && w == WT_LEN) {
+            // Packed repeated int32 (varint, two's-complement). Walk the
+            // packed payload and pick off varints in parallel order with
+            // route[] / route_back[].
+            uint64_t plen;
+            if (!read_varint(buf, len, &pos, &plen)) return false;
+            if (plen > (uint64_t)(len - pos)) return false;
+            uint16_t end = pos + (uint16_t)plen;
+            int8_t   *dst = (f == 2u) ? out->snr_fwd : out->snr_back;
+            uint8_t   k   = 0;
+            while (pos < end) {
+                uint64_t v;
+                if (!read_varint(buf, len, &pos, &v)) return false;
+                if (k < PHONEAPI_ROUTE_HOPS_MAX) {
+                    dst[k] = saturate_snr_x4_to_i8((int32_t)(int64_t)v);
+                    k++;
+                }
+            }
+            if (pos != end) return false;
+        } else if ((f == 2u || f == 4u) && w == WT_VARINT) {
+            // Non-packed repeated int32 — single value. Place at the
+            // next slot in the parallel array (best-effort — without
+            // explicit indexing we assume non-packed senders interleave
+            // route+snr pairs in source order, which matches Meshtastic
+            // RouteDiscoveryModule's emission pattern).
+            uint64_t v;
+            if (!read_varint(buf, len, &pos, &v)) return false;
+            int8_t   *dst = (f == 2u) ? out->snr_fwd : out->snr_back;
+            uint8_t   k   = (f == 2u) ? out->hop_count
+                                      : out->hops_back_count;
+            // Drop into the slot for the just-pushed hop entry.
+            uint8_t   slot = (k > 0u) ? (uint8_t)(k - 1u) : 0u;
+            if (slot < PHONEAPI_ROUTE_HOPS_MAX) {
+                dst[slot] = saturate_snr_x4_to_i8((int32_t)(int64_t)v);
+            }
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+bool phoneapi_decode_traceroute_packet(const uint8_t *buf, uint16_t len,
+                                       uint32_t *out_from_node,
+                                       phoneapi_last_route_t *out_route)
+{
+    if (out_from_node == NULL || out_route == NULL) return false;
+    *out_from_node = 0u;
+    memset(out_route, 0, sizeof(*out_route));
+    /* Mark all SNR slots unknown up-front; the decoder only fills
+     * slots it actually saw. */
+    for (uint8_t i = 0; i < PHONEAPI_ROUTE_HOPS_MAX; i++) {
+        out_route->snr_fwd[i]  = INT8_MIN;
+        out_route->snr_back[i] = INT8_MIN;
+    }
+
+    data_subview_t data = { 0, NULL, 0 };
+    bool have_data = false;
+    uint32_t from = 0u;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            from = v;
+        } else if (f == 4u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
+            have_data = true;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    if (!have_data || data.portnum != PHONEAPI_PORTNUM_TRACEROUTE_APP) {
+        return false;
+    }
+    *out_from_node = from;
+    if (data.payload != NULL && data.payload_len > 0u) {
+        if (!decode_route_discovery_inner(data.payload, data.payload_len,
+                                           out_route)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ── Position decoder (POSITION_APP, portnum 3) ──────────────────────
+//
+// Position (mesh.proto): we want only
+//   sfixed32 latitude_i  = 1;  // degrees × 1e7
+//   sfixed32 longitude_i = 2;  // degrees × 1e7
+//   int32    altitude    = 3;  // metres (varint, two's-complement)
+//   fixed32  time        = 4;  // unix epoch seconds (when fix taken)
+
+static bool decode_position_inner(const uint8_t *buf, uint16_t len,
+                                  phoneapi_last_position_t *out)
+{
+    out->lat_e7 = 0;
+    out->lon_e7 = 0;
+    out->alt_m  = INT32_MIN;
+    out->epoch  = 0u;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->lat_e7 = (int32_t)v;
+        } else if (f == 2u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->lon_e7 = (int32_t)v;
+        } else if (f == 3u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->alt_m = (int32_t)(int64_t)v;
+        } else if (f == 4u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->epoch = v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+bool phoneapi_decode_position_packet(const uint8_t *buf, uint16_t len,
+                                     uint32_t *out_from_node,
+                                     phoneapi_last_position_t *out_pos)
+{
+    if (out_from_node == NULL || out_pos == NULL) return false;
+    *out_from_node = 0u;
+    memset(out_pos, 0, sizeof(*out_pos));
+    out_pos->alt_m = INT32_MIN;
+
+    data_subview_t data = { 0, NULL, 0 };
+    bool have_data = false;
+    uint32_t from = 0u;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            from = v;
+        } else if (f == 4u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
+            have_data = true;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    if (!have_data || data.portnum != PHONEAPI_PORTNUM_POSITION_APP) {
+        return false;
+    }
+    *out_from_node = from;
+    if (data.payload != NULL && data.payload_len > 0u) {
+        if (!decode_position_inner(data.payload, data.payload_len, out_pos)) {
+            return false;
         }
     }
     return true;

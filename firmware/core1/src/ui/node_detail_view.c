@@ -88,6 +88,63 @@ static void format_pubkey(char *buf, size_t cap,
     }
 }
 
+/* Format Route line for last_route_t. epoch == 0 means we never
+ * got a reply; non-zero means the decoder fired (sentinel set in
+ * phoneapi_session). 0-hop counts after a reply mean direct neighbour
+ * (no intermediate forwarders). */
+static void format_route(char *buf, size_t cap,
+                         const phoneapi_last_route_t *r)
+{
+    if (r->epoch == 0u) {
+        snprintf(buf, cap, "(none)");
+        return;
+    }
+    if (r->hop_count == 0u && r->hops_back_count == 0u) {
+        snprintf(buf, cap, "direct");
+        return;
+    }
+    size_t off = 0;
+    off += (size_t)snprintf(buf + off, cap - off,
+                            "%uh", (unsigned)r->hop_count);
+    /* First 2 forward hops as short !XX form. */
+    uint8_t show = (r->hop_count < 2u) ? r->hop_count : 2u;
+    for (uint8_t i = 0; i < show && off + 8u < cap; i++) {
+        off += (size_t)snprintf(buf + off, cap - off,
+                                " !%08lx",
+                                (unsigned long)r->hops_full[i]);
+    }
+    /* SNR summary — first hop only (signal as we left peer for hop 0). */
+    if (r->hop_count > 0u && r->snr_fwd[0] != INT8_MIN && off + 12u < cap) {
+        off += (size_t)snprintf(buf + off, cap - off,
+                                " SNR%+.1f",
+                                r->snr_fwd[0] / 4.0);
+    }
+    if (r->hops_back_count > 0u && off + 6u < cap) {
+        off += (size_t)snprintf(buf + off, cap - off,
+                                " /%ub", (unsigned)r->hops_back_count);
+    }
+}
+
+/* Format Pos line for last_position_t. "(none)" if epoch == 0. */
+static void format_pos(char *buf, size_t cap,
+                       const phoneapi_last_position_t *p)
+{
+    if (p->epoch == 0u) {
+        snprintf(buf, cap, "(none)");
+        return;
+    }
+    /* lat/lon e7 → degrees with 4 decimal places (~11 m precision,
+     * suitable for at-a-glance check). %.4f keeps the line under
+     * panel width. */
+    if (p->alt_m != INT32_MIN) {
+        snprintf(buf, cap, "%.4f,%.4f %dm",
+                 p->lat_e7 / 1e7, p->lon_e7 / 1e7, (int)p->alt_m);
+    } else {
+        snprintf(buf, cap, "%.4f,%.4f --",
+                 p->lat_e7 / 1e7, p->lon_e7 / 1e7);
+    }
+}
+
 /* ── Render ─────────────────────────────────────────────────────────── */
 
 static void render(void)
@@ -149,6 +206,14 @@ static void render(void)
     char pubkey[24];
     format_pubkey(pubkey, sizeof(pubkey), e.public_key, e.public_key_len);
 
+    char route_str[64];
+    format_route(route_str, sizeof(route_str), &e.last_route);
+
+    char pos_str[40];
+    format_pos(pos_str, sizeof(pos_str), &e.last_position);
+
+    /* Lic + PubKey share a line so we can fit Route + Pos under the
+     * 202 px body window (10 lines × ~18 px). */
     char body[480];
     snprintf(body, sizeof(body),
              "Long  : %s\n"
@@ -158,8 +223,9 @@ static void render(void)
              "Batt  : %s    %s\n"
              "Util  : %s\n"
              "Uptime: %s    Heard: %s\n"
-             "Lic   : %s\n"
-             "PubKey: %s",
+             "Lic %s   Key: %s\n"
+             "Route : %s\n"
+             "Pos   : %s",
              e.long_name[0] ? e.long_name : "(no name)",
              (unsigned)e.hw_model,
              role_label(e.role),
@@ -169,8 +235,9 @@ static void render(void)
              batt, volt,
              util,
              uptime, age,
-             e.is_licensed ? "yes" : "no",
-             pubkey);
+             e.is_licensed ? "yes" : "no ", pubkey,
+             route_str,
+             pos_str);
     lv_label_set_text(s.body, body);
 }
 

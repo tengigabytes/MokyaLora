@@ -93,9 +93,28 @@ bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
 // return true. For non-text packets returns false (caller should drop).
 // `out_msg->seq` is left zero — caller assigns when publishing.
 #define PHONEAPI_PORTNUM_TEXT_MESSAGE_APP 1u
+#define PHONEAPI_PORTNUM_POSITION_APP    3u
 #define PHONEAPI_PORTNUM_ROUTING_APP     5u
+#define PHONEAPI_PORTNUM_TRACEROUTE_APP 70u
 bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
                                  phoneapi_text_msg_t *out_msg);
+
+// MeshPacket carrying a TRACEROUTE_APP (portnum 70) reply. Fills
+// `out_from_node` with the originating peer (MeshPacket.from) and
+// `out_route` with the parsed RouteDiscovery payload (forward + back
+// hops, capped at PHONEAPI_ROUTE_HOPS_MAX). Returns false for
+// non-traceroute packets / malformed data.
+bool phoneapi_decode_traceroute_packet(const uint8_t *buf, uint16_t len,
+                                       uint32_t *out_from_node,
+                                       phoneapi_last_route_t *out_route);
+
+// MeshPacket carrying a POSITION_APP (portnum 3) reply. Fills
+// `out_from_node` with MeshPacket.from and `out_pos` with the parsed
+// Position fields v1 cares about (lat_e7, lon_e7, alt, time). Returns
+// false for non-position packets / malformed data.
+bool phoneapi_decode_position_packet(const uint8_t *buf, uint16_t len,
+                                     uint32_t *out_from_node,
+                                     phoneapi_last_position_t *out_pos);
 
 // MeshPacket carrying a Routing-app ACK (decoded.portnum == 5).
 //   - `out_request_id` ← Data.request_id (the original packet id we sent)

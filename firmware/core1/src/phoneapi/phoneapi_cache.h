@@ -87,6 +87,37 @@ typedef struct {
     bool     module_is_muted;
 } phoneapi_channel_t;
 
+// Last RouteDiscovery (TRACEROUTE_APP, portnum 70) reply seen for a peer.
+// Stored per-node so node_detail_view can render hop counts + per-hop
+// SNR after the user issues a C-3 OP_TRACEROUTE.
+//
+// Meshtastic RouteDiscovery (mesh.proto): up to 8 hops + 8 SNRs per
+// direction in the wire format; we cap at 4 each to keep per-node
+// memory bounded — a 5+ hop traceroute reply truncates to the first 4
+// in the listed direction. SNRs are int32 × 4 (dB×4); we saturate to
+// int8 to keep storage tight.
+#define PHONEAPI_ROUTE_HOPS_MAX  4u
+
+typedef struct {
+    uint8_t  hop_count;                          // 0..4, 0 = no data
+    uint8_t  hops_back_count;                    // 0..4, 0 = no return path
+    uint32_t hops_full[PHONEAPI_ROUTE_HOPS_MAX]; // forward route node_num
+    uint32_t hops_back_full[PHONEAPI_ROUTE_HOPS_MAX];
+    int8_t   snr_fwd[PHONEAPI_ROUTE_HOPS_MAX];   // dB × 4, INT8_MIN if unknown
+    int8_t   snr_back[PHONEAPI_ROUTE_HOPS_MAX];
+    uint32_t epoch;                              // last_heard epoch of this reply
+} phoneapi_last_route_t;
+
+// Last POSITION_APP (portnum 3) reply seen for a peer. v1 surfaces the
+// four most useful fields; PDOP / sats / precision_bits / source are
+// not displayed in the C-2 detail view.
+typedef struct {
+    int32_t  lat_e7;                             // latitude × 1e7 (sint32)
+    int32_t  lon_e7;                             // longitude × 1e7 (sint32)
+    int32_t  alt_m;                              // metres, INT32_MIN = unset
+    uint32_t epoch;                              // 0 = no data
+} phoneapi_last_position_t;
+
 // NodeInfo subset (one entry per peer in the mesh)
 typedef struct {
     bool     in_use;
@@ -112,6 +143,11 @@ typedef struct {
     bool     is_licensed;
     uint8_t  public_key_len;         // 0 if absent, else 32 (Curve25519)
     uint8_t  public_key[32];
+    // C-3 OP_TRACEROUTE / OP_REQUEST_POS reply caches. Populated by
+    // FR_TAG_PACKET dispatch when a portnum 70 / 3 reply lands; read by
+    // C-2 detail view.
+    phoneapi_last_route_t    last_route;
+    phoneapi_last_position_t last_position;
     // Bookkeeping
     uint32_t phase_seq;              // matches cache.current_phase_seq if fresh
 } phoneapi_node_t;
@@ -266,6 +302,11 @@ typedef struct {
 // when a FromRadio.packet with portnum==TEXT_MESSAGE_APP is seen.
 // Field shape matches `messages_inbox_entry_t` so messages_view can be
 // migrated with minimal code change.
+//
+// A3: trailing radio metadata fields lifted off the MeshPacket envelope
+// (rx_snr/rx_rssi/hop_limit/hop_start) feed dm_store so the long-press
+// detail modal can show signal context. Sentinel values document
+// "decoder didn't see this field on the wire" cases.
 typedef struct {
     uint32_t seq;            ///< Monotonic id assigned at publish
     uint32_t from_node_id;
@@ -273,6 +314,10 @@ typedef struct {
     uint8_t  channel_index;
     uint16_t text_len;
     uint8_t  text[PHONEAPI_MSG_TEXT_MAX];
+    int16_t  rx_snr_x4;      ///< INT16_MIN if MeshPacket.rx_snr absent
+    int16_t  rx_rssi;        ///< 0 if MeshPacket.rx_rssi absent (dBm signed)
+    uint8_t  hop_limit;      ///< 0xFF if MeshPacket.hop_limit absent
+    uint8_t  hop_start;      ///< 0xFF if MeshPacket.hop_start absent
 } phoneapi_text_msg_t;
 
 // Public API ---------------------------------------------------------
@@ -341,6 +386,15 @@ uint32_t phoneapi_cache_node_count(void);
 bool phoneapi_cache_take_node_at(uint32_t index, phoneapi_node_t *out);
 // Copy node by absolute node_id; returns false if not present.
 bool phoneapi_cache_get_node_by_id(uint32_t node_id, phoneapi_node_t *out);
+
+// C-3 OP_TRACEROUTE / OP_REQUEST_POS reply writers. No-op if the
+// referenced node isn't in the cache. Bumps change_seq so the C-2
+// detail view's refresh hook re-renders. Safe to call from the
+// session task (mutex-protected).
+void phoneapi_cache_set_last_route(uint32_t node_num,
+                                   const phoneapi_last_route_t *r);
+void phoneapi_cache_set_last_position(uint32_t node_num,
+                                      const phoneapi_last_position_t *p);
 
 uint32_t phoneapi_cache_change_seq(void);
 uint32_t phoneapi_cache_committed_seq(void);

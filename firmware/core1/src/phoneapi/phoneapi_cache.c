@@ -10,7 +10,12 @@
 #include "task.h"
 
 // Cache state — exported through the API only. Everything is guarded
-// by `s_lock`. SWD inspection still works via the static address.
+// by `s_lock`. PSRAM-resident: single-core access, low frequency
+// (NodeInfo updates ~per peer per heartbeat), and we don't need SWD
+// to read it directly — `g_phoneapi_dbg` shadow below is the
+// SWD-friendly mirror. Living in .psram_bss frees ~6 KB of the tight
+// Core 1 SRAM budget (which the per-node last_route + last_position
+// extension just blew through).
 static struct {
     phoneapi_my_info_t          my_info;
     phoneapi_metadata_t         metadata;
@@ -49,7 +54,7 @@ static struct {
     uint32_t committed_seq;     // bump on phoneapi_cache_commit()
     uint32_t current_phase_seq; // bump on phoneapi_cache_phase_begin()
     bool     config_complete;
-} s_cache;
+} s_cache __attribute__((section(".psram_bss")));
 
 static SemaphoreHandle_t s_lock = NULL;
 
@@ -315,6 +320,36 @@ bool phoneapi_cache_get_node_by_id(uint32_t node_id, phoneapi_node_t *out)
     }
     cache_unlock();
     return ok;
+}
+
+void phoneapi_cache_set_last_route(uint32_t node_num,
+                                   const phoneapi_last_route_t *r)
+{
+    if (r == NULL || node_num == 0u) return;
+    cache_lock();
+    for (size_t i = 0; i < PHONEAPI_NODES_CAP; i++) {
+        if (s_cache.nodes[i].in_use && s_cache.nodes[i].num == node_num) {
+            s_cache.nodes[i].last_route = *r;
+            s_cache.change_seq++;
+            break;
+        }
+    }
+    cache_unlock();
+}
+
+void phoneapi_cache_set_last_position(uint32_t node_num,
+                                      const phoneapi_last_position_t *p)
+{
+    if (p == NULL || node_num == 0u) return;
+    cache_lock();
+    for (size_t i = 0; i < PHONEAPI_NODES_CAP; i++) {
+        if (s_cache.nodes[i].in_use && s_cache.nodes[i].num == node_num) {
+            s_cache.nodes[i].last_position = *p;
+            s_cache.change_seq++;
+            break;
+        }
+    }
+    cache_unlock();
 }
 
 // ── Config sub-oneof writers / readers (B3-P1 / Cut B) ──────────────
