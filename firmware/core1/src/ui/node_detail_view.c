@@ -24,6 +24,7 @@
 #include "key_event.h"
 #include "mie/keycode.h"
 #include "nodes_view.h"
+#include "node_alias.h"
 
 /* ── State ──────────────────────────────────────────────────────────── */
 
@@ -108,9 +109,10 @@ static void render(void)
     }
 
     char hdr[80];
-    snprintf(hdr, sizeof(hdr), "%-4s / !%08lx",
-             e.short_name[0] ? e.short_name : "????",
-             (unsigned long)e.num);
+    char nm[24];
+    node_alias_format_display(e.num, e.short_name, nm, sizeof(nm));
+    snprintf(hdr, sizeof(hdr), "%s / !%08lx",
+             nm, (unsigned long)e.num);
     lv_label_set_text(s.header, hdr);
 
     char snr[16];

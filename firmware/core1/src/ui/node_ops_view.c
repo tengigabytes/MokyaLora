@@ -23,6 +23,8 @@
 #include "mie/keycode.h"
 #include "nodes_view.h"
 #include "chat_list_view.h"
+#include "node_alias.h"
+#include "ime_task.h"
 
 #define ROW_H        24
 #define HEADER_H     16
@@ -40,13 +42,26 @@ typedef enum {
 
 static const char *const s_op_labels[MAX_ENTRIES] = {
     "DM (open conversation)",
-    "Alias              (TBD)",
+    "Set alias",
     "Favorite toggle    (TBD)",
     "Ignore toggle      (TBD)",
     "Traceroute         (TBD)",
     "Request position   (TBD)",
     "Remote admin       (TBD)",
 };
+
+/* Which ops are wired today. Placeholders render dimmed; OK on them
+ * still flashes a TBD hint via the header label. */
+static bool op_is_active(uint8_t i)
+{
+    switch ((op_id_t)i) {
+        case OP_DM:
+        case OP_ALIAS:
+            return true;
+        default:
+            return false;
+    }
+}
 
 typedef struct {
     lv_obj_t *header;
@@ -78,9 +93,16 @@ static void render(void)
     phoneapi_node_t e;
     if (s.active_num != 0u &&
         phoneapi_cache_get_node_by_id(s.active_num, &e)) {
-        snprintf(hdr, sizeof(hdr), "Ops: %-4s !%08lx",
-                 e.short_name[0] ? e.short_name : "????",
-                 (unsigned long)s.active_num);
+        char nm[24];
+        node_alias_format_display(s.active_num, e.short_name,
+                                  nm, sizeof(nm));
+        snprintf(hdr, sizeof(hdr), "Ops: %s !%08lx",
+                 nm, (unsigned long)s.active_num);
+    } else if (s.active_num != 0u) {
+        char nm[24];
+        node_alias_format_display(s.active_num, NULL, nm, sizeof(nm));
+        snprintf(hdr, sizeof(hdr), "Ops: %s !%08lx",
+                 nm, (unsigned long)s.active_num);
     } else {
         snprintf(hdr, sizeof(hdr), "Ops: (no node)");
     }
@@ -91,7 +113,7 @@ static void render(void)
         snprintf(buf, sizeof(buf), "%s %s",
                  i == s.cursor ? ">" : " ", s_op_labels[i]);
         lv_label_set_text(s.rows[i], buf);
-        bool placeholder = (i != OP_DM);
+        bool placeholder = !op_is_active(i);
         lv_obj_set_style_text_color(s.rows[i],
             i == s.cursor && !placeholder
                 ? ui_color(UI_COLOR_ACCENT_FOCUS)
@@ -99,6 +121,24 @@ static void render(void)
                     ? ui_color(UI_COLOR_TEXT_SECONDARY)
                     : ui_color(UI_COLOR_TEXT_PRIMARY)), 0);
     }
+}
+
+/* IME callback for the alias rename flow. Writes the committed text
+ * into the local alias store; an empty commit clears the alias. */
+static void on_alias_done(bool committed, const char *utf8,
+                          uint16_t byte_len, void *ctx)
+{
+    (void)ctx;
+    if (!committed) return;
+    /* Use the active node id we stashed when this op was launched.
+     * If the user navigated elsewhere mid-modal, s.active_num stays
+     * pinned because conversation/launcher don't touch it. */
+    if (s.active_num == 0u) return;
+    node_alias_set(s.active_num, utf8, byte_len);
+    /* Render runs again automatically when view_router restores us
+     * as active after the IME modal closes — header will pick up
+     * the new alias via phoneapi_cache lookup + node_alias_lookup
+     * fallback chain. */
 }
 
 static void create(lv_obj_t *panel)
@@ -151,6 +191,29 @@ static void apply(const key_event_t *ev)
                         view_router_navigate(VIEW_ID_MESSAGES_CHAT);
                     }
                     break;
+                case OP_ALIAS: {
+                    if (s.active_num == 0u) break;
+                    if (ime_request_text_active()) break;
+                    /* Pre-fill with the existing alias if any so the
+                     * user edits rather than retypes. */
+                    const char *cur = node_alias_lookup(s.active_num);
+                    ime_text_request_t req = {
+                        .prompt    = "Alias",
+                        .initial   = cur,
+                        .max_bytes = (uint16_t)NODE_ALIAS_MAX_LEN,
+                        .mode_hint = IME_TEXT_MODE_DEFAULT,
+                        .flags     = IME_TEXT_FLAG_NONE,
+                        .layout    = IME_TEXT_LAYOUT_FULLSCREEN,
+                        /* draft_id keyed by node so per-peer drafts
+                         * survive cancel-and-resume. Use an arbitrary
+                         * tag bit to avoid collision with the
+                         * conversation-compose draft namespace
+                         * (which uses raw node_num). */
+                        .draft_id  = s.active_num | 0x80000000u,
+                    };
+                    (void)ime_request_text(&req, on_alias_done, NULL);
+                    break;
+                }
                 default:
                     /* Placeholder hint — flash the header with a TBD
                      * marker so the press is visibly registered. */

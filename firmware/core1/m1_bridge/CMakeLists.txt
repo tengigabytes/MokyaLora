@@ -264,6 +264,7 @@ add_executable(core1_bridge
     ${MESSAGES_DIR}/messages_send.c
     ${MESSAGES_DIR}/messages_tx_status.c
     ${MESSAGES_DIR}/dm_store.c
+    ${MESSAGES_DIR}/node_alias.c
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_framing.c>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_decode.c>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_cache.c>

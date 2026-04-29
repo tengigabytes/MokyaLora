@@ -26,6 +26,7 @@
 #include "key_event.h"
 #include "mie/keycode.h"
 #include "mokya_trace.h"
+#include "node_alias.h"
 
 /* ── Layout ─────────────────────────────────────────────────────────── */
 
@@ -80,10 +81,13 @@ static void format_row(char *buf, size_t cap, bool focused,
     if (e->hops_away == 0xFFu) snprintf(hops_str, sizeof(hops_str), "?");
     else snprintf(hops_str, sizeof(hops_str), "%uh", (unsigned)e->hops_away);
 
-    const char *sn = e->short_name[0] ? e->short_name : "????";
-    snprintf(buf, cap, "%s%-4s  %-12s  %s %s",
+    /* Prefer local alias over broadcast short_name — node_alias_format
+     * falls back to short_name then "!hex" when no alias is set. */
+    char nm[24];
+    node_alias_format_display(e->num, e->short_name, nm, sizeof(nm));
+    snprintf(buf, cap, "%s%-8s  %-12s  %s %s",
              focused ? ">" : " ",
-             sn,
+             nm,
              e->long_name[0] ? e->long_name : "(no name)",
              snr_str, hops_str);
 }
