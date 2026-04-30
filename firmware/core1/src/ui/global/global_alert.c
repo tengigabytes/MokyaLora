@@ -38,6 +38,11 @@
 #define LOW_BATT_CLEAR_MV    3700u
 #define LOW_BATT_POLL_MS     5000u   /* ~0.2 Hz — battery moves slowly  */
 
+/* Real LiPo cells never drop below ~2500 mV — anything under this means
+ * no battery installed (BAT pin floating). Don't latch alerts in that
+ * case; would mask USB-only dev runs as "low battery". */
+#define VBAT_PRESENT_MIN_MV  500u
+
 /* DM toast cadence. Show for 4 s; new inbound supersedes any in-flight
  * info-level alert (status_bar handles single-slot replacement). */
 #define DM_TOAST_DURATION_MS 4000u
@@ -209,6 +214,16 @@ static void poll_low_batt(uint32_t now)
     const bq25622_state_t *b = bq25622_get_state();
     if (b == NULL || !b->online) return;
     uint32_t mv = b->vbat_mv;
+
+    /* No battery installed — clear any latch and skip. */
+    if (mv < VBAT_PRESENT_MIN_MV) {
+        if (s.low_batt_latched) {
+            s.low_batt_latched = false;
+            status_bar_clear_alert();
+            TRACE("galert", "low_batt_clr", "no_batt");
+        }
+        return;
+    }
 
     if (!s.low_batt_latched && mv < LOW_BATT_TRIP_MV) {
         s.low_batt_latched = true;
