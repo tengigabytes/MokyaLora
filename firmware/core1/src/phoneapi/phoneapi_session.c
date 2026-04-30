@@ -39,6 +39,16 @@ static struct {
 static phoneapi_mode_t s_mode       = PHONEAPI_MODE_STANDALONE;
 static uint32_t        s_last_nonce = 0;
 
+/* F-3 NeighborInfo SWD diag — written by the cascade decoder hook
+ * below on every successful NEIGHBORINFO_APP decode. Lives in regular
+ * .bss so SWD reads are coherent (cache lives in PSRAM and is not
+ * SWD-readable). See test_f3_neighbor_info.py. */
+volatile uint32_t g_f3_total            __attribute__((used)) = 0u;
+volatile uint32_t g_f3_last_from        __attribute__((used)) = 0u;
+volatile uint8_t  g_f3_last_count       __attribute__((used)) = 0u;
+volatile uint32_t g_f3_last_first_node  __attribute__((used)) = 0u;
+volatile int8_t   g_f3_last_first_snr_x4 __attribute__((used)) = INT8_MIN;
+
 // Heartbeat timer. Period chosen well under PhoneAPI's 15-min serial
 // timeout (`SerialConsole.cpp:27`). Started in STANDALONE, stopped in
 // FORWARD (the USB host's heartbeats keep Core 0 alive in that mode).
@@ -528,6 +538,20 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                 /* NeighborInfo carries rx_time when available; decoder
                  * stamps epoch=1 sentinel if not. */
                 phoneapi_cache_set_last_neighbors(from_nb, &nb);
+                /* SWD-readable diag — F-3 host test reads these to
+                 * confirm cascade decoder ran without walking the
+                 * PSRAM cache (which has cache-coherency caveats over
+                 * SWD). Updated on every successful decode. */
+                extern volatile uint32_t g_f3_total;
+                extern volatile uint32_t g_f3_last_from;
+                extern volatile uint8_t  g_f3_last_count;
+                extern volatile uint32_t g_f3_last_first_node;
+                extern volatile int8_t   g_f3_last_first_snr_x4;
+                g_f3_total++;
+                g_f3_last_from        = from_nb;
+                g_f3_last_count       = nb.count;
+                g_f3_last_first_node  = (nb.count > 0u) ? nb.entries[0].node_num : 0u;
+                g_f3_last_first_snr_x4= (nb.count > 0u) ? nb.entries[0].snr_x4   : INT8_MIN;
                 TRACE("phapi", "rx_nbrs",
                       "from=%u,count=%u,t=%u",
                       (unsigned)from_nb, (unsigned)nb.count,
