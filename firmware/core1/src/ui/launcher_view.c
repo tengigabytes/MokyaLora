@@ -35,22 +35,35 @@ typedef struct {
  *
  *    Msg(A)  Chan(B)  Nodes(C)
  *    Map(D)  Tele(F)  Tools(T)
- *    Set(S)  Admin    Power
+ *    Set(S)  Me       Power
  *
- * Active in this build: Msg, Nodes, Tools, Set. The other five are
- * spec-named placeholders so the user can see what's coming and the
- * 9-grid layout looks complete. Placeholders render dimmed and OK on
- * them is a no-op. As each app lands, swap its target from
- * VIEW_ID_COUNT to the new view id. */
+ * As each app lands, swap its target from VIEW_ID_COUNT to the new
+ * view id. Power is the only remaining placeholder — reserved for
+ * Z-1 SOS standby (depends on power button driver + low-batt state
+ * machine + IPC_CMD_SEND_SOS, none implemented yet). Pressing OK on
+ * a placeholder shows a one-line "coming soon" toast (handled by
+ * apply()) instead of silently exiting the launcher. */
+typedef struct {
+    const char *placeholder_msg;
+} tile_meta_t;
+
 static tile_t s_tiles[ROWS * COLS] = {
     { "Msg",    VIEW_ID_MESSAGES }, { "Chan",  VIEW_ID_CHANNELS },  { "Nodes", VIEW_ID_NODES   },
     { "Map",    VIEW_ID_MAP      }, { "Tele",  VIEW_ID_TELEMETRY }, { "Tools", VIEW_ID_TOOLS   },
     { "Set",    VIEW_ID_SETTINGS }, { "Me",    VIEW_ID_MY_NODE },   { "Power", VIEW_ID_COUNT   },
 };
 
+/* Per-tile placeholder reasons (only meaningful when target == VIEW_ID_COUNT). */
+static const tile_meta_t s_tile_meta[ROWS * COLS] = {
+    {NULL}, {NULL}, {NULL},
+    {NULL}, {NULL}, {NULL},
+    {NULL}, {NULL}, {"SOS app 規劃中 (待 power button + Z-1)"},
+};
+
 typedef struct {
     lv_obj_t *bg;
     lv_obj_t *cells[ROWS * COLS];
+    lv_obj_t *toast_lbl;     /* one-line message under the grid */
     uint8_t   cur_row;
     uint8_t   cur_col;
 } launcher_t;
@@ -117,12 +130,38 @@ static void create(lv_obj_t *panel)
         }
     }
 
+    /* Toast label under the grid (Y0+188+4 = 210 .. 224). Empty by
+     * default; set by apply() when user OKs a placeholder tile. */
+    s.toast_lbl = lv_label_create(panel);
+    lv_obj_set_pos(s.toast_lbl, 4, 210);
+    lv_obj_set_size(s.toast_lbl, 312, 14);
+    lv_obj_set_style_text_font(s.toast_lbl, ui_font_sm16(), 0);
+    lv_obj_set_style_text_color(s.toast_lbl,
+                                ui_color(UI_COLOR_TEXT_SECONDARY), 0);
+    lv_obj_set_style_pad_all(s.toast_lbl, 0, 0);
+    lv_label_set_long_mode(s.toast_lbl, LV_LABEL_LONG_CLIP);
+    lv_label_set_text(s.toast_lbl, "");
+
     paint_focus();
 }
 
 static void destroy(void)
 {
     memset(s.cells, 0, sizeof(s.cells));
+    s.toast_lbl = NULL;
+}
+
+static void clear_toast_when_cursor_moves(void)
+{
+    if (s.toast_lbl) lv_label_set_text(s.toast_lbl, "");
+}
+
+static void show_placeholder_toast(uint8_t idx)
+{
+    if (s.toast_lbl == NULL) return;
+    const char *msg = s_tile_meta[idx].placeholder_msg;
+    if (msg == NULL) msg = "尚未實作";
+    lv_label_set_text(s.toast_lbl, msg);
 }
 
 static void apply(const key_event_t *ev)
@@ -131,17 +170,25 @@ static void apply(const key_event_t *ev)
 
     switch (ev->keycode) {
         case MOKYA_KEY_UP:
-            if (s.cur_row > 0) { s.cur_row--; paint_focus(); }
+            if (s.cur_row > 0) { s.cur_row--; paint_focus(); clear_toast_when_cursor_moves(); }
             break;
         case MOKYA_KEY_DOWN:
-            if (s.cur_row + 1 < ROWS) { s.cur_row++; paint_focus(); }
+            if (s.cur_row + 1 < ROWS) { s.cur_row++; paint_focus(); clear_toast_when_cursor_moves(); }
             break;
         case MOKYA_KEY_LEFT:
-            if (s.cur_col > 0) { s.cur_col--; paint_focus(); }
+            if (s.cur_col > 0) { s.cur_col--; paint_focus(); clear_toast_when_cursor_moves(); }
             break;
         case MOKYA_KEY_RIGHT:
-            if (s.cur_col + 1 < COLS) { s.cur_col++; paint_focus(); }
+            if (s.cur_col + 1 < COLS) { s.cur_col++; paint_focus(); clear_toast_when_cursor_moves(); }
             break;
+        case MOKYA_KEY_OK: {
+            /* Reachable here only when view_router falls through (target
+             * is a placeholder). Real targets are intercepted by the
+             * router and dispatched via launcher_view_picked + modal_finish. */
+            int idx = s.cur_row * COLS + s.cur_col;
+            show_placeholder_toast((uint8_t)idx);
+            break;
+        }
         default: break;
     }
 }

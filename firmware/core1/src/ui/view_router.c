@@ -406,11 +406,18 @@ void view_router_tick(void)
             handle_func_event(&ev);
             continue;
         }
-        /* OK in launcher = commit + navigate */
+        /* OK in launcher: commit + navigate to a real target. If the
+         * focused tile is a placeholder (target == VIEW_ID_COUNT), fall
+         * through to launcher_view's apply() so it can show a "coming
+         * soon" toast instead of silently exiting the launcher. */
         if (s_view_router_active == VIEW_ID_LAUNCHER &&
             ev.keycode == MOKYA_KEY_OK && ev.pressed) {
-            modal_finish(true);
-            continue;
+            view_id_t picked = launcher_view_picked();
+            if (picked < VIEW_ID_COUNT) {
+                modal_finish(true);
+                continue;
+            }
+            /* Placeholder — let launcher's apply() handle it. */
         }
         /* SET in IME modal = explicit "send / apply" commit. Spec-clean
          * alternative to the legacy FUNC-short-as-commit; conversation

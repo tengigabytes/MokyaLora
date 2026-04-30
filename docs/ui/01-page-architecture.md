@@ -9,7 +9,7 @@
 | 頁面代號 | Core 1 view（檔案/變數） | 狀態 | 備註 |
 |---|---|---|---|
 | L-0 桌面 | `boot_home_view` | ✅ | 5 telemetry + 3 messages + 1 event 對齊 spec（commit `80f7a55`） |
-| L-1 九宮格 | `launcher_view` | ✅ 部分 | FUNC 鍵走 view-router 預設行為；spec-named 9 格（commit `188b2a8` / `ee3a72e`）。Map 已於 D-Map v1 (commit `8e1e5ed`) 接通到 `VIEW_ID_MAP`；Power 格仍 `VIEW_ID_COUNT`（disabled placeholder），待電源 App / SOS 系列上線 |
+| L-1 九宮格 | `launcher_view` | ✅ | spec-named 9 格全到位；Map 由 D-Map v1 (commit `8e1e5ed`) 接 `VIEW_ID_MAP`。Power 格刻意保留為 placeholder（target=`VIEW_ID_COUNT`，灰色）— 預定接 Z-1 SOS（待 power button driver + 低電狀態機 + `IPC_CMD_SEND_SOS`）。**OK on placeholder** 顯示一行 toast「SOS app 規劃中 (待 power button + Z-1)」，不再無聲退出 launcher（L1 sweep Phase 1） |
 | keypad 測試 | `keypad_view` | ✅ debug | 鍵盤診斷用 |
 | G-1 Status Bar | `global/status_bar` | ✅ | 全域常駐 widget；TX/RX activity pulse（commit `7e5cd1b`） |
 | G-2 Hint Bar | `global/hint_bar` | ✅ | 由 view descriptor `.hints` 驅動（commit `538b614`） |
