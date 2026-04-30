@@ -32,8 +32,8 @@ for m in re.finditer(r'#define\s+(MOKYA_KEY_\w+)\s+\(\(mokya_keycode_t\)(0x[0-9A
 
 VIEW_NAMES = ['BOOT_HOME', 'LAUNCHER', 'MESSAGES', 'MESSAGES_CHAT',
               'MESSAGE_DETAIL', 'CANNED', 'NODES', 'NODE_DETAIL',
-              'NODE_OPS', 'MY_NODE', 'SETTINGS', 'TELEMETRY',
-              'CHANNELS', 'CHANNEL_EDIT', 'TOOLS',
+              'NODE_OPS', 'MY_NODE', 'SETTINGS', 'MODULES_INDEX',
+              'TELEMETRY', 'CHANNELS', 'CHANNEL_EDIT', 'TOOLS',
               'TRACEROUTE', 'GNSS_SKY', 'FIRMWARE_INFO', 'IME',
               'KEYPAD', 'RF_DEBUG', 'FONT_TEST']
 
@@ -114,7 +114,7 @@ def main():
 
         def status(label):
             v, name = ki.view()
-            page = swd.read_u32(page_addr) if v == 11 else None
+            page = swd.read_u32(page_addr) if v == 12 else None
             print(f'[{label:<28}] view={v:2d}({name:<14}) tele.page={page}')
             return v
 
@@ -149,7 +149,7 @@ def main():
         # Step 3: OK -> telemetry view
         ki.press(KEYMAP['MOKYA_KEY_OK'], gap_ms=400)
         v = status('OK -> telemetry')
-        if v != 11:
+        if v != 12:
             print(f'!! telemetry not active (v={v})'); fail += 1; return fail
 
         # Step 4: page cycling — relative to current page (LRU-cached

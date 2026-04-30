@@ -15,13 +15,28 @@
  */
 #pragma once
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "view_router.h"
+#include "settings_keys.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 const view_descriptor_t *settings_app_view_descriptor(void);
+
+/* Stash a settings_group_t value to seed the cursor on the next view
+ * activation. Used by modules_index_view (T2.4) to deep-link from the
+ * S-7 list straight into a module's leaves without forcing the user
+ * to re-navigate from the root each time.
+ *
+ * `valid` = false clears the stash (subsequent settings_view enter
+ * starts at root as before). The stash is consumed exactly once: the
+ * next create() reads it then re-arms valid=false.
+ */
+void settings_app_view_set_initial_group(settings_group_t g, bool valid);
 
 #ifdef __cplusplus
 }

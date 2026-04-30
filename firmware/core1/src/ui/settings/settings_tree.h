@@ -38,6 +38,11 @@ typedef const struct settings_tree_node settings_tree_node_t;
 
 settings_tree_node_t       *settings_tree_root(void);
 
+/* Look up the group node by enum value. Returns NULL if `g` is out of
+ * range or the tree has not been built yet.  Useful for deep-linking
+ * (T2.4 modules_index_view → settings_view at a chosen group). */
+settings_tree_node_t       *settings_tree_group_node(settings_group_t g);
+
 settings_tree_node_kind_t   settings_tree_node_kind(settings_tree_node_t *n);
 
 /* Display label for breadcrumb / list rendering. NULL-terminated.

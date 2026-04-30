@@ -55,6 +55,18 @@ typedef struct {
 
 static settings_app_t s;
 
+/* T2.4 deep-link stash: modules_index_view writes a target group here
+ * and immediately navigates to VIEW_ID_SETTINGS. The next create()
+ * reads + clears it so the second-time-around entry resets to root. */
+static settings_group_t s_initial_group;
+static bool             s_initial_group_valid;
+
+void settings_app_view_set_initial_group(settings_group_t g, bool valid)
+{
+    s_initial_group = g;
+    s_initial_group_valid = valid;
+}
+
 static lv_obj_t *make_label(lv_obj_t *parent, int x, int y, int w, int h,
                             lv_color_t col)
 {
@@ -375,7 +387,15 @@ static void create(lv_obj_t *panel)
 {
     memset(&s, 0, sizeof(s));
     s.panel  = panel;
-    s.cursor = settings_tree_root();
+    /* Honour deep-link stash exactly once; fall back to root otherwise. */
+    if (s_initial_group_valid) {
+        settings_tree_node_t *g_node =
+            settings_tree_group_node(s_initial_group);
+        s.cursor = g_node ? g_node : settings_tree_root();
+        s_initial_group_valid = false;
+    } else {
+        s.cursor = settings_tree_root();
+    }
     s.mode   = SAV_MODE_BROWSE;
 
     lv_obj_set_style_bg_color(panel, ui_color(UI_COLOR_BG_PRIMARY), 0);
@@ -452,12 +472,40 @@ static void apply(const key_event_t *ev)
         case MOKYA_KEY_BACK:
             browse_back();
             break;
+        case MOKYA_KEY_RIGHT:
+            /* T2.4 deep-link: only meaningful at the root level — opens
+             * the spec-named S-7 "Modules" index (see modules_index_view).
+             * Pressing RIGHT inside a group is a no-op, since the
+             * visual axis there is UP/DOWN. */
+            if (settings_tree_node_kind(s.cursor) == ST_NODE_ROOT) {
+                view_router_navigate(VIEW_ID_MODULES_INDEX);
+            }
+            break;
         default: break;
     }
 }
 
 static void refresh(void)
 {
+    /* Deep-link consume: when modules_index_view set the stash and
+     * navigated here, but the view was LRU-cached so create() didn't
+     * run, the stash needs to be honoured on the first refresh after
+     * activation.  The fresh-create path also lands here harmlessly
+     * because create() already cleared `s_initial_group_valid`. */
+    if (s_initial_group_valid && s.bc_lbl != NULL) {
+        settings_tree_node_t *node =
+            settings_tree_group_node(s_initial_group);
+        if (node) {
+            s.cursor     = node;
+            s.sel_row    = 0;
+            s.scroll_top = 0;
+            s.mode       = SAV_MODE_BROWSE;
+            show_browse_widgets(true);
+            render_browse();
+        }
+        s_initial_group_valid = false;
+    }
+
     /* Async exit poll for SAV_MODE_EDIT_TEXT: the IME modal owns the
      * screen during text edit, so neither apply() nor template_*_done
      * is reachable during the modal. When view_router restores us as

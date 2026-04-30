@@ -112,6 +112,14 @@ settings_tree_node_t *settings_tree_root(void)
     return node_at(0);
 }
 
+settings_tree_node_t *settings_tree_group_node(settings_group_t g)
+{
+    if ((unsigned)g >= SG_GROUP_COUNT) return NULL;
+    build_once();
+    /* Group nodes occupy slots 1..SG_GROUP_COUNT in enum order. */
+    return node_at((uint8_t)(1u + (unsigned)g));
+}
+
 settings_tree_node_kind_t settings_tree_node_kind(settings_tree_node_t *n)
 {
     if (!n) return ST_NODE_ROOT;
