@@ -34,6 +34,8 @@
 #include "settings/settings_app_view.h"
 #include "modules_index_view.h"
 #include "telemetry_view.h"
+#include "map_view.h"
+#include "map_nav_view.h"
 #include "channels_view.h"
 #include "channel_edit_view.h"
 #include "traceroute_view.h"
@@ -62,6 +64,8 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_SETTINGS]       = settings_app_view_descriptor();
     g_view_registry[VIEW_ID_MODULES_INDEX]  = modules_index_view_descriptor();
     g_view_registry[VIEW_ID_TELEMETRY]      = telemetry_view_descriptor();
+    g_view_registry[VIEW_ID_MAP]            = map_view_descriptor();
+    g_view_registry[VIEW_ID_MAP_NAV]        = map_nav_view_descriptor();
     g_view_registry[VIEW_ID_CHANNELS]       = channels_view_descriptor();
     g_view_registry[VIEW_ID_CHANNEL_EDIT]   = channel_edit_view_descriptor();
     g_view_registry[VIEW_ID_TOOLS]          = tools_view_descriptor();

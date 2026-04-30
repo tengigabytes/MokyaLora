@@ -29,10 +29,11 @@ for m in re.finditer(r'#define\s+(MOKYA_KEY_\w+)\s+\(\(mokya_keycode_t\)(0x[0-9A
 VIEW_NAMES = ['BOOT_HOME', 'LAUNCHER', 'MESSAGES', 'MESSAGES_CHAT',
               'MESSAGE_DETAIL', 'CANNED', 'NODES', 'NODE_DETAIL',
               'NODE_OPS', 'REMOTE_ADMIN', 'MY_NODE', 'SETTINGS',
-              'MODULES_INDEX', 'TELEMETRY', 'CHANNELS', 'CHANNEL_EDIT',
-              'TOOLS', 'TRACEROUTE', 'GNSS_SKY', 'FIRMWARE_INFO',
-              'IME', 'KEYPAD', 'RF_DEBUG', 'FONT_TEST']
-VIEW_ID_IME = 20   # bumps each time a non-modal view is inserted
+              'MODULES_INDEX', 'TELEMETRY', 'MAP', 'MAP_NAV',
+              'CHANNELS', 'CHANNEL_EDIT', 'TOOLS', 'TRACEROUTE',
+              'GNSS_SKY', 'FIRMWARE_INFO', 'IME', 'KEYPAD',
+              'RF_DEBUG', 'FONT_TEST']
+VIEW_ID_IME = 22   # bumps each time a non-modal view is inserted
 
 KEYI_MAGIC  = 0x4B45494A
 RING_EVENTS = 32

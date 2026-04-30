@@ -25,11 +25,12 @@
 #include "node_alias.h"
 #include "ime_task.h"
 #include "phoneapi_encode.h"
+#include "map_nav_view.h"
 #include "mokya_trace.h"
 
 #define ROW_H        24
 #define HEADER_H     16
-#define MAX_ENTRIES   7
+#define MAX_ENTRIES   8
 
 typedef enum {
     OP_DM            = 0,
@@ -39,6 +40,7 @@ typedef enum {
     OP_TRACEROUTE    = 4,
     OP_REQUEST_POS   = 5,
     OP_REMOTE_ADMIN  = 6,
+    OP_NAVIGATE      = 7,
 } op_id_t;
 
 /* Static portion of each label. FAVORITE / IGNORE rows append a
@@ -52,6 +54,7 @@ static const char *const s_op_labels[MAX_ENTRIES] = {
     "Traceroute (send)",
     "Request position",
     "Remote admin (reboot/reset)",
+    "Navigate to map (D-6)",
 };
 
 /* All ops are wired today (T2.5 closed the OP_REMOTE_ADMIN gap).
@@ -67,6 +70,7 @@ static bool op_is_active(uint8_t i)
         case OP_TRACEROUTE:
         case OP_REQUEST_POS:
         case OP_REMOTE_ADMIN:
+        case OP_NAVIGATE:
             return true;
         default:
             return false;
@@ -338,6 +342,21 @@ static void apply(const key_event_t *ev)
                     }
                     nodes_view_set_active_node(s.active_num);
                     view_router_navigate(VIEW_ID_REMOTE_ADMIN);
+                    break;
+                }
+                case OP_NAVIGATE: {
+                    /* D-6 entry path #2 (plan map-ppi-radar-v1.md
+                     * §DEC-6). Hand the target to map_nav_view via its
+                     * pending-target setter so the view picks it up on
+                     * create() — matches the remote_admin pattern of
+                     * stashing the target before navigating. */
+                    if (s.active_num == 0u) {
+                        lv_label_set_text(s.header,
+                            "Navigate: no target");
+                        break;
+                    }
+                    map_nav_view_set_target(s.active_num);
+                    view_router_navigate(VIEW_ID_MAP_NAV);
                     break;
                 }
                 default:
