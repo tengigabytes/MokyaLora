@@ -95,6 +95,7 @@ bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
 #define PHONEAPI_PORTNUM_TEXT_MESSAGE_APP 1u
 #define PHONEAPI_PORTNUM_POSITION_APP    3u
 #define PHONEAPI_PORTNUM_ROUTING_APP     5u
+#define PHONEAPI_PORTNUM_WAYPOINT_APP    8u
 #define PHONEAPI_PORTNUM_RANGE_TEST_APP 66u
 #define PHONEAPI_PORTNUM_TRACEROUTE_APP 70u
 #define PHONEAPI_PORTNUM_NEIGHBORINFO_APP 71u
@@ -126,6 +127,16 @@ bool phoneapi_decode_position_packet(const uint8_t *buf, uint16_t len,
 bool phoneapi_decode_neighborinfo_packet(const uint8_t *buf, uint16_t len,
                                           uint32_t *out_from_node,
                                           phoneapi_neighbors_t *out_nb);
+
+// MeshPacket carrying a WAYPOINT_APP (portnum 8) broadcast. Fills
+// MeshPacket.from into `out->sender_node_id` and the rest from the
+// embedded Waypoint protobuf (mesh.proto:1291). `out->is_local` is
+// always set false (locally-created waypoints don't go through the
+// wire decoder). `out->epoch_seen` ← MeshPacket.rx_time when present,
+// else 1 (sentinel "fresh"). Returns false for non-waypoint packets
+// or malformed wire.
+bool phoneapi_decode_waypoint_packet(const uint8_t *buf, uint16_t len,
+                                     phoneapi_waypoint_t *out);
 
 // Generic MeshPacket metadata extractor — does NOT filter by portnum,
 // so callers (T-4 sniffer) can log every inbound packet. Captures

@@ -1326,6 +1326,111 @@ bool phoneapi_decode_neighborinfo_packet(const uint8_t *buf, uint16_t len,
     return true;
 }
 
+// ── Waypoint decoder (WAYPOINT_APP, portnum 8) ──────────────────────
+//
+// Waypoint (mesh.proto:1291):
+//   uint32   id           = 1; varint
+//   sfixed32 latitude_i   = 2; I32 (optional, signed two's-complement LE)
+//   sfixed32 longitude_i  = 3; I32
+//   uint32   expire       = 4; varint
+//   uint32   locked_to    = 5; varint
+//   string   name         = 6; LD (max 30 chars)
+//   string   description  = 7; LD (max 100 chars)
+//   fixed32  icon         = 8; I32 (Unicode codepoint)
+//
+// Wrapped as MeshPacket.decoded.payload of a packet whose
+// decoded.portnum == WAYPOINT_APP (8).
+
+static bool decode_waypoint_inner(const uint8_t *buf, uint16_t len,
+                                  phoneapi_waypoint_t *out)
+{
+    /* Caller pre-zeroed *out and set is_local=false. */
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->id = (uint32_t)v;
+        } else if (f == 2u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->lat_e7 = (int32_t)v;        /* sfixed32 = bitcast of u32 */
+        } else if (f == 3u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->lon_e7 = (int32_t)v;
+        } else if (f == 4u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->expire = (uint32_t)v;
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->locked_to = (uint32_t)v;
+        } else if (f == 6u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos, out->name,
+                                  PHONEAPI_WAYPOINT_NAME_MAX)) return false;
+        } else if (f == 7u && w == WT_LEN) {
+            if (!read_string_into(buf, len, &pos, out->description,
+                                  PHONEAPI_WAYPOINT_DESC_MAX)) return false;
+        } else if (f == 8u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->icon = v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+bool phoneapi_decode_waypoint_packet(const uint8_t *buf, uint16_t len,
+                                     phoneapi_waypoint_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    out->is_local = false;
+
+    data_subview_t data = { 0, NULL, 0 };
+    bool have_data = false;
+    uint32_t from = 0u;
+    uint32_t rx_time = 0u;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            from = v;
+        } else if (f == 4u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
+            have_data = true;
+        } else if (f == 7u && w == WT_I32) {
+            /* MeshPacket.rx_time (fixed32). */
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            rx_time = v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    if (!have_data || data.portnum != PHONEAPI_PORTNUM_WAYPOINT_APP) {
+        return false;
+    }
+    out->sender_node_id = from;
+    out->epoch_seen     = (rx_time != 0u) ? rx_time : 1u;
+    if (data.payload != NULL && data.payload_len > 0u) {
+        if (!decode_waypoint_inner(data.payload, data.payload_len, out)) {
+            return false;
+        }
+    }
+    /* Reject id==0 — Meshtastic Waypoint id is the dedup key, no
+     * sane originator emits 0. Treat as malformed. */
+    return out->id != 0u;
+}
+
 // ── Range Test decoder (RANGE_TEST_APP, portnum 66) ─────────────────
 //
 // Range Test packets carry an ASCII payload — Meshtastic emits "seq <N>"

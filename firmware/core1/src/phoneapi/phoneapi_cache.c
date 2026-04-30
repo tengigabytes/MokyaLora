@@ -39,6 +39,8 @@ static struct {
     phoneapi_module_serial_t        module_serial;
     phoneapi_module_ext_notif_t     module_ext_notif;
     phoneapi_module_remote_hw_t     module_remote_hw;
+    /* D-series waypoints (received + locally-created).  RAM-only in v1. */
+    phoneapi_waypoint_t         waypoints[PHONEAPI_WAYPOINTS_CAP];
     bool                        my_info_valid;
     bool                        metadata_valid;
     bool                        config_device_valid;
@@ -379,6 +381,116 @@ void phoneapi_cache_set_last_neighbors(uint32_t node_num,
         }
     }
     cache_unlock();
+}
+
+// ── D-series waypoint cache (D-3/4/5) ───────────────────────────────
+
+void phoneapi_waypoints_upsert(const phoneapi_waypoint_t *w)
+{
+    if (w == NULL || w->id == 0u) return;
+    cache_lock();
+
+    int hit       = -1;
+    int empty     = -1;
+    int oldest    = -1;
+    uint32_t old_seen = UINT32_MAX;
+
+    for (size_t i = 0; i < PHONEAPI_WAYPOINTS_CAP; i++) {
+        const phoneapi_waypoint_t *e = &s_cache.waypoints[i];
+        if (e->in_use) {
+            if (e->id == w->id) { hit = (int)i; break; }
+            if (e->epoch_seen < old_seen) {
+                old_seen = e->epoch_seen;
+                oldest   = (int)i;
+            }
+        } else if (empty < 0) {
+            empty = (int)i;
+        }
+    }
+
+    int slot = (hit >= 0) ? hit :
+               (empty >= 0) ? empty :
+               oldest;
+    if (slot < 0) { cache_unlock(); return; }
+
+    s_cache.waypoints[slot]        = *w;
+    s_cache.waypoints[slot].in_use = true;
+    s_cache.change_seq++;
+    cache_unlock();
+}
+
+void phoneapi_waypoints_remove(uint32_t id)
+{
+    if (id == 0u) return;
+    cache_lock();
+    for (size_t i = 0; i < PHONEAPI_WAYPOINTS_CAP; i++) {
+        if (s_cache.waypoints[i].in_use && s_cache.waypoints[i].id == id) {
+            s_cache.waypoints[i].in_use = false;
+            s_cache.change_seq++;
+            break;
+        }
+    }
+    cache_unlock();
+}
+
+uint32_t phoneapi_waypoints_count(void)
+{
+    cache_lock();
+    uint32_t n = 0;
+    for (size_t i = 0; i < PHONEAPI_WAYPOINTS_CAP; i++) {
+        if (s_cache.waypoints[i].in_use) n++;
+    }
+    cache_unlock();
+    return n;
+}
+
+/* Newest-first ordering by epoch_seen — bubble-sort over the small
+ * (<=8) in-use set is fine; called at refresh rate, not real-time. */
+bool phoneapi_waypoints_take_at(uint32_t index, phoneapi_waypoint_t *out)
+{
+    if (out == NULL) return false;
+    cache_lock();
+
+    uint8_t order[PHONEAPI_WAYPOINTS_CAP];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < PHONEAPI_WAYPOINTS_CAP; i++) {
+        if (s_cache.waypoints[i].in_use) order[n++] = i;
+    }
+    /* Sort descending by epoch_seen (newest first). */
+    for (uint8_t i = 1; i < n; i++) {
+        uint8_t v = order[i];
+        uint32_t key = s_cache.waypoints[v].epoch_seen;
+        int j = (int)i - 1;
+        while (j >= 0 && s_cache.waypoints[order[j]].epoch_seen < key) {
+            order[j + 1] = order[j];
+            j--;
+        }
+        order[j + 1] = v;
+    }
+
+    bool ok = false;
+    if (index < n) {
+        *out = s_cache.waypoints[order[index]];
+        ok = true;
+    }
+    cache_unlock();
+    return ok;
+}
+
+bool phoneapi_waypoints_get_by_id(uint32_t id, phoneapi_waypoint_t *out)
+{
+    if (out == NULL || id == 0u) return false;
+    cache_lock();
+    bool ok = false;
+    for (size_t i = 0; i < PHONEAPI_WAYPOINTS_CAP; i++) {
+        if (s_cache.waypoints[i].in_use && s_cache.waypoints[i].id == id) {
+            *out = s_cache.waypoints[i];
+            ok = true;
+            break;
+        }
+    }
+    cache_unlock();
+    return ok;
 }
 
 // ── Config sub-oneof writers / readers (B3-P1 / Cut B) ──────────────

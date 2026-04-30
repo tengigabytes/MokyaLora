@@ -389,6 +389,40 @@ typedef struct {
     phoneapi_remote_hw_pin_t pins[4];
 } phoneapi_module_remote_hw_t;
 
+// ── D-series Waypoint cache (mesh.proto:1291 Waypoint) ──────────────
+//
+// Capacity capped at 8 — matches phoneapi_neighbors render budget. v1
+// is RAM-only (PSRAM .psram_bss); reboot clears self-created and
+// received waypoints alike. Flash persist via LittleFS is v2 (D-series
+// plan §卡點).
+//
+// Source-of-truth: waypoint id is uint32 picked by the originator.
+// Different originators MAY reuse ids; in v1 we treat (id) alone as
+// the upsert key — cross-sender collisions would clobber, but in
+// practice ids are timestamp-derived so collisions are rare.
+//
+// Wire format: WAYPOINT_APP (portnum 8) MeshPacket carrying a
+// Waypoint protobuf. See phoneapi_decode_waypoint_packet().
+
+#define PHONEAPI_WAYPOINTS_CAP        8u
+#define PHONEAPI_WAYPOINT_NAME_MAX   31u  /* 30 + NUL */
+#define PHONEAPI_WAYPOINT_DESC_MAX  101u  /* 100 + NUL */
+
+typedef struct {
+    bool     in_use;
+    uint32_t id;                                   ///< Waypoint.id (sender-unique)
+    int32_t  lat_e7;                               ///< Waypoint.latitude_i (sfixed32)
+    int32_t  lon_e7;                               ///< Waypoint.longitude_i
+    uint32_t expire;                               ///< 0 = never, else epoch s
+    uint32_t locked_to;                            ///< 0 = open edit; else owner
+    uint32_t icon;                                 ///< Unicode codepoint (fixed32)
+    char     name[PHONEAPI_WAYPOINT_NAME_MAX];
+    char     description[PHONEAPI_WAYPOINT_DESC_MAX];
+    uint32_t sender_node_id;                       ///< MeshPacket.from, or own
+    uint32_t epoch_seen;                           ///< rx_time / local create time
+    bool     is_local;                             ///< true = D-5 self-created
+} phoneapi_waypoint_t;
+
 // Decoded TEXT_MESSAGE_APP payload — published by the cascade decoder
 // when a FromRadio.packet with portnum==TEXT_MESSAGE_APP is seen.
 // Field shape matches `messages_inbox_entry_t` so messages_view can be
@@ -505,6 +539,30 @@ void phoneapi_cache_set_last_neighbors(uint32_t node_num,
 uint32_t phoneapi_cache_change_seq(void);
 uint32_t phoneapi_cache_committed_seq(void);
 bool     phoneapi_cache_config_complete(void);
+
+// ── Waypoint cache API (D-3/4/5) ───────────────────────────────────
+//
+// Single writer (cascade decoder for received broadcasts; D-5 view for
+// locally-created); many readers (D-3/4/5/D-2 views). All access is
+// mutex-protected.
+//
+// `upsert` semantics: identifies an existing slot by `id`; if found
+// overwrites in place. Otherwise picks an empty slot. If the table is
+// full the oldest expired (or oldest by `epoch_seen` if none expired)
+// is evicted. `id == 0` is treated as an invalid call (no-op).
+void     phoneapi_waypoints_upsert(const phoneapi_waypoint_t *w);
+void     phoneapi_waypoints_remove(uint32_t id);
+
+// `phoneapi_waypoints_count()` returns the number of in-use slots
+// (does not auto-prune expired entries — UI may want to render them
+// differently rather than hide outright).
+uint32_t phoneapi_waypoints_count(void);
+
+// Iterate by index 0..count-1. The order is "newest first" (by epoch_seen).
+bool     phoneapi_waypoints_take_at(uint32_t index, phoneapi_waypoint_t *out);
+
+// Look up by waypoint id. Returns false if not present.
+bool     phoneapi_waypoints_get_by_id(uint32_t id, phoneapi_waypoint_t *out);
 
 // Inbound text-message ring (FIFO of last PHONEAPI_MSG_RING_CAP).
 // Producer = phoneapi_session decoder; consumer = messages_view.

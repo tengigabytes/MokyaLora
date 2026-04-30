@@ -49,6 +49,15 @@ volatile uint8_t  g_f3_last_count       __attribute__((used)) = 0u;
 volatile uint32_t g_f3_last_first_node  __attribute__((used)) = 0u;
 volatile int8_t   g_f3_last_first_snr_x4 __attribute__((used)) = INT8_MIN;
 
+/* D-3 waypoint cascade SWD diag — bumped on every successful
+ * WAYPOINT_APP decode. Same .bss-resident pattern as g_f3_*.
+ * See scripts/test_d3_waypoint_decode.py. */
+volatile uint32_t g_d3_total            __attribute__((used)) = 0u;
+volatile uint32_t g_d3_last_id          __attribute__((used)) = 0u;
+volatile uint32_t g_d3_last_from        __attribute__((used)) = 0u;
+volatile int32_t  g_d3_last_lat_e7      __attribute__((used)) = 0;
+volatile int32_t  g_d3_last_lon_e7      __attribute__((used)) = 0;
+
 /* Live debug — counters for the few portnums we want to track. Bumped
  * before per-portnum dispatch so arrivals are visible even when our
  * specific decoder doesn't recognise the body. */
@@ -581,6 +590,26 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                       "from=%u,count=%u,t=%u",
                       (unsigned)from_nb, (unsigned)nb.count,
                       (unsigned)nb.epoch);
+                break;
+            }
+            phoneapi_waypoint_t wp;
+            if (phoneapi_decode_waypoint_packet(sub, sub_len, &wp)) {
+                phoneapi_waypoints_upsert(&wp);
+                extern volatile uint32_t g_d3_total;
+                extern volatile uint32_t g_d3_last_id;
+                extern volatile uint32_t g_d3_last_from;
+                extern volatile int32_t  g_d3_last_lat_e7;
+                extern volatile int32_t  g_d3_last_lon_e7;
+                g_d3_total++;
+                g_d3_last_id     = wp.id;
+                g_d3_last_from   = wp.sender_node_id;
+                g_d3_last_lat_e7 = wp.lat_e7;
+                g_d3_last_lon_e7 = wp.lon_e7;
+                TRACE("phapi", "rx_wp",
+                      "id=%u,from=%u,lat=%d,lon=%d,exp=%u",
+                      (unsigned)wp.id, (unsigned)wp.sender_node_id,
+                      (int)wp.lat_e7, (int)wp.lon_e7,
+                      (unsigned)wp.expire);
                 break;
             }
             uint32_t from_rt = 0u;
