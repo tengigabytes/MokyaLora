@@ -401,6 +401,111 @@ static bool send_self_admin_varint(uint32_t peer_node_num,
                              trace_label);
 }
 
+/* ── B-3 加入頻道 — AdminMessage.set_channel encoder ─────────────────
+ *
+ * Wire layout (one-pass, single-byte length prefixes — total stays
+ * under 128 B for the v1 schema):
+ *
+ *   AdminMessage {
+ *     set_channel (field 8, LEN) {
+ *       Channel {
+ *         index    (field 1, varint)
+ *         settings (field 2, LEN) {
+ *           psk      (field 2, LEN bytes)
+ *           name     (field 3, LEN string)
+ *         }
+ *         role     (field 3, varint)
+ *       }
+ *     }
+ *   }
+ *
+ * Payload size budget for v1: 32 (psk) + 11 (name) + tags + lengths
+ *   ≈ 60 B; AdminMessage outer wrap ≈ 65 B. Comfortably below the
+ *   single-byte-length 128 B threshold so we backpatch lengths at the
+ *   reservation points without a varint resize step. */
+bool phoneapi_encode_admin_set_channel(uint8_t channel_index,
+                                        const char *name, uint8_t name_len,
+                                        const uint8_t *psk, uint8_t psk_len,
+                                        uint8_t role,
+                                        uint32_t *out_packet_id)
+{
+    if (channel_index >= PHONEAPI_CHANNEL_COUNT) return false;
+    if (name_len > 11u) return false;
+    /* Meshtastic proto: psk_len ∈ {0, 1, 16, 32}. 0 = open, 1 =
+     * "use default key" sentinel, 16/32 = real key. */
+    if (!(psk_len == 0u || psk_len == 1u ||
+          psk_len == 16u || psk_len == 32u)) return false;
+
+    phoneapi_my_info_t mi;
+    if (!phoneapi_cache_get_my_info(&mi) || mi.my_node_num == 0u) {
+        return false;
+    }
+
+    uint8_t  buf[96];
+    size_t   pos = 0;
+
+    /* AdminMessage.set_channel — field 8 LEN. Reserve 1 byte for length;
+     * backpatch after the Channel body finishes. */
+    if (!put_tag(buf, sizeof(buf), &pos, 8u, 2u)) return false;
+    if (pos + 1u > sizeof(buf)) return false;
+    size_t am_len_pos = pos;
+    pos += 1u;
+    size_t channel_start = pos;
+
+    /* Channel.index — field 1 varint */
+    if (!put_tag(buf, sizeof(buf), &pos, 1u, 0u)) return false;
+    if (!put_varint(buf, sizeof(buf), &pos, channel_index)) return false;
+
+    /* Channel.settings — field 2 LEN. Same backpatch pattern. */
+    if (!put_tag(buf, sizeof(buf), &pos, 2u, 2u)) return false;
+    if (pos + 1u > sizeof(buf)) return false;
+    size_t cs_len_pos = pos;
+    pos += 1u;
+    size_t cs_start = pos;
+
+    /* ChannelSettings.psk — field 2 LEN bytes */
+    if (psk_len > 0u) {
+        if (!put_tag(buf, sizeof(buf), &pos, 2u, 2u)) return false;
+        if (!put_varint(buf, sizeof(buf), &pos, psk_len)) return false;
+        if (pos + psk_len > sizeof(buf)) return false;
+        memcpy(&buf[pos], psk, psk_len);
+        pos += psk_len;
+    }
+
+    /* ChannelSettings.name — field 3 LEN string */
+    if (name_len > 0u) {
+        if (!put_tag(buf, sizeof(buf), &pos, 3u, 2u)) return false;
+        if (!put_varint(buf, sizeof(buf), &pos, name_len)) return false;
+        if (pos + name_len > sizeof(buf)) return false;
+        memcpy(&buf[pos], name, name_len);
+        pos += name_len;
+    }
+
+    size_t cs_len = pos - cs_start;
+    if (cs_len >= 128u) return false;       /* single-byte assumption */
+    buf[cs_len_pos] = (uint8_t)cs_len;
+
+    /* Channel.role — field 3 varint */
+    if (!put_tag(buf, sizeof(buf), &pos, 3u, 0u)) return false;
+    if (!put_varint(buf, sizeof(buf), &pos, role)) return false;
+
+    size_t ch_len = pos - channel_start;
+    if (ch_len >= 128u) return false;
+    buf[am_len_pos] = (uint8_t)ch_len;
+
+    /* Wrap as MeshPacket → portnum 6 (ADMIN_APP), to=self so AdminModule
+     * processes it on the local-from path. Same envelope as
+     * set_favorite_node. */
+    return encode_app_packet(mi.my_node_num,
+                             /*channel_index=*/0u,
+                             /*portnum=*/6u,
+                             buf, (uint16_t)pos,
+                             /*want_ack=*/true,
+                             /*want_response=*/true,
+                             out_packet_id,
+                             "admin_set_channel");
+}
+
 bool phoneapi_encode_admin_set_favorite(uint32_t peer_node_num,
                                         bool     set,
                                         uint32_t *out_packet_id)

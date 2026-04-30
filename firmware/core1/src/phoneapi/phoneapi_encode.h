@@ -82,6 +82,24 @@ bool phoneapi_encode_admin_set_favorite(uint32_t peer_node_num,
                                         bool     set,
                                         uint32_t *out_packet_id);
 
+/* B-3 加入頻道 — self-admin AdminMessage.set_channel (field 8).
+ *
+ * Builds a Channel { index, settings { psk, name }, role } sub-message
+ * inside the AdminMessage and sends it locally (mp.from = mp.to = self).
+ * AdminModule on Core 0 picks it up and writes channelFile.channels[N]
+ * + persists. v1 only sets {psk, name} inside ChannelSettings — id,
+ * uplink/downlink/module_settings stay at proto defaults.
+ *
+ * `name_len` must be ≤ 11 (proto cap). `psk_len` must be 0, 1, 16, or
+ * 32 (proto convention; 1 = "use default LongFast PSK"). `role` is one
+ * of phoneapi_channel_role_t. Returns false on body overflow / missing
+ * my_node_num / out-of-range index. */
+bool phoneapi_encode_admin_set_channel(uint8_t channel_index,
+                                        const char *name, uint8_t name_len,
+                                        const uint8_t *psk, uint8_t psk_len,
+                                        uint8_t role,
+                                        uint32_t *out_packet_id);
+
 /* Same as set_favorite but for the ignore list (set_ignored_node = 47,
  * remove_ignored_node = 48). NodeInfo.is_unmessagable mirrors the
  * resulting state. */

@@ -177,11 +177,26 @@ static void apply(const key_event_t *ev)
         case MOKYA_KEY_DOWN:
             if (s.cursor + 1u < ROW_COUNT) { s.cursor++; render(); }
             break;
-        case MOKYA_KEY_OK:
+        case MOKYA_KEY_OK: {
+            /* Empty slot → channel_add_view (B-3); occupied → channel_edit_view
+             * (existing). "Empty" means role==DISABLED — Meshtastic populates
+             * all 8 ChannelSettings entries so `in_use` is always true; the
+             * role is the meaningful occupancy flag. Cache miss treated as
+             * empty so cold-boot before cascade replay still routes to add. */
+            phoneapi_channel_t ch;
+            bool have = phoneapi_cache_get_channel(s.cursor, &ch);
+            bool occupied = have && ch.in_use &&
+                            ch.role != PHONEAPI_CHAN_ROLE_DISABLED;
             channels_view_set_active_index(s.cursor);
-            TRACE("chlist", "open_edit", "idx=%u", (unsigned)s.cursor);
-            view_router_navigate(VIEW_ID_CHANNEL_EDIT);
+            if (occupied) {
+                TRACE("chlist", "open_edit", "idx=%u", (unsigned)s.cursor);
+                view_router_navigate(VIEW_ID_CHANNEL_EDIT);
+            } else {
+                TRACE("chlist", "open_add", "idx=%u", (unsigned)s.cursor);
+                view_router_navigate(VIEW_ID_CHANNEL_ADD);
+            }
             break;
+        }
         case MOKYA_KEY_BACK:
             view_router_navigate(VIEW_ID_BOOT_HOME);
             break;

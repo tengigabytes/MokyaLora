@@ -38,6 +38,7 @@
 #include "map_nav_view.h"
 #include "channels_view.h"
 #include "channel_edit_view.h"
+#include "channel_add_view.h"
 #include "traceroute_view.h"
 #include "range_test_view.h"
 #include "gnss_sky_view.h"
@@ -76,6 +77,7 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_FIRMWARE_INFO]  = firmware_info_view_descriptor();
     g_view_registry[VIEW_ID_IME]            = ime_view_descriptor();
     g_view_registry[VIEW_ID_KEYPAD]         = keypad_view_descriptor();
+    g_view_registry[VIEW_ID_CHANNEL_ADD]    = channel_add_view_descriptor();
 #if MOKYA_DEBUG_VIEWS
     g_view_registry[VIEW_ID_RF_DEBUG]       = rf_debug_view_descriptor();
     g_view_registry[VIEW_ID_FONT_TEST]      = font_test_view_descriptor();

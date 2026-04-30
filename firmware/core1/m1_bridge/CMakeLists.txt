@@ -241,6 +241,7 @@ add_executable(core1_bridge
     ${METRICS_DIR}/history.c
     ${UI_DIR}/channels_view.c
     ${UI_DIR}/channel_edit_view.c
+    ${UI_DIR}/channel_add_view.c
     ${UI_DIR}/traceroute_view.c
     ${UI_DIR}/range_test_view.c
     ${UI_DIR}/gnss_sky_view.c

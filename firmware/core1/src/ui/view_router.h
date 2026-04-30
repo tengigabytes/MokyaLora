@@ -73,6 +73,7 @@ typedef enum {
     VIEW_ID_FIRMWARE_INFO,    /* T-8 firmware info (versions, hashes)     */
     VIEW_ID_IME,              /* G-3 IME modal-only                       */
     VIEW_ID_KEYPAD,           /* legacy keypad debug grid (under Tools)   */
+    VIEW_ID_CHANNEL_ADD,      /* B-3 加入頻道 (manual create new)         */
 #if MOKYA_DEBUG_VIEWS
     VIEW_ID_RF_DEBUG,
     VIEW_ID_FONT_TEST,
