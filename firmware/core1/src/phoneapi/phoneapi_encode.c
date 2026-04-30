@@ -407,7 +407,9 @@ static bool send_self_admin_varint(uint32_t peer_node_num,
  * under 128 B for the v1 schema):
  *
  *   AdminMessage {
- *     set_channel (field 8, LEN) {
+ *     set_channel (field 33, LEN) {     // confirmed via
+ *                                       // meshtastic_AdminMessage_set_channel_tag
+ *                                       // in admin.pb.h
  *       Channel {
  *         index    (field 1, varint)
  *         settings (field 2, LEN) {
@@ -444,9 +446,9 @@ bool phoneapi_encode_admin_set_channel(uint8_t channel_index,
     uint8_t  buf[96];
     size_t   pos = 0;
 
-    /* AdminMessage.set_channel — field 8 LEN. Reserve 1 byte for length;
+    /* AdminMessage.set_channel — field 33 LEN. Reserve 1 byte for length;
      * backpatch after the Channel body finishes. */
-    if (!put_tag(buf, sizeof(buf), &pos, 8u, 2u)) return false;
+    if (!put_tag(buf, sizeof(buf), &pos, 33u, 2u)) return false;
     if (pos + 1u > sizeof(buf)) return false;
     size_t am_len_pos = pos;
     pos += 1u;
