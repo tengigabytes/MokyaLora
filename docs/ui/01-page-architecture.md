@@ -165,7 +165,7 @@
 頂端顯示：本機暱稱 / 角色 / 區域 / Preset / TX 功率
 分組：常用 / 通訊 / 進階（折疊）
 
-> **B3 IPC 設定覆蓋現況（2026-04 校對）**：cascade IPC_CFG_* 約 60+ key 已就緒（Device / LoRa / Position / Display / Power / Security / Owner / Channel / Telemetry / NeighborInfo / RangeTest / DetectionSensor / CannedMessage / AmbientLighting / Paxcounter）。**仍缺**：Store & Forward (S-7.4)、External Notification (S-7.2)、Serial (S-7.9)、Remote Hardware (S-7.10) 四個 ModuleConfig 群組；對應子頁實作前需先補 IPC_CFG_* 與 cascade decoder。
+> **B3 + T2.4 IPC 設定覆蓋現況（2026-04-30 校對）**：cascade IPC_CFG_* 共 19 group / ~115 key 已全數到位（Device / LoRa / Position / Display / Power / Security / Owner / Channel + Telemetry / NeighborInfo / RangeTest / DetectionSensor / CannedMessage / AmbientLighting / Paxcounter / **StoreForward (S-7.4) / Serial (S-7.9) / ExternalNotification (S-7.2) / RemoteHardware (S-7.10)**）。最後四個 ModuleConfig 群組由 commit `83cc2e1` 的 T2.4 phase 補完（共 31 key），end-to-end round-trip 由 `scripts/test_ipc_config.sh t24` 驗證通過。**剩餘缺口**：S-7.10 RemoteHardware 的 `available_pins[]` repeated message — 需 nested-array 編輯器，另案處理。
 
 ### S 常用區
 
@@ -264,11 +264,19 @@
 ---
 
 最後更新：2026-04-30
-版本：v1.3（T-3 / T-4 / T-5 / T-7 全部從 ⏳ 升 ✅，T-section 4 view
-新增；Phase 2 NeighborInfo + Phase 3 RangeTest decoder 修正
-MeshPacket 欄位編號錯誤 [rx_time=8→7 / rx_snr=9→8 / rx_rssi=13→12]，
-與 B-3 field tag 8→33 同類錯誤；T-4 端到端 RF live decode 通過
-[peer broadcast → SWD 抓 payload byte-for-byte]）
+版本：v1.4（S-7 IPC 覆蓋現況註記校正：4 個 ModuleConfig 群組
+[StoreForward / Serial / ExternalNotification / RemoteHardware]
+其實已由 commit `83cc2e1` 的 T2.4 phase 全數補完，舊註的「仍缺」
+是 B3 phase 後沒同步更新的 stale doc；t24 regression 31 key
+round-trip 通過；唯一保留的缺口是 S-7.10 `available_pins[]`
+nested-array 編輯器，另案處理）
+
+v1.3（2026-04-30）：T-3 / T-4 / T-5 / T-7 全部從 ⏳ 升 ✅，
+T-section 4 view 新增；Phase 2 NeighborInfo + Phase 3 RangeTest
+decoder 修正 MeshPacket 欄位編號錯誤
+[rx_time=8→7 / rx_snr=9→8 / rx_rssi=13→12]，與 B-3 field tag
+8→33 同類錯誤；T-4 端到端 RF live decode 通過
+[peer broadcast → SWD 抓 payload byte-for-byte]。
 
 v1.2（2026-04-30）：D-Map v1 / F-1 / F-3 / T-2 / B-3 / B-4 全部從
 ⏳ 升 ✅；Core 1 view 對照表同步 dev-Sblzm 5/5 phase commits +
