@@ -28,7 +28,10 @@
 | C-3 節點操作 | `node_ops_view` | ✅ | 7 OPs：DM / ALIAS / FAVORITE / IGNORE / TRACEROUTE / REQUEST_POS / REMOTE_ADMIN（commit `d9ebf55`、`f9270b6`、`6b385eb`、`58f61f6`、`89786ef`） |
 | C-3 sub OP_REMOTE_ADMIN | `remote_admin_view` | ✅ | 5 actions sub-menu：Reboot / Shutdown / FactoryReset(Cfg) / FactoryReset(Dev) / NodeDB Reset（T2.5，commit `89786ef`） |
 | C-4 我的節點 | `my_node_view` | ✅ | commit `d9ebf55` |
-| D-1~D-6 地圖 | ⏳ | 未實作 | 6 頁地圖 / 航點 App，需新 view + LVGL chart |
+| D-1 主地圖 | `map_view` | ✅ 部分 | 向量 PPI 雷達盤：3 距離環 + 本機 `+` + N 標 + peer 點（短名稱 + SNR 著色），LEFT/RIGHT 7 檔尺度（100 m..100 km），SET 切 layer mask（nodes / all / me-only），UP/DOWN 走訪 peer cursor、OK 鎖定進 D-6（dev-Sblzm） |
+| D-2 圖層切換 | `map_view` 子模式 | ✅ 部分 | D-1 內 SET 鍵循環；航跡/航點未實作（ALL 暫等同 NODES） |
+| D-3~D-5 航點 | ⏳ | 未實作 | 航點 CRUD + persist 待 LittleFS 整合 |
+| D-6 航點導航 | `map_nav_view` | ✅ 部分 | 鎖定 peer 後顯示大方位字（8 方位 + 度數）+ 距離 + ETA + 速度；C-3 OP_NAVIGATE 入口；BACK 回 D-1（dev-Sblzm） |
 | F-1 本機遙測 | `telemetry_view` (TELE_PAGE_F1) | ✅ 部分 | channel_util / air_util_tx 待 TELEMETRY_APP self-decode |
 | F-2 環境感測 | `telemetry_view` (TELE_PAGE_F2) | ✅ | 氣壓/三軸磁/各 sensor 溫度；Rev A 無濕度感測器 |
 | F-3 鄰居資訊 | `telemetry_view` (TELE_PAGE_F3) | ✅ 部分 | 用既有 `phoneapi_node_t` SNR/hops/last_heard 矩陣；完整 NeighborInfo (PortNum 71) decode 留 v2 |

@@ -3184,6 +3184,101 @@ Memory cost: 256 B inside the existing 24 KB `.shared_ipc` region
 breadcrumb tail (0x2007FFC0). See `docs/design-notes/firmware-architecture.md`
 §9.4 / §9.5.
 
+### D-Map App v1 — vector PPI radar + peer navigation (2026-04-30)
+
+Plan `~/.claude/plans/map-ppi-radar-v1.md`. Closes the L-1 launcher
+slot 4 (`Map`) placeholder. Three Phases delivered on `dev-Sblzm`:
+
+- **Phase A — D-1 skeleton**: empty radar dish (3 distance rings + ME
+  `+` + N marker) + LEFT/RIGHT scale cycling (7 steps: 100 m..100 km,
+  default 1 km). New `map_view.{c,h}` + `VIEW_ID_MAP=14` + register +
+  launcher slot wire-up. Test `scripts/test_d1_skeleton.py` injects
+  via RTT key-inject (`mokya_swd::rtt_send_frame` + `mokya_rtt::build_frame`),
+  reads view-id + `s.scale_idx` via SWD; 10/10 PASS.
+  Cold-boot bug found + fixed: BSS-zero of `s.scale_idx` was
+  indistinguishable from "user clamped to 100 m"; added file-scope
+  `s_first_create_done` flag as the disambiguator (memset doesn't
+  touch it; first create() sees `false` → use `SCALE_DEFAULT`,
+  thereafter preserve cached value).
+
+- **Phase B — peer rendering + layer mask + cursor**: walks
+  `phoneapi_cache` peers, projects each via flat-earth approx
+  (`range_m ≈ R·sqrt(Δlat² + (cos lat₀·Δlon)²)`,
+  `az = atan2(cos lat₀·Δlon, Δlat)`, single `cosf` per refresh),
+  draws as `lv_label` at polar (r, θ) with SNR-driven colour (>=+5dB
+  green, >=0 white, >=-10 yellow, <-10/unset grey). SET key cycles
+  layer mask (NODES / ALL / ME-ONLY); UP/DOWN walks visible peer
+  cursor; OK locks the cursor peer as D-6 nav target. Peers beyond
+  the current scale are simply hidden (no edge-clipping). Test
+  `scripts/test_d1_phase_b.py` covers SET cycle, UP/DOWN no-op when
+  empty, scale clamps, LRU re-create state preservation; 15/15 PASS
+  after SWD-write defaults reset (preserved-across-destroy state
+  needs explicit clobber for repeatable tests).
+
+- **Phase C — D-6 navigation view**: new `map_nav_view.{c,h}` +
+  `VIEW_ID_MAP_NAV=15`. Big bearing display (8 cardinals + degrees)
+  + range + ETA (RMC speed_kmh_x10, "stationary" guard at <1 km/h)
+  + speed lines. Two entry paths: (1) D-1 OK on cursor peer
+  (`map_view_get_nav_target()`), (2) C-3 OP_NAVIGATE in node_ops_view
+  (`map_nav_view_set_target()` + navigate). BACK returns to D-1
+  unconditionally (plan §DEC-6 — avoids nodes_view loop). Test
+  `scripts/test_d1_phase_c.py` exercises Path B end-to-end via RTT
+  inject (BOOT_HOME → Nodes → row1 peer → NODE_DETAIL → NODE_OPS →
+  DOWN×7 → OP_NAVIGATE → MAP_NAV) and verifies `s.target_num` picks
+  up the active_num; 10/10 PASS.
+
+**Out of scope (v2):** D-3/D-4/D-5 waypoint CRUD (needs LittleFS
+integration), magnetic-north + LIS2MDL compass, track history layer
+(航跡), waypoint as nav target. v1 reference is GPS true-north only.
+
+**View ID renumbering:** MAP=14 + MAP_NAV=15 inserted between
+TELEMETRY=13 and CHANNELS, bumping CHANNELS/CHANNEL_EDIT 14/15 →
+15/16, TOOLS 16→17, TRACEROUTE 17→18, GNSS_SKY 18→19, FIRMWARE_INFO
+19→20, IME 20→21, KEYPAD 21→22, debug RF/FONT 22/23 → 23/24. All
+existing `t1_2 / t2_1..t2_5` test scripts patched in the same
+session; memory `reference_core1_key_inject.md` view-ID table also
+updated.
+
+**Test infrastructure note:** RTT key-inject (mode 1) used end-to-end
+across all three Phase tests; `mokya_swd.set_key_inject_mode(RTT)` +
+`rtt_send_frame(build_frame(...))` is the canonical "drive UI
+under SWD-cooperating tests" pattern, with `s_rtt_frames_ok` /
+`s_rtt_rejected` parser counters as a sanity gate (Phase A ran 38
+frames OK / 0 rejected).
+
+**Visual verification deferred to integration (Phase D):** peer
+rendering math is unit-testable via SWD only by faking `teseo_state`
++ cache structures; production verification requires a live GPS fix
+(or `MOKYA_GPS_DUMMY_NMEA=ON`) plus at least one peer with
+`last_position` in the cache, exercised by walking outdoors with
+the device + a reference Meshtastic node.
+
+**Post-ship refinement — Option B sticky-state semantics
+(2026-04-30):** Phase A's "second-run FAIL" during back-to-back
+regression looked like inter-test state leakage. Investigated via
+`scripts/diag_d1_state.py` — six-point observation across one
+SYSRESETREQ cycle (T0 pre-D1 / T1 first-create / T2 LEFT clamp /
+T3a destroy / T3b re-create / T4 post-reset BSS / T5 post-reset
+first-create) confirmed the firmware behaved exactly per the
+`s_first_create_done` docstring: cold boot picks `SCALE_DEFAULT`,
+all subsequent creates preserve. Not a bug — but the diagnostic
+forced a real design call: should BACK preserve every D-1 sub-mode
+flag, or just the visual zoom? Picked **Option B**:
+
+- `s.scale_idx` stays sticky — long-term visual preference, "I was
+  zoomed to 5 km, leave me at 5 km when I come back"
+- `s.layer_mask` and `s.cursor` reset on BACK to `LAYER_NODES` /
+  `-1` — they're D-2 sub-modes (filter view, peer focus) that should
+  end when the user leaves D-1, not survive into the next session
+
+Implemented as a 2-line addition in `map_view::apply` BACK case
+(no destroy() change needed; the reset runs synchronously before
+`view_router_navigate(VIEW_ID_BOOT_HOME)`). Phase B test grew 4
+extra assertions (pre-BACK SET to ALL, post-BACK layer == NODES,
+cursor == -1, scale preserved); all pass. `diag_d1_state.py`
+retained as the canonical "is this state-preservation bug or
+feature?" reproducer.
+
 ---
 
 ## Issues Log (Phase 2)
