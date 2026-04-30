@@ -36,7 +36,7 @@ static const tool_entry_t s_entries[MAX_ENTRIES] = {
     { "T-4 Sniffer",         VIEW_ID_COUNT      },
     { "T-5 LoRa Self-test",  VIEW_ID_COUNT      },
     { "T-6 GNSS Sat",        VIEW_ID_GNSS_SKY   },
-    { "T-7 Pairing Code",    VIEW_ID_COUNT      },
+    { "T-7 Pairing Code",    VIEW_ID_T7_PAIRING },
     { "T-8 Firmware Info",   VIEW_ID_FIRMWARE_INFO },
     /* Existing debug overlays — release builds drop the debug-only
      * entries and the cells render as placeholders so the layout

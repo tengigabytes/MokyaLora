@@ -24,6 +24,16 @@ extern "C" {
 size_t base64_urlsafe_encode(const uint8_t *in, size_t in_len,
                               char *out, size_t cap);
 
+/* Standard RFC 4648 §4 base64 encode (`+/` alphabet, `=` padding to
+ * 4-char alignment). Used by T-7 pairing view to match the on-the-
+ * wire string Meshtastic CLI prints for publicKey — exact-string
+ * comparison is the verification gate.
+ *
+ * Returns chars written (excluding NUL); 0 if `cap` too small.
+ * Output length is always 4 * ceil(in_len / 3). */
+size_t base64_std_encode(const uint8_t *in, size_t in_len,
+                          char *out, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif
