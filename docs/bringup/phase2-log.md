@@ -3577,6 +3577,84 @@ bumped to v1.4. v1.5 bump captures S-7.10 closure.
 
 ---
 
+### L1 partial-completion sweep — 4 phases (2026-05-01)
+
+After the L2 doc-stale fixes (commit `76d3501`), four spec rows in
+`docs/ui/01-page-architecture.md` were still flagged "✅ 部分" with
+real (small) gaps. This sweep closes them in order of size, smallest
+first.
+
+**Phase 1 — L-1 launcher placeholder UX (commit `049f218`)**: OK on
+the Power tile (only remaining placeholder, reserved for Z-1 SOS)
+used to call `view_router_modal_finish(true)` and silently exit the
+launcher — looking like a misclick. Now the router peeks the picked
+target before committing the modal: if `picked == VIEW_ID_COUNT`,
+fall through to launcher_view's apply(), which paints a one-line
+toast under the grid ("SOS app 規劃中 (待 power button + Z-1)").
+Per-tile `s_tile_meta[]` lets future placeholders carry their own
+message. Verified end-to-end via `scripts/test_launcher_placeholder.py`
+— 5/5 key-path assertions PASS.
+
+**Phase 2 — F-4 air_util_tx history chart (commit `692d674`)**: the
+third F-4 chart was a "待 PortNum 67 解碼" placeholder. The data
+is already cached upstream — `phoneapi_node_t.air_util_tx_pct` gets
+populated for every peer including self by the cascade
+FR_TAG_NODE_INFO → DeviceMetrics sub-decoder (used by F-1 self
+telemetry). `metrics/history.c` `take_sample()` now reads
+`phoneapi_cache_get_node_by_id(my_node_num)` and stores
+`air_util_tx_pct × 10` (uint8 0..100 → int16 0..1000) into the ring.
+Field `channel_util_x10` renamed to `air_tx_pct_x10` (the value being
+stored is air_util_tx, not channel_util). New SWD-readable diag
+globals `g_history_count`, `g_history_last_*` for testability. Chart
+Y range (0..1000) was already set matching the new units, no LVGL
+setup change needed. Verified by `scripts/test_f4_history.py` — ring
+1 → 3 in 37 s (matches 30 s period), self air_tx_pct sampled at 0%
+on idle bench.
+
+**Phase 3 — B-2 channel edit role / uplink / downlink (commit
+`af21450` + submodule `fc8742a32`)**: B-2 had 3 writable rows + 3
+read-only display rows. Promoted role / uplink / downlink to
+writable; collapsed PSK-summary + channel-id into one combined dim
+"info" row at the bottom so the layout still fits 224 px panel.
+
+  IPC additions:
+    IPC_CFG_CHANNEL_ROLE             = 0x0604  uint8 enum 0..2
+    IPC_CFG_CHANNEL_UPLINK_ENABLED   = 0x0605  bool
+    IPC_CFG_CHANNEL_DOWNLINK_ENABLED = 0x0606  bool
+  All three are slot-addressed via the existing 0x06xx
+  channel_index gate.
+
+  Cascade decode_channel_settings extended with fields 5
+  (uplink_enabled) and 6 (downlink_enabled); chan_settings_ctx_t
+  pipes new pointers through. role was already at field 3.
+
+  phoneapi_channel_t cache gains uplink_enabled + downlink_enabled
+  bools. Core 0 SET handlers commit via SEGMENT_CHANNELS soft-reload.
+
+  channel_edit_view rows: WRITABLE_ROWS 3 → 6; cursor walks 0..5.
+  LEFT/RIGHT cycles role (3 values, wraparound); OK toggles
+  uplink/downlink (parallels existing toggle_muted pattern).
+
+  Test (`scripts/test_ipc_config.sh b3p5`): 6-step round-trip on
+  Rev A — channel[7] role → SECONDARY → DISABLED, channel[0]
+  uplink/downlink toggles each direction, all grep'd from
+  `meshtastic --info` output. t245 (S-7.10) re-run, no regression.
+
+**Phase 4 — doc closure (this commit)**: page-architecture v1.6
+syncs the affected rows (L-1, B-2, F-4) from "✅ 部分" → "✅" and
+adds this phase2-log entry. README.md two-axis progress table
+updated to mirror.
+
+**Net delta after sweep**: implementation status of the spec page
+inventory moves from 45 ✅ + 5 ✅ 部分 + 6 ⏳ to **48 ✅ + 2 ✅ 部分
++ 6 ⏳** out of 62 pages. The two remaining ✅ 部分 are D-1/D-2
+(航跡/航點 layer requires D-3 first) and D-6 (no own gap; partial
+status reflects the same D-3 dependency). The 6 ⏳ are D-3/4/5
+航點 + Z-1/2/3 SOS, both blocked by hardware dependencies (LittleFS
+persist + power button driver) outside this sweep's scope.
+
+---
+
 ## Issues Log (Phase 2)
 
 | # | Date | Area | Issue | Resolution |

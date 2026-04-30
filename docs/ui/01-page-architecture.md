@@ -21,7 +21,7 @@
 | A-3 訊息詳情 modal | `message_detail_view` | ✅ | FUNC long-press 觸發（commit `a04d909`） |
 | A-4 罐頭訊息 | `canned_view` + `canned_messages` | ✅ | LEFT 在 conversation_view 觸發（commit `97a47b3` + `b2f0a95`） |
 | B-1 頻道清單 | `channels_view` | ✅ | 8 entries（commit `76d4d75`） |
-| B-2 頻道編輯 | `channel_edit_view` | ✅ 部分 | 3 可寫欄（name / module_position_precision / muted）+ 3 唯讀顯示欄（PSK 摘要 / role / channel id），commit `76d4d75`。PSK / role 改為可寫、uplink / downlink 欄位仍待補 |
+| B-2 頻道編輯 | `channel_edit_view` | ✅ | 6 可寫欄（name / position_precision / muted / role / uplink / downlink）+ 1 唯讀資訊欄（PSK 摘要 + channel id 合併行）。PSK 編輯（OPEN/default/random16/random32 picker）獨立 phase 另案。L1 sweep Phase 3 (commit `af21450`) |
 | B-3 加入頻道 | `channel_add_view` | ✅ | 從 channels_view OK 在空 slot 進入；name + role + 32 B random PSK，`AdminMessage.set_channel` (field 33) self-admin 發送，AdminModule 寫 channelFile（dev-Sblzm e530d61）|
 | B-4 分享頻道 | `channel_share_view` + `util/channel_share_url` + `util/base64_url` | ✅ | URL `meshtastic.org/e/#<base64(ChannelSet)>` 文字 + `lv_qrcode` 144×144 顯示；OpenCV 端到端 decode 驗證通（dev-Sblzm 5a/5b commits）|
 | C-1 節點清單 | `nodes_view` | ✅ | cascade `phoneapi_cache` 來源（refactor `d9ebf55`） |
@@ -36,7 +36,7 @@
 | F-1 本機遙測 | `telemetry_view` (TELE_PAGE_F1) | ✅ | channel_util / air_util_tx 從 cascade DeviceMetrics 解碼（已存在）+ 自身 NodeInfo 取出顯示（dev-Sblzm 57bc816）|
 | F-2 環境感測 | `telemetry_view` (TELE_PAGE_F2) | ✅ | 氣壓/三軸磁/各 sensor 溫度；Rev A 無濕度感測器 |
 | F-3 鄰居資訊 | `telemetry_view` (TELE_PAGE_F3) | ✅ | NEIGHBORINFO_APP (PortNum 71) cascade decoder + `phoneapi_neighbors_t` per-node cache + Nbrs column；live broadcast 驗證受限於 Meshtastic 4hr min 間隔（dev-Sblzm 9b38f1b）|
-| F-4 歷史曲線 | `telemetry_view` (TELE_PAGE_F4) + `metrics/history` | ✅ 部分 | 電量 + 訊號雙 chart（256 點 × 30 s = 2 hr 8 min 視窗），ring 在 SRAM `.bss` 1.5 KB；空中時間佔比 chart 留 placeholder 待 TELEMETRY_APP self-decode；persist 跨 boot 不在 v1（T2.6） |
+| F-4 歷史曲線 | `telemetry_view` (TELE_PAGE_F4) + `metrics/history` | ✅ | 電量 + 訊號 + 空中時間三 chart 全到位（256 點 × 30 s = 2 hr 8 min 視窗），ring 在 SRAM `.bss` 1.5 KB。空中時間採樣自 cascade FR_TAG_NODE_INFO 已 decode 的 `phoneapi_node_t.air_util_tx_pct`（自身 NodeInfo 廣播）。persist 跨 boot 不在 v1（T2.6 + L1 sweep Phase 2 commit `692d674`）|
 | T-0 工具主選單 | `tools_view` | ✅ | spec-named 入口（commit `0ceb082`、`ee3a72e`） |
 | T-1 Traceroute | `traceroute_view` | ✅ | commit `3fbf664` |
 | T-2 Range Test | `range_test_view` + `messages/range_test_log` | ✅ | RANGE_TEST_APP (PortNum 66) cascade decoder + per-peer hit/seq/SNR/RSSI ring（cap 7）+ 模組狀態 header；live broadcast 驗證待 RF（dev-Sblzm 5ee4a07）|
@@ -263,13 +263,21 @@
 
 ---
 
-最後更新：2026-04-30
-版本：v1.5（S-7.10 RemoteHardware available_pins[] 完整補完：
+最後更新：2026-05-01
+版本：v1.6（L1 partial-completion sweep — 4 個部分項目同步收尾：
+P1 L-1 launcher 占位 OK 顯示 toast 不再無聲退出 (commit `049f218`)；
+P2 F-4 air_util_tx 第三條 chart 從 cascade self DeviceMetrics 採樣
+(commit `692d674`)；P3 B-2 channel edit 加 role / uplink / downlink
+3 個可寫欄 + IPC keys 0x0604..0x0606 + b3p5 round-trip (commit
+`af21450`)；P4 本次 doc closure。S-7 全 group / 19 group 完備、
+相關 row 從 ✅ 部分 升 ✅）
+
+v1.5（2026-04-30）：S-7.10 RemoteHardware available_pins[] 完整補完：
 Phase 1 commit `35e2c21` 加 IPC + cascade decoder + cache + Core 0
 SET/GET handlers + slot_index 重用語意；Phase 2 commit `6f41a53` 加
 `rhw_pins_view` + `rhw_pin_edit_view` 兩個 view，modules_index_view
 S-7.10 row 改 override_view 直接跳到 pins editor；t245 IPC layer +
-test_t10_rhw_pins.py UI key-inject 端到端通過）
+test_t10_rhw_pins.py UI key-inject 端到端通過。
 
 v1.4（2026-04-30）：S-7 IPC 覆蓋現況註記校正：4 個 ModuleConfig 群組
 [StoreForward / Serial / ExternalNotification / RemoteHardware]
