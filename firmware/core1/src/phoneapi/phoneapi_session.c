@@ -17,6 +17,7 @@
 #include "dm_store.h"
 #include "messages_tx_status.h"
 #include "global/status_bar.h"
+#include "history.h"
 #include "mokya_trace.h"
 
 static phoneapi_framing_t s_framing;
@@ -429,6 +430,20 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                                                            FR_TAG_PACKET,
                                                            &sub_len);
         if (sub == NULL) break;
+
+        /* T2.6 — tap envelope SNR for the F-4 history ring. The text
+         * decoder parses MeshPacket.rx_snr (field 8) before checking
+         * portnum, so rx_snr_x4 is set even when the call returns false
+         * for non-TEXT packets. We don't care whether the payload is
+         * text — any RX with a populated rx_snr counts as a signal-
+         * level data point. */
+        {
+            phoneapi_text_msg_t env;
+            (void)phoneapi_decode_text_packet(sub, sub_len, &env);
+            if (env.rx_snr_x4 != INT16_MIN) {
+                metrics_history_note_rx_snr_x4(env.rx_snr_x4);
+            }
+        }
 
         uint32_t ack_pid = 0u;
         uint8_t  ack_err = 0u;

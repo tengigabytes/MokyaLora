@@ -86,6 +86,7 @@
 #include "dm_store.h"
 #include "settings_client.h"
 #include "watchdog_task.h"
+#include "history.h"
 #ifdef MOKYA_PHONEAPI_CASCADE
 #include "phoneapi_session.h"
 #endif
@@ -678,6 +679,11 @@ int main(void)
      * fed into the framing parser. */
     phoneapi_session_init();
 #endif
+
+    /* T2.6 — F-4 trend ring sampler (30 s soft timer). Safe to start now;
+     * BQ25622 is up from sensor_task init and the cascade RX hook can
+     * begin storing into the SNR slot as soon as packets arrive. */
+    metrics_history_init();
 
     /* Keypad scan task — MUST run at the same priority as usb / bridge / lvgl.
      * usb_device_task is a `tud_task(); taskYIELD();` loop with no blocking

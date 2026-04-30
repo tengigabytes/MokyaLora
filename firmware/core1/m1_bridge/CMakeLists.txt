@@ -126,6 +126,7 @@ set(PSRAM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/psram)
 
 # ── Messages inbox (M5 Phase 1) ──────────────────────────────────────────────
 set(MESSAGES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/messages)
+set(METRICS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/metrics)
 
 # ── IME module (M4 Step 3+) ──────────────────────────────────────────────────
 set(IME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/ime)
@@ -235,6 +236,7 @@ add_executable(core1_bridge
     ${UI_DIR}/remote_admin_view.c
     ${UI_DIR}/my_node_view.c
     ${UI_DIR}/telemetry_view.c
+    ${METRICS_DIR}/history.c
     ${UI_DIR}/channels_view.c
     ${UI_DIR}/channel_edit_view.c
     ${UI_DIR}/traceroute_view.c
@@ -331,6 +333,7 @@ target_include_directories(core1_bridge PRIVATE
     ${PSRAM_DIR}
     ${IME_DIR}
     ${MESSAGES_DIR}
+    ${METRICS_DIR}
     ${SETTINGS_DIR}
     ${PHONEAPI_DIR}
     ${DEBUG_DIR}
