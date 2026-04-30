@@ -61,6 +61,16 @@ typedef struct {
  * Memory cost: ~280 B SRAM. */
 static cshare_t s;
 
+/* SWD diagnostic exports — published on every successful QR render
+ * so a host script can dump the canvas pixel buffer and decode it.
+ * Cleared to zero when QR fails. Memory cost: 16 B. */
+volatile uint8_t  *g_b4_qr_data __attribute__((used)) = NULL;
+volatile uint32_t  g_b4_qr_size __attribute__((used)) = 0u;
+volatile uint16_t  g_b4_qr_w    __attribute__((used)) = 0u;
+volatile uint16_t  g_b4_qr_h    __attribute__((used)) = 0u;
+volatile uint32_t  g_b4_qr_stride __attribute__((used)) = 0u;
+volatile uint8_t   g_b4_qr_cf   __attribute__((used)) = 0u;
+
 static lv_obj_t *make_label(lv_obj_t *parent, int x, int y, int w, int h,
                             lv_color_t col)
 {
@@ -110,6 +120,24 @@ static void render(void)
                  (unsigned)s.url_len,
                  (qrres == LV_RESULT_OK) ? "OK" : "FAIL");
         lv_label_set_text(s.status, st);
+
+        /* SWD diagnostic — publish canvas data pointer + dims so a host
+         * dumper can read the raw I1 buffer. Cleared on failure to make
+         * mismatch obvious. */
+        if (qrres == LV_RESULT_OK && s.qr) {
+            lv_draw_buf_t *db = lv_canvas_get_draw_buf(s.qr);
+            if (db != NULL) {
+                g_b4_qr_data   = db->data;
+                g_b4_qr_size   = db->data_size;
+                g_b4_qr_w      = (uint16_t)db->header.w;
+                g_b4_qr_h      = (uint16_t)db->header.h;
+                g_b4_qr_stride = db->header.stride;
+                g_b4_qr_cf     = (uint8_t)db->header.cf;
+            }
+        } else {
+            g_b4_qr_data = NULL;
+            g_b4_qr_size = 0u;
+        }
     } else {
         lv_label_set_text(s.url,
             "(URL build failed — channel/lora cache empty?)");
