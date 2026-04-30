@@ -31,6 +31,7 @@
 #include "node_ops_view.h"
 #include "my_node_view.h"
 #include "settings/settings_app_view.h"
+#include "telemetry_view.h"
 #if MOKYA_DEBUG_VIEWS
 #include "rf_debug_view.h"
 #include "font_test_view.h"
@@ -51,6 +52,7 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_NODE_OPS]       = node_ops_view_descriptor();
     g_view_registry[VIEW_ID_MY_NODE]        = my_node_view_descriptor();
     g_view_registry[VIEW_ID_SETTINGS]       = settings_app_view_descriptor();
+    g_view_registry[VIEW_ID_TELEMETRY]      = telemetry_view_descriptor();
     g_view_registry[VIEW_ID_TOOLS]          = tools_view_descriptor();
     g_view_registry[VIEW_ID_IME]            = ime_view_descriptor();
     g_view_registry[VIEW_ID_KEYPAD]         = keypad_view_descriptor();

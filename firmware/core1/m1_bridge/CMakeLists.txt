@@ -233,6 +233,7 @@ add_executable(core1_bridge
     ${UI_DIR}/node_detail_view.c
     ${UI_DIR}/node_ops_view.c
     ${UI_DIR}/my_node_view.c
+    ${UI_DIR}/telemetry_view.c
     ${UI_DIR}/settings/settings_tree.c
     ${UI_DIR}/settings/settings_app_view.c
     ${UI_DIR}/settings/template_toggle.c

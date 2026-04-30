@@ -59,6 +59,7 @@ typedef enum {
     VIEW_ID_NODE_OPS,         /* C-3 per-node operations menu             */
     VIEW_ID_MY_NODE,          /* C-4 my (local) node info + settings link */
     VIEW_ID_SETTINGS,         /* S-0 settings                             */
+    VIEW_ID_TELEMETRY,        /* F-0 telemetry app (F-1/F-2/F-3 sub-pages)*/
     VIEW_ID_TOOLS,            /* T-0 tools / diagnostics list (Phase 3)   */
     VIEW_ID_IME,              /* G-3 IME modal-only                       */
     VIEW_ID_KEYPAD,           /* legacy keypad debug grid (under Tools)   */
