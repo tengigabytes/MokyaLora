@@ -81,6 +81,13 @@ typedef struct {
     uint8_t  psk_len;                // 0 / 1 / 16 / 32
     uint32_t channel_id;             // fixed32 from settings.id
     char     name[PHONEAPI_CHANNEL_NAME_MAX];
+    // ChannelSettings.psk raw bytes (B-4 share-URL encoder needs the
+    // actual key, not just the length). Storage is up to 32 B; only
+    // the first `psk_len` bytes are meaningful. Privacy: cache lives
+    // in PSRAM `.psram_bss` and is SWD-readable — acceptable for
+    // MokyaLora's single-user model. v2 multi-user mode would need
+    // to gate this behind explicit user authorization.
+    uint8_t  psk[32];
     // ChannelSettings.module_settings (B3-P2)
     bool     has_module_settings;
     uint32_t module_position_precision;

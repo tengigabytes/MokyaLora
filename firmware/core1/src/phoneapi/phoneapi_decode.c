@@ -315,6 +315,8 @@ typedef struct {
     char     *name;
     size_t    name_max;
     uint8_t  *psk_len;
+    uint8_t  *psk;            /* up to 32 B; B-4 share-URL needs actual key */
+    size_t    psk_max;
     uint32_t *channel_id;
     /* B3-P2 — ChannelSettings.module_settings (channel.proto:95) */
     bool     *has_module_settings;
@@ -362,7 +364,16 @@ static bool decode_channel_settings(const uint8_t *buf, uint16_t len, void *vctx
             uint64_t plen;
             if (!read_varint(buf, len, &pos, &plen)) return false;
             if (plen > (uint64_t)(len - pos)) return false;
-            *ctx->psk_len = (uint8_t)((plen > 0xFFu) ? 0xFFu : plen);
+            uint8_t copy = (uint8_t)((plen > 0xFFu) ? 0xFFu : plen);
+            *ctx->psk_len = copy;
+            /* Copy actual PSK bytes into the cache (B-4 share-URL).
+             * If wire psk_len > our cap (32) we still record psk_len
+             * but truncate the bytes — caller can detect via
+             * psk_len > sizeof(phoneapi_channel_t.psk). */
+            if (ctx->psk != NULL && copy > 0u) {
+                size_t n = (copy > ctx->psk_max) ? ctx->psk_max : copy;
+                memcpy(ctx->psk, buf + pos, n);
+            }
             pos += (uint16_t)plen;
         } else if (f == 3u && w == WT_LEN) {
             if (!read_string_into(buf, len, &pos, ctx->name, ctx->name_max))
@@ -401,6 +412,8 @@ bool phoneapi_decode_channel(const uint8_t *buf, uint16_t len,
                 .name                       = out->name,
                 .name_max                   = PHONEAPI_CHANNEL_NAME_MAX,
                 .psk_len                    = &out->psk_len,
+                .psk                        = out->psk,
+                .psk_max                    = sizeof(out->psk),
                 .channel_id                 = &out->channel_id,
                 .has_module_settings        = &out->has_module_settings,
                 .module_position_precision  = &out->module_position_precision,

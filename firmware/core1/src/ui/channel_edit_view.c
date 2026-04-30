@@ -342,6 +342,12 @@ static void apply(const key_event_t *ev)
                 default: break;
             }
             break;
+        case MOKYA_KEY_SET:
+            /* B-4: open share-URL view for the channel currently
+             * being edited. Active index is already set on
+             * channels_view_set_active_index by the B-1 entry path. */
+            view_router_navigate(VIEW_ID_CHANNEL_SHARE);
+            break;
         case MOKYA_KEY_BACK:
             view_router_navigate(VIEW_ID_CHANNELS);
             break;
@@ -366,7 +372,7 @@ static const view_descriptor_t CHANNEL_EDIT_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
-    .hints   = { "UP/DN 移動", "OK 編輯", "BACK 列表" },
+    .hints   = { "UP/DN 移動", "OK 編輯", "SET 分享 / BACK" },
 };
 
 const view_descriptor_t *channel_edit_view_descriptor(void)
