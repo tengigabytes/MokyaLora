@@ -29,9 +29,11 @@
 | C-3 節點操作 | `node_ops_view` | ✅ | 7 OPs：DM / ALIAS / FAVORITE / IGNORE / TRACEROUTE / REQUEST_POS / REMOTE_ADMIN（commit `d9ebf55`、`f9270b6`、`6b385eb`、`58f61f6`、`89786ef`） |
 | C-3 sub OP_REMOTE_ADMIN | `remote_admin_view` | ✅ | 5 actions sub-menu：Reboot / Shutdown / FactoryReset(Cfg) / FactoryReset(Dev) / NodeDB Reset（T2.5，commit `89786ef`） |
 | C-4 我的節點 | `my_node_view` | ✅ | commit `d9ebf55` |
-| D-1 主地圖 | `map_view` | ✅ 部分 | 向量 PPI 雷達盤：3 距離環 + 本機 `+` + N 標 + peer 點（短名稱 + SNR 著色），LEFT/RIGHT 7 檔尺度（100 m..100 km），SET 切 layer mask（nodes / all / me-only），UP/DOWN 走訪 peer cursor、OK 鎖定進 D-6（dev-Sblzm） |
-| D-2 圖層切換 | `map_view` 子模式 | ✅ 部分 | D-1 內 SET 鍵循環；航跡/航點未實作（ALL 暫等同 NODES） |
-| D-3~D-5 航點 | ⏳ | 未實作 | 航點 CRUD + persist 待 LittleFS 整合 |
+| D-1 主地圖 | `map_view` | ✅ | 向量 PPI 雷達盤：3 距離環 + 本機 `+` + N 標 + peer 點（短名稱 + SNR 著色）+ 航點 W: 標（綠色）；LEFT/RIGHT 7 檔尺度（100 m..100 km），SET 切 layer mask（nodes / all / me-only / waypoints），UP/DOWN 走訪 cursor（peers 或 waypoints 視 layer 而定），OK 鎖定 peer 進 D-6 / 開航點進 D-4，TAB 進 D-3（D-series Phase 5 commit `ce3db7f`） |
+| D-2 圖層切換 | `map_view` 子模式 | ✅ | D-1 內 SET 鍵 4 步循環 nodes / all / me-only / waypoints；waypoints layer 把快取 8 個航點投影到雷達盤（Phase 5）；航跡 (track) 仍 v2 |
+| D-3 航點清單 | `waypoints_view` | ✅ | 8-slot 列表，行格式 ">name lat,lon @sender_short / *me"，header "Waypts N/8 (v1 重啟後重置)"；UP/DOWN 走訪、OK→D-4、BACK→D-1、LEFT→D-5；從 D-1 TAB 進入；Phase 2 (commit `7cdf6d9`) |
+| D-4 航點詳情 | `waypoint_detail_view` | ✅ | 完整 8 個 Waypoint proto 欄位：lat/lon 7 位小數、expire (epoch / "never")、locked_to 解析成 @short_name、icon 顯示為 U+XXXX 編碼點（Unifont sm 16 無 emoji glyph）、source 區分 *me / @short、description；外部 API `waypoint_detail_view_set_target(id)` 支援 D-2 layer 入口；Phase 3 (commit `12528d9`) |
+| D-5 新增航點 | `waypoint_edit_view` | ✅ 部分 | v1 走 GNSS-only：Name（OK 開 IME，max 30 chars per proto cap）+ Save (use GNSS now)；無 fix 時 Save 列灰色 + toast「需 GNSS 3D fix」；活動 status block 顯示 fix quality / sat / lat / lon / HDOP；id = lower 32 bits of `time_us_64()`，is_local=true、locked_to=self；手動 lat/lon 編輯介面仍 v2；Phase 4 (commit `99a6998`) |
 | D-6 航點導航 | `map_nav_view` | ✅ 部分 | 鎖定 peer 後顯示大方位字（8 方位 + 度數）+ 距離 + ETA + 速度；C-3 OP_NAVIGATE 入口；BACK 回 D-1（dev-Sblzm） |
 | F-1 本機遙測 | `telemetry_view` (TELE_PAGE_F1) | ✅ | channel_util / air_util_tx 從 cascade DeviceMetrics 解碼（已存在）+ 自身 NodeInfo 取出顯示（dev-Sblzm 57bc816）|
 | F-2 環境感測 | `telemetry_view` (TELE_PAGE_F2) | ✅ | 氣壓/三軸磁/各 sensor 溫度；Rev A 無濕度感測器 |
@@ -264,7 +266,16 @@
 ---
 
 最後更新：2026-05-01
-版本：v1.6（L1 partial-completion sweep — 4 個部分項目同步收尾：
+版本：v1.7（D-series 航點 v1 — 5-phase sweep 一次性把 D-3/4/5 從 ⏳ 升 ✅
++ 同步把 D-1 / D-2 從 ✅ 部分 升 ✅。Phase 1 cascade decoder + RAM cache
+(commit `bae5796`)；Phase 2 D-3 list + D-1 TAB entry (commit `7cdf6d9`)；
+Phase 3 D-4 detail (commit `12528d9`)；Phase 4 D-5 edit (commit `99a6998`)；
+Phase 5 D-2 WAYPOINTS layer in map_view (commit `ce3db7f`)；Phase 6 doc closure。
+v1 RAM-only — 重啟後航點清空，flash persist 留 v2。手動 lat/lon
+編輯仍 v2。8 路徑全程 hardware-validated：cascade decode + view nav 共
+6 個 Python 測試 + D-1 phase B 18/18 regression）
+
+v1.6（L1 partial-completion sweep — 4 個部分項目同步收尾：
 P1 L-1 launcher 占位 OK 顯示 toast 不再無聲退出 (commit `049f218`)；
 P2 F-4 air_util_tx 第三條 chart 從 cascade self DeviceMetrics 採樣
 (commit `692d674`)；P3 B-2 channel edit 加 role / uplink / downlink

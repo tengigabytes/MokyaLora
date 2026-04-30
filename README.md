@@ -25,7 +25,7 @@ Rev B per current product direction; the rest carry forward.
 | Component | Status |
 |-----------|--------|
 | Core 0 — Meshtastic modem (Arduino-Pico + single-core FreeRTOS) | **Live on Rev A** — `rp2350b-mokya` variant of Meshtastic 2.7.21, IPC byte bridge to Core 1 owns USB CDC, `meshtastic --info` round-trip ~4.5 s |
-| Core 1 — FreeRTOS + LVGL + UI (separate Apache-2.0 image at flash 0x10200000) | **Live** — TinyUSB CDC, doorbell-driven IPC, all I2C/sensor drivers, GNSS, ST7789VI display + LVGL v9, keypad → LVGL view router (chat / nodes / IME / message / RF debug views) |
+| Core 1 — FreeRTOS + LVGL + UI (separate Apache-2.0 image at flash 0x10200000) | **Live** — TinyUSB CDC, doorbell-driven IPC, all I2C/sensor drivers, GNSS, ST7789VI display + LVGL v9, keypad → LVGL view router. UI page coverage post D-series 2026-05-01: D-1/D-2/D-3/D-4 ✅, D-5 ✅ 部分 (GNSS-only save; manual lat/lon editor v2), D-6 ✅ 部分 (no waypoint nav target). Only ⏳ pages left are Z-1/Z-2/Z-3 SOS (blocked on power button driver + low-batt state machine). See `docs/ui/01-page-architecture.md` for the full row-level table |
 | MokyaInput Engine (MIE) | **Phase 1.6.1 on hardware** — Smart Zh/En + Bopomofo, MIEF unicode font (19 320 glyphs), MIE4 v4 dictionary in flash, 128-entry LRU cache (flash-persisted), 120/120 host tests passing |
 | IPC protocol | **3 SPSC rings + GPS double-buffer in 24 KB shared SRAM** — RX_TEXT, NODE_UPDATE, TX_ACK, SEND_TEXT, GET/SET/COMMIT_CONFIG (LoRa subset) all wired; full `IPCPhoneAPI` subclass deferred |
 | GPS bridge | **Phase 1 — `IpcGpsBuf` end-to-end** — Core 1 owns Teseo, NMEA streamed to Core 0's `IpcGpsStream` adapter; Phase 2 (real Teseo NMEA into ring) deferred |

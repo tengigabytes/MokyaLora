@@ -3653,6 +3653,127 @@ status reflects the same D-3 dependency). The 6 ⏳ are D-3/4/5
 航點 + Z-1/2/3 SOS, both blocked by hardware dependencies (LittleFS
 persist + power button driver) outside this sweep's scope.
 
+### D-series waypoints v1 — D-3 / D-4 / D-5 + D-2 layer (2026-05-01)
+
+Plan: in-conversation, 6 phases on `dev-Sblzm`. Closes the last
+"⏳ 未實作" rows in the D · 地圖 App block of `01-page-architecture.md`,
+promotes D-1 / D-2 from ✅ 部分 to ✅. Receive-only path: cascade
+WAYPOINT_APP (portnum 8) decoder → in-RAM cache → 3 new views + the
+existing D-1 PPI gains a waypoints layer. v1 is **RAM-only** —
+reboot clears every waypoint; flash persist via LittleFS deferred
+to v2 (see plan §卡點).
+
+- **Phase 1 — cascade decoder + RAM cache (commit `bae5796`).**
+  `phoneapi_waypoint_t` (id, lat_e7, lon_e7, expire, locked_to,
+  icon, name[31], description[101], sender_node_id, epoch_seen,
+  is_local) added to `phoneapi_cache.h`. Storage:
+  `phoneapi_waypoints[8]` in PSRAM `.psram_bss` (matches the
+  existing nodes / config caches' placement). API:
+  `phoneapi_waypoints_upsert / remove / count / take_at /
+  get_by_id` — by-id upsert with epoch_seen-based oldest-eviction
+  on full table. Decoder: `phoneapi_decode_waypoint_packet()`
+  walks the MeshPacket envelope (from / decoded.payload /
+  rx_time) and a Waypoint inner decoder covers all 8 proto
+  fields per `mesh.proto:1291`; rejects `id == 0`. Dispatch hook
+  in `phoneapi_session.c::FR_TAG_PACKET` runs alongside the
+  existing position / neighbor / range_test chain. SWD diag
+  globals `g_d3_total / g_d3_last_id` (.bss-resident, trimmed to
+  8 B to stay inside the 2 KB MSP guard). Test
+  `scripts/test_d3_waypoint_decode.py` crafts a synthetic
+  Taipei-101 cascade frame, halt-injects into the c0_to_c1 ring,
+  verifies decoder fired + id round-tripped; 2/2 PASS.
+
+- **Phase 2 — D-3 list + D-1 TAB entry (commit `7cdf6d9`).**
+  `waypoints_view.{c,h}`: header `Waypts N/8 (v1 重啟後重置)` +
+  8-row list "name lat,lon source", source = "@<short_name>" or
+  "*me". UP/DOWN walks cursor; OK stashes id (Phase 3 wires →
+  D-4); BACK → D-1. Entry: `MOKYA_KEY_TAB` on map_view navigates
+  to `VIEW_ID_WAYPOINTS`; map_view hint bar gains "TAB航點". 3
+  new view IDs added (WAYPOINTS=33 / WAYPOINT_DETAIL=34 /
+  WAYPOINT_EDIT=35); detail/edit slots stay NULL through Phases
+  2/3 — guarded by `g_view_registry[id] != NULL` checks. State
+  in `.psram_bss` (rhw_pin_edit_view pattern); diag globals
+  trimmed to recover the 12 B that initially busted the 2 KB MSP
+  guard. Tests: `test_d3_view.py` 5/5; D-1 phase B regression
+  clean.
+
+- **Phase 3 — D-4 detail (commit `12528d9`).**
+  `waypoint_detail_view.{c,h}`: full proto field render including
+  description, locked_to → "@<short_name> (!hex)" via
+  `phoneapi_cache_get_node_by_id`, icon as
+  "U+XXXX (decimal)" — Unifont sm 16 has no emoji glyph, so we
+  surface the codepoint instead. External entry
+  `waypoint_detail_view_set_target(id)` for D-2 layer hand-off
+  (Phase 5); D-3 → OK falls back to `waypoints_view_get_active_id()`.
+  Test `test_d4_view.py` 6/6 PASS — synthetic cascade injection
+  populates cache, RTT key-inject takes
+  BOOT_HOME→MAP→TAB→D-3→OK→D-4 and back, verifies
+  `s_active_id == TEST_WP_ID`.
+
+- **Phase 4 — D-5 edit (commit `99a6998`).**
+  `waypoint_edit_view.{c,h}`: 2-row form, Name (OK opens IME, max
+  30 bytes per proto cap) + Save (use GNSS now). Save reads
+  `teseo_get_state()`; without a 3D fix the row is dimmed and
+  press shows "需 GNSS 3D fix (move to open sky)" — no junk
+  coordinates ever land in the cache. id = lower 32 bits of
+  `time_us_64()` (≠0), is_local=true, locked_to=self,
+  expire=0. Live status block (refresh once / second) shows
+  fix quality / sat count / lat / lon / HDOP. Manual lat/lon
+  editor deferred to v2. D-3 LEFT key now navigates to D-5;
+  hint bar gains "LEFT加". `test_d5_view.py` 7/7 PASS — view-id
+  transitions only; cache mutation reserved for an outdoor
+  walk-around with a peer device.
+
+- **Phase 5 — D-2 WAYPOINTS layer in map_view (commit `ce3db7f`).**
+  `layer_mask_t` gains `LAYER_WAYPOINTS = 3`; SET cycle becomes
+  NODES → ALL → ME_ONLY → WAYPOINTS → NODES (NODES/ALL/ME_ONLY
+  enum values preserved at 0/1/2 for `test_d1_phase_b`
+  wire-compat). New `place_waypoints` projects the cached
+  waypoints onto the dish via the existing `project_peer`
+  flat-earth math; renders "W:<short>" in `ACCENT_SUCCESS` green.
+  Cursor semantics layer-dependent: NODES/ALL walk peers + OK
+  → D-6; WAYPOINTS walks waypoints + OK
+  (`waypoint_detail_view_set_target` + navigate) → D-4. New
+  `map_wp_t s_wp` (40 B) lives in `.psram_bss` so the legacy
+  `static map_t s` stays in regular `.bss` and `find_static_s`
+  in `test_d1_phase_b.py` still resolves. Test updates: phase B
+  expects 4-step cycle (5/5 SET assertions PASS), full 18/18
+  regression clean.
+
+- **Phase 6 — doc closure.** This section,
+  `01-page-architecture.md` D-row update + version bump to
+  v1.7, README dual-axis sweep.
+
+**Out of scope (still v2):** flash-backed waypoint persist
+(LittleFS), manual lat/lon editor in D-5, waypoint as nav
+target in D-6, track history layer in D-2, broadcasting
+self-created waypoints out to the mesh (Mokya only receives
+in v1; broadcasting would mirror B-3's AdminMessage encode
+path and warrants its own phase).
+
+**Visual verification deferred to integration:** the Phase 5
+waypoint dish projection math is unit-testable via SWD only
+by faking `teseo_state` + cache structures; production
+verification requires a live GPS fix + cached waypoint(s),
+exercised by walking outdoors with the device (or
+`MOKYA_GPS_DUMMY_NMEA=ON` + a SWD-injected waypoint).
+
+**Memory budget detour worth recording:** every phase except
+Phase 6 hit the 2 KB MSP guard and required either a
+`.psram_bss` placement or a diag-global trim. Lessons reusable
+for future Phase-N: (1) any new view's per-instance state
+(LVGL pointers + cursor + scratch buffers) should default to
+`__attribute__((section(".psram_bss")))` — checked at
+Phase 2/4. (2) New SWD-readable diag globals must stay in
+`.bss` for SWD coherency, but should be sized aggressively;
+two u32s (total + last_key_field) cover the same test
+intent as five with 60 % less BSS pressure. (3) When a
+struct must keep its existing `.bss` offset (test scripts
+read it via `find_static_s` objdump scan), split out new
+fields into a separate file-scope variable in `.psram_bss`
+rather than growing the original — see Phase 5's
+`map_t s` / `map_wp_t s_wp` split.
+
 ---
 
 ## Issues Log (Phase 2)
