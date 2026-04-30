@@ -250,6 +250,7 @@ add_executable(core1_bridge
     ${UI_DIR}/lora_test_view.c
     ${UI_DIR}/rhw_pins_view.c
     ${UI_DIR}/rhw_pin_edit_view.c
+    ${UI_DIR}/waypoints_view.c
     ${MESSAGES_DIR}/packet_log.c
     ${MESSAGES_DIR}/lora_test_log.c
     ${UTIL_DIR}/base64_url.c

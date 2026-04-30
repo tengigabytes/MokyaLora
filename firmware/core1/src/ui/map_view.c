@@ -464,6 +464,12 @@ static void apply(const key_event_t *ev)
             TRACE_BARE("map", "back");
             view_router_navigate(VIEW_ID_BOOT_HOME);
             break;
+        case MOKYA_KEY_TAB:
+            /* TAB → D-3 waypoint list. Conceptually "next view" within
+             * the Map app. Hint bar advertises this as "TAB 航點". */
+            TRACE_BARE("map", "tab_to_d3");
+            view_router_navigate(VIEW_ID_WAYPOINTS);
+            break;
         default:
             break;
     }
@@ -491,7 +497,7 @@ static const view_descriptor_t MAP_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
-    .hints   = { "<>縮放", "OK 鎖定", "BACK 返回" },
+    .hints   = { "<>縮放 TAB航點", "OK 鎖定", "BACK 返回" },
 };
 
 const view_descriptor_t *map_view_descriptor(void)

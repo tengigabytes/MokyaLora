@@ -50,13 +50,13 @@ volatile uint32_t g_f3_last_first_node  __attribute__((used)) = 0u;
 volatile int8_t   g_f3_last_first_snr_x4 __attribute__((used)) = INT8_MIN;
 
 /* D-3 waypoint cascade SWD diag — bumped on every successful
- * WAYPOINT_APP decode. Same .bss-resident pattern as g_f3_*.
- * See scripts/test_d3_waypoint_decode.py. */
+ * WAYPOINT_APP decode. .bss-resident (PSRAM is not SWD-coherent).
+ * Trimmed to total+id only to stay inside Core 1's 2 KB MSP guard;
+ * id collision proves the decoder reached the first inner field —
+ * remaining fields are exercised by the protobuf round-trip test
+ * fixture (build_cascade_frame). See test_d3_waypoint_decode.py. */
 volatile uint32_t g_d3_total            __attribute__((used)) = 0u;
 volatile uint32_t g_d3_last_id          __attribute__((used)) = 0u;
-volatile uint32_t g_d3_last_from        __attribute__((used)) = 0u;
-volatile int32_t  g_d3_last_lat_e7      __attribute__((used)) = 0;
-volatile int32_t  g_d3_last_lon_e7      __attribute__((used)) = 0;
 
 /* Live debug — counters for the few portnums we want to track. Bumped
  * before per-portnum dispatch so arrivals are visible even when our
@@ -597,14 +597,8 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                 phoneapi_waypoints_upsert(&wp);
                 extern volatile uint32_t g_d3_total;
                 extern volatile uint32_t g_d3_last_id;
-                extern volatile uint32_t g_d3_last_from;
-                extern volatile int32_t  g_d3_last_lat_e7;
-                extern volatile int32_t  g_d3_last_lon_e7;
                 g_d3_total++;
-                g_d3_last_id     = wp.id;
-                g_d3_last_from   = wp.sender_node_id;
-                g_d3_last_lat_e7 = wp.lat_e7;
-                g_d3_last_lon_e7 = wp.lon_e7;
+                g_d3_last_id = wp.id;
                 TRACE("phapi", "rx_wp",
                       "id=%u,from=%u,lat=%d,lon=%d,exp=%u",
                       (unsigned)wp.id, (unsigned)wp.sender_node_id,

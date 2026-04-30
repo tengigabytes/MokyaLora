@@ -46,6 +46,7 @@
 #include "lora_test_view.h"
 #include "rhw_pins_view.h"
 #include "rhw_pin_edit_view.h"
+#include "waypoints_view.h"
 #include "traceroute_view.h"
 #include "range_test_view.h"
 #include "gnss_sky_view.h"
@@ -97,6 +98,10 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_T5_LORA_TEST]   = lora_test_view_descriptor();
     g_view_registry[VIEW_ID_T10_RHW_PINS]    = rhw_pins_view_descriptor();
     g_view_registry[VIEW_ID_T10_RHW_PIN_EDIT]= rhw_pin_edit_view_descriptor();
+    g_view_registry[VIEW_ID_WAYPOINTS]       = waypoints_view_descriptor();
+    /* VIEW_ID_WAYPOINT_DETAIL — Phase 3 will register; left NULL.
+     * VIEW_ID_WAYPOINT_EDIT   — Phase 4 will register; left NULL.
+     * Neither is reachable from Phase 2 entry paths. */
 #if MOKYA_DEBUG_VIEWS
     g_view_registry[VIEW_ID_RF_DEBUG]       = rf_debug_view_descriptor();
     g_view_registry[VIEW_ID_FONT_TEST]      = font_test_view_descriptor();
