@@ -51,11 +51,12 @@ static const char *const s_op_labels[MAX_ENTRIES] = {
     "Ignore",
     "Traceroute (send)",
     "Request position",
-    "Remote admin       (TBD)",
+    "Remote admin (reboot/reset)",
 };
 
-/* Which ops are wired today. Placeholders render dimmed; OK on them
- * still flashes a TBD hint via the header label. */
+/* All ops are wired today (T2.5 closed the OP_REMOTE_ADMIN gap).
+ * Function kept as a per-op gate in case future entries land in
+ * partial state. */
 static bool op_is_active(uint8_t i)
 {
     switch ((op_id_t)i) {
@@ -65,6 +66,7 @@ static bool op_is_active(uint8_t i)
         case OP_IGNORE:
         case OP_TRACEROUTE:
         case OP_REQUEST_POS:
+        case OP_REMOTE_ADMIN:
             return true;
         default:
             return false;
@@ -324,10 +326,26 @@ static void apply(const key_event_t *ev)
                     }
                     break;
                 }
+                case OP_REMOTE_ADMIN: {
+                    /* T2.5 — open the destructive-action sub-menu.
+                     * The target is already stashed on the nodes_view
+                     * active_num via C-1 → C-2 → C-3 entry, so
+                     * remote_admin_view picks it up at create() time. */
+                    if (s.active_num == 0u) {
+                        lv_label_set_text(s.header,
+                            "Remote admin: no target");
+                        break;
+                    }
+                    nodes_view_set_active_node(s.active_num);
+                    view_router_navigate(VIEW_ID_REMOTE_ADMIN);
+                    break;
+                }
                 default:
-                    /* Placeholder hint — flash the header with a TBD
-                     * marker so the press is visibly registered. */
-                    lv_label_set_text(s.header, "(TBD — not wired yet)");
+                    /* All ops should be wired by now (post-T2.5).
+                     * If a future op_id_t value lands without a case,
+                     * surface that here so it doesn't silently swallow
+                     * the OK press. */
+                    lv_label_set_text(s.header, "(unhandled op)");
                     break;
             }
             break;

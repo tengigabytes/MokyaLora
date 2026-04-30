@@ -232,6 +232,7 @@ add_executable(core1_bridge
     ${UI_DIR}/nodes_view.c
     ${UI_DIR}/node_detail_view.c
     ${UI_DIR}/node_ops_view.c
+    ${UI_DIR}/remote_admin_view.c
     ${UI_DIR}/my_node_view.c
     ${UI_DIR}/telemetry_view.c
     ${UI_DIR}/channels_view.c

@@ -57,6 +57,7 @@ typedef enum {
     VIEW_ID_NODES,            /* C-1 node list                            */
     VIEW_ID_NODE_DETAIL,      /* C-2 single-node full detail              */
     VIEW_ID_NODE_OPS,         /* C-3 per-node operations menu             */
+    VIEW_ID_REMOTE_ADMIN,     /* C-3 OP_REMOTE_ADMIN sub-menu             */
     VIEW_ID_MY_NODE,          /* C-4 my (local) node info + settings link */
     VIEW_ID_SETTINGS,         /* S-0 settings                             */
     VIEW_ID_MODULES_INDEX,    /* S-7 module sub-page index (10 entries)   */

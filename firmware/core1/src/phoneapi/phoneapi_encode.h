@@ -89,6 +89,60 @@ bool phoneapi_encode_admin_set_ignored(uint32_t peer_node_num,
                                        bool     set,
                                        uint32_t *out_packet_id);
 
+/* T2.5 OP_REMOTE_ADMIN — generic remote-admin AdminMessage encoder.
+ *
+ * Wraps a single varint field {admin_field, value} as the
+ * AdminMessage body and ships it on portnum 6 (ADMIN_APP) with
+ * MeshPacket.to = target_node_num.  Authentication on the remote
+ * side is target-controlled: the target either has
+ * config.security.admin_channel_enabled = true (admin_channel
+ * lookup) or has our public key in its admin_key list.  This encoder
+ * doesn't sign anything itself — Meshtastic 2.5+ admin_key signing
+ * happens inside Core 0's MeshService::sendToMesh path.
+ *
+ * `want_ack=true` waits for routing-ack; `want_response=true` asks
+ * the remote AdminModule to reply with a status frame.  Most reboot/
+ * shutdown actions don't reply (the target is going down) so callers
+ * typically pass want_response=false for those.
+ *
+ * Returns false on cascade-encode failure (TX ring full, my_info
+ * missing — also blocks self-admin as a safety net).
+ */
+bool phoneapi_encode_admin_remote_varint(uint32_t target_node_num,
+                                         uint8_t  channel_index,
+                                         uint32_t admin_field,
+                                         uint64_t value,
+                                         bool     want_ack,
+                                         bool     want_response,
+                                         const char *trace_label,
+                                         uint32_t *out_packet_id);
+
+/* T2.5 thin wrappers for the common admin actions exposed by C-3 OP_
+ * REMOTE_ADMIN sub-menu.  Field numbers come from admin.proto:
+ *   reboot_seconds          = 97 (int32)
+ *   shutdown_seconds        = 98 (int32)
+ *   factory_reset_config    = 99 (int32, value > 0 triggers)
+ *   factory_reset_device    = 94 (int32, value > 0 triggers)
+ *   nodedb_reset            = 100 (bool)
+ */
+bool phoneapi_encode_admin_reboot(uint32_t target_node_num,
+                                  uint8_t  channel_index,
+                                  int32_t  seconds,
+                                  uint32_t *out_packet_id);
+bool phoneapi_encode_admin_shutdown(uint32_t target_node_num,
+                                    uint8_t  channel_index,
+                                    int32_t  seconds,
+                                    uint32_t *out_packet_id);
+bool phoneapi_encode_admin_factory_reset_config(uint32_t target_node_num,
+                                                uint8_t  channel_index,
+                                                uint32_t *out_packet_id);
+bool phoneapi_encode_admin_factory_reset_device(uint32_t target_node_num,
+                                                uint8_t  channel_index,
+                                                uint32_t *out_packet_id);
+bool phoneapi_encode_admin_nodedb_reset(uint32_t target_node_num,
+                                        uint8_t  channel_index,
+                                        uint32_t *out_packet_id);
+
 #ifdef __cplusplus
 }
 #endif

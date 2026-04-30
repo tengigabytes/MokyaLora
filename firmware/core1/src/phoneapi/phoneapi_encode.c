@@ -424,3 +424,147 @@ bool phoneapi_encode_admin_set_ignored(uint32_t peer_node_num,
                                   set ? "admin_set_ign" : "admin_clr_ign",
                                   out_packet_id);
 }
+
+/* ── T2.5 OP_REMOTE_ADMIN — generic remote-admin encoder ──────────── */
+
+bool phoneapi_encode_admin_remote_varint(uint32_t target_node_num,
+                                         uint8_t  channel_index,
+                                         uint32_t admin_field,
+                                         uint64_t value,
+                                         bool     want_ack,
+                                         bool     want_response,
+                                         const char *trace_label,
+                                         uint32_t *out_packet_id)
+{
+    /* Reject self-targeted remote-admin — caller likely confused
+     * remote-admin with self-admin (separate API). Also rejects
+     * broadcast (0xFFFFFFFF) — admin packets are point-to-point. */
+    if (target_node_num == 0u || target_node_num == 0xFFFFFFFFu) {
+        return false;
+    }
+    phoneapi_my_info_t mi;
+    if (phoneapi_cache_get_my_info(&mi) && mi.my_node_num == target_node_num) {
+        /* Caller wanted self-admin; route through send_self_admin_varint
+         * if they really need that — we treat self-target as a bug
+         * here so factory_reset doesn't accidentally wipe US instead
+         * of the remote node we picked. */
+        return false;
+    }
+
+    /* AdminMessage body: one varint field. Cap at 11 bytes (max varint
+     * length 10 + 1-byte tag for field<128 OR 2-byte tag up to 16383). */
+    uint8_t admin_body[16];
+    size_t  body_len = encode_admin_single_varint(admin_body,
+                                                   sizeof(admin_body),
+                                                   admin_field,
+                                                   value);
+    if (body_len == 0u) return false;
+
+    /* Wrap as MeshPacket payload, portnum 6 (ADMIN_APP). The remote
+     * node's AdminModule processes it iff admin-channel is enabled
+     * on its side OR our public key sits in its admin_key list. We
+     * don't pre-check either — let the user observe via traceroute /
+     * subsequent --info that the action took effect. */
+    return encode_app_packet(target_node_num,
+                             channel_index,
+                             /*portnum=*/6u,
+                             admin_body,
+                             (uint16_t)body_len,
+                             want_ack,
+                             want_response,
+                             out_packet_id,
+                             trace_label);
+}
+
+/* int32 in proto3 is sign-extended to 64-bit before varint encoding —
+ * helper that does the right cast for typical small positive values
+ * we send (1..3600 seconds, factory-reset trigger 1). */
+static uint64_t int32_as_proto_u64(int32_t v)
+{
+    return (uint64_t)(int64_t)v;   /* sign-extend */
+}
+
+bool phoneapi_encode_admin_reboot(uint32_t target_node_num,
+                                  uint8_t  channel_index,
+                                  int32_t  seconds,
+                                  uint32_t *out_packet_id)
+{
+    /* admin.proto:497 reboot_seconds = 97. Target reboots in `seconds`;
+     * negative cancels a pending reboot. The remote node typically
+     * stops responding before its routing-ack reaches us, so
+     * want_ack=true is a best-effort delivery hint, NOT a confirmation
+     * of action.  want_response=false matches host CLI's --reboot. */
+    return phoneapi_encode_admin_remote_varint(target_node_num,
+                                               channel_index,
+                                               /*admin_field=*/97u,
+                                               int32_as_proto_u64(seconds),
+                                               /*want_ack=*/true,
+                                               /*want_response=*/false,
+                                               "admin_reboot",
+                                               out_packet_id);
+}
+
+bool phoneapi_encode_admin_shutdown(uint32_t target_node_num,
+                                    uint8_t  channel_index,
+                                    int32_t  seconds,
+                                    uint32_t *out_packet_id)
+{
+    /* admin.proto:502 shutdown_seconds = 98. Same response-window
+     * caveat as reboot — ack may arrive but action is one-shot. */
+    return phoneapi_encode_admin_remote_varint(target_node_num,
+                                               channel_index,
+                                               /*admin_field=*/98u,
+                                               int32_as_proto_u64(seconds),
+                                               /*want_ack=*/true,
+                                               /*want_response=*/false,
+                                               "admin_shutdown",
+                                               out_packet_id);
+}
+
+bool phoneapi_encode_admin_factory_reset_config(uint32_t target_node_num,
+                                                uint8_t  channel_index,
+                                                uint32_t *out_packet_id)
+{
+    /* admin.proto:507 factory_reset_config = 99. Wipes config but
+     * preserves BLE bonds. Field is int32; any non-zero value
+     * triggers (host CLI uses 1). */
+    return phoneapi_encode_admin_remote_varint(target_node_num,
+                                               channel_index,
+                                               /*admin_field=*/99u,
+                                               int32_as_proto_u64(1),
+                                               /*want_ack=*/true,
+                                               /*want_response=*/false,
+                                               "admin_freset_cfg",
+                                               out_packet_id);
+}
+
+bool phoneapi_encode_admin_factory_reset_device(uint32_t target_node_num,
+                                                uint8_t  channel_index,
+                                                uint32_t *out_packet_id)
+{
+    /* admin.proto:479 factory_reset_device = 94. Wipes config + BLE
+     * bonds (true full reset). int32; non-zero triggers. */
+    return phoneapi_encode_admin_remote_varint(target_node_num,
+                                               channel_index,
+                                               /*admin_field=*/94u,
+                                               int32_as_proto_u64(1),
+                                               /*want_ack=*/true,
+                                               /*want_response=*/false,
+                                               "admin_freset_dev",
+                                               out_packet_id);
+}
+
+bool phoneapi_encode_admin_nodedb_reset(uint32_t target_node_num,
+                                        uint8_t  channel_index,
+                                        uint32_t *out_packet_id)
+{
+    /* admin.proto:513 nodedb_reset = 100. Bool; favorites preserved. */
+    return phoneapi_encode_admin_remote_varint(target_node_num,
+                                               channel_index,
+                                               /*admin_field=*/100u,
+                                               /*value=*/1u,
+                                               /*want_ack=*/true,
+                                               /*want_response=*/false,
+                                               "admin_nodedb_reset",
+                                               out_packet_id);
+}

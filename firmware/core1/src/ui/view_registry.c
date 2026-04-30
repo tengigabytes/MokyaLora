@@ -29,6 +29,7 @@
 #include "nodes_view.h"
 #include "node_detail_view.h"
 #include "node_ops_view.h"
+#include "remote_admin_view.h"
 #include "my_node_view.h"
 #include "settings/settings_app_view.h"
 #include "modules_index_view.h"
@@ -56,6 +57,7 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_NODES]          = nodes_view_descriptor();
     g_view_registry[VIEW_ID_NODE_DETAIL]    = node_detail_view_descriptor();
     g_view_registry[VIEW_ID_NODE_OPS]       = node_ops_view_descriptor();
+    g_view_registry[VIEW_ID_REMOTE_ADMIN]   = remote_admin_view_descriptor();
     g_view_registry[VIEW_ID_MY_NODE]        = my_node_view_descriptor();
     g_view_registry[VIEW_ID_SETTINGS]       = settings_app_view_descriptor();
     g_view_registry[VIEW_ID_MODULES_INDEX]  = modules_index_view_descriptor();
