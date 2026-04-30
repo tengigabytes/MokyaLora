@@ -366,6 +366,21 @@ void phoneapi_cache_set_last_position(uint32_t node_num,
     cache_unlock();
 }
 
+void phoneapi_cache_set_last_neighbors(uint32_t node_num,
+                                       const phoneapi_neighbors_t *n)
+{
+    if (n == NULL || node_num == 0u) return;
+    cache_lock();
+    for (size_t i = 0; i < PHONEAPI_NODES_CAP; i++) {
+        if (s_cache.nodes[i].in_use && s_cache.nodes[i].num == node_num) {
+            s_cache.nodes[i].last_neighbors = *n;
+            s_cache.change_seq++;
+            break;
+        }
+    }
+    cache_unlock();
+}
+
 // ── Config sub-oneof writers / readers (B3-P1 / Cut B) ──────────────
 
 void phoneapi_cache_set_config_device(const phoneapi_config_device_t *cfg)

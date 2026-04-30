@@ -382,8 +382,9 @@ static void render_f3(void)
     clear_rows();
     clamp_f3_scroll(total);
 
-    /* Row 0: column header. */
-    set_row(0, "Peer       SNR     Hops  Heard");
+    /* Row 0: column header. `Nbrs` is the size of this peer's last
+     * NeighborInfo broadcast — `--` when we haven't heard one yet. */
+    set_row(0, "Peer      SNR     Hops Heard Nbrs");
     if (s.rows[0]) {
         lv_obj_set_style_text_color(s.rows[0],
             ui_color(UI_COLOR_TEXT_SECONDARY), 0);
@@ -444,10 +445,18 @@ static void render_f3(void)
             snprintf(age_s, sizeof(age_s), "--");
         }
 
+        char nbrs_s[8];
+        if (e.last_neighbors.epoch == 0u) {
+            snprintf(nbrs_s, sizeof(nbrs_s), "--");
+        } else {
+            snprintf(nbrs_s, sizeof(nbrs_s), "%u",
+                     (unsigned)e.last_neighbors.count);
+        }
+
         bool focused = (off == s.f3_cursor);
-        snprintf(buf, sizeof(buf), "%s%-9s %-7s %-5s %s",
+        snprintf(buf, sizeof(buf), "%s%-8s %-7s %-4s %-5s %s",
                  focused ? ">" : " ",
-                 nm, snr_s, hops_s, age_s);
+                 nm, snr_s, hops_s, age_s, nbrs_s);
         set_row(row, buf);
         if (s.rows[row]) {
             lv_obj_set_style_text_color(s.rows[row],

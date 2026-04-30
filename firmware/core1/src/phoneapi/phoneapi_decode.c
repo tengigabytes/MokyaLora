@@ -1099,6 +1099,139 @@ bool phoneapi_decode_position_packet(const uint8_t *buf, uint16_t len,
     return true;
 }
 
+// ── NeighborInfo decoder (NEIGHBORINFO_APP, portnum 71) ─────────────
+//
+// NeighborInfo (mesh.proto):
+//   uint32 node_id                          = 1;  // source peer
+//   uint32 last_sent_by_id                  = 2;
+//   uint32 node_broadcast_interval_secs     = 3;
+//   repeated Neighbor neighbors             = 4;
+// Neighbor:
+//   uint32 node_id                          = 1;
+//   float  snr                              = 2;  // dB, IEEE-754 fixed32
+//   fixed32 last_rx_time                    = 3;  // deprecated
+//   uint32 node_broadcast_interval_secs     = 4;
+//
+// The outer NeighborInfo is the decoded.payload of a MeshPacket whose
+// decoded.portnum == 71. We only care about the `neighbors` list — the
+// outer node_id duplicates MeshPacket.from anyway.
+
+static int8_t saturate_snr_x4_from_float(float snr_db)
+{
+    float v = snr_db * 4.0f;
+    if (v >  127.0f) return  127;
+    if (v < -128.0f) return -128;
+    return (int8_t)v;
+}
+
+static bool decode_neighbor_inner(const uint8_t *buf, uint16_t len,
+                                  phoneapi_neighbor_entry_t *out)
+{
+    out->node_num = 0u;
+    out->snr_x4   = INT8_MIN;
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            out->node_num = (uint32_t)v;
+        } else if (f == 2u && w == WT_I32) {
+            uint32_t u; if (!read_fixed32(buf, len, &pos, &u)) return false;
+            union { uint32_t u; float f; } pun;
+            pun.u = u;
+            out->snr_x4 = saturate_snr_x4_from_float(pun.f);
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+static bool decode_neighborinfo_inner(const uint8_t *buf, uint16_t len,
+                                      phoneapi_neighbors_t *out)
+{
+    /* Caller pre-zeroed *out. Append into entries[] capping at
+     * PHONEAPI_NEIGHBORS_MAX. Other fields (last_sent_by_id, intervals)
+     * are skipped — F-3 doesn't surface them. */
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 4u && w == WT_LEN) {
+            uint64_t plen;
+            if (!read_varint(buf, len, &pos, &plen)) return false;
+            if (plen > (uint64_t)(len - pos)) return false;
+            phoneapi_neighbor_entry_t e;
+            if (!decode_neighbor_inner(buf + pos, (uint16_t)plen, &e)) {
+                return false;
+            }
+            pos += (uint16_t)plen;
+            if (out->count < PHONEAPI_NEIGHBORS_MAX && e.node_num != 0u) {
+                out->entries[out->count++] = e;
+            }
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    return true;
+}
+
+bool phoneapi_decode_neighborinfo_packet(const uint8_t *buf, uint16_t len,
+                                          uint32_t *out_from_node,
+                                          phoneapi_neighbors_t *out_nb)
+{
+    if (out_from_node == NULL || out_nb == NULL) return false;
+    *out_from_node = 0u;
+    memset(out_nb, 0, sizeof(*out_nb));
+
+    data_subview_t data = { 0, NULL, 0 };
+    bool have_data = false;
+    uint32_t from = 0u;
+    uint32_t rx_time = 0u;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            from = v;
+        } else if (f == 4u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
+            have_data = true;
+        } else if (f == 8u && w == WT_I32) {
+            /* MeshPacket.rx_time — useful as freshness epoch for F-3
+             * "heard N s ago" column when the host clock is sync'd. */
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            rx_time = v;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    if (!have_data || data.portnum != PHONEAPI_PORTNUM_NEIGHBORINFO_APP) {
+        return false;
+    }
+    *out_from_node = from;
+    out_nb->epoch = (rx_time != 0u) ? rx_time : 1u;
+    if (data.payload != NULL && data.payload_len > 0u) {
+        if (!decode_neighborinfo_inner(data.payload, data.payload_len,
+                                       out_nb)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // ── Config sub-oneof decoders (B3-P1 / Cut B) ───────────────────────
 //
 // Each input buffer is the raw DeviceConfig / LoRaConfig / PositionConfig

@@ -118,6 +118,30 @@ typedef struct {
     uint32_t epoch;                              // 0 = no data
 } phoneapi_last_position_t;
 
+// Last NEIGHBORINFO_APP (portnum 71) reply seen for a peer. Capped at
+// 8 neighbours per source node — Meshtastic NeighborInfo can carry more
+// in principle, but F-3 v1 only renders a single line per source so the
+// cap is a render-side choice as much as a memory one.
+//
+// `entries[]` stores the SNR the SOURCE peer measures for each of its
+// neighbours (i.e. peer X reports "I hear node Y at +5.5 dB"); not the
+// SNR self → X (which lives in phoneapi_node_t.snr_x100).
+//
+// snr_x4 = dB × 4, saturated to int8 ([-32, +32] dB range), INT8_MIN if
+// the wire didn't include the SNR field.
+#define PHONEAPI_NEIGHBORS_MAX  8u
+
+typedef struct {
+    uint32_t node_num;
+    int8_t   snr_x4;                             // INT8_MIN = unknown
+} phoneapi_neighbor_entry_t;
+
+typedef struct {
+    uint8_t  count;                              // 0..PHONEAPI_NEIGHBORS_MAX
+    uint32_t epoch;                              // 0 = no data, 1 = sentinel
+    phoneapi_neighbor_entry_t entries[PHONEAPI_NEIGHBORS_MAX];
+} phoneapi_neighbors_t;
+
 // NodeInfo subset (one entry per peer in the mesh)
 typedef struct {
     bool     in_use;
@@ -148,6 +172,7 @@ typedef struct {
     // C-2 detail view.
     phoneapi_last_route_t    last_route;
     phoneapi_last_position_t last_position;
+    phoneapi_neighbors_t     last_neighbors;
     // Bookkeeping
     uint32_t phase_seq;              // matches cache.current_phase_seq if fresh
 } phoneapi_node_t;
@@ -456,6 +481,8 @@ void phoneapi_cache_set_last_route(uint32_t node_num,
                                    const phoneapi_last_route_t *r);
 void phoneapi_cache_set_last_position(uint32_t node_num,
                                       const phoneapi_last_position_t *p);
+void phoneapi_cache_set_last_neighbors(uint32_t node_num,
+                                       const phoneapi_neighbors_t *n);
 
 uint32_t phoneapi_cache_change_seq(void);
 uint32_t phoneapi_cache_committed_seq(void);

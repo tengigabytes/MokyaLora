@@ -96,6 +96,7 @@ bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
 #define PHONEAPI_PORTNUM_POSITION_APP    3u
 #define PHONEAPI_PORTNUM_ROUTING_APP     5u
 #define PHONEAPI_PORTNUM_TRACEROUTE_APP 70u
+#define PHONEAPI_PORTNUM_NEIGHBORINFO_APP 71u
 bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
                                  phoneapi_text_msg_t *out_msg);
 
@@ -115,6 +116,15 @@ bool phoneapi_decode_traceroute_packet(const uint8_t *buf, uint16_t len,
 bool phoneapi_decode_position_packet(const uint8_t *buf, uint16_t len,
                                      uint32_t *out_from_node,
                                      phoneapi_last_position_t *out_pos);
+
+// MeshPacket carrying a NEIGHBORINFO_APP (portnum 71) broadcast. Fills
+// `out_from_node` with MeshPacket.from (= the source peer reporting its
+// neighbour list) and `out_nb` with up to PHONEAPI_NEIGHBORS_MAX
+// neighbours. Each neighbour's `snr_x4` is the SNR the source measured
+// for that neighbour (saturated to int8); INT8_MIN if absent on wire.
+bool phoneapi_decode_neighborinfo_packet(const uint8_t *buf, uint16_t len,
+                                          uint32_t *out_from_node,
+                                          phoneapi_neighbors_t *out_nb);
 
 // MeshPacket carrying a Routing-app ACK (decoded.portnum == 5).
 //   - `out_request_id` ← Data.request_id (the original packet id we sent)

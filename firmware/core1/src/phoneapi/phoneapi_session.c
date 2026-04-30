@@ -493,6 +493,19 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                       (int)p.lon_e7, (int)p.alt_m, (unsigned)p.epoch);
                 break;
             }
+            uint32_t from_nb = 0u;
+            phoneapi_neighbors_t nb;
+            if (phoneapi_decode_neighborinfo_packet(sub, sub_len,
+                                                    &from_nb, &nb)) {
+                /* NeighborInfo carries rx_time when available; decoder
+                 * stamps epoch=1 sentinel if not. */
+                phoneapi_cache_set_last_neighbors(from_nb, &nb);
+                TRACE("phapi", "rx_nbrs",
+                      "from=%u,count=%u,t=%u",
+                      (unsigned)from_nb, (unsigned)nb.count,
+                      (unsigned)nb.epoch);
+                break;
+            }
         }
 
         phoneapi_text_msg_t m;
