@@ -168,7 +168,29 @@ def main():
     img_ref_scaled.save(python_png)
     print(f"  saved {python_png}")
 
-    # ── Module-level comparison ───────────────────────────────────────
+    # ── Auto-decode the device QR via OpenCV ──────────────────────────
+    # OpenCV QRCodeDetector ships with opencv-python (no external
+    # libzbar dependency). Decoded text MUST equal `url` byte-for-byte
+    # for Phase 5b to claim end-to-end behavioural PASS.
+    print()
+    print("OpenCV QR decode of device PNG:")
+    try:
+        import cv2
+        img_cv = cv2.imread(str(device_png))
+        det = cv2.QRCodeDetector()
+        decoded, bbox, _ = det.detectAndDecode(img_cv)
+        print(f"  decoded: {decoded!r}")
+        if decoded == url:
+            print(f"  ==> Phase 5b PASS — decoded QR matches URL byte-for-byte")
+            sys.exit(0)
+        else:
+            print(f"  ==> Phase 5b FAIL — decoded != expected URL")
+            print(f"      expected: {url!r}")
+            sys.exit(1)
+    except Exception as e:
+        print(f"  cv2 decode failed ({e}); falling back to module diff")
+
+    # ── Module-level comparison (fallback if cv2 missing) ─────────────
     # Convert both images to N×N module matrices and compare bit-wise.
     # qrcode lib gives us the canonical matrix directly; for the device
     # PNG, sample the centre of each module cell.
