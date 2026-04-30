@@ -3279,6 +3279,141 @@ cursor == -1, scale preserved); all pass. `diag_d1_state.py`
 retained as the canonical "is this state-preservation bug or
 feature?" reproducer.
 
+### Secondary Spec Fill-in v1 — F-1 / F-3 / T-2 / B-3 / B-4 (2026-04-30)
+
+Plan `~/.claude/plans/secondary-fillin-v1.md`. Five phases shipped on
+`dev-Sblzm`, each promoted from ⏳ → ✅ in
+`docs/ui/01-page-architecture.md`. Two protobuf-encoder bugs caught
+by behavioural-audit harness.
+
+**Phase 1 — F-1 device telemetry (commit `57bc816`)**: ~25 LoC view
+change. DeviceMetrics decoder already populated
+`phoneapi_node_t.{channel_util_pct, air_util_tx_pct}` for every
+peer including self via cascade `FR_TAG_NODE_INFO` upsert; F-1 was
+hardcoding `n/a (待 telemetry decode)` on a wrong assumption.
+`render_f1` now reads self via `phoneapi_cache_get_node_by_id(my_node_num)`,
+0xFF sentinel falls back to `--`.
+
+**Phase 2 — F-3 NeighborInfo (commit `9b38f1b`)**: cascade decoder for
+PortNum 71 + new `phoneapi_neighbors_t` cache (8 entries × {node_num,
+snr_x4} + epoch); rides the existing `RouteDiscovery` /
+`Position` decoder pattern (subview parser, float → int8 saturation
+via `union pun`). F-3 view gains a `Nbrs` column showing peer's last
+broadcast neighbour count (or `--` when no broadcast received yet).
+Live verification deferred — Meshtastic firmware **clamps
+`neighbor_info.update_interval` to a 14400 s (4 hr) minimum** even
+when CLI sets a smaller value, so a fresh in-session test isn't
+practical; structural verification + decoder pattern parity with
+`RouteDiscovery` is the gate.
+
+**Phase 3 — T-2 Range Test (commit `5ee4a07`)**: cascade decoder for
+PortNum 66 + new `messages/range_test_log.{c,h}` per-peer ring (cap
+7) + new `range_test_view` under T-section. `tools_view` row index 1
+swapped from `VIEW_ID_COUNT` placeholder to `VIEW_ID_RANGE_TEST`.
+Header surfaces `mod:ON/OFF/?` from cached `phoneapi_module_range_test_t`.
+Live verification inconclusive on this dev hardware: peer COM7 set
+to `range_test.sender=300` but no inbound packets logged after a
+6-min wait window — RF/peer-side issue, not Phase 3 firmware regression.
+
+**Phase 4 — B-3 加入頻道 (commits `c0fe9d6`, `cebef0d`)**: first multi-
+level admin-message encoder in the codebase. Layout:
+
+  AdminMessage {
+    set_channel (field 33, LEN) {     ← canonical Meshtastic tag
+      Channel { index, settings { psk, name }, role }
+    }
+  }
+
+`phoneapi_encode_admin_set_channel()` uses one-byte length backpatches
+(body ≤ 60 B). Sent via `encode_app_packet` to portnum 6 (ADMIN_APP)
+with `mp.from = 0` so AdminModule local-from path applies it.
+`channel_add_view` gathers name (IME) + role (LEFT/RIGHT toggle) +
+auto-generated 32-byte random PSK (timer-seeded xorshift32) and
+fires `Save`. `channels_view` OK splits by `role != DISABLED` to
+route either `CHANNEL_EDIT` or `CHANNEL_ADD`.
+
+**B-3 audit lesson (commit `cebef0d`):** initial encoder used
+`AdminMessage.set_channel = field 8` per a plan-time guess; actual
+nanopb generated header (`admin.pb.h`) defines `set_channel_tag = 33`
+and `field 8 = get_module_config_response_tag`. So Core 0 saw a
+packet whose oneof tag pointed to a stale response, found no
+matching request, silently dropped. Encoder returned true,
+QueueStatus `res=0` came back (success), `meshtastic --info` showed
+no channel update — exactly the failure mode structural-only
+verification can't see. Caught by `scripts/diag_b3_encoder.py` reading
+RTT trace + comparing hex bytes against the `*.pb.h` generated tag
+constants. Fix: change `put_tag(8u, 2u)` → `put_tag(33u, 2u)`. New
+recommendation captured in plan: **always grep `*.pb.h` for the
+exact `_tag` constant before writing a new protobuf encoder.**
+
+**Phase 5a — B-4 channel-share URL text (commit `6789d31`)**: pre-req
+extends `phoneapi_channel_t` with `uint8_t psk[32]` and updates
+`phoneapi_decode_channel_settings` to memcpy the PSK bytes into
+cache (was previously skip_field-discarded for "privacy" — but the
+URL builder needs the actual key). Privacy: cache lives in PSRAM
+`.psram_bss` and is SWD-readable; acceptable for MokyaLora's single-
+user model. New `firmware/core1/src/util/`: `base64_url.{c,h}`
+(RFC 4648 §5 URL-safe, no padding) + `channel_share_url.{c,h}`
+(ChannelSet protobuf builder + URL prefix). `channel_share_view`
+displays the 57–170 char URL wrapped. SET key from
+`channel_edit_view` opens the share view.
+
+**Phase 5a verification:** parse `meshtastic --info` Primary URL →
+ChannelSet protobuf → 9 fields (psk, name, module_settings.{position_
+precision, is_muted}, lora_config.{use_preset, modem_preset, region,
+hop_limit, tx_power}); compare same fields parsed out of device's
+URL. 9/9 PASS. My URL is a SUBSET of CLI's (CLI emits
+spread_factor/coding_rate/etc. even when use_preset=true; we omit
+them since `phoneapi_decode_config_lora` doesn't capture those
+fields — they're derivable from `modem_preset` on receiver side).
+
+**Phase 5b — B-4 QR rendering (commits `7db41b8`, `dcf8528`,
+`e530d61`)**: enables `LV_USE_QRCODE=1` in lv_conf.h to pull LVGL's
+vendored Nayuki qrcodegen-c. `channel_share_view` adds a 144×144
+`lv_qrcode` widget above the URL text; widget auto-picks Version
+4-8 ECC L based on URL length. I1 (1 bpp) draw buffer ≈ 2.5 KB
+allocated by LVGL.
+
+**Phase 5b verification (the gold-standard pipeline):**
+  1. SWD-readable globals `g_b4_qr_data/_size/_w/_h/_stride/_cf`
+     published on every successful render.
+  2. `scripts/dump_b4_qr_png.py` SWD-reads the 8 B palette + 2592 B
+     I1 pixel buffer (= 144×18 stride bytes), converts to PIL '1'
+     mode PNG.
+  3. `cv2.QRCodeDetector` (opencv-python, no external libzbar
+     dependency — matters on Windows where pyzbar's libzbar-64.dll
+     isn't bundled) decodes the PNG.
+  4. Decoded text compared to `s.url_buf` bytes read via SWD;
+     byte-for-byte match required.
+
+Result on dev unit:
+  device URL  : https://meshtastic.org/e/#CgkSAQE6BAgLEAESCggBEAQ4CEADUA8
+  cv2 decoded : https://meshtastic.org/e/#CgkSAQE6BAgLEAESCggBEAQ4CEADUA8
+  ==> match.
+
+**Audit harness recommendation (carry forward across plans):**
+Every plan that adds a new protobuf encoder MUST include:
+  - Grep the generated `*.pb.h` for the `_tag` constants used
+    (do NOT trust plan-time field numbers; B-3's bug came from this).
+  - End-to-end behavioural test that re-decodes the on-device output
+    via an independent decoder (CLI persist check / cv2.QRCodeDetector
+    / protoc decode_raw / etc.). Structural-only nav routing + view-
+    id assertions are necessary but not sufficient — they pass cleanly
+    while the encoded bytes are wrong.
+
+Side observations during the audit:
+  - PSRAM cache coherency (memory `project_psram_swd_cache_coherence`):
+    static `s` for `channel_share_view` was originally `.psram_bss` but
+    SWD reads of PSRAM via uncached alias 0x15xxxxxx returned stale
+    zeros; moved to regular `.bss` (cost ~280 B SRAM). Same gotcha
+    applies to any future view whose state needs SWD-side inspection.
+  - Test fixture / struct-offset coupling: adding `lv_obj_t *qr` to
+    `cshare_t` shifted `url_buf`/`url_len` offsets by +4 B; the
+    audit script's hardcoded offsets read zeros (same pattern as
+    test scripts going stale after enum renumbering). `diag_b4_view.py`
+    saves the diagnostic by dumping the full struct so the mismatch
+    surfaces immediately.
+
 ---
 
 ## Issues Log (Phase 2)

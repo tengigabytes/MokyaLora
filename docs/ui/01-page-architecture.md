@@ -22,7 +22,8 @@
 | A-4 罐頭訊息 | `canned_view` + `canned_messages` | ✅ | LEFT 在 conversation_view 觸發（commit `97a47b3` + `b2f0a95`） |
 | B-1 頻道清單 | `channels_view` | ✅ | 8 entries（commit `76d4d75`） |
 | B-2 頻道編輯 | `channel_edit_view` | ✅ 部分 | 3 可寫欄（name / module_position_precision / muted）+ 3 唯讀顯示欄（PSK 摘要 / role / channel id），commit `76d4d75`。PSK / role 改為可寫、uplink / downlink 欄位仍待補 |
-| B-3 / B-4 | ⏳ | 未實作 | |
+| B-3 加入頻道 | `channel_add_view` | ✅ | 從 channels_view OK 在空 slot 進入；name + role + 32 B random PSK，`AdminMessage.set_channel` (field 33) self-admin 發送，AdminModule 寫 channelFile（dev-Sblzm e530d61）|
+| B-4 分享頻道 | `channel_share_view` + `util/channel_share_url` + `util/base64_url` | ✅ | URL `meshtastic.org/e/#<base64(ChannelSet)>` 文字 + `lv_qrcode` 144×144 顯示；OpenCV 端到端 decode 驗證通（dev-Sblzm 5a/5b commits）|
 | C-1 節點清單 | `nodes_view` | ✅ | cascade `phoneapi_cache` 來源（refactor `d9ebf55`） |
 | C-2 節點詳情 | `node_detail_view` | ✅ | 含 last traceroute + position reply 渲染（commit `d9ebf55` + `a65af97`） |
 | C-3 節點操作 | `node_ops_view` | ✅ | 7 OPs：DM / ALIAS / FAVORITE / IGNORE / TRACEROUTE / REQUEST_POS / REMOTE_ADMIN（commit `d9ebf55`、`f9270b6`、`6b385eb`、`58f61f6`、`89786ef`） |
@@ -32,13 +33,13 @@
 | D-2 圖層切換 | `map_view` 子模式 | ✅ 部分 | D-1 內 SET 鍵循環；航跡/航點未實作（ALL 暫等同 NODES） |
 | D-3~D-5 航點 | ⏳ | 未實作 | 航點 CRUD + persist 待 LittleFS 整合 |
 | D-6 航點導航 | `map_nav_view` | ✅ 部分 | 鎖定 peer 後顯示大方位字（8 方位 + 度數）+ 距離 + ETA + 速度；C-3 OP_NAVIGATE 入口；BACK 回 D-1（dev-Sblzm） |
-| F-1 本機遙測 | `telemetry_view` (TELE_PAGE_F1) | ✅ 部分 | channel_util / air_util_tx 待 TELEMETRY_APP self-decode |
+| F-1 本機遙測 | `telemetry_view` (TELE_PAGE_F1) | ✅ | channel_util / air_util_tx 從 cascade DeviceMetrics 解碼（已存在）+ 自身 NodeInfo 取出顯示（dev-Sblzm 57bc816）|
 | F-2 環境感測 | `telemetry_view` (TELE_PAGE_F2) | ✅ | 氣壓/三軸磁/各 sensor 溫度；Rev A 無濕度感測器 |
-| F-3 鄰居資訊 | `telemetry_view` (TELE_PAGE_F3) | ✅ 部分 | 用既有 `phoneapi_node_t` SNR/hops/last_heard 矩陣；完整 NeighborInfo (PortNum 71) decode 留 v2 |
+| F-3 鄰居資訊 | `telemetry_view` (TELE_PAGE_F3) | ✅ | NEIGHBORINFO_APP (PortNum 71) cascade decoder + `phoneapi_neighbors_t` per-node cache + Nbrs column；live broadcast 驗證受限於 Meshtastic 4hr min 間隔（dev-Sblzm 9b38f1b）|
 | F-4 歷史曲線 | `telemetry_view` (TELE_PAGE_F4) + `metrics/history` | ✅ 部分 | 電量 + 訊號雙 chart（256 點 × 30 s = 2 hr 8 min 視窗），ring 在 SRAM `.bss` 1.5 KB；空中時間佔比 chart 留 placeholder 待 TELEMETRY_APP self-decode；persist 跨 boot 不在 v1（T2.6） |
 | T-0 工具主選單 | `tools_view` | ✅ | spec-named 入口（commit `0ceb082`、`ee3a72e`） |
 | T-1 Traceroute | `traceroute_view` | ✅ | commit `3fbf664` |
-| T-2 Range Test | ⏳ | 未實作 | |
+| T-2 Range Test | `range_test_view` + `messages/range_test_log` | ✅ | RANGE_TEST_APP (PortNum 66) cascade decoder + per-peer hit/seq/SNR/RSSI ring（cap 7）+ 模組狀態 header；live broadcast 驗證待 RF（dev-Sblzm 5ee4a07）|
 | T-3 訊號頻譜 | ⏳ | 未實作 | SX1262 RSSI 掃描需 cascade decoder |
 | T-4 封包嗅探 | ⏳ | 未實作 | |
 | T-5 LoRa 自我測試 | ⏳ | 未實作 | |
@@ -108,9 +109,9 @@
 | B-1 | 頻道列表 | Primary + Secondary 0-7，含啟用狀態 |
 | B-2 | 頻道編輯 | 名稱、PSK、Role、Uplink/Downlink、Position Precision |
 | B-3 | 加入頻道 | 手動輸入 / 接收 admin packet |
-| B-4 | 分享頻道 | 顯示 URL（給對方手機掃）⚠️ QR 渲染 codec 尚未實作 |
+| B-4 | 分享頻道 | URL + 144×144 QR 已實作（LVGL 內建 `lv_qrcode` / Nayuki qrcodegen-c）|
 
-> **實作落差（B-4）**：Meshtastic channel-share URL 編碼（base64 of ChannelSettings protobuf）需在 Core 1 加 codec；目前 cascade phoneapi 只暴露 `IPC_CFG_CHANNEL_*` 讀取，無 URL 產生器。QR 渲染需引入 QR encoder（如 `qrcodegen`，~5 KB code）。
+> **B-4 實作摘要（2026-04-30 dev-Sblzm）**：Pre-req `phoneapi_channel_t` 加 `psk[32]` 進 cache（decoder 從 skip-bytes 改成 memcpy；privacy 接受單機 SWD 可見）。Encoder 在 `firmware/core1/src/util/channel_share_url.{c,h}` —— 手寫 ChannelSet protobuf + URL-safe base64 (`base64_url.{c,h}`)。QR 渲染靠 LVGL `LV_USE_QRCODE=1` 拉進 vendored qrcodegen，`lv_qrcode_update()` 把 URL 編進 144×144 I1 (1 bpp) buffer。驗證：URL 結構與 `meshtastic --info` Primary URL 各欄位逐一比對 9/9 PASS；QR 透過 SWD dump I1 buffer → PNG → cv2.QRCodeDetector decode → byte-for-byte 等於 URL。
 
 ## C · 節點 App
 
@@ -262,5 +263,12 @@
 
 ---
 
-最後更新：2026-04-29
-版本：v1.1（移除 Audio/MQTT/Network/BT 模組；S 進階 S-12~S-15 順移；B-3 移除 QR；新增 Core 1 view 對照表；補各 App 實作落差註記；頁數 67 → 62）
+最後更新：2026-04-30
+版本：v1.2（D-Map v1 / F-1 / F-3 / T-2 / B-3 / B-4 全部從 ⏳ 升 ✅；
+Core 1 view 對照表同步 dev-Sblzm 5/5 phase commits + audit 抓出的
+B-3 set_channel field tag 8→33 修正 + B-4 cv2 端到端 QR decode 驗證；
+頁數 v1.1=62 維持不變，僅狀態欄位更新）
+
+v1.1（2026-04-29）：移除 Audio/MQTT/Network/BT 模組；S 進階 S-12~S-15
+順移；B-3 移除 QR；新增 Core 1 view 對照表；補各 App 實作落差註記；
+頁數 67 → 62。
