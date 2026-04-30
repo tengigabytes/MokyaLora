@@ -44,6 +44,8 @@
 #include "spectrum_view.h"
 #include "sniffer_view.h"
 #include "lora_test_view.h"
+#include "rhw_pins_view.h"
+#include "rhw_pin_edit_view.h"
 #include "traceroute_view.h"
 #include "range_test_view.h"
 #include "gnss_sky_view.h"
@@ -53,7 +55,12 @@
 #include "font_test_view.h"
 #endif
 
-const view_descriptor_t *g_view_registry[VIEW_ID_COUNT];
+/* Lookup table is populated once at boot (view_registry_populate) and
+ * read-only afterwards. Place in PSRAM .bss to free SRAM for stack /
+ * .bss budget. Cost is one PSRAM read per navigate, which is cheap
+ * (write-back cached, sequential). */
+const view_descriptor_t *g_view_registry[VIEW_ID_COUNT]
+    __attribute__((section(".psram_bss")));
 
 void view_registry_populate(void)
 {
@@ -88,6 +95,8 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_T3_SPECTRUM]    = spectrum_view_descriptor();
     g_view_registry[VIEW_ID_T4_SNIFFER]     = sniffer_view_descriptor();
     g_view_registry[VIEW_ID_T5_LORA_TEST]   = lora_test_view_descriptor();
+    g_view_registry[VIEW_ID_T10_RHW_PINS]    = rhw_pins_view_descriptor();
+    g_view_registry[VIEW_ID_T10_RHW_PIN_EDIT]= rhw_pin_edit_view_descriptor();
 #if MOKYA_DEBUG_VIEWS
     g_view_registry[VIEW_ID_RF_DEBUG]       = rf_debug_view_descriptor();
     g_view_registry[VIEW_ID_FONT_TEST]      = font_test_view_descriptor();

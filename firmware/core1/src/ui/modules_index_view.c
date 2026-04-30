@@ -38,22 +38,23 @@ typedef struct {
     const char       *spec_id;       /* "S-7.1" .. */
     const char       *label;         /* user-visible name */
     bool              wired;
-    settings_group_t  target_group;  /* only valid if wired */
+    settings_group_t  target_group;  /* only valid if wired and override_view==0 */
+    view_id_t         override_view; /* if non-zero, navigate here directly */
     const char       *tbd_reason;    /* only valid if !wired */
 } module_entry_t;
 
 /* Spec order from docs/ui/01-page-architecture.md §S-7. */
 static const module_entry_t k_modules[ROW_COUNT] = {
-    { "S-7.1",  "Canned Message",    true,  SG_CANNED_MSG,    NULL },
-    { "S-7.2",  "External Notif.",   true,  SG_EXT_NOTIF,     NULL },
-    { "S-7.3",  "Range Test",        true,  SG_RANGE_TEST,    NULL },
-    { "S-7.4",  "Store & Forward",   true,  SG_STORE_FORWARD, NULL },
-    { "S-7.5",  "Telemetry",         true,  SG_TELEMETRY,     NULL },
-    { "S-7.6",  "Detection Sensor",  true,  SG_DETECT_SENSOR, NULL },
-    { "S-7.7",  "Paxcounter",        true,  SG_PAXCOUNTER,    NULL },
-    { "S-7.8",  "Neighbor Info",     true,  SG_NEIGHBOR,      NULL },
-    { "S-7.9",  "Serial",            true,  SG_SERIAL,        NULL },
-    { "S-7.10", "Remote Hardware",   true,  SG_REMOTE_HW,     "available_pins[] 編輯器另案" },
+    { "S-7.1",  "Canned Message",    true,  SG_CANNED_MSG,    0,                    NULL },
+    { "S-7.2",  "External Notif.",   true,  SG_EXT_NOTIF,     0,                    NULL },
+    { "S-7.3",  "Range Test",        true,  SG_RANGE_TEST,    0,                    NULL },
+    { "S-7.4",  "Store & Forward",   true,  SG_STORE_FORWARD, 0,                    NULL },
+    { "S-7.5",  "Telemetry",         true,  SG_TELEMETRY,     0,                    NULL },
+    { "S-7.6",  "Detection Sensor",  true,  SG_DETECT_SENSOR, 0,                    NULL },
+    { "S-7.7",  "Paxcounter",        true,  SG_PAXCOUNTER,    0,                    NULL },
+    { "S-7.8",  "Neighbor Info",     true,  SG_NEIGHBOR,      0,                    NULL },
+    { "S-7.9",  "Serial",            true,  SG_SERIAL,        0,                    NULL },
+    { "S-7.10", "Remote Hardware",   true,  SG_REMOTE_HW,     VIEW_ID_T10_RHW_PINS, NULL },
 };
 
 typedef struct {
@@ -162,11 +163,18 @@ static void apply(const key_event_t *ev)
         case MOKYA_KEY_OK: {
             const module_entry_t *m = &k_modules[s.cursor];
             if (m->wired) {
-                settings_app_view_set_initial_group(m->target_group, true);
-                TRACE("modidx", "open",
-                      "spec=%s grp=%u",
-                      m->spec_id, (unsigned)m->target_group);
-                view_router_navigate(VIEW_ID_SETTINGS);
+                if (m->override_view != 0) {
+                    TRACE("modidx", "open_view",
+                          "spec=%s view=%u",
+                          m->spec_id, (unsigned)m->override_view);
+                    view_router_navigate(m->override_view);
+                } else {
+                    settings_app_view_set_initial_group(m->target_group, true);
+                    TRACE("modidx", "open",
+                          "spec=%s grp=%u",
+                          m->spec_id, (unsigned)m->target_group);
+                    view_router_navigate(VIEW_ID_SETTINGS);
+                }
             } else {
                 char buf[64];
                 snprintf(buf, sizeof(buf), "%s %s — %s",
