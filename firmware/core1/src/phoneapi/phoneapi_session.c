@@ -20,6 +20,7 @@
 #include "messages_tx_status.h"
 #include "range_test_log.h"
 #include "packet_log.h"
+#include "lora_test_log.h"
 #include "global/status_bar.h"
 #include "history.h"
 #include "mokya_trace.h"
@@ -451,6 +452,9 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                 e.payload_len = meta.payload_len;
                 memcpy(e.payload, meta.payload, meta.payload_len);
                 packet_log_record(&e);
+                /* T-5 LoRa health metrics — every RX bumps the counter
+                 * regardless of portnum. */
+                lora_test_log_record_rx(meta.snr_x4, meta.rssi, meta.rx_time);
             }
         }
 
@@ -475,6 +479,7 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                                  ? MESSAGES_TX_RESULT_DELIVERED
                                  : MESSAGES_TX_RESULT_FAILED;
             messages_tx_status_publish(result, ack_err, ack_pid);
+            lora_test_log_record_ack(ack_pid, ack_err);
             TRACE("phapi", "rx_ack",
                   "pid=%u,err=%u",
                   (unsigned)ack_pid, (unsigned)ack_err);
@@ -605,6 +610,8 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
         TRACE("phapi", "rx_queue",
               "pid=%u,res=%d,free=%u",
               (unsigned)qs.mesh_packet_id, (int)qs.res, (unsigned)qs.free);
+        lora_test_log_record_queue_status(qs.free, qs.maxlen,
+                                           qs.mesh_packet_id, qs.res);
         if (qs.mesh_packet_id != 0u && qs.res != 0) {
             messages_tx_status_publish(MESSAGES_TX_RESULT_FAILED,
                                        (uint8_t)qs.res,

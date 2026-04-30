@@ -40,11 +40,11 @@
 | T-0 工具主選單 | `tools_view` | ✅ | spec-named 入口（commit `0ceb082`、`ee3a72e`） |
 | T-1 Traceroute | `traceroute_view` | ✅ | commit `3fbf664` |
 | T-2 Range Test | `range_test_view` + `messages/range_test_log` | ✅ | RANGE_TEST_APP (PortNum 66) cascade decoder + per-peer hit/seq/SNR/RSSI ring（cap 7）+ 模組狀態 header；live broadcast 驗證待 RF（dev-Sblzm 5ee4a07）|
-| T-3 訊號頻譜 | ⏳ | 未實作 | SX1262 RSSI 掃描需 cascade decoder |
-| T-4 封包嗅探 | ⏳ | 未實作 | |
-| T-5 LoRa 自我測試 | ⏳ | 未實作 | |
+| T-3 訊號頻譜 | `spectrum_view` | ✅ | 走訪 phoneapi_cache 各 peer 的 snr_x100，依 SNR 排序 + ASCII bar；passive，不做 active SX1262 RSSI scan（dev-Sblzm Phase 2）|
+| T-4 封包嗅探 | `sniffer_view` + `messages/packet_log` | ✅ | cascade FR_TAG_PACKET sniff hook 攔所有 portnum，per-packet ring（cap 16）+ portnum mnemonic + 16 byte hex 預覽；UP/DOWN 滾（dev-Sblzm Phase 3）|
+| T-5 LoRa 自我測試 | `lora_test_view` + `messages/lora_test_log` | ✅ | passive 計數 RX/ACK/NACK/queue free/maxlen + last SNR/RSSI；active loopback 留 v2（dev-Sblzm Phase 4）|
+| T-7 配對碼顯示 | `pairing_view` + `util/base64_url::base64_std_encode` | ✅ | 本機 admin pubkey 64-char hex + 44-char std base64 顯示；對齊 `meshtastic --info publicKey`（dev-Sblzm Phase 1）|
 | T-6 GNSS 衛星圖 | `gnss_sky_view` | ✅ | 仰角 / 方位 / SNR（commit `3fbf664`） |
-| T-7 配對碼顯示 | ⏳ | 未實作 | |
 | T-8 firmware info | `firmware_info_view` | ✅ | versions / hashes（commit `3fbf664`） |
 | S-0 設定主頁 | `settings/settings_app_view` | ✅ | tree walker + breadcrumb（commit `ba55cf9`） |
 | S-1~S-6, S-8~S-12 | `settings/settings_tree` + `settings/settings_keys` | ✅ 部分 | 19 groups / 115 keys（B3 + T2.4.2：Device / LoRa / Position / Power / Display / Channel / Owner / Security + Telemetry / Neighbor / RangeTest / DetectSnsr / CannedMsg / Ambient / Paxcounter / StoreForward / Serial / ExtNotif / RemoteHW），cascade `FR_TAG_MODULE_CONFIG` walk-down decoder + cache 已上（commit `9cf76a4`） |
@@ -264,10 +264,16 @@
 ---
 
 最後更新：2026-04-30
-版本：v1.2（D-Map v1 / F-1 / F-3 / T-2 / B-3 / B-4 全部從 ⏳ 升 ✅；
-Core 1 view 對照表同步 dev-Sblzm 5/5 phase commits + audit 抓出的
-B-3 set_channel field tag 8→33 修正 + B-4 cv2 端到端 QR decode 驗證；
-頁數 v1.1=62 維持不變，僅狀態欄位更新）
+版本：v1.3（T-3 / T-4 / T-5 / T-7 全部從 ⏳ 升 ✅，T-section 4 view
+新增；Phase 2 NeighborInfo + Phase 3 RangeTest decoder 修正
+MeshPacket 欄位編號錯誤 [rx_time=8→7 / rx_snr=9→8 / rx_rssi=13→12]，
+與 B-3 field tag 8→33 同類錯誤；T-4 端到端 RF live decode 通過
+[peer broadcast → SWD 抓 payload byte-for-byte]）
+
+v1.2（2026-04-30）：D-Map v1 / F-1 / F-3 / T-2 / B-3 / B-4 全部從
+⏳ 升 ✅；Core 1 view 對照表同步 dev-Sblzm 5/5 phase commits +
+audit 抓出的 B-3 set_channel field tag 8→33 修正 + B-4 cv2 端到端
+QR decode 驗證。
 
 v1.1（2026-04-29）：移除 Audio/MQTT/Network/BT 模組；S 進階 S-12~S-15
 順移；B-3 移除 QR；新增 Core 1 view 對照表；補各 App 實作落差註記；

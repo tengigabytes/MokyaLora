@@ -43,6 +43,7 @@
 #include "pairing_view.h"
 #include "spectrum_view.h"
 #include "sniffer_view.h"
+#include "lora_test_view.h"
 #include "traceroute_view.h"
 #include "range_test_view.h"
 #include "gnss_sky_view.h"
@@ -86,6 +87,7 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_T7_PAIRING]     = pairing_view_descriptor();
     g_view_registry[VIEW_ID_T3_SPECTRUM]    = spectrum_view_descriptor();
     g_view_registry[VIEW_ID_T4_SNIFFER]     = sniffer_view_descriptor();
+    g_view_registry[VIEW_ID_T5_LORA_TEST]   = lora_test_view_descriptor();
 #if MOKYA_DEBUG_VIEWS
     g_view_registry[VIEW_ID_RF_DEBUG]       = rf_debug_view_descriptor();
     g_view_registry[VIEW_ID_FONT_TEST]      = font_test_view_descriptor();

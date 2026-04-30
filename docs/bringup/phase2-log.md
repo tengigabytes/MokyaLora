@@ -3416,6 +3416,95 @@ Side observations during the audit:
 
 ---
 
+### T-section Fill-in v1 — T-7 / T-3 / T-4 / T-5 (2026-04-30)
+
+Plan `~/.claude/plans/t-section-fillin-v1.md`. Four phases shipped on
+`dev-Sblzm`, each promoted from ⏳ → ✅ in
+`docs/ui/01-page-architecture.md`. Same audit standard as
+secondary-fillin v1: independent decoder roundtrip on every phase that
+introduces a new protobuf consumer; one more `*.pb.h` field-tag bug
+caught.
+
+**Phase 1 — T-7 配對碼 (commit `dc4ec65`)**: smallest phase, no
+protobuf encoder. `pairing_view` reads
+`phoneapi_config_security.public_key` (32 B Curve25519) and renders
+two formats — 64-char hex (split 2×32 lines) + 44-char std base64. New
+`base64_std_encode()` in `firmware/core1/src/util/base64_url.c` for
+RFC 4648 §4 (`+/` alphabet, `=` padding) — distinct from the URL-safe
+encoder added for B-4. `scripts/test_t7_pairing.py` SWD-reads the
+device pubkey, std-base64-encodes it, and byte-for-byte compares
+against `meshtastic --info`'s `publicKey` field. PASS.
+
+**Phase 2 — T-3 訊號頻譜 (commit `910bedc`)**: passive view, no new
+decoder. `spectrum_view` walks `phoneapi_cache`, sorts peers by
+`snr_x100` descending, maps SNR ±10 dB → 0..8 ASCII bar cells. Diag
+globals `g_t3_collected / _top_node_num / _top_snr_x100` exported for
+SWD test. `scripts/test_t3_spectrum.py` parses CLI Nodes JSON,
+compares peer count + top peer's SNR (matching tolerance ±0.5 dB).
+PASS. Active SX1262 RSSI scan (full-band sweep) deferred to v2 —
+needs new IPC commands + Meshtastic submodule patch.
+
+**Phase 3 — T-4 封包嗅探 (commit `d43abc6`)**: first cascade
+sniff hook that ignores portnum. New
+`firmware/core1/src/messages/packet_log.{c,h}` (16-entry ring,
+`.psram_bss` to save ~580 B SRAM, single-task no-mutex) +
+`phoneapi_decode_packet_meta()` generic MeshPacket meta decoder.
+Cascade `FR_TAG_PACKET` hook calls it before the existing
+portnum-specific dispatch chain. `sniffer_view` scrolls 16 entries
+in a 7-row visible window with portnum mnemonic
+(TXT/POS/ROU/ADM/RNG/TLM/TR/NBR) + 16-byte hex preview. Live
+verification via peer COM7 broadcasting unique token; `scripts/
+test_t4_sniffer.py` SWD-reads `g_t4_newest_payload` and compares
+byte-for-byte. PASS (payload `T4audit319d` from `!538eebe7`,
+portnum=1).
+
+**T-4 audit lesson (same commit):** initial decoders for **NeighborInfo
+(F-3, Phase 2 of secondary-fillin)** and **RangeTest (T-2, Phase 3)**
+both used `MeshPacket.rx_time = field 8 / rx_snr = 9 / rx_rssi = 13`,
+copied from a plan-time table. Generic `phoneapi_decode_packet_meta`
+roundtrip test on T-4 surfaced the bug — payload bytes decoded fine but
+`rx_snr` / `rx_rssi` came out as 0. Grep of `mesh.pb.h` for
+`meshtastic_MeshPacket_*_tag` confirmed canonical field numbers are
+**rx_time=7 / rx_snr=8 / rx_rssi=12**. Same class of error as B-3's
+`set_channel = 8 vs 33`; the audit script wasn't run on F-3 or T-2
+(no protobuf encoder, only structural verification). All three field
+numbers fixed retrospectively in the T-4 commit so F-3 / T-2 / T-4
+share one correct decoder. Restated rule: **`*.pb.h` `_tag` constants
+are authoritative for decoders too, not only encoders.**
+
+**Phase 4 — T-5 LoRa 自我測試 (this commit)**: passive metrics
+dashboard. New `firmware/core1/src/messages/lora_test_log.{c,h}` —
+state struct in `.psram_bss` with lazy `ensure_inited()` for
+`INT8_MIN` SNR sentinel (saves 44 B SRAM that overflowed the budget
+on regular .bss). Counters fed by three cascade hooks:
+`lora_test_log_record_rx` from FR_TAG_PACKET (every inbound
+MeshPacket, regardless of portnum), `_record_ack` from
+Routing(ACK), `_record_queue_status` from QueueStatus. View shows
+RX count / last SNR+RSSI / TX queued / ACK / NACK / queue free-max
+/ last ACK pid+err. SWD diag globals `g_t5_rx_count / _ack_count /
+_nack_count / _last_snr_x4 / _last_rssi / _queue_free / _queue_max`
+re-published on every render so host test bypasses the PSRAM struct.
+`scripts/test_t5_lora_test.py` triggers a TEXT broadcast from peer
+COM7, polls `g_t5_rx_count` until it advances, asserts:
+  • rx_count delta ≥ 1
+  • `g_t5_last_snr_x4` populated (not INT8_MIN sentinel)
+  • `g_t5_queue_max` populated (QueueStatus hook fires)
+PASS on dev unit: delta=3, last SNR +10.25 dB, queue 16/16. Active
+loopback (TX self → RX self with own-pubkey-rejection bypass) +
+SX1262 register-level read-back are v2 — both need new IPC
+commands and would touch the Meshtastic submodule.
+
+**T-section v1 close-out:** 4/4 view IDs added to
+`view_router.h` before the `#if MOKYA_DEBUG_VIEWS` block to keep
+debug RF/FONT view IDs stable; `tools_view.c` now routes all 8
+T-rows; `view_registry.c` populates 4 new descriptors. Total firmware
+delta ~860 LoC (`messages/{packet_log, lora_test_log}` + 4 views +
+`util/base64_url::base64_std_encode` + 1 cascade decoder + 3
+session.c hooks). All 9 tests in the secondary+T regression suite
+PASS.
+
+---
+
 ## Issues Log (Phase 2)
 
 | # | Date | Area | Issue | Resolution |

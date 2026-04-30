@@ -78,6 +78,7 @@ typedef enum {
     VIEW_ID_T7_PAIRING,       /* T-7 配對碼 (admin pubkey display)        */
     VIEW_ID_T3_SPECTRUM,      /* T-3 訊號頻譜 (per-peer SNR bar)          */
     VIEW_ID_T4_SNIFFER,       /* T-4 封包嗅探 (packet ring + hex preview) */
+    VIEW_ID_T5_LORA_TEST,     /* T-5 LoRa 自我測試 (passive health metrics)*/
 #if MOKYA_DEBUG_VIEWS
     VIEW_ID_RF_DEBUG,
     VIEW_ID_FONT_TEST,
