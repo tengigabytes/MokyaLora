@@ -210,15 +210,34 @@ static void render_f1(void)
     }
     set_row(4, buf);
 
-    /* Row 5: channel utilisation (deferred — would need TELEMETRY_APP
-     * self-decode on PortNum 67; see plan §不在範圍). */
-    set_row(5, "Channel%  n/a (待 telemetry decode)");
+    /* Rows 5/6: device-metrics from self's NodeInfo broadcast. The
+     * DeviceMetrics sub-decoder in phoneapi_decode.c already fills
+     * `channel_util_pct` / `air_util_tx_pct` for every peer that
+     * broadcasts NodeInfo with metrics — and self is upserted by the
+     * cascade FR_TAG_NODE_INFO path same as a peer. Sentinel 0xFF =
+     * "not yet seen", surfaces as `--`. */
+    phoneapi_my_info_t mi;
+    phoneapi_node_t    self;
+    bool have_self = phoneapi_cache_get_my_info(&mi) &&
+                     phoneapi_cache_get_node_by_id(mi.my_node_num, &self);
+    if (have_self && self.channel_util_pct != 0xFFu) {
+        snprintf(buf, sizeof(buf), "Channel%%  %u%%",
+                 (unsigned)self.channel_util_pct);
+    } else {
+        snprintf(buf, sizeof(buf), "Channel%%  --");
+    }
+    set_row(5, buf);
 
-    /* Row 6: airtime tx % (same constraint as channel%). */
-    set_row(6, "Air tx%   n/a (待 telemetry decode)");
+    if (have_self && self.air_util_tx_pct != 0xFFu) {
+        snprintf(buf, sizeof(buf), "Air tx%%   %u%%",
+                 (unsigned)self.air_util_tx_pct);
+    } else {
+        snprintf(buf, sizeof(buf), "Air tx%%   --");
+    }
+    set_row(6, buf);
 
-    /* Row 7: hint about the deferred fields. Dim it so the eye reads
-     * the live data first. */
+    /* Row 7: hint pointing at the F-4 history chart. Dim so the eye
+     * reads the live data above first. */
     set_row(7, "          [F-4 趨勢圖另案]");
     if (s.rows[7]) {
         lv_obj_set_style_text_color(s.rows[7],
