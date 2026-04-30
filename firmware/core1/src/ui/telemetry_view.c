@@ -492,6 +492,7 @@ static void render_f4(void)
      * idx going n-1 down to 0 visits oldest first. */
     int latest_soc = INT16_MIN;
     int latest_snr = INT16_MIN;
+    int latest_air = INT16_MIN;
     for (int idx = (int)n - 1; idx >= 0; --idx) {
         metrics_sample_t m;
         if (!metrics_history_get((uint16_t)idx, &m)) continue;
@@ -514,9 +515,14 @@ static void render_f4(void)
             latest_snr = m.last_rx_snr_x10;
         }
 
-        /* Channel-util series stays NONE until P67 self-decode lands. */
-        lv_chart_set_next_value(s.f4_chart_chu, s.f4_ser_chu,
-                                LV_CHART_POINT_NONE);
+        if (m.air_tx_pct_x10 == METRICS_HISTORY_NONE) {
+            lv_chart_set_next_value(s.f4_chart_chu, s.f4_ser_chu,
+                                    LV_CHART_POINT_NONE);
+        } else {
+            lv_chart_set_next_value(s.f4_chart_chu, s.f4_ser_chu,
+                                    m.air_tx_pct_x10);
+            latest_air = m.air_tx_pct_x10;
+        }
     }
 
     /* Per-chart caption. Use s.f4_label_* (one-line under each chart). */
@@ -539,7 +545,13 @@ static void render_f4(void)
     }
     lv_label_set_text(s.f4_label_snr, buf);
 
-    lv_label_set_text(s.f4_label_chu, "空中時間  待 PortNum 67 解碼");
+    if (latest_air == INT16_MIN) {
+        snprintf(buf, sizeof(buf), "空中時間  --");
+    } else {
+        snprintf(buf, sizeof(buf), "空中時間  %d.%d%%",
+                 latest_air / 10, latest_air % 10);
+    }
+    lv_label_set_text(s.f4_label_chu, buf);
 }
 
 /* Toggle F-4 chart visibility based on current page. The labels follow

@@ -1,8 +1,10 @@
 /* metrics/history.h — F-4 trend ring buffer (T2.6).
  *
- * 256-entry ring sampled every 30 s. Captures battery SoC and the most
- * recently observed cascade RX SNR; the channel-utilisation slot is a
- * placeholder until TELEMETRY_APP (PortNum 67) self-decode lands.
+ * 256-entry ring sampled every 30 s. Captures battery SoC, the most
+ * recently observed cascade RX SNR, and self's air_util_tx_pct as
+ * surfaced by the cascade FR_TAG_NODE_INFO DeviceMetrics decoder
+ * (phoneapi_node_t.air_util_tx_pct, populated by self's own NodeInfo
+ * broadcasts).
  *
  * Storage: ~1.5 KB SRAM .bss. Not persisted across reboot.
  *
@@ -22,7 +24,9 @@
 typedef struct {
     int16_t soc_pct;          /* 0..100, METRICS_HISTORY_NONE = no data */
     int16_t last_rx_snr_x10;  /* signed dB×10; NONE if no RX since boot */
-    int16_t channel_util_x10; /* dB×10 placeholder; NONE until P67 wired */
+    int16_t air_tx_pct_x10;   /* self's air_util_tx_pct ×10 (0..1000);
+                               * NONE if self's NodeInfo with metrics
+                               * not yet observed via cascade. */
 } metrics_sample_t;
 
 /* Start the ring + soft timer. Safe to call once after FreeRTOS scheduler

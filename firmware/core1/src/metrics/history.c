@@ -22,6 +22,7 @@
 #include "timers.h"
 
 #include "bq25622.h"
+#include "phoneapi_cache.h"
 #include "mokya_trace.h"
 
 /* ── Storage ────────────────────────────────────────────────────────── */
@@ -31,6 +32,14 @@ static uint16_t         s_head;          /* next write slot */
 static uint16_t         s_count;         /* 0..LEN          */
 static volatile int16_t s_last_snr_x4 = METRICS_HISTORY_NONE;
 static volatile uint32_t s_change_seq;
+
+/* SWD-readable diag — last sample's per-field value. Updated on every
+ * timer tick for host tests that want to verify the ring is accumulating
+ * without walking the PSRAM cache or the .bss ring directly. */
+volatile uint16_t g_history_count           __attribute__((used)) = 0u;
+volatile int16_t  g_history_last_soc_pct    __attribute__((used)) = METRICS_HISTORY_NONE;
+volatile int16_t  g_history_last_snr_x10    __attribute__((used)) = METRICS_HISTORY_NONE;
+volatile int16_t  g_history_last_air_tx_x10 __attribute__((used)) = METRICS_HISTORY_NONE;
 
 static TimerHandle_t s_timer;
 static bool          s_init_done;
@@ -59,13 +68,24 @@ static int16_t snr_x10_from_x4(int16_t snr_x4)
 static void take_sample(void)
 {
     metrics_sample_t s;
-    s.soc_pct          = METRICS_HISTORY_NONE;
-    s.last_rx_snr_x10  = snr_x10_from_x4(s_last_snr_x4);
-    s.channel_util_x10 = METRICS_HISTORY_NONE;  /* deferred — PortNum 67 */
+    s.soc_pct         = METRICS_HISTORY_NONE;
+    s.last_rx_snr_x10 = snr_x10_from_x4(s_last_snr_x4);
+    s.air_tx_pct_x10  = METRICS_HISTORY_NONE;
 
     const bq25622_state_t *b = bq25622_get_state();
     if (b != NULL && b->online && b->vbat_mv > 0u) {
         s.soc_pct = soc_from_vbat(b->vbat_mv);
+    }
+
+    /* Self's air_util_tx_pct comes from its own NodeInfo broadcasts as
+     * decoded by cascade FR_TAG_NODE_INFO → DeviceMetrics. Sentinel
+     * 0xFF = "not yet seen" → leave as METRICS_HISTORY_NONE. */
+    phoneapi_my_info_t mi;
+    phoneapi_node_t    self;
+    if (phoneapi_cache_get_my_info(&mi) &&
+        phoneapi_cache_get_node_by_id(mi.my_node_num, &self) &&
+        self.air_util_tx_pct != 0xFFu) {
+        s.air_tx_pct_x10 = (int16_t)((int32_t)self.air_util_tx_pct * 10);
     }
 
     s_ring[s_head] = s;
@@ -73,9 +93,15 @@ static void take_sample(void)
     if (s_count < METRICS_HISTORY_LEN) s_count++;
     s_change_seq++;
 
+    g_history_count           = s_count;
+    g_history_last_soc_pct    = s.soc_pct;
+    g_history_last_snr_x10    = s.last_rx_snr_x10;
+    g_history_last_air_tx_x10 = s.air_tx_pct_x10;
+
     TRACE("metrics", "sample",
-          "soc=%d,snr_x10=%d,n=%u",
-          (int)s.soc_pct, (int)s.last_rx_snr_x10, (unsigned)s_count);
+          "soc=%d,snr_x10=%d,air_x10=%d,n=%u",
+          (int)s.soc_pct, (int)s.last_rx_snr_x10,
+          (int)s.air_tx_pct_x10, (unsigned)s_count);
 }
 
 static void timer_cb(TimerHandle_t t)
