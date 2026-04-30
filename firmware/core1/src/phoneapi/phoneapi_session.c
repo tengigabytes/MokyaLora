@@ -49,6 +49,19 @@ volatile uint8_t  g_f3_last_count       __attribute__((used)) = 0u;
 volatile uint32_t g_f3_last_first_node  __attribute__((used)) = 0u;
 volatile int8_t   g_f3_last_first_snr_x4 __attribute__((used)) = INT8_MIN;
 
+/* Live debug — counters for the few portnums we want to track. Bumped
+ * before per-portnum dispatch so arrivals are visible even when our
+ * specific decoder doesn't recognise the body. */
+volatile uint32_t g_dbg_pn_text     __attribute__((used)) = 0u;  /* 1 */
+volatile uint32_t g_dbg_pn_position __attribute__((used)) = 0u;  /* 3 */
+volatile uint32_t g_dbg_pn_nodeinfo __attribute__((used)) = 0u;  /* 4 */
+volatile uint32_t g_dbg_pn_routing  __attribute__((used)) = 0u;  /* 5 */
+volatile uint32_t g_dbg_pn_admin    __attribute__((used)) = 0u;  /* 6 */
+volatile uint32_t g_dbg_pn_telem    __attribute__((used)) = 0u;  /* 67 */
+volatile uint32_t g_dbg_pn_neighbor __attribute__((used)) = 0u;  /* 71 */
+volatile uint32_t g_dbg_pn_other    __attribute__((used)) = 0u;
+volatile uint32_t g_dbg_pn_last     __attribute__((used)) = 0u;  /* most recent */
+
 // Heartbeat timer. Period chosen well under PhoneAPI's 15-min serial
 // timeout (`SerialConsole.cpp:27`). Started in STANDALONE, stopped in
 // FORWARD (the USB host's heartbeats keep Core 0 alive in that mode).
@@ -465,6 +478,18 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                 /* T-5 LoRa health metrics — every RX bumps the counter
                  * regardless of portnum. */
                 lora_test_log_record_rx(meta.snr_x4, meta.rssi, meta.rx_time);
+                /* Per-portnum debug counters. */
+                g_dbg_pn_last = meta.portnum;
+                switch (meta.portnum) {
+                    case 1:  g_dbg_pn_text++; break;
+                    case 3:  g_dbg_pn_position++; break;
+                    case 4:  g_dbg_pn_nodeinfo++; break;
+                    case 5:  g_dbg_pn_routing++; break;
+                    case 6:  g_dbg_pn_admin++; break;
+                    case 67: g_dbg_pn_telem++; break;
+                    case 71: g_dbg_pn_neighbor++; break;
+                    default: g_dbg_pn_other++; break;
+                }
             }
         }
 
