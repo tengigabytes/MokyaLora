@@ -2,30 +2,50 @@
 
 本文件盤點 MokyaLora UI 的所有頁面與全域元件。每頁分配代號，作為後續細部規劃的索引。
 
-## 對應 Core 1 view 實作狀態（2026-04 快照）
+## 對應 Core 1 view 實作狀態（2026-04-30 快照）
 
 下表彙整本架構規劃中各頁面在目前 Core 1 view-router 內的實作對應，作為規劃 ↔ 韌體進度的追蹤介面。
 
 | 頁面代號 | Core 1 view（檔案/變數） | 狀態 | 備註 |
 |---|---|---|---|
-| L-0 桌面 | ⏳ | 未實作 | 目前以 `rf_debug_view` 作為 boot view（debug 暫行） |
-| L-1 九宮格 | ⏳ | 未實作 | FUNC 鍵目前**未消費** `key_event`（不是 cycle）；待 view-router 加 FUNC handler |
+| L-0 桌面 | `boot_home_view` | ✅ | 5 telemetry + 3 messages + 1 event 對齊 spec（commit `80f7a55`） |
+| L-1 九宮格 | `launcher_view` | ✅ 部分 | FUNC 鍵走 view-router 預設行為；spec-named 9 格（commit `188b2a8` / `ee3a72e`），其中 Map / Power 兩格仍 `VIEW_ID_COUNT`（disabled placeholder），待 D-1 / 電源 App 上線 |
 | keypad 測試 | `keypad_view` | ✅ debug | 鍵盤診斷用 |
-| G-1 Status Bar | ⏳ | 未實作 | 全域常駐 widget 待建立 |
-| G-2 Hint Bar | ⏳ | 未實作 | |
-| G-3 IME | `ime_view` | ✅ | 注音 / EN / Ab 三模式皆已實作（MIE v4 + LRU；MIE 內部 `ABC` 由 view 層 mapping 為 `Ab`）；MIE 無獨立 Num 模式 |
-| G-4 全域 Modal | ⏳ | 未實作 | |
-| A-2 對話詳情 | `messages_view` | ✅ 部分 | 8-entry inbox + UP/DOWN 切換 + OK 回覆；對話流預覽未實作 |
-| A-2 送出 | `messages_send.{c,h}` | ✅ | OK 鍵讀 `ime_view_text()` → cascade `phoneapi_encode_text_packet` |
-| A-1/A-3/A-4 | ⏳ | 未實作 | |
-| B-1~B-4 頻道 | ⏳ | 未實作 | |
-| C-1 節點清單 | `nodes_view` | ✅ 部分 | cascade `phoneapi_cache` 來源 |
-| C-2~C-4 | ⏳ | 未實作 | |
-| D-1~D-6 地圖 | ⏳ | 未實作 | |
-| F-1~F-4 遙測 | ⏳ | 未實作 | |
-| T-1~T-8 工具 | ⏳ | 未實作 | 部分 debug view 可作雛形（`rf_debug_view`） |
-| S-0~S-12 設定 | `settings_view` | ✅ 部分 | B3 已覆蓋 88 keys / 15 groups（含 ModuleConfig 4 群） |
-| S-X 模板 A/B/C/D | ⏳ | 未實作 | settings_view 目前未走四模板抽象，每項自繪 |
+| G-1 Status Bar | `global/status_bar` | ✅ | 全域常駐 widget；TX/RX activity pulse（commit `7e5cd1b`） |
+| G-2 Hint Bar | `global/hint_bar` | ✅ | 由 view descriptor `.hints` 驅動（commit `538b614`） |
+| G-3 IME | `ime_view` | ✅ | 注音 / EN / Ab 三模式（MIE v4 + LRU）；Mode A inline overlay 給 A-2（commit `47cb07c`）。MIE 無獨立 Num 模式 |
+| G-4 全域 Modal | `global/global_alert` | ✅ | DM toast + low-battery alert orchestrator（commit `2bbab46` + `7852fe6` no-battery guard） |
+| A-1 對話列表 | `chat_list_view` | ✅ | DM store 後端（commit `0ceb082`、`b0094c3`） |
+| A-2 對話詳情 | `conversation_view` | ✅ | 對話流 + Mode A inline IME overlay（commit `0ceb082`、`47cb07c`） |
+| A-2 送出 | `messages/messages_send.{c,h}` | ✅ | OK 鍵讀 `ime_view_text()` → cascade `phoneapi_encode_text_packet`；TX 狀態追蹤走 `messages/messages_tx_status` + `messages/dm_store` |
+| A-3 訊息詳情 modal | `message_detail_view` | ✅ | FUNC long-press 觸發（commit `a04d909`） |
+| A-4 罐頭訊息 | `canned_view` + `canned_messages` | ✅ | LEFT 在 conversation_view 觸發（commit `97a47b3` + `b2f0a95`） |
+| B-1 頻道清單 | `channels_view` | ✅ | 8 entries（commit `76d4d75`） |
+| B-2 頻道編輯 | `channel_edit_view` | ✅ 部分 | 3 可寫欄（name / module_position_precision / muted）+ 3 唯讀顯示欄（PSK 摘要 / role / channel id），commit `76d4d75`。PSK / role 改為可寫、uplink / downlink 欄位仍待補 |
+| B-3 / B-4 | ⏳ | 未實作 | |
+| C-1 節點清單 | `nodes_view` | ✅ | cascade `phoneapi_cache` 來源（refactor `d9ebf55`） |
+| C-2 節點詳情 | `node_detail_view` | ✅ | 含 last traceroute + position reply 渲染（commit `d9ebf55` + `a65af97`） |
+| C-3 節點操作 | `node_ops_view` | ✅ | 7 OPs：DM / ALIAS / FAVORITE / IGNORE / TRACEROUTE / REQUEST_POS / REMOTE_ADMIN（commit `d9ebf55`、`f9270b6`、`6b385eb`、`58f61f6`、`89786ef`） |
+| C-3 sub OP_REMOTE_ADMIN | `remote_admin_view` | ✅ | 5 actions sub-menu：Reboot / Shutdown / FactoryReset(Cfg) / FactoryReset(Dev) / NodeDB Reset（T2.5，commit `89786ef`） |
+| C-4 我的節點 | `my_node_view` | ✅ | commit `d9ebf55` |
+| D-1~D-6 地圖 | ⏳ | 未實作 | 6 頁地圖 / 航點 App，需新 view + LVGL chart |
+| F-1 本機遙測 | `telemetry_view` (TELE_PAGE_F1) | ✅ 部分 | channel_util / air_util_tx 待 TELEMETRY_APP self-decode |
+| F-2 環境感測 | `telemetry_view` (TELE_PAGE_F2) | ✅ | 氣壓/三軸磁/各 sensor 溫度；Rev A 無濕度感測器 |
+| F-3 鄰居資訊 | `telemetry_view` (TELE_PAGE_F3) | ✅ 部分 | 用既有 `phoneapi_node_t` SNR/hops/last_heard 矩陣；完整 NeighborInfo (PortNum 71) decode 留 v2 |
+| F-4 歷史曲線 | ⏳ | deferred T2.6 | 需 LVGL chart RAM + ring buffer 持久化策略 |
+| T-0 工具主選單 | `tools_view` | ✅ | spec-named 入口（commit `0ceb082`、`ee3a72e`） |
+| T-1 Traceroute | `traceroute_view` | ✅ | commit `3fbf664` |
+| T-2 Range Test | ⏳ | 未實作 | |
+| T-3 訊號頻譜 | ⏳ | 未實作 | SX1262 RSSI 掃描需 cascade decoder |
+| T-4 封包嗅探 | ⏳ | 未實作 | |
+| T-5 LoRa 自我測試 | ⏳ | 未實作 | |
+| T-6 GNSS 衛星圖 | `gnss_sky_view` | ✅ | 仰角 / 方位 / SNR（commit `3fbf664`） |
+| T-7 配對碼顯示 | ⏳ | 未實作 | |
+| T-8 firmware info | `firmware_info_view` | ✅ | versions / hashes（commit `3fbf664`） |
+| S-0 設定主頁 | `settings/settings_app_view` | ✅ | tree walker + breadcrumb（commit `ba55cf9`） |
+| S-1~S-6, S-8~S-12 | `settings/settings_tree` + `settings/settings_keys` | ✅ 部分 | 19 groups / 115 keys（B3 + T2.4.2：Device / LoRa / Position / Power / Display / Channel / Owner / Security + Telemetry / Neighbor / RangeTest / DetectSnsr / CannedMsg / Ambient / Paxcounter / StoreForward / Serial / ExtNotif / RemoteHW），cascade `FR_TAG_MODULE_CONFIG` walk-down decoder + cache 已上（commit `9cf76a4`） |
+| S-7 模組索引 | `modules_index_view` | ✅ | 10-page module sub-page index + deep-link（commit `a6c4a46`） |
+| S-X 模板 A/B/C/D | `template_enum/number/text/toggle` | ✅ | enum (`828a253`)、toggle (`ba55cf9`)、number (`9f8b032`)、text (`62b3091`) |
 | Z-1~Z-3 SOS | ⏳ | 未實作 | 前置：power button driver、極簡低電狀態機 |
 | 字型 | `mie_font.{c,h}` + `font_test_view` | ✅ | MIEF v1 / Unifont sm 16 |
 
