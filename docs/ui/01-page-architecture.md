@@ -32,7 +32,7 @@
 | F-1 本機遙測 | `telemetry_view` (TELE_PAGE_F1) | ✅ 部分 | channel_util / air_util_tx 待 TELEMETRY_APP self-decode |
 | F-2 環境感測 | `telemetry_view` (TELE_PAGE_F2) | ✅ | 氣壓/三軸磁/各 sensor 溫度；Rev A 無濕度感測器 |
 | F-3 鄰居資訊 | `telemetry_view` (TELE_PAGE_F3) | ✅ 部分 | 用既有 `phoneapi_node_t` SNR/hops/last_heard 矩陣；完整 NeighborInfo (PortNum 71) decode 留 v2 |
-| F-4 歷史曲線 | ⏳ | deferred T2.6 | 需 LVGL chart RAM + ring buffer 持久化策略 |
+| F-4 歷史曲線 | `telemetry_view` (TELE_PAGE_F4) + `metrics/history` | ✅ 部分 | 電量 + 訊號雙 chart（256 點 × 30 s = 2 hr 8 min 視窗），ring 在 SRAM `.bss` 1.5 KB；空中時間佔比 chart 留 placeholder 待 TELEMETRY_APP self-decode；persist 跨 boot 不在 v1（T2.6） |
 | T-0 工具主選單 | `tools_view` | ✅ | spec-named 入口（commit `0ceb082`、`ee3a72e`） |
 | T-1 Traceroute | `traceroute_view` | ✅ | commit `3fbf664` |
 | T-2 Range Test | ⏳ | 未實作 | |

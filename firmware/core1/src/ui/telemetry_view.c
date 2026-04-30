@@ -36,6 +36,7 @@
 #include "phoneapi_cache.h"
 #include "node_alias.h"
 #include "nodes_view.h"
+#include "history.h"
 
 /* ── Layout ─────────────────────────────────────────────────────────── */
 
@@ -51,8 +52,17 @@ typedef enum {
     TELE_PAGE_F1 = 0,   /* 本機遙測 */
     TELE_PAGE_F2,       /* 環境感測 */
     TELE_PAGE_F3,       /* 鄰居資訊 */
+    TELE_PAGE_F4,       /* 歷史曲線 */
     TELE_PAGE_COUNT
 } tele_page_t;
+
+/* F-4 layout: three stacked charts inside the 320×224 panel. */
+#define F4_CHART_X       4
+#define F4_CHART_W       (PANEL_W - 8)
+#define F4_CHART_TOP     TITLE_H
+#define F4_CHART_H       70
+#define F4_CHART_GAP     2
+#define F4_POINTS        METRICS_HISTORY_LEN   /* 256 */
 
 typedef struct {
     lv_obj_t   *title;
@@ -64,6 +74,19 @@ typedef struct {
     uint32_t    f3_cursor;
     uint32_t    f3_scroll_top;
     uint32_t    f3_last_change_seq;
+
+    /* F-4 chart objects + per-series handles, allocated once at create()
+     * and hidden when the page is not visible. */
+    lv_obj_t       *f4_chart_soc;
+    lv_obj_t       *f4_chart_snr;
+    lv_obj_t       *f4_chart_chu;
+    lv_chart_series_t *f4_ser_soc;
+    lv_chart_series_t *f4_ser_snr;
+    lv_chart_series_t *f4_ser_chu;
+    lv_obj_t       *f4_label_soc;
+    lv_obj_t       *f4_label_snr;
+    lv_obj_t       *f4_label_chu;
+    uint32_t        f4_last_change_seq;
 } telemetry_t;
 
 static telemetry_t s;
@@ -415,14 +438,109 @@ static void render_f3(void)
     }
 }
 
+/* ── Page render: F-4 歷史曲線 ──────────────────────────────────────── */
+
+/* Push 256 ring samples into the three lv_charts. The ring stores
+ * newest-first via metrics_history_get(0); LVGL chart x-axis is left-to-
+ * right oldest-to-newest, so we walk the ring from oldest to newest and
+ * use lv_chart_set_next_value() which auto-advances internal cursor. */
+static void render_f4(void)
+{
+    lv_label_set_text(s.title, "F-4 歷史曲線 (4/4)");
+    /* The row labels are hidden on F-4; show only the chart axis labels. */
+    clear_rows();
+
+    if (s.f4_chart_soc == NULL) return;   /* charts not yet created */
+
+    /* Reset chart cursors so set_next_value re-fills from x=0. */
+    lv_chart_set_all_value(s.f4_chart_soc, s.f4_ser_soc, LV_CHART_POINT_NONE);
+    lv_chart_set_all_value(s.f4_chart_snr, s.f4_ser_snr, LV_CHART_POINT_NONE);
+    lv_chart_set_all_value(s.f4_chart_chu, s.f4_ser_chu, LV_CHART_POINT_NONE);
+
+    uint16_t n = metrics_history_count();
+    if (n > F4_POINTS) n = F4_POINTS;
+
+    /* Walk oldest → newest. metrics_history_get(idx_from_newest) with
+     * idx going n-1 down to 0 visits oldest first. */
+    int latest_soc = INT16_MIN;
+    int latest_snr = INT16_MIN;
+    for (int idx = (int)n - 1; idx >= 0; --idx) {
+        metrics_sample_t m;
+        if (!metrics_history_get((uint16_t)idx, &m)) continue;
+
+        if (m.soc_pct == METRICS_HISTORY_NONE) {
+            lv_chart_set_next_value(s.f4_chart_soc, s.f4_ser_soc,
+                                    LV_CHART_POINT_NONE);
+        } else {
+            lv_chart_set_next_value(s.f4_chart_soc, s.f4_ser_soc,
+                                    m.soc_pct);
+            latest_soc = m.soc_pct;
+        }
+
+        if (m.last_rx_snr_x10 == METRICS_HISTORY_NONE) {
+            lv_chart_set_next_value(s.f4_chart_snr, s.f4_ser_snr,
+                                    LV_CHART_POINT_NONE);
+        } else {
+            lv_chart_set_next_value(s.f4_chart_snr, s.f4_ser_snr,
+                                    m.last_rx_snr_x10);
+            latest_snr = m.last_rx_snr_x10;
+        }
+
+        /* Channel-util series stays NONE until P67 self-decode lands. */
+        lv_chart_set_next_value(s.f4_chart_chu, s.f4_ser_chu,
+                                LV_CHART_POINT_NONE);
+    }
+
+    /* Per-chart caption. Use s.f4_label_* (one-line under each chart). */
+    char buf[48];
+    if (latest_soc == INT16_MIN) {
+        snprintf(buf, sizeof(buf), "電量  --%%   (n=%u)", (unsigned)n);
+    } else {
+        snprintf(buf, sizeof(buf), "電量  %3d%%  (n=%u)",
+                 latest_soc, (unsigned)n);
+    }
+    lv_label_set_text(s.f4_label_soc, buf);
+
+    if (latest_snr == INT16_MIN) {
+        snprintf(buf, sizeof(buf), "訊號  --     dB");
+    } else {
+        int sign  = latest_snr < 0 ? -1 : 1;
+        int abs10 = latest_snr * sign;
+        snprintf(buf, sizeof(buf), "訊號  %s%d.%d dB",
+                 sign < 0 ? "-" : "+", abs10 / 10, abs10 % 10);
+    }
+    lv_label_set_text(s.f4_label_snr, buf);
+
+    lv_label_set_text(s.f4_label_chu, "空中時間  待 PortNum 67 解碼");
+}
+
+/* Toggle F-4 chart visibility based on current page. The labels follow
+ * their parent chart automatically. */
+static void f4_set_visible(bool show)
+{
+    if (s.f4_chart_soc == NULL) return;
+    lv_obj_t *objs[] = { s.f4_chart_soc, s.f4_chart_snr, s.f4_chart_chu,
+                         s.f4_label_soc, s.f4_label_snr, s.f4_label_chu };
+    for (size_t i = 0; i < sizeof(objs) / sizeof(objs[0]); ++i) {
+        if (objs[i] == NULL) continue;
+        if (show) lv_obj_clear_flag(objs[i], LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag (objs[i], LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 /* ── Dispatch ───────────────────────────────────────────────────────── */
 
 static void render(void)
 {
+    /* Charts are only valid on F-4. Hide them otherwise so the row labels
+     * for F-1/F-2/F-3 don't get drawn over by stale chart pixels. */
+    f4_set_visible(s.page == TELE_PAGE_F4);
+
     switch (s.page) {
         case TELE_PAGE_F1: render_f1(); break;
         case TELE_PAGE_F2: render_f2(); break;
         case TELE_PAGE_F3: render_f3(); break;
+        case TELE_PAGE_F4: render_f4(); break;
         default: break;
     }
 }
@@ -453,6 +571,49 @@ static void create(lv_obj_t *panel)
                                ui_color(UI_COLOR_TEXT_PRIMARY));
     }
 
+    /* F-4 charts: built once, hidden by default. Layout = 3 stacks of
+     * 70 px chart + 12 px caption inside (TITLE_H + 3 × (70+12) = 16+246
+     * but panel is 224). Trim chart_h by reusing the title row's gap. */
+    const int caption_h = 12;
+    const int chart_h   = 56;       /* 3 × (56+12) = 204 + TITLE_H 16 = 220 */
+    int y = F4_CHART_TOP;
+    struct {
+        lv_obj_t          **chart_p;
+        lv_chart_series_t **ser_p;
+        lv_obj_t          **label_p;
+        int                 y_min, y_max;
+    } cfg[3] = {
+        { &s.f4_chart_soc, &s.f4_ser_soc, &s.f4_label_soc, 0,    100  },
+        { &s.f4_chart_snr, &s.f4_ser_snr, &s.f4_label_snr, -200, 150  },
+        { &s.f4_chart_chu, &s.f4_ser_chu, &s.f4_label_chu, 0,    1000 },
+    };
+    for (int i = 0; i < 3; ++i) {
+        lv_obj_t *c = lv_chart_create(panel);
+        lv_obj_set_pos(c, F4_CHART_X, y);
+        lv_obj_set_size(c, F4_CHART_W, chart_h);
+        lv_chart_set_type(c, LV_CHART_TYPE_LINE);
+        lv_chart_set_point_count(c, F4_POINTS);
+        lv_chart_set_update_mode(c, LV_CHART_UPDATE_MODE_SHIFT);
+        lv_chart_set_div_line_count(c, 3, 4);
+        lv_chart_set_range(c, LV_CHART_AXIS_PRIMARY_Y,
+                           cfg[i].y_min, cfg[i].y_max);
+        lv_obj_set_style_size(c, 0, 0, LV_PART_INDICATOR);  /* hide dots */
+        lv_obj_set_style_bg_color(c, ui_color(UI_COLOR_BG_PRIMARY), 0);
+        lv_obj_set_style_border_width(c, 1, 0);
+        lv_obj_set_style_border_color(c, ui_color(UI_COLOR_TEXT_SECONDARY), 0);
+        lv_obj_set_style_pad_all(c, 0, 0);
+        *cfg[i].chart_p = c;
+        *cfg[i].ser_p   = lv_chart_add_series(c,
+                              ui_color(UI_COLOR_ACCENT_FOCUS),
+                              LV_CHART_AXIS_PRIMARY_Y);
+        lv_chart_set_all_value(c, *cfg[i].ser_p, LV_CHART_POINT_NONE);
+
+        *cfg[i].label_p = make_label(panel, F4_CHART_X + 2,
+                                     y + chart_h, F4_CHART_W - 4, caption_h,
+                                     ui_color(UI_COLOR_TEXT_SECONDARY));
+        y += chart_h + caption_h;
+    }
+
     render();
 }
 
@@ -460,6 +621,10 @@ static void destroy(void)
 {
     s.title = NULL;
     for (int i = 0; i < MAX_ROWS; ++i) s.rows[i] = NULL;
+    s.f4_chart_soc = s.f4_chart_snr = s.f4_chart_chu = NULL;
+    s.f4_ser_soc   = s.f4_ser_snr   = s.f4_ser_chu   = NULL;
+    s.f4_label_soc = s.f4_label_snr = s.f4_label_chu = NULL;
+    s.f4_last_change_seq = 0u;
 }
 
 static void cycle_page(int delta)
@@ -471,6 +636,7 @@ static void cycle_page(int delta)
     /* Reset the change-seq watch so the new page's first refresh
      * always paints (otherwise a stale match silently skips). */
     s.f3_last_change_seq = 0u;
+    s.f4_last_change_seq = 0u;
     s.last_refresh_ms    = 0u;
     render();
     TRACE("tele", "page", "p=%d", (int)s.page);
@@ -536,6 +702,17 @@ static void refresh(void)
             s.last_refresh_ms    = now_ms();
         }
         render_f3();
+        return;
+    }
+
+    if (s.page == TELE_PAGE_F4) {
+        /* Sample period is 30 s; gate redraws on the metrics change-seq
+         * so the chart re-fill cost only pays when there's new data. */
+        uint32_t cur = metrics_history_change_seq();
+        if (cur == s.f4_last_change_seq) return;
+        s.f4_last_change_seq = cur;
+        s.last_refresh_ms    = now_ms();
+        render_f4();
         return;
     }
 
