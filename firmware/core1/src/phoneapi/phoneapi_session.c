@@ -3,6 +3,8 @@
 
 #include "phoneapi_session.h"
 
+#include <string.h>          /* memset/memcpy */
+
 #include "FreeRTOS.h"
 #include "task.h"
 #include "timers.h"
@@ -17,6 +19,7 @@
 #include "dm_store.h"
 #include "messages_tx_status.h"
 #include "range_test_log.h"
+#include "packet_log.h"
 #include "global/status_bar.h"
 #include "history.h"
 #include "mokya_trace.h"
@@ -431,6 +434,25 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                                                            FR_TAG_PACKET,
                                                            &sub_len);
         if (sub == NULL) break;
+
+        /* T-4 sniffer hook — runs BEFORE the portnum-specific dispatcher
+         * chain so every packet (even portnums we don't have decoders
+         * for) lands in packet_log. Cheap (single linear walk). */
+        {
+            phoneapi_packet_meta_t meta;
+            if (phoneapi_decode_packet_meta(sub, sub_len, &meta)) {
+                packet_log_entry_t e;
+                memset(&e, 0, sizeof(e));
+                e.epoch       = meta.rx_time;
+                e.from_node   = meta.from_node;
+                e.portnum     = meta.portnum;
+                e.snr_x4      = meta.snr_x4;
+                e.rssi        = meta.rssi;
+                e.payload_len = meta.payload_len;
+                memcpy(e.payload, meta.payload, meta.payload_len);
+                packet_log_record(&e);
+            }
+        }
 
         /* T2.6 — tap envelope SNR for the F-4 history ring. The text
          * decoder parses MeshPacket.rx_snr (field 8) before checking

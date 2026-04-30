@@ -33,7 +33,7 @@ static const tool_entry_t s_entries[MAX_ENTRIES] = {
     { "T-1 Traceroute",      VIEW_ID_TRACEROUTE },
     { "T-2 Range Test",      VIEW_ID_RANGE_TEST },
     { "T-3 Spectrum",        VIEW_ID_T3_SPECTRUM},
-    { "T-4 Sniffer",         VIEW_ID_COUNT      },
+    { "T-4 Sniffer",         VIEW_ID_T4_SNIFFER },
     { "T-5 LoRa Self-test",  VIEW_ID_COUNT      },
     { "T-6 GNSS Sat",        VIEW_ID_GNSS_SKY   },
     { "T-7 Pairing Code",    VIEW_ID_T7_PAIRING },

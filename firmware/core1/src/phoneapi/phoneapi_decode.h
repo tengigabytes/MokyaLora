@@ -127,6 +127,24 @@ bool phoneapi_decode_neighborinfo_packet(const uint8_t *buf, uint16_t len,
                                           uint32_t *out_from_node,
                                           phoneapi_neighbors_t *out_nb);
 
+// Generic MeshPacket metadata extractor — does NOT filter by portnum,
+// so callers (T-4 sniffer) can log every inbound packet. Captures
+// from + portnum + first 16 B payload + rx_snr/rx_rssi/rx_time.
+// Returns true if the packet has at least a `from` field; false on
+// malformed wire.
+typedef struct {
+    uint32_t from_node;
+    uint32_t portnum;
+    uint8_t  payload[16];
+    uint8_t  payload_len;
+    int8_t   snr_x4;
+    int16_t  rssi;
+    uint32_t rx_time;
+} phoneapi_packet_meta_t;
+
+bool phoneapi_decode_packet_meta(const uint8_t *buf, uint16_t len,
+                                  phoneapi_packet_meta_t *out);
+
 // MeshPacket carrying a RANGE_TEST_APP (portnum 66) broadcast. Returns
 // MeshPacket envelope fields (rx_snr / rx_rssi / rx_time) plus the
 // leading decimal integer from the ASCII payload (Meshtastic Range Test

@@ -246,6 +246,8 @@ add_executable(core1_bridge
     ${UI_DIR}/channel_share_view.c
     ${UI_DIR}/pairing_view.c
     ${UI_DIR}/spectrum_view.c
+    ${UI_DIR}/sniffer_view.c
+    ${MESSAGES_DIR}/packet_log.c
     ${UTIL_DIR}/base64_url.c
     ${UTIL_DIR}/channel_share_url.c
     ${UI_DIR}/traceroute_view.c

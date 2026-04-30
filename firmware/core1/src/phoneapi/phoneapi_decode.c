@@ -893,6 +893,8 @@ bool phoneapi_decode_queue_status(const uint8_t *buf, uint16_t len,
 // senders sometimes emit non-packed (one LD/varint per element). We
 // handle both forms.
 
+static int8_t saturate_snr_x4_from_float(float snr_db);  /* fwd decl — defined below */
+
 static int8_t saturate_snr_x4_to_i8(int32_t v)
 {
     if (v >  127) return  127;
@@ -1112,6 +1114,70 @@ bool phoneapi_decode_position_packet(const uint8_t *buf, uint16_t len,
     return true;
 }
 
+// ── Generic packet metadata decoder (T-4 sniffer) ───────────────────
+//
+// Extracts MeshPacket envelope + Data sub-message preview without
+// filtering by portnum, so the caller (T-4 packet log) can record
+// every inbound packet regardless of whether we have a specific
+// decoder for it.
+//
+// Field numbers (mesh.pb.h cross-checked):
+//   from = 1, to = 2, channel = 3, decoded = 4,
+//   rx_time = 7, rx_snr = 8, hop_limit = 9, rx_rssi = 12, hop_start = 15.
+
+bool phoneapi_decode_packet_meta(const uint8_t *buf, uint16_t len,
+                                  phoneapi_packet_meta_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    out->snr_x4 = INT8_MIN;
+
+    data_subview_t data = { 0, NULL, 0 };
+    bool have_data = false;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->from_node = v;
+        } else if (f == 4u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
+            have_data = true;
+        } else if (f == 7u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            out->rx_time = v;
+        } else if (f == 8u && w == WT_I32) {
+            float snr;
+            if (!read_float(buf, len, &pos, &snr)) return false;
+            out->snr_x4 = saturate_snr_x4_from_float(snr);
+        } else if (f == 12u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            int32_t s = (int32_t)(int64_t)v;
+            if (s >  32767) s =  32767;
+            if (s < -32768) s = -32768;
+            out->rssi = (int16_t)s;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    if (have_data) {
+        out->portnum = data.portnum;
+        if (data.payload != NULL && data.payload_len > 0u) {
+            uint8_t copy = (uint8_t)((data.payload_len > sizeof(out->payload))
+                                     ? sizeof(out->payload)
+                                     : data.payload_len);
+            memcpy(out->payload, data.payload, copy);
+            out->payload_len = copy;
+        }
+    }
+    return true;
+}
+
 // ── NeighborInfo decoder (NEIGHBORINFO_APP, portnum 71) ─────────────
 //
 // NeighborInfo (mesh.proto):
@@ -1222,9 +1288,12 @@ bool phoneapi_decode_neighborinfo_packet(const uint8_t *buf, uint16_t len,
         } else if (f == 4u && w == WT_LEN) {
             if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
             have_data = true;
-        } else if (f == 8u && w == WT_I32) {
-            /* MeshPacket.rx_time — useful as freshness epoch for F-3
-             * "heard N s ago" column when the host clock is sync'd. */
+        } else if (f == 7u && w == WT_I32) {
+            /* MeshPacket.rx_time (mesh.pb.h field 7, fixed32) — freshness
+             * epoch for F-3's "heard N s ago" column. NOTE: was field 8
+             * in initial Phase 2 commit; that overlaps rx_snr and
+             * yielded random garbage epochs (silent bug — caught by
+             * the same .pb.h cross-check that found B-3 field 8→33). */
             uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
             rx_time = v;
         } else {
@@ -1307,15 +1376,22 @@ bool phoneapi_decode_range_test_packet(const uint8_t *buf, uint16_t len,
         } else if (f == 4u && w == WT_LEN) {
             if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
             have_data = true;
-        } else if (f == 8u && w == WT_I32) {
+        } else if (f == 7u && w == WT_I32) {
+            /* mesh.pb.h: MeshPacket.rx_time = field 7 (fixed32). Was
+             * mistakenly field 8 in initial Phase 3 commit. */
             uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
             rx_time = v;
-        } else if (f == 9u && w == WT_I32) {
+        } else if (f == 8u && w == WT_I32) {
+            /* mesh.pb.h: MeshPacket.rx_snr = field 8 (float). Was
+             * mistakenly field 9 in initial Phase 3 commit. */
             uint32_t u; if (!read_fixed32(buf, len, &pos, &u)) return false;
             union { uint32_t u; float f; } pun;
             pun.u = u;
             snr_x4 = saturate_snr_x4_from_float(pun.f);
-        } else if (f == 13u && w == WT_VARINT) {
+        } else if (f == 12u && w == WT_VARINT) {
+            /* mesh.pb.h: MeshPacket.rx_rssi = field 12 (int32 signed
+             * varint). Was mistakenly field 13 in initial Phase 3
+             * commit. */
             uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
             int32_t r = (int32_t)(int64_t)v;
             if (r > INT16_MAX) r = INT16_MAX;
