@@ -39,6 +39,7 @@
 #include "channels_view.h"
 #include "channel_edit_view.h"
 #include "traceroute_view.h"
+#include "range_test_view.h"
 #include "gnss_sky_view.h"
 #include "firmware_info_view.h"
 #if MOKYA_DEBUG_VIEWS
@@ -70,6 +71,7 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_CHANNEL_EDIT]   = channel_edit_view_descriptor();
     g_view_registry[VIEW_ID_TOOLS]          = tools_view_descriptor();
     g_view_registry[VIEW_ID_TRACEROUTE]     = traceroute_view_descriptor();
+    g_view_registry[VIEW_ID_RANGE_TEST]     = range_test_view_descriptor();
     g_view_registry[VIEW_ID_GNSS_SKY]       = gnss_sky_view_descriptor();
     g_view_registry[VIEW_ID_FIRMWARE_INFO]  = firmware_info_view_descriptor();
     g_view_registry[VIEW_ID_IME]            = ime_view_descriptor();

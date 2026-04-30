@@ -1232,6 +1232,103 @@ bool phoneapi_decode_neighborinfo_packet(const uint8_t *buf, uint16_t len,
     return true;
 }
 
+// ── Range Test decoder (RANGE_TEST_APP, portnum 66) ─────────────────
+//
+// Range Test packets carry an ASCII payload — Meshtastic emits "seq <N>"
+// or sometimes just the bare integer. We extract the leading decimal
+// number for display; non-numeric payloads land with seq=0.
+//
+// MeshPacket envelope fields surfaced: rx_snr (float, field 9), rx_rssi
+// (int32, field 13), rx_time (fixed32, field 8). All optional on the
+// wire; sentinel values when absent.
+
+static uint32_t parse_leading_uint(const uint8_t *p, uint16_t n)
+{
+    /* Skip optional "seq" prefix and any spaces / `=` between it and
+     * the number. */
+    if (n >= 3u && p[0] == 's' && p[1] == 'e' && p[2] == 'q') {
+        p += 3; n -= 3;
+        while (n > 0u && (*p == ' ' || *p == '=' || *p == '\t')) {
+            p++; n--;
+        }
+    }
+    uint32_t v = 0u;
+    while (n > 0u && *p >= '0' && *p <= '9') {
+        v = v * 10u + (uint32_t)(*p - '0');
+        p++; n--;
+    }
+    return v;
+}
+
+bool phoneapi_decode_range_test_packet(const uint8_t *buf, uint16_t len,
+                                        uint32_t *out_from_node,
+                                        uint32_t *out_seq,
+                                        int8_t   *out_snr_x4,
+                                        int16_t  *out_rssi,
+                                        uint32_t *out_rx_time)
+{
+    if (out_from_node == NULL) return false;
+    *out_from_node = 0u;
+    if (out_seq)     *out_seq     = 0u;
+    if (out_snr_x4)  *out_snr_x4  = INT8_MIN;
+    if (out_rssi)    *out_rssi    = 0;
+    if (out_rx_time) *out_rx_time = 0u;
+
+    data_subview_t data = { 0, NULL, 0 };
+    bool     have_data = false;
+    uint32_t from = 0u;
+    int8_t   snr_x4 = INT8_MIN;
+    int16_t  rssi = 0;
+    uint32_t rx_time = 0u;
+
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tag_word;
+        if (!read_varint(buf, len, &pos, &tag_word)) return false;
+        uint32_t f = (uint32_t)(tag_word >> 3);
+        uint8_t  w = (uint8_t)(tag_word & 7u);
+
+        if (f == 1u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            from = v;
+        } else if (f == 4u && w == WT_LEN) {
+            if (!dispatch_sub(buf, len, &pos, decode_data, &data)) return false;
+            have_data = true;
+        } else if (f == 8u && w == WT_I32) {
+            uint32_t v; if (!read_fixed32(buf, len, &pos, &v)) return false;
+            rx_time = v;
+        } else if (f == 9u && w == WT_I32) {
+            uint32_t u; if (!read_fixed32(buf, len, &pos, &u)) return false;
+            union { uint32_t u; float f; } pun;
+            pun.u = u;
+            snr_x4 = saturate_snr_x4_from_float(pun.f);
+        } else if (f == 13u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            int32_t r = (int32_t)(int64_t)v;
+            if (r > INT16_MAX) r = INT16_MAX;
+            if (r < INT16_MIN) r = INT16_MIN;
+            rssi = (int16_t)r;
+        } else {
+            if (!skip_field(buf, len, &pos, w)) return false;
+        }
+    }
+    if (!have_data || data.portnum != PHONEAPI_PORTNUM_RANGE_TEST_APP) {
+        return false;
+    }
+
+    uint32_t seq = 0u;
+    if (data.payload != NULL && data.payload_len > 0u) {
+        seq = parse_leading_uint(data.payload, data.payload_len);
+    }
+
+    *out_from_node = from;
+    if (out_seq)     *out_seq     = seq;
+    if (out_snr_x4)  *out_snr_x4  = snr_x4;
+    if (out_rssi)    *out_rssi    = rssi;
+    if (out_rx_time) *out_rx_time = rx_time;
+    return true;
+}
+
 // ── Config sub-oneof decoders (B3-P1 / Cut B) ───────────────────────
 //
 // Each input buffer is the raw DeviceConfig / LoRaConfig / PositionConfig

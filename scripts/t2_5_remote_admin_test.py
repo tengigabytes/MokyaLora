@@ -41,8 +41,8 @@ VIEW_NAMES = ['BOOT_HOME', 'LAUNCHER', 'MESSAGES', 'MESSAGES_CHAT',
               'NODE_OPS', 'REMOTE_ADMIN', 'MY_NODE', 'SETTINGS',
               'MODULES_INDEX', 'TELEMETRY', 'MAP', 'MAP_NAV',
               'CHANNELS', 'CHANNEL_EDIT', 'TOOLS', 'TRACEROUTE',
-              'GNSS_SKY', 'FIRMWARE_INFO', 'IME', 'KEYPAD',
-              'RF_DEBUG', 'FONT_TEST']
+              'RANGE_TEST', 'GNSS_SKY', 'FIRMWARE_INFO', 'IME',
+              'KEYPAD', 'RF_DEBUG', 'FONT_TEST']
 
 VIEW_ID_BOOT_HOME    = 0
 VIEW_ID_LAUNCHER     = 1

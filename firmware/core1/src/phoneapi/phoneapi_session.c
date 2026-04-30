@@ -16,6 +16,7 @@
 #include "phoneapi_tx.h"
 #include "dm_store.h"
 #include "messages_tx_status.h"
+#include "range_test_log.h"
 #include "global/status_bar.h"
 #include "history.h"
 #include "mokya_trace.h"
@@ -504,6 +505,23 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
                       "from=%u,count=%u,t=%u",
                       (unsigned)from_nb, (unsigned)nb.count,
                       (unsigned)nb.epoch);
+                break;
+            }
+            uint32_t from_rt = 0u;
+            uint32_t rt_seq = 0u;
+            int8_t   rt_snr = INT8_MIN;
+            int16_t  rt_rssi = 0;
+            uint32_t rt_epoch = 0u;
+            if (phoneapi_decode_range_test_packet(sub, sub_len,
+                                                   &from_rt, &rt_seq,
+                                                   &rt_snr, &rt_rssi,
+                                                   &rt_epoch)) {
+                range_test_log_record(from_rt, rt_seq, rt_snr,
+                                       rt_rssi, rt_epoch);
+                TRACE("phapi", "rx_rng",
+                      "from=%u,seq=%u,snr=%d,rssi=%d",
+                      (unsigned)from_rt, (unsigned)rt_seq,
+                      (int)rt_snr, (int)rt_rssi);
                 break;
             }
         }

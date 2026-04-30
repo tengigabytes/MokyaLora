@@ -95,6 +95,7 @@ bool phoneapi_decode_node_info(const uint8_t *buf, uint16_t len,
 #define PHONEAPI_PORTNUM_TEXT_MESSAGE_APP 1u
 #define PHONEAPI_PORTNUM_POSITION_APP    3u
 #define PHONEAPI_PORTNUM_ROUTING_APP     5u
+#define PHONEAPI_PORTNUM_RANGE_TEST_APP 66u
 #define PHONEAPI_PORTNUM_TRACEROUTE_APP 70u
 #define PHONEAPI_PORTNUM_NEIGHBORINFO_APP 71u
 bool phoneapi_decode_text_packet(const uint8_t *buf, uint16_t len,
@@ -125,6 +126,18 @@ bool phoneapi_decode_position_packet(const uint8_t *buf, uint16_t len,
 bool phoneapi_decode_neighborinfo_packet(const uint8_t *buf, uint16_t len,
                                           uint32_t *out_from_node,
                                           phoneapi_neighbors_t *out_nb);
+
+// MeshPacket carrying a RANGE_TEST_APP (portnum 66) broadcast. Returns
+// MeshPacket envelope fields (rx_snr / rx_rssi / rx_time) plus the
+// leading decimal integer from the ASCII payload (Meshtastic Range Test
+// emits "seq <N>" or just "<N>"). 0 returned for any field absent on
+// the wire; INT8_MIN for snr if the float field was absent.
+bool phoneapi_decode_range_test_packet(const uint8_t *buf, uint16_t len,
+                                        uint32_t *out_from_node,
+                                        uint32_t *out_seq,
+                                        int8_t   *out_snr_x4,
+                                        int16_t  *out_rssi,
+                                        uint32_t *out_rx_time);
 
 // MeshPacket carrying a Routing-app ACK (decoded.portnum == 5).
 //   - `out_request_id` ← Data.request_id (the original packet id we sent)

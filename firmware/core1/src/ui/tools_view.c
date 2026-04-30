@@ -31,7 +31,7 @@ static const tool_entry_t s_entries[MAX_ENTRIES] = {
      * T-3 RSSI spectrum is the most-deferred — needs Core 0 IPC + a
      * Meshtastic submodule patch to pause the radio for scans. */
     { "T-1 Traceroute",      VIEW_ID_TRACEROUTE },
-    { "T-2 Range Test",      VIEW_ID_COUNT      },
+    { "T-2 Range Test",      VIEW_ID_RANGE_TEST },
     { "T-3 Spectrum",        VIEW_ID_COUNT      },
     { "T-4 Sniffer",         VIEW_ID_COUNT      },
     { "T-5 LoRa Self-test",  VIEW_ID_COUNT      },

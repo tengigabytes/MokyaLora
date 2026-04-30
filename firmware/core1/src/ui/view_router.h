@@ -68,6 +68,7 @@ typedef enum {
     VIEW_ID_CHANNEL_EDIT,     /* B-2 channel edit (name/pos/muted)        */
     VIEW_ID_TOOLS,            /* T-0 tools / diagnostics list (Phase 3)   */
     VIEW_ID_TRACEROUTE,       /* T-1 traceroute (pick peer + render reply)*/
+    VIEW_ID_RANGE_TEST,       /* T-2 Range Test inbound packet log        */
     VIEW_ID_GNSS_SKY,         /* T-6 GNSS satellite sky view (polar)      */
     VIEW_ID_FIRMWARE_INFO,    /* T-8 firmware info (versions, hashes)     */
     VIEW_ID_IME,              /* G-3 IME modal-only                       */

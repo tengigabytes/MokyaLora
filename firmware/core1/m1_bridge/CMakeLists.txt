@@ -242,6 +242,7 @@ add_executable(core1_bridge
     ${UI_DIR}/channels_view.c
     ${UI_DIR}/channel_edit_view.c
     ${UI_DIR}/traceroute_view.c
+    ${UI_DIR}/range_test_view.c
     ${UI_DIR}/gnss_sky_view.c
     ${UI_DIR}/firmware_info_view.c
     ${UI_DIR}/modules_index_view.c
@@ -281,6 +282,7 @@ add_executable(core1_bridge
     ${MESSAGES_DIR}/messages_tx_status.c
     ${MESSAGES_DIR}/dm_store.c
     ${MESSAGES_DIR}/node_alias.c
+    ${MESSAGES_DIR}/range_test_log.c
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_framing.c>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_decode.c>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:${PHONEAPI_DIR}/phoneapi_cache.c>
