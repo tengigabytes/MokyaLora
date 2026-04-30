@@ -1,14 +1,19 @@
 /* channel_share_view.c — see channel_share_view.h.
  *
- * Layout (panel 320 × 224):
- *   y   0..15   header  "B-4 分享 ch%u  %s"
- *   y  16..199  URL text — lv_label with LONG_WRAP, monospace 16-px
- *               (ASCII fits 40 chars per line; typical URL ≈ 80–170
- *               chars → 2–5 lines)
- *   y 200..223  status / hint
+ * Layout (panel 320 × 224, Phase 5b QR enabled):
+ *   y   0..15   header   "B-4 分享 ch%u  %s"
+ *   y  20..163  QR       lv_qrcode 144×144 px centered (x=88..231)
+ *                         — internal I1 (1 bpp) buffer ≈ 2.5 KB
+ *   y 168..199  URL text lv_label LONG_WRAP, smaller area than 5a
+ *   y 200..223  status   URL length + BACK hint
  *
- * Refresh: gated on phoneapi_cache_change_seq — re-renders only when
- * channelFile changes. Cheap; URL build runs in ~1 ms.
+ * lv_qrcode auto-selects QR Version (1-40) and Mask (0-7) based on
+ * the input data length; for our typical 57–170 char URL it picks
+ * Version 4-8 (33×33 to 49×49 modules) at ECC L. Output is scaled
+ * to fill the requested 144 px.
+ *
+ * Refresh gated on phoneapi_cache_change_seq — a B-2 rename or
+ * PSK change automatically rebuilds the URL + re-encodes the QR.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -19,6 +24,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "lvgl.h"   /* lv_qrcode_* lives under src/libs/qrcode and is
+                     * pulled by lvgl.h master include */
+
 #include "global/ui_theme.h"
 #include "key_event.h"
 #include "mie/keycode.h"
@@ -26,14 +34,18 @@
 #include "mokya_trace.h"
 
 #define HEADER_H        16
-#define URL_TOP         16
-#define URL_H          184
+#define QR_TOP          20
+#define QR_SIZE        144
+#define QR_LEFT        ((PANEL_W - QR_SIZE) / 2)   /* 88 */
+#define URL_TOP        168
+#define URL_H           32
 #define STATUS_TOP     200
 #define STATUS_H        24
 #define PANEL_W        320
 
 typedef struct {
     lv_obj_t *header;
+    lv_obj_t *qr;       /* lv_qrcode widget (Phase 5b)               */
     lv_obj_t *url;
     lv_obj_t *status;
     uint8_t   active_idx;
@@ -42,9 +54,12 @@ typedef struct {
     size_t    url_len;
 } cshare_t;
 
-/* PSRAM-resident — 256 B URL buffer + widgets bump the SRAM ledger
- * otherwise. Single-task access (lvgl_task) so no mutex needed. */
-static cshare_t s __attribute__((section(".psram_bss")));
+/* SRAM-resident (was .psram_bss but PSRAM is write-back cached and
+ * SWD reads bypass cache → uncached alias returns stale data; the
+ * audit test test_b4_share_url.py needs SWD-coherent reads of
+ * url_buf/url_len, so park `s` in regular .bss).
+ * Memory cost: ~280 B SRAM. */
+static cshare_t s;
 
 static lv_obj_t *make_label(lv_obj_t *parent, int x, int y, int w, int h,
                             lv_color_t col)
@@ -82,9 +97,18 @@ static void render(void)
                                          s.url_buf, sizeof(s.url_buf));
     if (s.url_len > 0u) {
         lv_label_set_text(s.url, s.url_buf);
-        char st[64];
-        snprintf(st, sizeof(st), "URL %u chars  BACK 返回",
-                 (unsigned)s.url_len);
+        /* Push URL into the QR widget. lv_qrcode_update returns
+         * LV_RESULT_INVALID if the data exceeds the encodable
+         * capacity at the chosen size; we pass a generous 144 px
+         * which the widget maps onto Version 1..40 internally. */
+        lv_result_t qrres = LV_RESULT_INVALID;
+        if (s.qr) {
+            qrres = lv_qrcode_update(s.qr, s.url_buf, (uint32_t)s.url_len);
+        }
+        char st[80];
+        snprintf(st, sizeof(st), "URL %u chars  QR %s  BACK",
+                 (unsigned)s.url_len,
+                 (qrres == LV_RESULT_OK) ? "OK" : "FAIL");
         lv_label_set_text(s.status, st);
     } else {
         lv_label_set_text(s.url,
@@ -112,6 +136,16 @@ static void create(lv_obj_t *panel)
 
     s.header = make_label(panel, 4, 0, PANEL_W - 8, HEADER_H,
                           ui_color(UI_COLOR_TEXT_SECONDARY));
+
+    /* QR canvas — lv_qrcode_set_size internally allocates the I1
+     * draw buffer (size² / 8 bytes ≈ 2.5 KB at 144 px). Dark/light
+     * follow the global theme so it stays readable on the dark BG. */
+    s.qr = lv_qrcode_create(panel);
+    lv_obj_set_pos(s.qr, QR_LEFT, QR_TOP);
+    lv_qrcode_set_size(s.qr, QR_SIZE);
+    lv_qrcode_set_dark_color(s.qr,  ui_color(UI_COLOR_TEXT_PRIMARY));
+    lv_qrcode_set_light_color(s.qr, ui_color(UI_COLOR_BG_PRIMARY));
+
     s.url    = make_label(panel, 4, URL_TOP, PANEL_W - 8, URL_H,
                           ui_color(UI_COLOR_TEXT_PRIMARY));
     s.status = make_label(panel, 4, STATUS_TOP, PANEL_W - 8, STATUS_H,
@@ -123,6 +157,7 @@ static void create(lv_obj_t *panel)
 static void destroy(void)
 {
     s.header = NULL;
+    s.qr     = NULL;
     s.url    = NULL;
     s.status = NULL;
 }

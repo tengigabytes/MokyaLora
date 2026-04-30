@@ -828,7 +828,7 @@
 #define LV_USE_RLE 0
 
 /*QR code library*/
-#define LV_USE_QRCODE 0
+#define LV_USE_QRCODE 1   /* B-4 channel-share view (Phase 5b) */
 
 /*Barcode code library*/
 #define LV_USE_BARCODE 0

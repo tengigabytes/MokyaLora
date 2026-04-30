@@ -46,14 +46,14 @@ VIEW_ID_CHANNELS        = 16
 VIEW_ID_CHANNEL_EDIT    = 17
 VIEW_ID_CHANNEL_SHARE   = 26   # post-Phase-5a enum
 
-# channel_share_view::s layout
-#   +0  header*  +4 url*  +8 status*
-#   +12 active_idx (uint8_t)
-#   +16 last_change_seq (uint32_t)
-#   +20 url_buf[256]
-#   +276 url_len (size_t = uint32 on 32-bit)
-CSHARE_OFF_URL_BUF = 20
-CSHARE_OFF_URL_LEN = 276
+# channel_share_view::s layout (Phase 5b — qr field shifted offsets)
+#   +0  header*  +4 qr*  +8 url*  +12 status*
+#   +16 active_idx (uint8_t)
+#   +20 last_change_seq (uint32_t)
+#   +24 url_buf[256]
+#   +280 url_len (size_t = uint32 on 32-bit)
+CSHARE_OFF_URL_BUF = 24
+CSHARE_OFF_URL_LEN = 280
 
 
 def find_static(elf, source_basename, name='s'):
