@@ -65,6 +65,19 @@ static const char *const k_detect_trigger_type[] = {
     "EITHER_LOW", "EITHER_HIGH",
 };
 
+/* T2.4.2 SerialConfig.Serial_Baud — 16 entries (proto:383). */
+static const char *const k_serial_baud[] = {
+    "DEFAULT", "110", "300", "600", "1200", "2400", "4800", "9600",
+    "19200", "38400", "57600", "115200", "230400", "460800", "576000",
+    "921600",
+};
+
+/* T2.4.2 SerialConfig.Serial_Mode — 11 entries (proto:405). */
+static const char *const k_serial_mode[] = {
+    "DEFAULT", "SIMPLE", "PROTO", "TEXTMSG", "NMEA", "CALTOPO",
+    "WS85", "VE_DIRECT", "MS_CONFIG", "LOG", "LOGTEXT",
+};
+
 /* ── Master key table ────────────────────────────────────────────────── *
  *
  * Order matters: settings_keys_in_group() returns a contiguous slice
@@ -404,6 +417,110 @@ static const settings_key_def_t k_keys[] = {
     { IPC_CFG_PAX_UPDATE_INTERVAL, SG_PAXCOUNTER, SK_KIND_U32,
       0, 86400, /*reboot=*/0, "int_s",
       NULL, 0 },
+
+    /* ── StoreForward (T2.4.1) ───────────────────────────────────── *
+     * `records` and `history_return_*` are uint32 but practical values
+     * stay under 1k entries / 24h windows; cap at 100000 so the number
+     * template clamps cleanly without overflow risk on tiny screens. */
+    { IPC_CFG_SF_ENABLED, SG_STORE_FORWARD, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "enabled",
+      NULL, 0 },
+    { IPC_CFG_SF_HEARTBEAT, SG_STORE_FORWARD, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "heartbeat",
+      NULL, 0 },
+    { IPC_CFG_SF_RECORDS, SG_STORE_FORWARD, SK_KIND_U32,
+      0, 100000, /*reboot=*/0, "records",
+      NULL, 0 },
+    { IPC_CFG_SF_HISTORY_RETURN_MAX, SG_STORE_FORWARD, SK_KIND_U32,
+      0, 100000, /*reboot=*/0, "hist_max",
+      NULL, 0 },
+    { IPC_CFG_SF_HISTORY_RETURN_WINDOW, SG_STORE_FORWARD, SK_KIND_U32,
+      0, 86400, /*reboot=*/0, "hist_win_s",
+      NULL, 0 },
+    { IPC_CFG_SF_IS_SERVER, SG_STORE_FORWARD, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "is_server",
+      NULL, 0 },
+
+    /* ── Serial (T2.4.2) ─────────────────────────────────────────── */
+    { IPC_CFG_SERIAL_ENABLED, SG_SERIAL, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "enabled",
+      NULL, 0 },
+    { IPC_CFG_SERIAL_ECHO, SG_SERIAL, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "echo",
+      NULL, 0 },
+    { IPC_CFG_SERIAL_RXD, SG_SERIAL, SK_KIND_U32,
+      0, 47, /*reboot=*/0, "rxd_gpio",
+      NULL, 0 },
+    { IPC_CFG_SERIAL_TXD, SG_SERIAL, SK_KIND_U32,
+      0, 47, /*reboot=*/0, "txd_gpio",
+      NULL, 0 },
+    { IPC_CFG_SERIAL_BAUD, SG_SERIAL, SK_KIND_ENUM_U8,
+      0, 15, /*reboot=*/0, "baud",
+      k_serial_baud, sizeof(k_serial_baud)/sizeof(k_serial_baud[0]) },
+    { IPC_CFG_SERIAL_TIMEOUT, SG_SERIAL, SK_KIND_U32,
+      0, 60000, /*reboot=*/0, "timeout_ms",
+      NULL, 0 },
+    { IPC_CFG_SERIAL_MODE, SG_SERIAL, SK_KIND_ENUM_U8,
+      0, 10, /*reboot=*/0, "mode",
+      k_serial_mode, sizeof(k_serial_mode)/sizeof(k_serial_mode[0]) },
+    { IPC_CFG_SERIAL_OVERRIDE_CONSOLE, SG_SERIAL, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "override_con",
+      NULL, 0 },
+
+    /* ── ExternalNotification (T2.4.3) ───────────────────────────── */
+    { IPC_CFG_EXTNOT_ENABLED, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "enabled",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_OUTPUT_MS, SG_EXT_NOTIF, SK_KIND_U32,
+      0, 60000, /*reboot=*/0, "output_ms",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_OUTPUT, SG_EXT_NOTIF, SK_KIND_U32,
+      0, 47, /*reboot=*/0, "output_gpio",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_OUTPUT_VIBRA, SG_EXT_NOTIF, SK_KIND_U32,
+      0, 47, /*reboot=*/0, "vibra_gpio",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_OUTPUT_BUZZER, SG_EXT_NOTIF, SK_KIND_U32,
+      0, 47, /*reboot=*/0, "buzzer_gpio",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_ACTIVE, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "active_hi",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_ALERT_MESSAGE, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "alert_msg",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_ALERT_MESSAGE_VIBRA, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "alert_msg_v",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_ALERT_MESSAGE_BUZZER, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "alert_msg_b",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_ALERT_BELL, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "alert_bell",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_ALERT_BELL_VIBRA, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "alert_bell_v",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_ALERT_BELL_BUZZER, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "alert_bell_b",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_USE_PWM, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "use_pwm",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_NAG_TIMEOUT, SG_EXT_NOTIF, SK_KIND_U32,
+      0, 3600, /*reboot=*/0, "nag_s",
+      NULL, 0 },
+    { IPC_CFG_EXTNOT_USE_I2S_AS_BUZZER, SG_EXT_NOTIF, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "i2s_as_buz",
+      NULL, 0 },
+
+    /* ── RemoteHardware (T2.4.4 — basic 2-key subset) ────────────── */
+    { IPC_CFG_RHW_ENABLED, SG_REMOTE_HW, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "enabled",
+      NULL, 0 },
+    { IPC_CFG_RHW_ALLOW_UNDEFINED_PIN_ACCESS, SG_REMOTE_HW, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "allow_undef",
+      NULL, 0 },
 };
 
 #define KEY_COUNT  ((uint8_t)(sizeof(k_keys) / sizeof(k_keys[0])))
@@ -424,6 +541,10 @@ static const char *const k_group_names[SG_GROUP_COUNT] = {
     [SG_CANNED_MSG]   = "CannedMsg",
     [SG_AMBIENT]      = "Ambient",
     [SG_PAXCOUNTER]   = "Paxcounter",
+    [SG_STORE_FORWARD]= "StoreForward",
+    [SG_SERIAL]       = "Serial",
+    [SG_EXT_NOTIF]    = "ExtNotif",
+    [SG_REMOTE_HW]    = "RemoteHW",
 };
 
 const char *settings_group_name(settings_group_t g)

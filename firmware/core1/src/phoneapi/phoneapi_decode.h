@@ -188,6 +188,21 @@ bool phoneapi_decode_module_ambient(const uint8_t *buf, uint16_t len,
 bool phoneapi_decode_module_paxcounter(const uint8_t *buf, uint16_t len,
                                        phoneapi_module_paxcounter_t *out);
 
+/* T2.4 — 4 new modules.
+ *   field  2 = serial         → phoneapi_decode_module_serial
+ *   field  3 = ext.notif.     → phoneapi_decode_module_ext_notif
+ *   field  4 = store_forward  → phoneapi_decode_module_store_forward
+ *   field  9 = remote_hardware→ phoneapi_decode_module_remote_hw
+ */
+bool phoneapi_decode_module_store_forward(const uint8_t *buf, uint16_t len,
+                                          phoneapi_module_store_forward_t *out);
+bool phoneapi_decode_module_serial(const uint8_t *buf, uint16_t len,
+                                   phoneapi_module_serial_t *out);
+bool phoneapi_decode_module_ext_notif(const uint8_t *buf, uint16_t len,
+                                      phoneapi_module_ext_notif_t *out);
+bool phoneapi_decode_module_remote_hw(const uint8_t *buf, uint16_t len,
+                                      phoneapi_module_remote_hw_t *out);
+
 // Walk the outer Config message and invoke `cb` once per LD sub-field
 // (each oneof variant lives inside one LD field — device=1, position=2,
 // power=3, network=4, display=5, lora=6, bluetooth=7, security=8,

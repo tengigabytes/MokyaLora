@@ -45,15 +45,15 @@ typedef struct {
 /* Spec order from docs/ui/01-page-architecture.md §S-7. */
 static const module_entry_t k_modules[ROW_COUNT] = {
     { "S-7.1",  "Canned Message",    true,  SG_CANNED_MSG,    NULL },
-    { "S-7.2",  "External Notif.",   false, 0,                "GPIO/buzzer IPC keys 待補" },
+    { "S-7.2",  "External Notif.",   true,  SG_EXT_NOTIF,     NULL },
     { "S-7.3",  "Range Test",        true,  SG_RANGE_TEST,    NULL },
-    { "S-7.4",  "Store & Forward",   false, 0,                "Heartbeat/history IPC 待補" },
+    { "S-7.4",  "Store & Forward",   true,  SG_STORE_FORWARD, NULL },
     { "S-7.5",  "Telemetry",         true,  SG_TELEMETRY,     NULL },
     { "S-7.6",  "Detection Sensor",  true,  SG_DETECT_SENSOR, NULL },
     { "S-7.7",  "Paxcounter",        true,  SG_PAXCOUNTER,    NULL },
     { "S-7.8",  "Neighbor Info",     true,  SG_NEIGHBOR,      NULL },
-    { "S-7.9",  "Serial",            false, 0,                "Baud/mode/GPIO IPC 待補" },
-    { "S-7.10", "Remote Hardware",   false, 0,                "GPIO list IPC 待補" },
+    { "S-7.9",  "Serial",            true,  SG_SERIAL,        NULL },
+    { "S-7.10", "Remote Hardware",   true,  SG_REMOTE_HW,     "available_pins[] 編輯器另案" },
 };
 
 typedef struct {

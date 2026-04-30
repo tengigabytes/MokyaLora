@@ -33,14 +33,13 @@ struct settings_tree_node {
     const char                      *label_override; /* root = "Settings" */
 };
 
-/* Bound check: 1 (root) + 15 (groups) + 88 (current keys) = 104.
- * Capped exactly at 104 (zero headroom) — Core 1 BSS is tight after
- * the C-2/C-3/C-4 view structs landed and we already moved their
- * state into PSRAM. Each node = 16 B → 1.62 KB BSS. Adding a key
+/* Bound check (post T2.4): 1 (root) + 19 (groups) + ~119 (88 + ~31 new
+ * T2.4 module leaves) = ~139.  Capped at 160 with ~20 entries headroom
+ * for follow-up keys. Each node = 16 B → 2.5 KB BSS. Adding a key
  * to settings_keys.c WILL trip build_once()'s ST_NODE_MAX guard
  * silently (extra keys past the cap are dropped); raise this cap
  * AND free more RAM elsewhere when that happens. */
-#define ST_NODE_MAX  104
+#define ST_NODE_MAX  160
 
 static struct settings_tree_node s_nodes[ST_NODE_MAX];
 static uint8_t                   s_node_count;

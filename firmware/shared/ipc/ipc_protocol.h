@@ -339,6 +339,56 @@ typedef enum {
      * at -80 server-side, no useful UI affordance. */
     IPC_CFG_PAX_ENABLED         = 0x1600,  ///< bool
     IPC_CFG_PAX_UPDATE_INTERVAL = 0x1601,  ///< uint32 s
+
+    /* ── 0x17xx — ModuleConfig.StoreForward (module_config.proto:563) ─── *
+     * S-7.4. All 6 fields exposed; reboot=N (TelemetryModule analog —
+     * service->reloadConfig(SEGMENT_MODULECONFIG) re-reads). */
+    IPC_CFG_SF_ENABLED               = 0x1700,  ///< bool
+    IPC_CFG_SF_HEARTBEAT             = 0x1701,  ///< bool
+    IPC_CFG_SF_RECORDS               = 0x1702,  ///< uint32
+    IPC_CFG_SF_HISTORY_RETURN_MAX    = 0x1703,  ///< uint32
+    IPC_CFG_SF_HISTORY_RETURN_WINDOW = 0x1704,  ///< uint32 s
+    IPC_CFG_SF_IS_SERVER             = 0x1705,  ///< bool
+
+    /* ── 0x18xx — ModuleConfig.Serial (module_config.proto:379) ───────── *
+     * S-7.9. RX/TX GPIO + baud + mode + flags. baud uses Serial_Baud
+     * enum (0..15), mode uses Serial_Mode (0..10). reboot=Y on the
+     * Meshtastic side (port re-init), but the IPC commit goes through
+     * the standard reloadConfig path. */
+    IPC_CFG_SERIAL_ENABLED          = 0x1800,  ///< bool
+    IPC_CFG_SERIAL_ECHO             = 0x1801,  ///< bool
+    IPC_CFG_SERIAL_RXD              = 0x1802,  ///< uint32 (GPIO)
+    IPC_CFG_SERIAL_TXD              = 0x1803,  ///< uint32 (GPIO)
+    IPC_CFG_SERIAL_BAUD             = 0x1804,  ///< uint8 enum 0..15
+    IPC_CFG_SERIAL_TIMEOUT          = 0x1805,  ///< uint32 s
+    IPC_CFG_SERIAL_MODE             = 0x1806,  ///< uint8 enum 0..10
+    IPC_CFG_SERIAL_OVERRIDE_CONSOLE = 0x1807,  ///< bool
+
+    /* ── 0x19xx — ModuleConfig.ExternalNotification (proto:472) ─────────
+     * S-7.2. 15 fields; all bool / uint32. reboot=N. */
+    IPC_CFG_EXTNOT_ENABLED              = 0x1900,  ///< bool
+    IPC_CFG_EXTNOT_OUTPUT_MS            = 0x1901,  ///< uint32 ms
+    IPC_CFG_EXTNOT_OUTPUT               = 0x1902,  ///< uint32 (GPIO)
+    IPC_CFG_EXTNOT_OUTPUT_VIBRA         = 0x1903,  ///< uint32 (GPIO)
+    IPC_CFG_EXTNOT_OUTPUT_BUZZER        = 0x1904,  ///< uint32 (GPIO)
+    IPC_CFG_EXTNOT_ACTIVE               = 0x1905,  ///< bool (active-high vs low)
+    IPC_CFG_EXTNOT_ALERT_MESSAGE        = 0x1906,  ///< bool
+    IPC_CFG_EXTNOT_ALERT_MESSAGE_VIBRA  = 0x1907,  ///< bool
+    IPC_CFG_EXTNOT_ALERT_MESSAGE_BUZZER = 0x1908,  ///< bool
+    IPC_CFG_EXTNOT_ALERT_BELL           = 0x1909,  ///< bool
+    IPC_CFG_EXTNOT_ALERT_BELL_VIBRA     = 0x190A,  ///< bool
+    IPC_CFG_EXTNOT_ALERT_BELL_BUZZER    = 0x190B,  ///< bool
+    IPC_CFG_EXTNOT_USE_PWM              = 0x190C,  ///< bool
+    IPC_CFG_EXTNOT_NAG_TIMEOUT          = 0x190D,  ///< uint32 s
+    IPC_CFG_EXTNOT_USE_I2S_AS_BUZZER    = 0x190E,  ///< bool
+
+    /* ── 0x1Axx — ModuleConfig.RemoteHardware (proto:110) ─────────────── *
+     * S-7.10. v1 covers `enabled` and `allow_undefined_pin_access`
+     * only.  `available_pins` is a repeated nested message
+     * (RemoteHardwarePin{name,gpio,type}); editing it needs a list
+     * editor that's tracked separately. */
+    IPC_CFG_RHW_ENABLED                    = 0x1A00,  ///< bool
+    IPC_CFG_RHW_ALLOW_UNDEFINED_PIN_ACCESS = 0x1A01,  ///< bool
 } IpcConfigKey;
 
 /** IPC_CMD_GET_CONFIG — request a config value by key.

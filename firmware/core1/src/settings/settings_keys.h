@@ -51,6 +51,11 @@ typedef enum {
     SG_CANNED_MSG,
     SG_AMBIENT,
     SG_PAXCOUNTER,
+    /* T2.4 — 4 new module groups */
+    SG_STORE_FORWARD,
+    SG_SERIAL,
+    SG_EXT_NOTIF,
+    SG_REMOTE_HW,
     SG_GROUP_COUNT,
 } settings_group_t;
 

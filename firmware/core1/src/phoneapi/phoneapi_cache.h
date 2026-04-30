@@ -298,6 +298,54 @@ typedef struct {
     uint32_t paxcounter_update_interval;
 } phoneapi_module_paxcounter_t;
 
+/* T2.4.1 ModuleConfig.StoreForward — proto:563 */
+typedef struct {
+    bool     enabled;
+    bool     heartbeat;
+    uint32_t records;
+    uint32_t history_return_max;
+    uint32_t history_return_window;
+    bool     is_server;
+} phoneapi_module_store_forward_t;
+
+/* T2.4.2 ModuleConfig.Serial — proto:379 */
+typedef struct {
+    bool     enabled;
+    bool     echo;
+    uint32_t rxd;
+    uint32_t txd;
+    uint8_t  baud;          /* Serial_Baud enum 0..15 */
+    uint32_t timeout;
+    uint8_t  mode;          /* Serial_Mode enum 0..10 */
+    bool     override_console_serial_port;
+} phoneapi_module_serial_t;
+
+/* T2.4.3 ModuleConfig.ExternalNotification — proto:472 */
+typedef struct {
+    bool     enabled;
+    uint32_t output_ms;
+    uint32_t output;
+    uint32_t output_vibra;
+    uint32_t output_buzzer;
+    bool     active;
+    bool     alert_message;
+    bool     alert_message_vibra;
+    bool     alert_message_buzzer;
+    bool     alert_bell;
+    bool     alert_bell_vibra;
+    bool     alert_bell_buzzer;
+    bool     use_pwm;
+    uint32_t nag_timeout;
+    bool     use_i2s_as_buzzer;
+} phoneapi_module_ext_notif_t;
+
+/* T2.4.4 ModuleConfig.RemoteHardware — proto:110.  available_pins[] is
+ * a repeated nested message and not exposed in v1 (needs list editor). */
+typedef struct {
+    bool enabled;
+    bool allow_undefined_pin_access;
+} phoneapi_module_remote_hw_t;
+
 // Decoded TEXT_MESSAGE_APP payload — published by the cascade decoder
 // when a FromRadio.packet with portnum==TEXT_MESSAGE_APP is seen.
 // Field shape matches `messages_inbox_entry_t` so messages_view can be
@@ -360,6 +408,12 @@ void phoneapi_cache_set_module_canned_msg(const phoneapi_module_canned_msg_t *m)
 void phoneapi_cache_set_module_ambient(const phoneapi_module_ambient_t *m);
 void phoneapi_cache_set_module_paxcounter(const phoneapi_module_paxcounter_t *m);
 
+/* T2.4 — 4 new modules' setters. */
+void phoneapi_cache_set_module_store_forward(const phoneapi_module_store_forward_t *m);
+void phoneapi_cache_set_module_serial(const phoneapi_module_serial_t *m);
+void phoneapi_cache_set_module_ext_notif(const phoneapi_module_ext_notif_t *m);
+void phoneapi_cache_set_module_remote_hw(const phoneapi_module_remote_hw_t *m);
+
 // Readers — copy out under the mutex.
 bool phoneapi_cache_get_my_info(phoneapi_my_info_t *out);
 bool phoneapi_cache_get_metadata(phoneapi_metadata_t *out);
@@ -381,6 +435,13 @@ bool phoneapi_cache_get_module_detect(phoneapi_module_detect_t *out);
 bool phoneapi_cache_get_module_canned_msg(phoneapi_module_canned_msg_t *out);
 bool phoneapi_cache_get_module_ambient(phoneapi_module_ambient_t *out);
 bool phoneapi_cache_get_module_paxcounter(phoneapi_module_paxcounter_t *out);
+
+/* T2.4 — 4 new modules' getters.  Each returns false if cascade has not
+ * yet delivered the sub-message in the current session. */
+bool phoneapi_cache_get_module_store_forward(phoneapi_module_store_forward_t *out);
+bool phoneapi_cache_get_module_serial(phoneapi_module_serial_t *out);
+bool phoneapi_cache_get_module_ext_notif(phoneapi_module_ext_notif_t *out);
+bool phoneapi_cache_get_module_remote_hw(phoneapi_module_remote_hw_t *out);
 uint32_t phoneapi_cache_node_count(void);
 // Copy node by relative index (0..count-1, ordered most-recent first).
 bool phoneapi_cache_take_node_at(uint32_t index, phoneapi_node_t *out);

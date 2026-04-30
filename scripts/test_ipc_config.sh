@@ -66,6 +66,41 @@ IPC_CFG_NEIGHBOR_ENABLED=0x1100
 IPC_CFG_NEIGHBOR_TRANSMIT_OVER_LORA=0x1102
 IPC_CFG_RANGETEST_ENABLED=0x1200
 IPC_CFG_RANGETEST_SENDER=0x1201
+# T2.4.1 StoreForward
+IPC_CFG_SF_ENABLED=0x1700
+IPC_CFG_SF_HEARTBEAT=0x1701
+IPC_CFG_SF_RECORDS=0x1702
+IPC_CFG_SF_HISTORY_RETURN_MAX=0x1703
+IPC_CFG_SF_HISTORY_RETURN_WINDOW=0x1704
+IPC_CFG_SF_IS_SERVER=0x1705
+# T2.4.2 Serial
+IPC_CFG_SERIAL_ENABLED=0x1800
+IPC_CFG_SERIAL_ECHO=0x1801
+IPC_CFG_SERIAL_RXD=0x1802
+IPC_CFG_SERIAL_TXD=0x1803
+IPC_CFG_SERIAL_BAUD=0x1804
+IPC_CFG_SERIAL_TIMEOUT=0x1805
+IPC_CFG_SERIAL_MODE=0x1806
+IPC_CFG_SERIAL_OVERRIDE_CONSOLE=0x1807
+# T2.4.3 ExternalNotification
+IPC_CFG_EXTNOT_ENABLED=0x1900
+IPC_CFG_EXTNOT_OUTPUT_MS=0x1901
+IPC_CFG_EXTNOT_OUTPUT=0x1902
+IPC_CFG_EXTNOT_OUTPUT_VIBRA=0x1903
+IPC_CFG_EXTNOT_OUTPUT_BUZZER=0x1904
+IPC_CFG_EXTNOT_ACTIVE=0x1905
+IPC_CFG_EXTNOT_ALERT_MESSAGE=0x1906
+IPC_CFG_EXTNOT_ALERT_MESSAGE_VIBRA=0x1907
+IPC_CFG_EXTNOT_ALERT_MESSAGE_BUZZER=0x1908
+IPC_CFG_EXTNOT_ALERT_BELL=0x1909
+IPC_CFG_EXTNOT_ALERT_BELL_VIBRA=0x190A
+IPC_CFG_EXTNOT_ALERT_BELL_BUZZER=0x190B
+IPC_CFG_EXTNOT_USE_PWM=0x190C
+IPC_CFG_EXTNOT_NAG_TIMEOUT=0x190D
+IPC_CFG_EXTNOT_USE_I2S_AS_BUZZER=0x190E
+# T2.4.4 RemoteHardware
+IPC_CFG_RHW_ENABLED=0x1A00
+IPC_CFG_RHW_ALLOW_UNDEFINED_PIN_ACCESS=0x1A01
 # B3-P4 expansion
 IPC_CFG_DETECT_ENABLED=0x1300
 IPC_CFG_DETECT_MIN_BCAST_SECS=0x1301
@@ -785,6 +820,136 @@ test_b3p4() {
         "$(bytes_for_u32_le 0)"   paxcounter.paxcounter_update_interval "0"
 }
 
+# T2.4.1 StoreForward — 6 keys, all bool/uint32.
+test_t241() {
+    echo "── T2.4.1: StoreForward (6 keys) ──"
+
+    b3p1_set_get_v2 0xE4 0xE5 $IPC_CFG_SF_ENABLED \
+        "0x01" store_forward.enabled "True"
+    b3p1_set_get_v2 0xE6 0xE7 $IPC_CFG_SF_ENABLED \
+        "0x00" store_forward.enabled "False"
+
+    b3p1_set_get_v2 0xE8 0xE9 $IPC_CFG_SF_HEARTBEAT \
+        "0x01" store_forward.heartbeat "True"
+    b3p1_set_get_v2 0xEA 0xEB $IPC_CFG_SF_HEARTBEAT \
+        "0x00" store_forward.heartbeat "False"
+
+    b3p1_set_get_v2 0xEC 0xED $IPC_CFG_SF_RECORDS \
+        "$(bytes_for_u32_le 100)" store_forward.records "100"
+    b3p1_set_get_v2 0xEE 0xEF $IPC_CFG_SF_RECORDS \
+        "$(bytes_for_u32_le 0)"   store_forward.records "0"
+
+    b3p1_set_get_v2 0xF0 0xF1 $IPC_CFG_SF_HISTORY_RETURN_MAX \
+        "$(bytes_for_u32_le 50)"  store_forward.history_return_max "50"
+
+    b3p1_set_get_v2 0xF2 0xF3 $IPC_CFG_SF_HISTORY_RETURN_WINDOW \
+        "$(bytes_for_u32_le 3600)" store_forward.history_return_window "3600"
+
+    b3p1_set_get_v2 0xF4 0xF5 $IPC_CFG_SF_IS_SERVER \
+        "0x01" store_forward.is_server "True"
+    b3p1_set_get_v2 0xF6 0xF7 $IPC_CFG_SF_IS_SERVER \
+        "0x00" store_forward.is_server "False"
+}
+
+# T2.4.2 Serial — 8 keys (2 enums + bools + uint32).
+test_t242() {
+    echo "── T2.4.2: Serial (8 keys) ──"
+
+    b3p1_set_get_v2 0x40 0x41 $IPC_CFG_SERIAL_ENABLED \
+        "0x01" serial.enabled "True"
+    b3p1_set_get_v2 0x42 0x43 $IPC_CFG_SERIAL_ENABLED \
+        "0x00" serial.enabled "False"
+
+    b3p1_set_get_v2 0x44 0x45 $IPC_CFG_SERIAL_ECHO \
+        "0x01" serial.echo "True"
+    b3p1_set_get_v2 0x46 0x47 $IPC_CFG_SERIAL_ECHO \
+        "0x00" serial.echo "False"
+
+    b3p1_set_get_v2 0x48 0x49 $IPC_CFG_SERIAL_RXD \
+        "$(bytes_for_u32_le 17)" serial.rxd "17"
+    b3p1_set_get_v2 0x4A 0x4B $IPC_CFG_SERIAL_TXD \
+        "$(bytes_for_u32_le 16)" serial.txd "16"
+
+    b3p1_set_get_v2 0x4C 0x4D $IPC_CFG_SERIAL_BAUD \
+        "0x0B" serial.baud "11"   # enum 11 = BAUD_115200
+    b3p1_set_get_v2 0x4E 0x4F $IPC_CFG_SERIAL_BAUD \
+        "0x00" serial.baud "0"    # enum 0 = BAUD_DEFAULT
+
+    b3p1_set_get_v2 0x50 0x51 $IPC_CFG_SERIAL_TIMEOUT \
+        "$(bytes_for_u32_le 250)" serial.timeout "250"
+
+    b3p1_set_get_v2 0x52 0x53 $IPC_CFG_SERIAL_MODE \
+        "0x02" serial.mode "2"   # enum 2 = PROTO
+    b3p1_set_get_v2 0x54 0x55 $IPC_CFG_SERIAL_MODE \
+        "0x00" serial.mode "0"   # enum 0 = DEFAULT
+
+    b3p1_set_get_v2 0x56 0x57 $IPC_CFG_SERIAL_OVERRIDE_CONSOLE \
+        "0x01" serial.override_console_serial_port "True"
+    b3p1_set_get_v2 0x58 0x59 $IPC_CFG_SERIAL_OVERRIDE_CONSOLE \
+        "0x00" serial.override_console_serial_port "False"
+}
+
+# T2.4.3 ExternalNotification — 15 keys, all bool / uint32.
+test_t243() {
+    echo "── T2.4.3: ExternalNotification (15 keys) ──"
+
+    b3p1_set_get_v2 0x5A 0x5B $IPC_CFG_EXTNOT_ENABLED \
+        "0x01" external_notification.enabled "True"
+    b3p1_set_get_v2 0x5C 0x5D $IPC_CFG_EXTNOT_ENABLED \
+        "0x00" external_notification.enabled "False"
+
+    b3p1_set_get_v2 0x5E 0x5F $IPC_CFG_EXTNOT_OUTPUT_MS \
+        "$(bytes_for_u32_le 500)" external_notification.output_ms "500"
+    b3p1_set_get_v2 0x60 0x61 $IPC_CFG_EXTNOT_OUTPUT \
+        "$(bytes_for_u32_le 13)"  external_notification.output "13"
+    b3p1_set_get_v2 0x62 0x63 $IPC_CFG_EXTNOT_OUTPUT_VIBRA \
+        "$(bytes_for_u32_le 14)"  external_notification.output_vibra "14"
+    b3p1_set_get_v2 0x64 0x65 $IPC_CFG_EXTNOT_OUTPUT_BUZZER \
+        "$(bytes_for_u32_le 15)"  external_notification.output_buzzer "15"
+
+    b3p1_set_get_v2 0x66 0x67 $IPC_CFG_EXTNOT_ACTIVE \
+        "0x01" external_notification.active "True"
+    b3p1_set_get_v2 0x68 0x69 $IPC_CFG_EXTNOT_ACTIVE \
+        "0x00" external_notification.active "False"
+
+    b3p1_set_get_v2 0x6A 0x6B $IPC_CFG_EXTNOT_ALERT_MESSAGE \
+        "0x01" external_notification.alert_message "True"
+    b3p1_set_get_v2 0x6C 0x6D $IPC_CFG_EXTNOT_ALERT_MESSAGE_VIBRA \
+        "0x01" external_notification.alert_message_vibra "True"
+    b3p1_set_get_v2 0x6E 0x6F $IPC_CFG_EXTNOT_ALERT_MESSAGE_BUZZER \
+        "0x01" external_notification.alert_message_buzzer "True"
+    b3p1_set_get_v2 0x70 0x71 $IPC_CFG_EXTNOT_ALERT_BELL \
+        "0x01" external_notification.alert_bell "True"
+    b3p1_set_get_v2 0x72 0x73 $IPC_CFG_EXTNOT_ALERT_BELL_VIBRA \
+        "0x01" external_notification.alert_bell_vibra "True"
+    b3p1_set_get_v2 0x74 0x75 $IPC_CFG_EXTNOT_ALERT_BELL_BUZZER \
+        "0x01" external_notification.alert_bell_buzzer "True"
+
+    b3p1_set_get_v2 0x76 0x77 $IPC_CFG_EXTNOT_USE_PWM \
+        "0x01" external_notification.use_pwm "True"
+
+    b3p1_set_get_v2 0x78 0x79 $IPC_CFG_EXTNOT_NAG_TIMEOUT \
+        "$(bytes_for_u32_le 60)" external_notification.nag_timeout "60"
+
+    b3p1_set_get_v2 0x7A 0x7B $IPC_CFG_EXTNOT_USE_I2S_AS_BUZZER \
+        "0x01" external_notification.use_i2s_as_buzzer "True"
+}
+
+# T2.4.4 RemoteHardware — 2 keys, both bool.
+test_t244() {
+    echo "── T2.4.4: RemoteHardware (2 keys) ──"
+
+    b3p1_set_get_v2 0x7C 0x7D $IPC_CFG_RHW_ENABLED \
+        "0x01" remote_hardware.enabled "True"
+    b3p1_set_get_v2 0x7E 0x7F $IPC_CFG_RHW_ENABLED \
+        "0x00" remote_hardware.enabled "False"
+
+    b3p1_set_get_v2 0x80 0x81 $IPC_CFG_RHW_ALLOW_UNDEFINED_PIN_ACCESS \
+        "0x01" remote_hardware.allow_undefined_pin_access "True"
+    b3p1_set_get_v2 0x82 0x83 $IPC_CFG_RHW_ALLOW_UNDEFINED_PIN_ACCESS \
+        "0x00" remote_hardware.allow_undefined_pin_access "False"
+}
+
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 case "${1:-all}" in
@@ -798,6 +963,11 @@ case "${1:-all}" in
     b3p2)    test_b3p2 ;;
     b3p3)    test_b3p3 ;;
     b3p4)    test_b3p4 ;;
+    t241)    test_t241 ;;
+    t242)    test_t242 ;;
+    t243)    test_t243 ;;
+    t244)    test_t244 ;;
+    t24)     test_t241; test_t242; test_t243; test_t244 ;;
     all)
         test_lora_subset 15
         test_owner_long_name "MokyaTest"

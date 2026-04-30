@@ -284,6 +284,46 @@ static void module_config_oneof_cb(uint32_t field_num,
         }
         break;
     }
+    case 2u: {  /* SerialConfig — T2.4.2 */
+        phoneapi_module_serial_t m;
+        if (phoneapi_decode_module_serial(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_serial(&m);
+            TRACE("phapi", "mc_serial", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_serial_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 3u: {  /* ExternalNotificationConfig — T2.4.3 */
+        phoneapi_module_ext_notif_t m;
+        if (phoneapi_decode_module_ext_notif(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_ext_notif(&m);
+            TRACE("phapi", "mc_extnot", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_extnot_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 4u: {  /* StoreForwardConfig — T2.4.1 */
+        phoneapi_module_store_forward_t m;
+        if (phoneapi_decode_module_store_forward(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_store_forward(&m);
+            TRACE("phapi", "mc_sf", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_sf_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
+    case 9u: {  /* RemoteHardwareConfig — T2.4.4 */
+        phoneapi_module_remote_hw_t m;
+        if (phoneapi_decode_module_remote_hw(sub_buf, sub_len, &m)) {
+            phoneapi_cache_set_module_remote_hw(&m);
+            TRACE("phapi", "mc_rhw", "len=%u", (unsigned)sub_len);
+        } else {
+            TRACE("phapi", "mc_rhw_fail", "len=%u", (unsigned)sub_len);
+        }
+        break;
+    }
     default:
         TRACE("phapi", "mc_skip",
               "f=%u,len=%u", (unsigned)field_num, (unsigned)sub_len);

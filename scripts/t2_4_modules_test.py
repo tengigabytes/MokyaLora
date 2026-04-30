@@ -221,15 +221,17 @@ def main():
             if slot != 0:
                 print(f'!! cursor slot={slot} expected 0 (root)'); fail += 1
 
-        # RIGHT again -> modules_index, DOWN to row 1 (S-7.2 TBD), OK
+        # RIGHT again -> modules_index, DOWN to row 1 (S-7.2 ExtNotif —
+        # post-T2.4.3 this is wired and OK should navigate to SETTINGS
+        # at slot SG_EXT_NOTIF).
         ki.press(KEYMAP['MOKYA_KEY_RIGHT'], gap_ms=300)
         if status('RIGHT -> modules_index again') != VIEW_ID_MODULES_INDEX:
             fail += 1
         ki.press(KEYMAP['MOKYA_KEY_DOWN'], gap_ms=200)
         ki.press(KEYMAP['MOKYA_KEY_OK'], gap_ms=300)
-        v = status('OK on S-7.2 (TBD)')
-        if v != VIEW_ID_MODULES_INDEX:
-            print(f'!! TBD row should not navigate (v={v})'); fail += 1
+        v = status('OK on S-7.2 -> SETTINGS')
+        if v != VIEW_ID_SETTINGS:
+            print(f'!! S-7.2 should navigate to SETTINGS (v={v})'); fail += 1
 
     if fail:
         print(f'\n=== T2.4 verify: {fail} FAIL ===')

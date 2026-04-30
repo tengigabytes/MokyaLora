@@ -1629,6 +1629,131 @@ bool phoneapi_decode_module_paxcounter(const uint8_t *buf, uint16_t len,
     return true;
 }
 
+// StoreForwardConfig (proto:563) — 6 fields, all bool/uint32. T2.4.1.
+//   1 enabled, 2 heartbeat, 3 records, 4 history_return_max,
+//   5 history_return_window, 6 is_server
+bool phoneapi_decode_module_store_forward(const uint8_t *buf, uint16_t len,
+                                          phoneapi_module_store_forward_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            switch (f) {
+            case 1u: out->enabled               = (v != 0u);   break;
+            case 2u: out->heartbeat             = (v != 0u);   break;
+            case 3u: out->records               = (uint32_t)v; break;
+            case 4u: out->history_return_max    = (uint32_t)v; break;
+            case 5u: out->history_return_window = (uint32_t)v; break;
+            case 6u: out->is_server             = (v != 0u);   break;
+            default: break;
+            }
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// SerialConfig (proto:379) — 8 fields. T2.4.2.
+//   1 enabled, 2 echo, 3 rxd, 4 txd, 5 baud (enum), 6 timeout,
+//   7 mode (enum), 8 override_console_serial_port
+bool phoneapi_decode_module_serial(const uint8_t *buf, uint16_t len,
+                                   phoneapi_module_serial_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            switch (f) {
+            case 1u: out->enabled                       = (v != 0u);   break;
+            case 2u: out->echo                          = (v != 0u);   break;
+            case 3u: out->rxd                           = (uint32_t)v; break;
+            case 4u: out->txd                           = (uint32_t)v; break;
+            case 5u: out->baud                          = (uint8_t)v;  break;
+            case 6u: out->timeout                       = (uint32_t)v; break;
+            case 7u: out->mode                          = (uint8_t)v;  break;
+            case 8u: out->override_console_serial_port  = (v != 0u);   break;
+            default: break;
+            }
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ExternalNotificationConfig (proto:472) — 15 fields.  T2.4.3.
+bool phoneapi_decode_module_ext_notif(const uint8_t *buf, uint16_t len,
+                                      phoneapi_module_ext_notif_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            switch (f) {
+            case 1u:  out->enabled              = (v != 0u);   break;
+            case 2u:  out->output_ms            = (uint32_t)v; break;
+            case 3u:  out->output               = (uint32_t)v; break;
+            case 4u:  out->active               = (v != 0u);   break;
+            case 5u:  out->alert_message        = (v != 0u);   break;
+            case 6u:  out->alert_bell           = (v != 0u);   break;
+            case 7u:  out->use_pwm              = (v != 0u);   break;
+            case 8u:  out->output_vibra         = (uint32_t)v; break;
+            case 9u:  out->output_buzzer        = (uint32_t)v; break;
+            case 10u: out->alert_message_vibra  = (v != 0u);   break;
+            case 11u: out->alert_message_buzzer = (v != 0u);   break;
+            case 12u: out->alert_bell_vibra     = (v != 0u);   break;
+            case 13u: out->alert_bell_buzzer    = (v != 0u);   break;
+            case 14u: out->nag_timeout          = (uint32_t)v; break;
+            case 15u: out->use_i2s_as_buzzer    = (v != 0u);   break;
+            default: break;
+            }
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// RemoteHardwareConfig (proto:110) — 1 enabled, 2 allow_undefined_pin_access.
+// Field 3 (available_pins) = repeated nested message; skipped in v1.
+bool phoneapi_decode_module_remote_hw(const uint8_t *buf, uint16_t len,
+                                      phoneapi_module_remote_hw_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            if      (f == 1u) out->enabled                    = (v != 0u);
+            else if (f == 2u) out->allow_undefined_pin_access = (v != 0u);
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool phoneapi_walk_config_oneof(const uint8_t *buf, uint16_t len,
                                 phoneapi_config_field_cb cb, void *ctx)
 {

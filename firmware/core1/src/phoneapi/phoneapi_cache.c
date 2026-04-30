@@ -34,6 +34,11 @@ static struct {
     phoneapi_module_canned_msg_t  module_canned_msg;
     phoneapi_module_ambient_t     module_ambient;
     phoneapi_module_paxcounter_t  module_paxcounter;
+    /* T2.4 — 4 new modules. */
+    phoneapi_module_store_forward_t module_store_forward;
+    phoneapi_module_serial_t        module_serial;
+    phoneapi_module_ext_notif_t     module_ext_notif;
+    phoneapi_module_remote_hw_t     module_remote_hw;
     bool                        my_info_valid;
     bool                        metadata_valid;
     bool                        config_device_valid;
@@ -49,6 +54,10 @@ static struct {
     bool                        module_canned_msg_valid;
     bool                        module_ambient_valid;
     bool                        module_paxcounter_valid;
+    bool                        module_store_forward_valid;
+    bool                        module_serial_valid;
+    bool                        module_ext_notif_valid;
+    bool                        module_remote_hw_valid;
 
     uint32_t change_seq;        // bump on every write
     uint32_t committed_seq;     // bump on phoneapi_cache_commit()
@@ -99,6 +108,11 @@ typedef struct {
     uint8_t  module_canned_msg_valid;
     uint8_t  module_ambient_valid;
     uint8_t  module_paxcounter_valid;
+    /* T2.4 — 4 new modules' validity shadows. */
+    uint8_t  module_store_forward_valid;
+    uint8_t  module_serial_valid;
+    uint8_t  module_ext_notif_valid;
+    uint8_t  module_remote_hw_valid;
     /* Spot-check field shadows — one representative field per
      * ModuleConfig sub-cache so SWD verification can confirm the
      * decoder produced real values (not just `valid=1` after
@@ -535,6 +549,13 @@ MODULE_CACHE_RW(ambient,     phoneapi_module_ambient_t,
                 g_phoneapi_dbg.module_ambient_red = m->red)
 MODULE_CACHE_RW(paxcounter,  phoneapi_module_paxcounter_t,
                 g_phoneapi_dbg.module_pax_int = m->paxcounter_update_interval)
+/* T2.4 — 4 new modules.  Shadow stmts are a no-op cast since the dbg
+ * struct doesn't carry per-field shadows for these (validity flags
+ * suffice for SWD inspection — settings_view is the read path). */
+MODULE_CACHE_RW(store_forward, phoneapi_module_store_forward_t, (void)m)
+MODULE_CACHE_RW(serial,        phoneapi_module_serial_t,        (void)m)
+MODULE_CACHE_RW(ext_notif,     phoneapi_module_ext_notif_t,     (void)m)
+MODULE_CACHE_RW(remote_hw,     phoneapi_module_remote_hw_t,     (void)m)
 
 #undef MODULE_CACHE_RW
 
