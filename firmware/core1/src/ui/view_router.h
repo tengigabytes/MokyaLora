@@ -76,6 +76,7 @@ typedef enum {
     VIEW_ID_CHANNEL_ADD,      /* B-3 加入頻道 (manual create new)         */
     VIEW_ID_CHANNEL_SHARE,    /* B-4 分享頻道 (URL text only — Phase 5a)  */
     VIEW_ID_T7_PAIRING,       /* T-7 配對碼 (admin pubkey display)        */
+    VIEW_ID_T3_SPECTRUM,      /* T-3 訊號頻譜 (per-peer SNR bar)          */
 #if MOKYA_DEBUG_VIEWS
     VIEW_ID_RF_DEBUG,
     VIEW_ID_FONT_TEST,
