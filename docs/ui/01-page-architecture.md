@@ -47,7 +47,7 @@
 | T-6 GNSS 衛星圖 | `gnss_sky_view` | ✅ | 仰角 / 方位 / SNR（commit `3fbf664`） |
 | T-8 firmware info | `firmware_info_view` | ✅ | versions / hashes（commit `3fbf664`） |
 | S-0 設定主頁 | `settings/settings_app_view` | ✅ | tree walker + breadcrumb（commit `ba55cf9`） |
-| S-1~S-6, S-8~S-12 | `settings/settings_tree` + `settings/settings_keys` | ✅ 部分 | 19 groups / 115 keys（B3 + T2.4.2：Device / LoRa / Position / Power / Display / Channel / Owner / Security + Telemetry / Neighbor / RangeTest / DetectSnsr / CannedMsg / Ambient / Paxcounter / StoreForward / Serial / ExtNotif / RemoteHW），cascade `FR_TAG_MODULE_CONFIG` walk-down decoder + cache 已上（commit `9cf76a4`） |
+| S-1~S-6, S-8~S-12 | `settings/settings_tree` + `settings/settings_keys` | ✅ | 19 groups / ~119 keys（B3 + T2.4 + S-7.10 Phase 1：Device / LoRa / Position / Power / Display / Channel / Owner / Security + Telemetry / Neighbor / RangeTest / DetectSnsr / CannedMsg / Ambient / Paxcounter / StoreForward / Serial / ExtNotif / RemoteHW 含 available_pins[]），cascade `FR_TAG_MODULE_CONFIG` walk-down decoder + cache 已上（commits `9cf76a4` / `35e2c21`） |
 | S-7 模組索引 | `modules_index_view` | ✅ | 10-page module sub-page index + deep-link（commit `a6c4a46`） |
 | S-X 模板 A/B/C/D | `template_enum/number/text/toggle` | ✅ | enum (`828a253`)、toggle (`ba55cf9`)、number (`9f8b032`)、text (`62b3091`) |
 | Z-1~Z-3 SOS | ⏳ | 未實作 | 前置：power button driver、極簡低電狀態機 |
@@ -165,7 +165,7 @@
 頂端顯示：本機暱稱 / 角色 / 區域 / Preset / TX 功率
 分組：常用 / 通訊 / 進階（折疊）
 
-> **B3 + T2.4 IPC 設定覆蓋現況（2026-04-30 校對）**：cascade IPC_CFG_* 共 19 group / ~115 key 已全數到位（Device / LoRa / Position / Display / Power / Security / Owner / Channel + Telemetry / NeighborInfo / RangeTest / DetectionSensor / CannedMessage / AmbientLighting / Paxcounter / **StoreForward (S-7.4) / Serial (S-7.9) / ExternalNotification (S-7.2) / RemoteHardware (S-7.10)**）。最後四個 ModuleConfig 群組由 commit `83cc2e1` 的 T2.4 phase 補完（共 31 key），end-to-end round-trip 由 `scripts/test_ipc_config.sh t24` 驗證通過。**剩餘缺口**：S-7.10 RemoteHardware 的 `available_pins[]` repeated message — 需 nested-array 編輯器，另案處理。
+> **B3 + T2.4 + S-7.10 IPC 設定覆蓋現況（2026-04-30 校對）**：cascade IPC_CFG_* 共 19 group / ~119 key 已全數到位（Device / LoRa / Position / Display / Power / Security / Owner / Channel + Telemetry / NeighborInfo / RangeTest / DetectionSensor / CannedMessage / AmbientLighting / Paxcounter / **StoreForward (S-7.4) / Serial (S-7.9) / ExternalNotification (S-7.2) / RemoteHardware (S-7.10) 含 `available_pins[]`**）。S-7.10 由 commit `35e2c21` 的 Phase 1 補完 4 個 slot-addressed key (RHW_PIN_COUNT / GPIO / NAME / TYPE) — `IpcPayloadConfigValue.channel_index` 重用為 `slot_index 0..3`。Phase 2 (commit `6f41a53`) 上 UI editor (`rhw_pins_view` + `rhw_pin_edit_view`，view IDs 31/32)：modules_index_view S-7.10 row 改 deep-link 到新 view。end-to-end round-trip 由 `scripts/test_ipc_config.sh t24/t245` (IPC 層) + `scripts/test_t10_rhw_pins.py` (UI key-inject 層) 雙重驗證。
 
 ### S 常用區
 
@@ -264,7 +264,14 @@
 ---
 
 最後更新：2026-04-30
-版本：v1.4（S-7 IPC 覆蓋現況註記校正：4 個 ModuleConfig 群組
+版本：v1.5（S-7.10 RemoteHardware available_pins[] 完整補完：
+Phase 1 commit `35e2c21` 加 IPC + cascade decoder + cache + Core 0
+SET/GET handlers + slot_index 重用語意；Phase 2 commit `6f41a53` 加
+`rhw_pins_view` + `rhw_pin_edit_view` 兩個 view，modules_index_view
+S-7.10 row 改 override_view 直接跳到 pins editor；t245 IPC layer +
+test_t10_rhw_pins.py UI key-inject 端到端通過）
+
+v1.4（2026-04-30）：S-7 IPC 覆蓋現況註記校正：4 個 ModuleConfig 群組
 [StoreForward / Serial / ExternalNotification / RemoteHardware]
 其實已由 commit `83cc2e1` 的 T2.4 phase 全數補完，舊註的「仍缺」
 是 B3 phase 後沒同步更新的 stale doc；t24 regression 31 key

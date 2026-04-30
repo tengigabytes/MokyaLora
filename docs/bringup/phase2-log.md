@@ -3505,6 +3505,78 @@ PASS.
 
 ---
 
+### S-7.10 RemoteHardware available_pins[] full closure (2026-04-30)
+
+Two-phase closure of the last spec gap in the S-7 ModuleConfig family.
+Pre-existing T2.4 (`83cc2e1`) wired enabled / allow_undef but
+explicitly deferred `available_pins[]` ("nested-array editor needed").
+
+**Phase 1 — IPC + cascade plumbing (commits submodule `28e2350b1` +
+main repo `35e2c21`)**: 4 new IPC keys with slot_index discriminator
+reusing the existing `IpcPayloadConfigValue.channel_index` field
+(consistent with B3-P3's channel pattern):
+  IPC_CFG_RHW_PIN_COUNT = 0x1A02  uint8 0..4 (global, slot ignored)
+  IPC_CFG_RHW_PIN_GPIO  = 0x1A03  uint8 0..255  slot 0..3
+  IPC_CFG_RHW_PIN_NAME  = 0x1A04  string max 14 B  slot 0..3
+  IPC_CFG_RHW_PIN_TYPE  = 0x1A05  enum 0..2  slot 0..3 (UNKNOWN /
+                                  DIGITAL_READ / DIGITAL_WRITE)
+Cascade decoder `phoneapi_decode_module_remote_hw` extended with a
+new sub-helper `decode_rhw_pin` walking the repeated field 3
+LEN-encoded `RemoteHardwarePin` sub-message (proto:965, fields
+1=gpio_pin, 2=name, 3=type). Cache struct extended with
+`pin_count + pins[4]`. Core 0 SET/GET handlers extended with 4 cases
+each + slot validation gate (key>=0x1A03 && key<=0x1A05 &&
+slot < 4). New helpers: `rhw_pin_slot_valid`, `copy_rhw_pin_name`,
+`set_rhw_pin_name`. Test script `scripts/test_ipc_config.sh t245`
+validates the wire path: SET count=2 + populate slot 0 (gpio=21
+"garage" DIGITAL_WRITE) + slot 1 (gpio=22 "bell" DIGITAL_READ) +
+COMMIT_CONFIG → meshtastic --info JSON `availablePins[]` byte-perfect.
+6/6 fields PASS on Rev A.
+
+**Phase 2 — UI editor (commit `6f41a53`)**: two new views close the
+loop. `rhw_pins_view` (VIEW_ID_T10_RHW_PINS = 31) is an 8-row list
+covering 3 module-level config (enabled / allow_undef / pin_count)
++ 4 slot summaries + Apply. UP/DN navigates rows; LEFT/RIGHT toggles
+bools or adjusts pin_count (clamped 0..4); OK on a slot opens
+`rhw_pin_edit_view` (VIEW_ID_T10_RHW_PIN_EDIT = 32), a 3-field
+per-slot editor (gpio LEFT/RIGHT ±1 wraparound, name OK opens IME
+modal reusing channel_add_view's pattern, type LEFT/RIGHT cycle 3
+values). Edit Save propagates back via
+`rhw_pins_view_apply_slot_edit()`. Apply on the parent view diffs
+the working copy against a baseline cached on view-create and only
+sends SETs for changed keys (lean COMMIT). `modules_index_view`
+gains a new `override_view` field on `module_entry_t`; S-7.10's
+entry uses it to bypass the default settings_app_view dispatch and
+deep-link straight to the pins editor.
+
+**SRAM budget:** Phase 2 added +290 B in view static state +
+g_view_registry growth (2 new entries × LRU runtime row = ~32 B).
+Both `rhw_pins_view::s` and `rhw_pin_edit_view::s` placed in
+`.psram_bss` (LVGL pointer access from Core 1 LVGL task is cache-
+coherent within Core 1's own world; SWD inspection of the editor's
+state is not needed because IPC layer is already tested). Also
+moved `g_view_registry[]` to `.psram_bss` (read-only after
+view_registry_populate, sequential reads on navigate, cheap under
+write-back cache). Net SRAM .bss delta: 0.
+
+**Test:** `scripts/test_t10_rhw_pins.py` drives the full UI key
+path: BOOT_HOME → FUNC → LAUNCHER → norm cursor + DOWN×2 → OK →
+SETTINGS → RIGHT (settings_app_view ROOT-level shortcut) →
+MODULES_INDEX → DOWN×9 → OK → RHW_PINS → DOWN×3 (slot 0) → OK →
+RHW_PIN_EDIT → RIGHT×9 (gpio=9) → DOWN×2 → RIGHT×2 (type=
+DIGITAL_WRITE) → DOWN → OK (Save) → RHW_PINS → DOWN×4 → OK
+(Apply) → MODULES_INDEX. All 6 view-id transitions match expected;
+final `meshtastic --info` JSON contains `availablePins[0]` with
+`gpioPin: 9` and `type: DIGITAL_WRITE`. PASS.
+
+**Stale doc fix (commit `876eb42`)**: `docs/ui/01-page-architecture.md`
+note "B3 IPC 設定覆蓋現況" had been claiming StoreForward / Serial
+/ ExtNotif / RemoteHardware were missing — actually closed by T2.4
+(`83cc2e1`) months earlier. Doc rewritten to reflect actual coverage,
+bumped to v1.4. v1.5 bump captures S-7.10 closure.
+
+---
+
 ## Issues Log (Phase 2)
 
 | # | Date | Area | Issue | Resolution |
