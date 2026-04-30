@@ -48,6 +48,7 @@
 #include "rhw_pin_edit_view.h"
 #include "waypoints_view.h"
 #include "waypoint_detail_view.h"
+#include "waypoint_edit_view.h"
 #include "traceroute_view.h"
 #include "range_test_view.h"
 #include "gnss_sky_view.h"
@@ -101,7 +102,7 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_T10_RHW_PIN_EDIT]= rhw_pin_edit_view_descriptor();
     g_view_registry[VIEW_ID_WAYPOINTS]       = waypoints_view_descriptor();
     g_view_registry[VIEW_ID_WAYPOINT_DETAIL] = waypoint_detail_view_descriptor();
-    /* VIEW_ID_WAYPOINT_EDIT — Phase 4 will register; left NULL. */
+    g_view_registry[VIEW_ID_WAYPOINT_EDIT]   = waypoint_edit_view_descriptor();
 #if MOKYA_DEBUG_VIEWS
     g_view_registry[VIEW_ID_RF_DEBUG]       = rf_debug_view_descriptor();
     g_view_registry[VIEW_ID_FONT_TEST]      = font_test_view_descriptor();

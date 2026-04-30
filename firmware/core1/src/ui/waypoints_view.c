@@ -209,6 +209,11 @@ static void apply(const key_event_t *ev)
         case MOKYA_KEY_BACK:
             view_router_navigate(VIEW_ID_MAP);
             break;
+        case MOKYA_KEY_LEFT:
+            /* LEFT → D-5 add waypoint (GNSS-only mode in v1). */
+            TRACE_BARE("wpts", "left_to_d5");
+            view_router_navigate(VIEW_ID_WAYPOINT_EDIT);
+            break;
         default: break;
     }
 }
@@ -230,7 +235,7 @@ static const view_descriptor_t WAYPOINTS_DESC = {
     .apply   = apply,
     .refresh = refresh,
     .flags   = 0,
-    .hints   = { "up/dn 走訪", "OK 詳情", "BACK 地圖" },
+    .hints   = { "上下走訪 LEFT加", "OK 詳情", "BACK 地圖" },
 };
 
 const view_descriptor_t *waypoints_view_descriptor(void)
