@@ -101,6 +101,11 @@ IPC_CFG_EXTNOT_USE_I2S_AS_BUZZER=0x190E
 # T2.4.4 RemoteHardware
 IPC_CFG_RHW_ENABLED=0x1A00
 IPC_CFG_RHW_ALLOW_UNDEFINED_PIN_ACCESS=0x1A01
+# S-7.10 RemoteHardware available_pins[] (slot via channel_index 0..3)
+IPC_CFG_RHW_PIN_COUNT=0x1A02
+IPC_CFG_RHW_PIN_GPIO=0x1A03
+IPC_CFG_RHW_PIN_NAME=0x1A04
+IPC_CFG_RHW_PIN_TYPE=0x1A05
 # B3-P4 expansion
 IPC_CFG_DETECT_ENABLED=0x1300
 IPC_CFG_DETECT_MIN_BCAST_SECS=0x1301
@@ -950,6 +955,82 @@ test_t244() {
         "0x00" remote_hardware.allow_undefined_pin_access "False"
 }
 
+# rhw_set_slot <seq> <slot> <key> <value_bytes>
+# Inject one SET with a non-zero channel_index (slot) — no commit, no verify.
+rhw_set_slot() {
+    local seq="$1" slot="$2" key="$3" val="$4"
+    local payload=$(build_set_payload_v2 "$key" "$slot" "$val")
+    inject_ipc_frame "$IPC_CMD_SET_CONFIG" "$seq" "$payload"
+    sleep 0.5
+}
+
+# T2.4.5 (S-7.10) — RemoteHardware available_pins[] round-trip.
+# Sets count=2, populates two slots, COMMIT_CONFIG, verifies via
+# --info JSON. Then resets count=0 to leave a clean slate.
+test_t245() {
+    echo "── T2.4.5 (S-7.10): RemoteHardware available_pins[] ──"
+
+    # Set pin_count=2 (channel_index ignored for this key)
+    rhw_set_slot 0xA0 0x00 $IPC_CFG_RHW_PIN_COUNT "0x02"
+    # Slot 0: gpio=21, name="garage", type=2 (DIGITAL_WRITE)
+    rhw_set_slot 0xA1 0x00 $IPC_CFG_RHW_PIN_GPIO "0x15"
+    rhw_set_slot 0xA2 0x00 $IPC_CFG_RHW_PIN_NAME "$(bytes_for_string garage)"
+    rhw_set_slot 0xA3 0x00 $IPC_CFG_RHW_PIN_TYPE "0x02"
+    # Slot 1: gpio=22, name="bell",   type=1 (DIGITAL_READ)
+    rhw_set_slot 0xA4 0x01 $IPC_CFG_RHW_PIN_GPIO "0x16"
+    rhw_set_slot 0xA5 0x01 $IPC_CFG_RHW_PIN_NAME "$(bytes_for_string bell)"
+    rhw_set_slot 0xA6 0x01 $IPC_CFG_RHW_PIN_TYPE "0x01"
+
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xA7 ""
+    sleep 4
+
+    # Verify via --info JSON. Look for canonical fields in availablePins.
+    local info
+    info=$(python -m meshtastic --port "$PORT" --info 2>&1 | tr -d '\n' | tr -s ' ')
+    local fails=0
+    if echo "$info" | grep -qE '"gpioPin": *21'; then
+        echo "  ✓ slot[0].gpio_pin = 21"
+    else
+        echo "  ✗ slot[0].gpio_pin missing"; fails=$((fails+1))
+    fi
+    if echo "$info" | grep -qE '"name": *"garage"'; then
+        echo "  ✓ slot[0].name = garage"
+    else
+        echo "  ✗ slot[0].name missing"; fails=$((fails+1))
+    fi
+    if echo "$info" | grep -qE '"type": *"DIGITAL_WRITE"'; then
+        echo "  ✓ slot[0].type = DIGITAL_WRITE"
+    else
+        echo "  ✗ slot[0].type missing"; fails=$((fails+1))
+    fi
+    if echo "$info" | grep -qE '"gpioPin": *22'; then
+        echo "  ✓ slot[1].gpio_pin = 22"
+    else
+        echo "  ✗ slot[1].gpio_pin missing"; fails=$((fails+1))
+    fi
+    if echo "$info" | grep -qE '"name": *"bell"'; then
+        echo "  ✓ slot[1].name = bell"
+    else
+        echo "  ✗ slot[1].name missing"; fails=$((fails+1))
+    fi
+    if echo "$info" | grep -qE '"type": *"DIGITAL_READ"'; then
+        echo "  ✓ slot[1].type = DIGITAL_READ"
+    else
+        echo "  ✗ slot[1].type missing"; fails=$((fails+1))
+    fi
+
+    # Cleanup: set count=0, COMMIT
+    rhw_set_slot 0xA8 0x00 $IPC_CFG_RHW_PIN_COUNT "0x00"
+    inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" 0xA9 ""
+    sleep 3
+
+    if [ "$fails" -eq 0 ]; then
+        echo "  ==> t245 PASS (S-7.10 available_pins[] round-trip)"
+    else
+        echo "  ==> t245 FAIL ($fails mismatches)"; return 1
+    fi
+}
+
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 case "${1:-all}" in
@@ -967,7 +1048,8 @@ case "${1:-all}" in
     t242)    test_t242 ;;
     t243)    test_t243 ;;
     t244)    test_t244 ;;
-    t24)     test_t241; test_t242; test_t243; test_t244 ;;
+    t245)    test_t245 ;;
+    t24)     test_t241; test_t242; test_t243; test_t244; test_t245 ;;
     all)
         test_lora_subset 15
         test_owner_long_name "MokyaTest"

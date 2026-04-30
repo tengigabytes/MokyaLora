@@ -371,11 +371,18 @@ typedef struct {
     bool     use_i2s_as_buzzer;
 } phoneapi_module_ext_notif_t;
 
-/* T2.4.4 ModuleConfig.RemoteHardware — proto:110.  available_pins[] is
- * a repeated nested message and not exposed in v1 (needs list editor). */
+/* T2.4.4 ModuleConfig.RemoteHardware — proto:110. */
 typedef struct {
-    bool enabled;
-    bool allow_undefined_pin_access;
+    uint8_t  gpio_pin;     ///< 0..255 (Meshtastic uses uint32 but stores u8)
+    char     name[15];     ///< null-terminated, max 14 chars
+    uint8_t  type;         ///< 0=UNKNOWN / 1=DIGITAL_READ / 2=DIGITAL_WRITE
+} phoneapi_remote_hw_pin_t;
+
+typedef struct {
+    bool     enabled;
+    bool     allow_undefined_pin_access;
+    uint8_t  pin_count;          ///< 0..4 valid slots
+    phoneapi_remote_hw_pin_t pins[4];
 } phoneapi_module_remote_hw_t;
 
 // Decoded TEXT_MESSAGE_APP payload — published by the cascade decoder

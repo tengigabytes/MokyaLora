@@ -2052,6 +2052,41 @@ bool phoneapi_decode_module_ext_notif(const uint8_t *buf, uint16_t len,
 
 // RemoteHardwareConfig (proto:110) — 1 enabled, 2 allow_undefined_pin_access.
 // Field 3 (available_pins) = repeated nested message; skipped in v1.
+/* RemoteHardwarePin sub-message: {1=gpio_pin uint32, 2=name string,
+ * 3=type RemoteHardwarePinType enum}. Module-config field 3 is repeated
+ * sub-message; cap at 4 slots (matches Meshtastic struct). */
+static bool decode_rhw_pin(const uint8_t *buf, uint16_t len,
+                            phoneapi_remote_hw_pin_t *out)
+{
+    if (out == NULL) return false;
+    memset(out, 0, sizeof(*out));
+    uint16_t pos = 0;
+    while (pos < len) {
+        uint64_t tw; if (!read_varint(buf, len, &pos, &tw)) return false;
+        uint32_t f = (uint32_t)(tw >> 3);
+        uint8_t  w = (uint8_t)(tw & 7u);
+        if (w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            if      (f == 1u) out->gpio_pin = (uint8_t)(v & 0xFFu);
+            else if (f == 3u) out->type     = (uint8_t)(v & 0xFFu);
+        } else if (w == WT_LEN) {
+            uint64_t sl; if (!read_varint(buf, len, &pos, &sl)) return false;
+            if ((uint64_t)pos + sl > (uint64_t)len) return false;
+            if (f == 2u) {
+                uint16_t copy = (sl < sizeof(out->name) - 1u)
+                                ? (uint16_t)sl
+                                : (uint16_t)(sizeof(out->name) - 1u);
+                memcpy(out->name, &buf[pos], copy);
+                out->name[copy] = '\0';
+            }
+            pos += (uint16_t)sl;
+        } else if (!skip_field(buf, len, &pos, w)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool phoneapi_decode_module_remote_hw(const uint8_t *buf, uint16_t len,
                                       phoneapi_module_remote_hw_t *out)
 {
@@ -2066,6 +2101,15 @@ bool phoneapi_decode_module_remote_hw(const uint8_t *buf, uint16_t len,
             uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
             if      (f == 1u) out->enabled                    = (v != 0u);
             else if (f == 2u) out->allow_undefined_pin_access = (v != 0u);
+        } else if (w == WT_LEN && f == 3u) {
+            uint64_t sub_len; if (!read_varint(buf, len, &pos, &sub_len)) return false;
+            if ((uint64_t)pos + sub_len > (uint64_t)len) return false;
+            if (out->pin_count < 4u) {
+                if (!decode_rhw_pin(&buf[pos], (uint16_t)sub_len,
+                                    &out->pins[out->pin_count])) return false;
+                ++out->pin_count;
+            }
+            pos += (uint16_t)sub_len;
         } else if (!skip_field(buf, len, &pos, w)) {
             return false;
         }

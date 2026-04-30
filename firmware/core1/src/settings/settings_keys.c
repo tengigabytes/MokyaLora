@@ -78,6 +78,11 @@ static const char *const k_serial_mode[] = {
     "WS85", "VE_DIRECT", "MS_CONFIG", "LOG", "LOGTEXT",
 };
 
+/* S-7.10 RemoteHardwarePinType — 3 entries (module_config.proto:982). */
+static const char *const k_rhw_pin_type[] = {
+    "UNKNOWN", "DIGITAL_READ", "DIGITAL_WRITE",
+};
+
 /* ── Master key table ────────────────────────────────────────────────── *
  *
  * Order matters: settings_keys_in_group() returns a contiguous slice
@@ -514,13 +519,27 @@ static const settings_key_def_t k_keys[] = {
       0, 1, /*reboot=*/0, "i2s_as_buz",
       NULL, 0 },
 
-    /* ── RemoteHardware (T2.4.4 — basic 2-key subset) ────────────── */
+    /* ── RemoteHardware (T2.4.4 + S-7.10 available_pins[]) ───────── */
     { IPC_CFG_RHW_ENABLED, SG_REMOTE_HW, SK_KIND_BOOL,
       0, 1, /*reboot=*/0, "enabled",
       NULL, 0 },
     { IPC_CFG_RHW_ALLOW_UNDEFINED_PIN_ACCESS, SG_REMOTE_HW, SK_KIND_BOOL,
       0, 1, /*reboot=*/0, "allow_undef",
       NULL, 0 },
+    /* available_pins[] — S-7.10. Slot 0..3 carried in IPC channel_index
+     * field; this metadata describes the per-slot value semantics. */
+    { IPC_CFG_RHW_PIN_COUNT, SG_REMOTE_HW, SK_KIND_U8,
+      0, 4, /*reboot=*/0, "pin_count",
+      NULL, 0 },
+    { IPC_CFG_RHW_PIN_GPIO, SG_REMOTE_HW, SK_KIND_U8,
+      0, 255, /*reboot=*/0, "pin_gpio",
+      NULL, 0 },
+    { IPC_CFG_RHW_PIN_NAME, SG_REMOTE_HW, SK_KIND_STR,
+      0, 14, /*reboot=*/0, "pin_name",
+      NULL, 0 },
+    { IPC_CFG_RHW_PIN_TYPE, SG_REMOTE_HW, SK_KIND_ENUM_U8,
+      0, 2, /*reboot=*/0, "pin_type",
+      k_rhw_pin_type, sizeof(k_rhw_pin_type)/sizeof(k_rhw_pin_type[0]) },
 };
 
 #define KEY_COUNT  ((uint8_t)(sizeof(k_keys) / sizeof(k_keys[0])))

@@ -383,18 +383,23 @@ typedef enum {
     IPC_CFG_EXTNOT_USE_I2S_AS_BUZZER    = 0x190E,  ///< bool
 
     /* ── 0x1Axx — ModuleConfig.RemoteHardware (proto:110) ─────────────── *
-     * S-7.10. v1 covers `enabled` and `allow_undefined_pin_access`
-     * only.  `available_pins` is a repeated nested message
-     * (RemoteHardwarePin{name,gpio,type}); editing it needs a list
-     * editor that's tracked separately. */
+     * S-7.10. `available_pins[]` is a repeated nested
+     * RemoteHardwarePin{gpio_pin, name<=14, type} array (max 4 slots);
+     * accessed per-slot via `IpcPayloadConfigValue.channel_index`
+     * repurposed as slot_index 0..3 for keys 0x1A03..0x1A05. */
     IPC_CFG_RHW_ENABLED                    = 0x1A00,  ///< bool
     IPC_CFG_RHW_ALLOW_UNDEFINED_PIN_ACCESS = 0x1A01,  ///< bool
+    IPC_CFG_RHW_PIN_COUNT                  = 0x1A02,  ///< uint8 0..4
+    IPC_CFG_RHW_PIN_GPIO                   = 0x1A03,  ///< uint8 0..255, slot 0..3
+    IPC_CFG_RHW_PIN_NAME                   = 0x1A04,  ///< string max 14 B, slot 0..3
+    IPC_CFG_RHW_PIN_TYPE                   = 0x1A05,  ///< uint8 enum 0..2, slot 0..3
 } IpcConfigKey;
 
 /** IPC_CMD_GET_CONFIG — request a config value by key.
  *
- * channel_index is meaningful only for 0x06xx Channel keys (B3-P3).
- * For all other keys it must be 0. Core 0 decoders accept the legacy
+ * channel_index is meaningful for 0x06xx Channel keys (B3-P3) and
+ * 0x1A03..0x1A05 RHW pin-slot keys (S-7.10, slot_index 0..3). For
+ * all other keys it must be 0. Core 0 decoders accept the legacy
  * 2-byte payload (no channel_index) and treat it as channel_index=0
  * for backward compatibility with B2-era SWD test scripts. */
 typedef struct {
