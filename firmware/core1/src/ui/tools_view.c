@@ -26,15 +26,18 @@ typedef struct {
 #define MAX_ENTRIES  11
 
 static const tool_entry_t s_entries[MAX_ENTRIES] = {
-    /* Spec entries (T-1..T-8) — all TBD until each lands. */
-    { "T-1 Traceroute",      VIEW_ID_COUNT      },
+    /* Spec entries (T-1..T-8). T-1/T-6/T-8 wired in T2.2 (commit
+     * sequence: telemetry → tools); T-2/T-3/T-4/T-5/T-7 still TBD.
+     * T-3 RSSI spectrum is the most-deferred — needs Core 0 IPC + a
+     * Meshtastic submodule patch to pause the radio for scans. */
+    { "T-1 Traceroute",      VIEW_ID_TRACEROUTE },
     { "T-2 Range Test",      VIEW_ID_COUNT      },
     { "T-3 Spectrum",        VIEW_ID_COUNT      },
     { "T-4 Sniffer",         VIEW_ID_COUNT      },
     { "T-5 LoRa Self-test",  VIEW_ID_COUNT      },
-    { "T-6 GNSS Sat",        VIEW_ID_COUNT      },
+    { "T-6 GNSS Sat",        VIEW_ID_GNSS_SKY   },
     { "T-7 Pairing Code",    VIEW_ID_COUNT      },
-    { "T-8 Firmware Info",   VIEW_ID_COUNT      },
+    { "T-8 Firmware Info",   VIEW_ID_FIRMWARE_INFO },
     /* Existing debug overlays — release builds drop the debug-only
      * entries and the cells render as placeholders so the layout
      * stays stable for muscle memory. */

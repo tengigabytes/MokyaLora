@@ -61,6 +61,9 @@ typedef enum {
     VIEW_ID_SETTINGS,         /* S-0 settings                             */
     VIEW_ID_TELEMETRY,        /* F-0 telemetry app (F-1/F-2/F-3 sub-pages)*/
     VIEW_ID_TOOLS,            /* T-0 tools / diagnostics list (Phase 3)   */
+    VIEW_ID_TRACEROUTE,       /* T-1 traceroute (pick peer + render reply)*/
+    VIEW_ID_GNSS_SKY,         /* T-6 GNSS satellite sky view (polar)      */
+    VIEW_ID_FIRMWARE_INFO,    /* T-8 firmware info (versions, hashes)     */
     VIEW_ID_IME,              /* G-3 IME modal-only                       */
     VIEW_ID_KEYPAD,           /* legacy keypad debug grid (under Tools)   */
 #if MOKYA_DEBUG_VIEWS

@@ -234,6 +234,9 @@ add_executable(core1_bridge
     ${UI_DIR}/node_ops_view.c
     ${UI_DIR}/my_node_view.c
     ${UI_DIR}/telemetry_view.c
+    ${UI_DIR}/traceroute_view.c
+    ${UI_DIR}/gnss_sky_view.c
+    ${UI_DIR}/firmware_info_view.c
     ${UI_DIR}/settings/settings_tree.c
     ${UI_DIR}/settings/settings_app_view.c
     ${UI_DIR}/settings/template_toggle.c
@@ -361,6 +364,31 @@ target_compile_definitions(core1_bridge PRIVATE
     MOKYA_DEBUG_VIEWS=1
     $<$<BOOL:${MOKYA_GPS_DUMMY_NMEA}>:MOKYA_GPS_DUMMY_NMEA=1>
     $<$<BOOL:${MOKYA_PHONEAPI_CASCADE}>:MOKYA_PHONEAPI_CASCADE=1>
+)
+
+# Stamp Core 1 binary with the git commit hash + dirty flag so T-8
+# firmware-info view can show the user what they're running. Captured
+# at configure time — re-run cmake (or rebuild after `git commit`) to
+# refresh.  Falls back to "unknown" if git isn't available.
+execute_process(
+    COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse --short HEAD
+    OUTPUT_VARIABLE MOKYA_CORE1_GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+execute_process(
+    COMMAND git -C "${CMAKE_SOURCE_DIR}" diff --quiet HEAD --
+    RESULT_VARIABLE MOKYA_CORE1_GIT_DIRTY_RC
+    ERROR_QUIET
+)
+if(NOT MOKYA_CORE1_GIT_HASH)
+    set(MOKYA_CORE1_GIT_HASH "unknown")
+endif()
+if(NOT MOKYA_CORE1_GIT_DIRTY_RC EQUAL 0)
+    set(MOKYA_CORE1_GIT_HASH "${MOKYA_CORE1_GIT_HASH}+")
+endif()
+target_compile_definitions(core1_bridge PRIVATE
+    MOKYA_CORE1_GIT_HASH="${MOKYA_CORE1_GIT_HASH}"
 )
 
 target_link_libraries(core1_bridge
