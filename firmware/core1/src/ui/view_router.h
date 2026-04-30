@@ -60,6 +60,8 @@ typedef enum {
     VIEW_ID_MY_NODE,          /* C-4 my (local) node info + settings link */
     VIEW_ID_SETTINGS,         /* S-0 settings                             */
     VIEW_ID_TELEMETRY,        /* F-0 telemetry app (F-1/F-2/F-3 sub-pages)*/
+    VIEW_ID_CHANNELS,         /* B-1 channel list (8 entries)             */
+    VIEW_ID_CHANNEL_EDIT,     /* B-2 channel edit (name/pos/muted)        */
     VIEW_ID_TOOLS,            /* T-0 tools / diagnostics list (Phase 3)   */
     VIEW_ID_TRACEROUTE,       /* T-1 traceroute (pick peer + render reply)*/
     VIEW_ID_GNSS_SKY,         /* T-6 GNSS satellite sky view (polar)      */

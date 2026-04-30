@@ -234,6 +234,8 @@ add_executable(core1_bridge
     ${UI_DIR}/node_ops_view.c
     ${UI_DIR}/my_node_view.c
     ${UI_DIR}/telemetry_view.c
+    ${UI_DIR}/channels_view.c
+    ${UI_DIR}/channel_edit_view.c
     ${UI_DIR}/traceroute_view.c
     ${UI_DIR}/gnss_sky_view.c
     ${UI_DIR}/firmware_info_view.c

@@ -43,7 +43,7 @@ typedef struct {
  * them is a no-op. As each app lands, swap its target from
  * VIEW_ID_COUNT to the new view id. */
 static tile_t s_tiles[ROWS * COLS] = {
-    { "Msg",    VIEW_ID_MESSAGES }, { "Chan",  VIEW_ID_COUNT },     { "Nodes", VIEW_ID_NODES   },
+    { "Msg",    VIEW_ID_MESSAGES }, { "Chan",  VIEW_ID_CHANNELS },  { "Nodes", VIEW_ID_NODES   },
     { "Map",    VIEW_ID_COUNT    }, { "Tele",  VIEW_ID_TELEMETRY }, { "Tools", VIEW_ID_TOOLS   },
     { "Set",    VIEW_ID_SETTINGS }, { "Me",    VIEW_ID_MY_NODE },   { "Power", VIEW_ID_COUNT   },
 };

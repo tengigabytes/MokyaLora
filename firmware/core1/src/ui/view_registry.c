@@ -32,6 +32,8 @@
 #include "my_node_view.h"
 #include "settings/settings_app_view.h"
 #include "telemetry_view.h"
+#include "channels_view.h"
+#include "channel_edit_view.h"
 #include "traceroute_view.h"
 #include "gnss_sky_view.h"
 #include "firmware_info_view.h"
@@ -56,6 +58,8 @@ void view_registry_populate(void)
     g_view_registry[VIEW_ID_MY_NODE]        = my_node_view_descriptor();
     g_view_registry[VIEW_ID_SETTINGS]       = settings_app_view_descriptor();
     g_view_registry[VIEW_ID_TELEMETRY]      = telemetry_view_descriptor();
+    g_view_registry[VIEW_ID_CHANNELS]       = channels_view_descriptor();
+    g_view_registry[VIEW_ID_CHANNEL_EDIT]   = channel_edit_view_descriptor();
     g_view_registry[VIEW_ID_TOOLS]          = tools_view_descriptor();
     g_view_registry[VIEW_ID_TRACEROUTE]     = traceroute_view_descriptor();
     g_view_registry[VIEW_ID_GNSS_SKY]       = gnss_sky_view_descriptor();

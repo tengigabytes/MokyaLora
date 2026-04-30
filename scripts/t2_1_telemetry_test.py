@@ -32,8 +32,10 @@ for m in re.finditer(r'#define\s+(MOKYA_KEY_\w+)\s+\(\(mokya_keycode_t\)(0x[0-9A
 
 VIEW_NAMES = ['BOOT_HOME', 'LAUNCHER', 'MESSAGES', 'MESSAGES_CHAT',
               'MESSAGE_DETAIL', 'CANNED', 'NODES', 'NODE_DETAIL',
-              'NODE_OPS', 'MY_NODE', 'SETTINGS', 'TELEMETRY', 'TOOLS',
-              'IME', 'KEYPAD', 'RF_DEBUG', 'FONT_TEST']
+              'NODE_OPS', 'MY_NODE', 'SETTINGS', 'TELEMETRY',
+              'CHANNELS', 'CHANNEL_EDIT', 'TOOLS',
+              'TRACEROUTE', 'GNSS_SKY', 'FIRMWARE_INFO', 'IME',
+              'KEYPAD', 'RF_DEBUG', 'FONT_TEST']
 
 KEYI_MAGIC  = 0x4B45494A
 RING_EVENTS = 32
