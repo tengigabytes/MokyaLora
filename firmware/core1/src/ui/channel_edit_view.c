@@ -3,18 +3,19 @@
  * Layout (panel 320 × 224):
  *   y   0..15   header   "B-2 編輯 ch3 LongFast"
  *   y  16..39   row 0    Name        :  LongFast
- *   y  40..63   row 1    Position    :  10 bits   (UP/DOWN ±1)
- *   y  64..87   row 2    Muted       :  [off]/[on] (OK toggles)
- *   y  88..111  row 3    PSK         :  default key  (read-only)
- *   y 112..135  row 4    Role        :  PRIMARY      (read-only)
- *   y 136..159  row 5    Channel ID  :  0xABCDEF01   (read-only)
- *   y 160..183  status (last SET ack/error/in-flight)
+ *   y  40..63   row 1    Position    :  10 bits   (LEFT/RIGHT ±1)
+ *   y  64..87   row 2    Muted       :  [off]/[on]  (OK toggles)
+ *   y  88..111  row 3    Role        :  PRIMARY     (LEFT/RIGHT cycle 3)
+ *   y 112..135  row 4    Uplink      :  [on]/[off]  (OK toggles)
+ *   y 136..159  row 5    Downlink    :  [on]/[off]  (OK toggles)
+ *   y 160..183  row 6    PSK 32B  id 0xABCDEF01  (read-only combined info)
+ *   y 184..207  status (last SET ack/error/in-flight)
  *
- * Cursor walks rows 0..2 only (writable).  Read-only rows render at
- * dim colour so it's visually obvious they aren't selectable.
+ * Cursor walks rows 0..5 (writable). The read-only info row at the
+ * bottom renders dim so it's visually clear it's not selectable.
  *
  * Each writable change pushes settings_client_send_set + send_commit
- * (no reboot — IPC_CFG_CHANNEL_* are all soft-reload keys).  Reply
+ * (no reboot — IPC_CFG_CHANNEL_* are all soft-reload keys). Reply
  * intake from settings_client_dispatch_reply lands in the in-process
  * queue but we don't poll it here — the cascade replays Channel after
  * commit and phoneapi_cache_change_seq bumping is the success signal.
@@ -39,19 +40,20 @@
 
 #define HEADER_H        16
 #define ROW_H           24
-#define WRITABLE_ROWS    3                /* name / pos / muted */
-#define READONLY_ROWS    3                /* psk / role / channel id */
+#define WRITABLE_ROWS    6                /* name/pos/muted/role/uplink/downlink */
+#define READONLY_ROWS    1                /* combined psk+id info */
 #define TOTAL_ROWS      (WRITABLE_ROWS + READONLY_ROWS)
-#define STATUS_TOP      (HEADER_H + TOTAL_ROWS * ROW_H + 4)
+#define STATUS_TOP      (HEADER_H + TOTAL_ROWS * ROW_H + 0)
 #define PANEL_W        320
 
 typedef enum {
-    ROW_NAME    = 0,
-    ROW_POS     = 1,
-    ROW_MUTED   = 2,
-    ROW_PSK     = 3,
-    ROW_ROLE    = 4,
-    ROW_CHANID  = 5,
+    ROW_NAME     = 0,
+    ROW_POS      = 1,
+    ROW_MUTED    = 2,
+    ROW_ROLE     = 3,
+    ROW_UPLINK   = 4,
+    ROW_DOWNLINK = 5,
+    ROW_INFO     = 6,    /* combined PSK summary + channel id, read-only */
 } row_id_t;
 
 typedef struct {
@@ -115,7 +117,7 @@ static void render(void)
     lv_label_set_text(s.rows[ROW_NAME], buf);
 
     if (have && ch.has_module_settings) {
-        snprintf(buf, sizeof(buf), "%sPosition   :  %u bits  (UP/DN ±1)",
+        snprintf(buf, sizeof(buf), "%sPosition   :  %u bits  (L/R ±1)",
                  s.cursor == ROW_POS ? ">" : " ",
                  (unsigned)ch.module_position_precision);
     } else {
@@ -124,11 +126,26 @@ static void render(void)
     }
     lv_label_set_text(s.rows[ROW_POS], buf);
 
-    snprintf(buf, sizeof(buf), "%sMuted      :  [%s]",
+    snprintf(buf, sizeof(buf), "%sMuted      :  [%s]  (OK toggle)",
              s.cursor == ROW_MUTED ? ">" : " ",
              have && ch.has_module_settings && ch.module_is_muted
                  ? "on" : "off");
     lv_label_set_text(s.rows[ROW_MUTED], buf);
+
+    snprintf(buf, sizeof(buf), "%sRole       :  %s  (L/R cycle)",
+             s.cursor == ROW_ROLE ? ">" : " ",
+             have ? role_full(ch.role) : "--");
+    lv_label_set_text(s.rows[ROW_ROLE], buf);
+
+    snprintf(buf, sizeof(buf), "%sUplink     :  [%s]  (OK toggle)",
+             s.cursor == ROW_UPLINK ? ">" : " ",
+             have && ch.uplink_enabled ? "on" : "off");
+    lv_label_set_text(s.rows[ROW_UPLINK], buf);
+
+    snprintf(buf, sizeof(buf), "%sDownlink   :  [%s]  (OK toggle)",
+             s.cursor == ROW_DOWNLINK ? ">" : " ",
+             have && ch.downlink_enabled ? "on" : "off");
+    lv_label_set_text(s.rows[ROW_DOWNLINK], buf);
 
     /* Apply colour by focus — writable rows */
     for (uint8_t i = 0; i < WRITABLE_ROWS; ++i) {
@@ -137,34 +154,20 @@ static void render(void)
                             : ui_color(UI_COLOR_TEXT_PRIMARY), 0);
     }
 
-    /* Read-only rows */
+    /* Combined read-only info row (PSK summary + channel id) */
     if (have) {
         const char *enc;
-        if      (ch.psk_len == 0u)  enc = "OPEN (no encryption)";
-        else if (ch.psk_len == 1u)  enc = "default key";
-        else                        enc = (ch.psk_len == 16u) ? "PSK 16 B" : "PSK 32 B";
-        snprintf(buf, sizeof(buf), " PSK        :  %s", enc);
+        if      (ch.psk_len == 0u)  enc = "OPEN";
+        else if (ch.psk_len == 1u)  enc = "default";
+        else                        enc = (ch.psk_len == 16u) ? "PSK16" : "PSK32";
+        snprintf(buf, sizeof(buf), " %s  id 0x%08lX",
+                 enc, (unsigned long)ch.channel_id);
     } else {
-        snprintf(buf, sizeof(buf), " PSK        :  --");
+        snprintf(buf, sizeof(buf), " --  id --");
     }
-    lv_label_set_text(s.rows[ROW_PSK], buf);
-
-    snprintf(buf, sizeof(buf), " Role       :  %s",
-             have ? role_full(ch.role) : "--");
-    lv_label_set_text(s.rows[ROW_ROLE], buf);
-
-    if (have) {
-        snprintf(buf, sizeof(buf), " Channel ID :  0x%08lX",
-                 (unsigned long)ch.channel_id);
-    } else {
-        snprintf(buf, sizeof(buf), " Channel ID :  --");
-    }
-    lv_label_set_text(s.rows[ROW_CHANID], buf);
-
-    for (uint8_t i = WRITABLE_ROWS; i < TOTAL_ROWS; ++i) {
-        lv_obj_set_style_text_color(s.rows[i],
-            ui_color(UI_COLOR_TEXT_SECONDARY), 0);
-    }
+    lv_label_set_text(s.rows[ROW_INFO], buf);
+    lv_obj_set_style_text_color(s.rows[ROW_INFO],
+        ui_color(UI_COLOR_TEXT_SECONDARY), 0);
 }
 
 /* ── IPC SET helpers ────────────────────────────────────────────────── */
@@ -270,6 +273,35 @@ static void toggle_muted(void)
                         &new_val, sizeof(new_val));
 }
 
+static void cycle_role(int delta)
+{
+    /* DISABLED(0) → PRIMARY(1) → SECONDARY(2) → DISABLED(0) → ... */
+    phoneapi_channel_t ch;
+    uint8_t cur = 0u;
+    if (phoneapi_cache_get_channel(s.active_idx, &ch)) cur = ch.role;
+    int v = (int)cur + delta;
+    if (v < 0) v = 2;
+    if (v > 2) v = 0;
+    uint8_t new_val = (uint8_t)v;
+    send_set_and_commit(IPC_CFG_CHANNEL_ROLE, &new_val, sizeof(new_val));
+}
+
+static void toggle_uplink(void)
+{
+    phoneapi_channel_t ch;
+    bool cur = phoneapi_cache_get_channel(s.active_idx, &ch) ? ch.uplink_enabled : false;
+    uint8_t new_val = cur ? 0u : 1u;
+    send_set_and_commit(IPC_CFG_CHANNEL_UPLINK_ENABLED, &new_val, sizeof(new_val));
+}
+
+static void toggle_downlink(void)
+{
+    phoneapi_channel_t ch;
+    bool cur = phoneapi_cache_get_channel(s.active_idx, &ch) ? ch.downlink_enabled : false;
+    uint8_t new_val = cur ? 0u : 1u;
+    send_set_and_commit(IPC_CFG_CHANNEL_DOWNLINK_ENABLED, &new_val, sizeof(new_val));
+}
+
 /* ── Lifecycle ──────────────────────────────────────────────────────── */
 
 static void create(lv_obj_t *panel)
@@ -325,20 +357,23 @@ static void apply(const key_event_t *ev)
             }
             break;
         case MOKYA_KEY_LEFT:
-            /* Numeric tweak axis on the position row — UP/DOWN stay
-             * pure cursor moves so navigation is consistent across
-             * row types. */
-            if (s.cursor == ROW_POS) bump_position_precision(-1);
+            /* Numeric / cycle tweak axis. UP/DOWN stay pure cursor moves
+             * so navigation is consistent across row types. */
+            if      (s.cursor == ROW_POS)  bump_position_precision(-1);
+            else if (s.cursor == ROW_ROLE) cycle_role(-1);
             break;
         case MOKYA_KEY_RIGHT:
-            if (s.cursor == ROW_POS) bump_position_precision(+1);
+            if      (s.cursor == ROW_POS)  bump_position_precision(+1);
+            else if (s.cursor == ROW_ROLE) cycle_role(+1);
             break;
         case MOKYA_KEY_OK:
             switch (s.cursor) {
-                case ROW_NAME:  open_name_edit();  break;
-                case ROW_MUTED: toggle_muted();    break;
-                /* OK on POS row does nothing — adjustment is via
-                 * UP/DOWN/LEFT/RIGHT. */
+                case ROW_NAME:     open_name_edit();  break;
+                case ROW_MUTED:    toggle_muted();    break;
+                case ROW_UPLINK:   toggle_uplink();   break;
+                case ROW_DOWNLINK: toggle_downlink(); break;
+                /* OK on POS / ROLE rows does nothing — adjustment is
+                 * via LEFT/RIGHT. */
                 default: break;
             }
             break;

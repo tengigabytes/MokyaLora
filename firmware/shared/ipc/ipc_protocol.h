@@ -263,6 +263,9 @@ typedef enum {
     IPC_CFG_CHANNEL_PSK                       = 0x0601,  ///< bytes max 32 B, reboot=N
     IPC_CFG_CHANNEL_MODULE_POSITION_PRECISION = 0x0602,  ///< uint32 (bits), reboot=N
     IPC_CFG_CHANNEL_MODULE_IS_MUTED           = 0x0603,  ///< bool, reboot=N
+    IPC_CFG_CHANNEL_ROLE                      = 0x0604,  ///< uint8 enum 0..2 (DISABLED/PRIMARY/SECONDARY), reboot=N
+    IPC_CFG_CHANNEL_UPLINK_ENABLED            = 0x0605,  ///< bool, reboot=N
+    IPC_CFG_CHANNEL_DOWNLINK_ENABLED          = 0x0606,  ///< bool, reboot=N
 
     /* 0x07xx — Owner (mesh.proto: meshtastic.User) */
     IPC_CFG_OWNER_LONG_NAME     = 0x0700,  ///< string, max 40 B, reboot=N

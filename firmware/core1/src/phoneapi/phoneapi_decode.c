@@ -322,6 +322,10 @@ typedef struct {
     bool     *has_module_settings;
     uint32_t *module_position_precision;
     bool     *module_is_muted;
+    /* B-2 P3 (L1 sweep) — ChannelSettings.uplink_enabled (5),
+     * ChannelSettings.downlink_enabled (6) */
+    bool     *uplink_enabled;
+    bool     *downlink_enabled;
 } chan_settings_ctx_t;
 
 static bool decode_module_settings(const uint8_t *buf, uint16_t len, void *vctx)
@@ -380,6 +384,12 @@ static bool decode_channel_settings(const uint8_t *buf, uint16_t len, void *vctx
                 return false;
         } else if (f == 4u && w == WT_I32) {
             if (!read_fixed32(buf, len, &pos, ctx->channel_id)) return false;
+        } else if (f == 5u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            if (ctx->uplink_enabled != NULL)   *ctx->uplink_enabled   = (v != 0u);
+        } else if (f == 6u && w == WT_VARINT) {
+            uint64_t v; if (!read_varint(buf, len, &pos, &v)) return false;
+            if (ctx->downlink_enabled != NULL) *ctx->downlink_enabled = (v != 0u);
         } else if (f == 7u && w == WT_LEN) {
             if (!dispatch_sub(buf, len, &pos, decode_module_settings, ctx))
                 return false;
@@ -418,6 +428,8 @@ bool phoneapi_decode_channel(const uint8_t *buf, uint16_t len,
                 .has_module_settings        = &out->has_module_settings,
                 .module_position_precision  = &out->module_position_precision,
                 .module_is_muted            = &out->module_is_muted,
+                .uplink_enabled             = &out->uplink_enabled,
+                .downlink_enabled           = &out->downlink_enabled,
             };
             if (!dispatch_sub(buf, len, &pos, decode_channel_settings, &ctx))
                 return false;

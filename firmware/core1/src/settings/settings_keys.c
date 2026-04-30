@@ -83,6 +83,11 @@ static const char *const k_rhw_pin_type[] = {
     "UNKNOWN", "DIGITAL_READ", "DIGITAL_WRITE",
 };
 
+/* B-2 Channel.Role — 3 entries (channel.proto). */
+static const char *const k_channel_role[] = {
+    "DISABLED", "PRIMARY", "SECONDARY",
+};
+
 /* ── Master key table ────────────────────────────────────────────────── *
  *
  * Order matters: settings_keys_in_group() returns a contiguous slice
@@ -278,6 +283,16 @@ static const settings_key_def_t k_keys[] = {
       NULL, 0 },
     { IPC_CFG_CHANNEL_MODULE_IS_MUTED, SG_CHANNEL, SK_KIND_BOOL,
       0, 1, /*reboot=*/0, "muted",
+      NULL, 0 },
+    /* B-2 P3 (L1 sweep) — Channel.role + ChannelSettings.uplink/downlink */
+    { IPC_CFG_CHANNEL_ROLE, SG_CHANNEL, SK_KIND_ENUM_U8,
+      0, 2, /*reboot=*/0, "role",
+      k_channel_role, sizeof(k_channel_role)/sizeof(k_channel_role[0]) },
+    { IPC_CFG_CHANNEL_UPLINK_ENABLED, SG_CHANNEL, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "uplink",
+      NULL, 0 },
+    { IPC_CFG_CHANNEL_DOWNLINK_ENABLED, SG_CHANNEL, SK_KIND_BOOL,
+      0, 1, /*reboot=*/0, "downlink",
       NULL, 0 },
 
     /* ── Owner ──────────────────────────────────────────────────────── */

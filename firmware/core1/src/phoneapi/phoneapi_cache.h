@@ -92,6 +92,10 @@ typedef struct {
     bool     has_module_settings;
     uint32_t module_position_precision;
     bool     module_is_muted;
+    // ChannelSettings.uplink_enabled / downlink_enabled (B-2 P3 — L1 sweep).
+    // Defaults to false until a Channel frame populates them.
+    bool     uplink_enabled;
+    bool     downlink_enabled;
 } phoneapi_channel_t;
 
 // Last RouteDiscovery (TRACEROUTE_APP, portnum 70) reply seen for a peer.

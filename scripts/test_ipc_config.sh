@@ -106,6 +106,10 @@ IPC_CFG_RHW_PIN_COUNT=0x1A02
 IPC_CFG_RHW_PIN_GPIO=0x1A03
 IPC_CFG_RHW_PIN_NAME=0x1A04
 IPC_CFG_RHW_PIN_TYPE=0x1A05
+# B-2 P3 (L1 sweep) Channel role + uplink/downlink (slot via channel_index)
+IPC_CFG_CHANNEL_ROLE=0x0604
+IPC_CFG_CHANNEL_UPLINK_ENABLED=0x0605
+IPC_CFG_CHANNEL_DOWNLINK_ENABLED=0x0606
 # B3-P4 expansion
 IPC_CFG_DETECT_ENABLED=0x1300
 IPC_CFG_DETECT_MIN_BCAST_SECS=0x1301
@@ -940,6 +944,56 @@ test_t243() {
         "0x01" external_notification.use_i2s_as_buzzer "True"
 }
 
+# B3-P5 (B-2 P3 L1 sweep) — Channel role + uplink/downlink.
+# uplink/downlink tested on channel 0; role tested on channel 7 (idle
+# slot — channel 0 is always PRIMARY by admin invariant). Cleanup
+# resets channel 7 to DISABLED.
+test_b3p5() {
+    echo "── B3-P5 (B-2 P3): Channel.role (ch7) + uplink/downlink (ch0) ──"
+
+    # Helper: SET on a channel slot with v2 header.
+    chan_set_check() {
+        local seq_a="$1" seq_b="$2" slot="$3" key="$4" val="$5" line_re="$6"
+        local payload=$(build_set_payload_v2 "$key" "$slot" "$val")
+        inject_ipc_frame "$IPC_CMD_SET_CONFIG" "$seq_a" "$payload"
+        sleep 1
+        inject_ipc_frame "$IPC_CMD_COMMIT_CONFIG" "$seq_b" ""
+        sleep 4
+        if python -m meshtastic --port "$PORT" --info 2>&1 | grep -q "$line_re"; then
+            echo "  ✓ /$line_re/"
+        else
+            echo "  ✗ missing /$line_re/"
+            python -m meshtastic --port "$PORT" --info 2>&1 | grep -E "Index [0-9]:" | head -3
+            return 1
+        fi
+    }
+
+    # ── Role on channel 7 (idle slot) ──
+    echo "=== channel[7].role = SECONDARY (2) ==="
+    chan_set_check 0xC0 0xC1 7 $IPC_CFG_CHANNEL_ROLE "0x02" \
+        "Index 7: SECONDARY"
+
+    echo "=== channel[7].role = DISABLED (0) — cleanup ==="
+    chan_set_check 0xC2 0xC3 7 $IPC_CFG_CHANNEL_ROLE "0x00" \
+        "Primary channel URL"   # DISABLED slots vanish; just confirm CLI still works
+
+    # ── Uplink toggle on channel 0 ──
+    echo "=== channel[0].uplink_enabled = True ==="
+    chan_set_check 0xC4 0xC5 0 $IPC_CFG_CHANNEL_UPLINK_ENABLED \
+        "0x01" '"uplinkEnabled": true'
+    echo "=== channel[0].uplink_enabled = False (cleanup) ==="
+    chan_set_check 0xC6 0xC7 0 $IPC_CFG_CHANNEL_UPLINK_ENABLED \
+        "0x00" '"uplinkEnabled": false'
+
+    # ── Downlink toggle on channel 0 ──
+    echo "=== channel[0].downlink_enabled = True ==="
+    chan_set_check 0xC8 0xC9 0 $IPC_CFG_CHANNEL_DOWNLINK_ENABLED \
+        "0x01" '"downlinkEnabled": true'
+    echo "=== channel[0].downlink_enabled = False (cleanup) ==="
+    chan_set_check 0xCA 0xCB 0 $IPC_CFG_CHANNEL_DOWNLINK_ENABLED \
+        "0x00" '"downlinkEnabled": false'
+}
+
 # T2.4.4 RemoteHardware — 2 keys, both bool.
 test_t244() {
     echo "── T2.4.4: RemoteHardware (2 keys) ──"
@@ -1044,6 +1098,7 @@ case "${1:-all}" in
     b3p2)    test_b3p2 ;;
     b3p3)    test_b3p3 ;;
     b3p4)    test_b3p4 ;;
+    b3p5)    test_b3p5 ;;
     t241)    test_t241 ;;
     t242)    test_t242 ;;
     t243)    test_t243 ;;
