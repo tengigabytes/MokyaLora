@@ -52,6 +52,7 @@
 #include "phoneapi_cache.h"
 #include "teseo_liv3fl.h"
 #include "node_alias.h"
+#include "waypoint_detail_view.h"
 
 /* ── Layout ─────────────────────────────────────────────────────────── */
 
@@ -74,18 +75,20 @@ static const int s_scale_m[] = {
 #define SCALE_COUNT   (sizeof(s_scale_m) / sizeof(s_scale_m[0]))
 #define SCALE_DEFAULT 2  /* 1 km */
 
-/* Layer mask (D-2 sub-mode). v1:航跡/航點 placeholders only — see
- * plan §不在範圍. */
+/* Layer mask (D-2 sub-mode). 航跡 layer still v2 — see plan §不在範圍.
+ * Enum order is wire-compat with test_d1_phase_b (NODES/ALL/ME_ONLY at
+ * 0/1/2); WAYPOINTS appended as 3 so the SET cycle becomes
+ * NODES → ALL → ME_ONLY → WAYPOINTS → NODES. */
 typedef enum {
-    LAYER_NODES   = 0,    /* show all peers with last_position           */
-    LAYER_ALL     = 1,    /* peers + waypoints + tracks (waypoints/tracks
-                           * not implemented in v1, behaves like NODES)  */
-    LAYER_ME_ONLY = 2,    /* hide all peers — sanity-check the dish      */
+    LAYER_NODES     = 0,    /* show peers with last_position             */
+    LAYER_ALL       = 1,    /* peers + waypoints (Phase 5)               */
+    LAYER_ME_ONLY   = 2,    /* hide everything — sanity-check the dish   */
+    LAYER_WAYPOINTS = 3,    /* show cached waypoints only (Phase 5)      */
     LAYER_COUNT
 } layer_mask_t;
 
 static const char *s_layer_names[LAYER_COUNT] = {
-    "nodes", "all", "me-only"
+    "nodes", "all", "me-only", "waypts"
 };
 
 /* ── State ──────────────────────────────────────────────────────────── */
@@ -111,7 +114,19 @@ typedef struct {
     uint32_t  last_render_ms;
 } map_t;
 
-static map_t s;
+/* Phase 5 waypoint render state. Lives in PSRAM .bss so adding the
+ * 8-entry id ring + label-offset bookkeeping doesn't push the Core 1
+ * .bss past the 2 KB MSP guard. test_d1_phase_b reads `static s`
+ * from regular .bss; keeping the legacy map_t there preserves the
+ * objdump-based offset table the test relies on. */
+typedef struct {
+    uint32_t visible_count;
+    uint32_t visible_id[PHONEAPI_WAYPOINTS_CAP];
+    uint8_t  label_off;             /* first peer[] slot used as waypoint */
+} map_wp_t;
+
+static map_t    s;
+static map_wp_t s_wp __attribute__((section(".psram_bss")));
 
 /* Cold-boot vs LRU-recreate disambiguation (see Phase A note). */
 static bool s_first_create_done = false;
@@ -232,53 +247,42 @@ static void hide_all_peers(void)
     s.visible_count = 0;
 }
 
-static void render_peers(const teseo_state_t *t,
-                         const phoneapi_my_info_t *mi,
-                         char *status_buf, size_t status_cap,
-                         uint32_t total)
+static int place_peers(const teseo_state_t *t,
+                       const phoneapi_my_info_t *mi,
+                       int slot_off,
+                       int *out_beyond, int *out_no_pos)
 {
-    hide_all_peers();
-    if (s.layer_mask == LAYER_ME_ONLY) {
-        snprintf(status_buf, status_cap, "me-only  (peers hidden)");
-        return;
-    }
-    if (t == NULL || !t->fix_valid) {
-        snprintf(status_buf, status_cap, "GPS searching — peers hidden");
-        return;
-    }
-
     int scale_m = s_scale_m[s.scale_idx];
-    int placed = 0;
-    int beyond = 0;
-    int no_pos = 0;
+    int placed  = 0;
+    int beyond  = 0;
+    int no_pos  = 0;
+    uint32_t total = phoneapi_cache_node_count();
 
     for (uint32_t i = 0;
-         i < total && (uint32_t)placed < PHONEAPI_NODES_CAP;
+         i < total && (uint32_t)(slot_off + placed) < PHONEAPI_NODES_CAP;
          ++i) {
         phoneapi_node_t e;
         if (!phoneapi_cache_take_node_at(i, &e)) continue;
-        if (mi && e.num == mi->my_node_num) continue;     /* skip self */
+        if (mi && e.num == mi->my_node_num) continue;
         if (e.last_position.epoch == 0u) { no_pos++; continue; }
 
         int px, py, rng, az;
-        bool inside = project_peer(t->lat_e7, t->lon_e7,
-                                   e.last_position.lat_e7,
-                                   e.last_position.lon_e7,
-                                   scale_m, &px, &py, &rng, &az);
-        if (!inside) { beyond++; continue; }
+        if (!project_peer(t->lat_e7, t->lon_e7,
+                          e.last_position.lat_e7,
+                          e.last_position.lon_e7,
+                          scale_m, &px, &py, &rng, &az)) {
+            beyond++; continue;
+        }
 
         char nm[16];
         node_alias_format_display(e.num, e.short_name, nm, sizeof(nm));
 
-        /* Cursor highlight: prefix "*" + accent colour. Cursor is the
-         * index INTO THE PLACED LIST, so we tag it after the placement
-         * decision. */
         bool is_cursor = (s.cursor >= 0 && (int)placed == (int)s.cursor);
         char buf[20];
         if (is_cursor) snprintf(buf, sizeof(buf), "*%s", nm);
         else           snprintf(buf, sizeof(buf), "%s",  nm);
 
-        lv_obj_t *p = s.peer[placed];
+        lv_obj_t *p = s.peer[slot_off + placed];
         lv_obj_set_pos(p, px - PEER_LABEL_W / 2, py - PEER_LABEL_H / 2);
         lv_label_set_text(p, buf);
         lv_obj_set_style_text_color(p,
@@ -290,15 +294,128 @@ static void render_peers(const teseo_state_t *t,
         placed++;
     }
 
-    s.visible_count = (uint32_t)placed;
-    /* Clamp cursor to current visible list. */
-    if (placed == 0)              s.cursor = -1;
-    else if (s.cursor >= placed)  s.cursor = (int8_t)(placed - 1);
-    else if (s.cursor < 0)        s.cursor = 0;
+    if (out_beyond) *out_beyond = beyond;
+    if (out_no_pos) *out_no_pos = no_pos;
+    return placed;
+}
+
+/* Project + render waypoints into peer[] slots starting at `slot_off`.
+ * Unifont sm 16 lacks emoji glyphs, so we render "W:<name>" with an
+ * accent-success colour to distinguish from peers. */
+static int place_waypoints(const teseo_state_t *t, int slot_off,
+                           int *out_beyond)
+{
+    int scale_m = s_scale_m[s.scale_idx];
+    uint32_t wcount = phoneapi_waypoints_count();
+    int placed = 0;
+    int beyond = 0;
+
+    for (uint32_t i = 0;
+         i < wcount && (uint32_t)(slot_off + placed) < PHONEAPI_NODES_CAP &&
+         (uint32_t)placed < PHONEAPI_WAYPOINTS_CAP;
+         ++i) {
+        phoneapi_waypoint_t e;
+        if (!phoneapi_waypoints_take_at(i, &e)) continue;
+
+        int px, py, rng, az;
+        if (!project_peer(t->lat_e7, t->lon_e7,
+                          e.lat_e7, e.lon_e7,
+                          scale_m, &px, &py, &rng, &az)) {
+            beyond++; continue;
+        }
+
+        /* Only the WAYPOINTS layer takes its cursor from the waypoint
+         * list; LAYER_ALL keeps cursor on peers. */
+        bool is_cursor = (s.layer_mask == LAYER_WAYPOINTS &&
+                          s.cursor >= 0 &&
+                          (int)placed == (int)s.cursor);
+
+        char buf[20];
+        char short_name[10];
+        if (e.name[0]) {
+            /* Truncate to 6 chars to fit the 32-px label cell next to
+             * the "W:" prefix. */
+            strncpy(short_name, e.name, sizeof(short_name) - 1);
+            short_name[sizeof(short_name) - 1] = '\0';
+            short_name[6] = '\0';   /* cap at 6 */
+        } else {
+            short_name[0] = '\0';
+        }
+        if (is_cursor) snprintf(buf, sizeof(buf), "*W:%s", short_name);
+        else           snprintf(buf, sizeof(buf), "W:%s",  short_name);
+
+        lv_obj_t *p = s.peer[slot_off + placed];
+        lv_obj_set_pos(p, px - PEER_LABEL_W / 2, py - PEER_LABEL_H / 2);
+        lv_label_set_text(p, buf);
+        lv_obj_set_style_text_color(p,
+            is_cursor ? ui_color(UI_COLOR_ACCENT_FOCUS)
+                      : ui_color(UI_COLOR_ACCENT_SUCCESS), 0);
+        lv_obj_clear_flag(p, LV_OBJ_FLAG_HIDDEN);
+
+        s_wp.visible_id[placed] = e.id;
+        placed++;
+    }
+
+    if (out_beyond) *out_beyond = beyond;
+    return placed;
+}
+
+static void render_peers(const teseo_state_t *t,
+                         const phoneapi_my_info_t *mi,
+                         char *status_buf, size_t status_cap,
+                         uint32_t total)
+{
+    (void)total;
+    hide_all_peers();
+    s_wp.visible_count = 0;
+    s_wp.label_off     = 0;
+
+    if (s.layer_mask == LAYER_ME_ONLY) {
+        snprintf(status_buf, status_cap, "me-only  (all hidden)");
+        return;
+    }
+    if (t == NULL || !t->fix_valid) {
+        snprintf(status_buf, status_cap, "GPS searching — items hidden");
+        return;
+    }
+
+    int peers_placed = 0;
+    int peers_beyond = 0;
+    int peers_no_pos = 0;
+    int wpts_placed  = 0;
+    int wpts_beyond  = 0;
+
+    /* Layer dispatch. cursor's meaning depends on layer:
+     *   NODES / ALL  : cursor walks visible peers (visible_node_id)
+     *   WAYPOINTS    : cursor walks visible waypoints (wp_visible_id)
+     *   ME_ONLY      : returned above */
+    if (s.layer_mask == LAYER_WAYPOINTS) {
+        wpts_placed = place_waypoints(t, 0, &wpts_beyond);
+        s_wp.visible_count = (uint32_t)wpts_placed;
+        s_wp.label_off     = 0;
+        s.visible_count    = 0;     /* peers are hidden in this layer  */
+        if (wpts_placed == 0)              s.cursor = -1;
+        else if (s.cursor >= wpts_placed)  s.cursor = (int8_t)(wpts_placed - 1);
+        else if (s.cursor < 0)             s.cursor = 0;
+    } else {
+        peers_placed = place_peers(t, mi, 0,
+                                   &peers_beyond, &peers_no_pos);
+        s.visible_count = (uint32_t)peers_placed;
+        if (peers_placed == 0)             s.cursor = -1;
+        else if (s.cursor >= peers_placed) s.cursor = (int8_t)(peers_placed - 1);
+        else if (s.cursor < 0)             s.cursor = 0;
+
+        if (s.layer_mask == LAYER_ALL) {
+            s_wp.label_off = (uint8_t)peers_placed;
+            wpts_placed = place_waypoints(t, peers_placed, &wpts_beyond);
+            s_wp.visible_count = (uint32_t)wpts_placed;
+        }
+    }
 
     snprintf(status_buf, status_cap,
-             "peers=%d  beyond=%d  no_pos=%d  cursor=%d",
-             placed, beyond, no_pos, (int)s.cursor);
+             "peers=%d wpts=%d beyond=%d/%d no_pos=%d cur=%d",
+             peers_placed, wpts_placed,
+             peers_beyond, wpts_beyond, peers_no_pos, (int)s.cursor);
 }
 
 static void render_header(uint32_t peer_count)
@@ -424,28 +541,45 @@ static void apply(const key_event_t *ev)
             render();
             TRACE("map", "key", "kc=SET   layer=%u", (unsigned)s.layer_mask);
             break;
-        case MOKYA_KEY_UP:
-            if (s.visible_count > 0u) {
-                if (s.cursor <= 0) s.cursor = (int8_t)(s.visible_count - 1u);
+        case MOKYA_KEY_UP: {
+            uint32_t n = (s.layer_mask == LAYER_WAYPOINTS)
+                            ? s_wp.visible_count : s.visible_count;
+            if (n > 0u) {
+                if (s.cursor <= 0) s.cursor = (int8_t)(n - 1u);
                 else               s.cursor--;
                 render();
             }
             TRACE("map", "key", "kc=UP    cursor=%d", (int)s.cursor);
             break;
-        case MOKYA_KEY_DOWN:
-            if (s.visible_count > 0u) {
-                if ((uint32_t)(s.cursor + 1) >= s.visible_count) s.cursor = 0;
-                else                                              s.cursor++;
+        }
+        case MOKYA_KEY_DOWN: {
+            uint32_t n = (s.layer_mask == LAYER_WAYPOINTS)
+                            ? s_wp.visible_count : s.visible_count;
+            if (n > 0u) {
+                if ((uint32_t)(s.cursor + 1) >= n) s.cursor = 0;
+                else                                s.cursor++;
                 render();
             }
             TRACE("map", "key", "kc=DOWN  cursor=%d", (int)s.cursor);
             break;
+        }
         case MOKYA_KEY_OK:
-            /* Lock the cursor peer as the D-6 nav target. cursor < 0
-             * (no visible peer) is a no-op so the user gets feedback
-             * via TRACE only — D-6 with target=0 is reachable from
-             * nodes_view OP_NAVIGATE for the "no D-1 peer" case. */
-            if (s.cursor >= 0 && (uint32_t)s.cursor < s.visible_count) {
+            /* Layer-dependent OK:
+             *   NODES / ALL: lock peer as D-6 nav target
+             *   WAYPOINTS  : open the cursor waypoint in D-4 detail   */
+            if (s.layer_mask == LAYER_WAYPOINTS) {
+                if (s.cursor >= 0 &&
+                    (uint32_t)s.cursor < s_wp.visible_count) {
+                    uint32_t id = s_wp.visible_id[s.cursor];
+                    TRACE("map", "key", "kc=OK    wp=0x%08lx",
+                          (unsigned long)id);
+                    waypoint_detail_view_set_target(id);
+                    view_router_navigate(VIEW_ID_WAYPOINT_DETAIL);
+                } else {
+                    TRACE_BARE("map", "ok_no_cursor_wpts");
+                }
+            } else if (s.cursor >= 0 &&
+                       (uint32_t)s.cursor < s.visible_count) {
                 s_nav_target_node_num = s.visible_node_id[s.cursor];
                 TRACE("map", "key", "kc=OK    nav_target=0x%08lx",
                       (unsigned long)s_nav_target_node_num);

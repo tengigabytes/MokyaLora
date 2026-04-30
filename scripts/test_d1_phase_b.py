@@ -71,8 +71,8 @@ OFF_CURSOR        = 158
 OFF_VISIBLE_COUNT = 160
 
 SCALE_LABELS = ['100m', '500m', '1km', '5km', '10km', '50km', '100km']
-LAYER_LABELS = ['nodes', 'all', 'me-only']
-LAYER_NODES, LAYER_ALL, LAYER_ME_ONLY = 0, 1, 2
+LAYER_LABELS = ['nodes', 'all', 'me-only', 'waypts']
+LAYER_NODES, LAYER_ALL, LAYER_ME_ONLY, LAYER_WAYPOINTS = 0, 1, 2, 3
 
 
 def find_static_s(elf, source_basename):
@@ -187,16 +187,19 @@ def main():
         if not expect("cursor default",        cu, -1):          fails += 1
         if not expect("visible_count default", vc, 0):           fails += 1
 
-        # ── SET cycles layer mask ──────────────────────────────────────
+        # ── SET cycles layer mask (4-step cycle since Phase 5) ────────
         send_press_release(swd, KEYMAP['MOKYA_KEY_SET'], gap_ms=200)
         lm = read_u8(swd, s_addr + OFF_LAYER_MASK)
-        if not expect("SET 1 -> layer=ALL",     lm, LAYER_ALL):     fails += 1
+        if not expect("SET 1 -> layer=ALL",       lm, LAYER_ALL):       fails += 1
         send_press_release(swd, KEYMAP['MOKYA_KEY_SET'], gap_ms=200)
         lm = read_u8(swd, s_addr + OFF_LAYER_MASK)
-        if not expect("SET 2 -> layer=ME_ONLY", lm, LAYER_ME_ONLY): fails += 1
+        if not expect("SET 2 -> layer=ME_ONLY",   lm, LAYER_ME_ONLY):   fails += 1
         send_press_release(swd, KEYMAP['MOKYA_KEY_SET'], gap_ms=200)
         lm = read_u8(swd, s_addr + OFF_LAYER_MASK)
-        if not expect("SET 3 -> layer=NODES (wrap)", lm, LAYER_NODES): fails += 1
+        if not expect("SET 3 -> layer=WAYPOINTS", lm, LAYER_WAYPOINTS): fails += 1
+        send_press_release(swd, KEYMAP['MOKYA_KEY_SET'], gap_ms=200)
+        lm = read_u8(swd, s_addr + OFF_LAYER_MASK)
+        if not expect("SET 4 -> layer=NODES (wrap)", lm, LAYER_NODES):  fails += 1
 
         # ── UP / DOWN no-op when visible_count == 0 ────────────────────
         send_press_release(swd, KEYMAP['MOKYA_KEY_UP'], gap_ms=200)
