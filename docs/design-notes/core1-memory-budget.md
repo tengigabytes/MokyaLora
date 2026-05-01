@@ -104,7 +104,7 @@ link; compare against this table when the numbers drift.
 
 ---
 
-## 3. FreeRTOS heap budget (`configTOTAL_HEAP_SIZE = 53 KB`)
+## 3. FreeRTOS heap budget (`configTOTAL_HEAP_SIZE = 52 KB`)
 
 Heap is consumed by task stacks (4 bytes per word), TCBs (~88 B each on
 32-bit V11), and kernel objects (queues/mutexes/semaphores ~80-100 B
@@ -159,6 +159,16 @@ each + their storage). `heap_4` adds ~16 B overhead per allocation.
 | **Estimated** | **~34.4 KB** | **~38.8 KB** | **~40.9 KB** |
 | `configTOTAL_HEAP_SIZE` | 49,152 | 49,152 | 54,272 (post 2026-04-29 RTT-buffer offset) |
 | **Reserve (threshold 15 %)** | **~14.7 KB (30 %)** ✓ | **~10.5 KB (21 %)** ✓ | **~11.7 KB (22 %)** ✓ |
+
+**Phase 2 c1_storage / LFS — heap re-balance 2026-05-01**:
+LFS code path pulled into the link (was DCE'd before c1_storage_init
+got a caller) added ~512 B SRAM (s_prog_buf 256 + LFS internal scratch
+freed at runtime per-open), 32 B for diag globals, and ~150 B of LFS
+text references that landed in BSS. To restore the 2 KB MSP guard,
+`configTOTAL_HEAP_SIZE` 53 → 52 KB. The 1 KB lost from FreeRTOS heap
+is offset by LFS-internal allocations using that very heap (per-file
+256 B malloc'd at open, freed at close), so the net working budget
+is unchanged. See §4 entries `s_prog_buf` / LFS state / s_lfs per-file.
 
 **Measured 2026-04-29 post `configTOTAL_HEAP_SIZE` 56 → 53 KB shrink (SWD, `g_core1_boot_heap_free`)**:
 `xFreeBytesRemaining = 11,960 B (22.0 %)` — above the 20 % §5/§6
@@ -219,6 +229,9 @@ Not exhaustive — just the ones large enough (≥ 256 B) to care about.
 | `s_msgs` (cascade messages ring) | `src/phoneapi/phoneapi_cache.c` | ~864 B | Phase D inbound TEXT_MESSAGE_APP ring: 4 × phoneapi_text_msg_t (~216 B each). Cascade flag only. |
 | `s_framing` | `src/phoneapi/phoneapi_framing.c` | ~528 B | 512 B FromRadio frame buffer + state machine. Cascade flag only. |
 | `_acUpBuffer` (SEGGER RTT) | `pico-sdk SEGGER_RTT.c` | **4 KB** | RTT terminal up-channel ring. Enlarged from default 1 KB → 4 KB on 2026-04-29 (`BUFFER_SIZE_UP=4096` via `target_compile_definitions`) so a single `--info` cascade replay (~10 KB of phapi `rx_frame` / `cfg_*` / `mc_*` events) survives long enough for `JLinkRTTLogger` to drain. Compensated by `configTOTAL_HEAP_SIZE` 56 → 53 KB in the same commit (net BSS Δ = 0). Verified post-change: 13/13 cascade decoder events captured during `--info` (was 0/13 at 1 KB). |
+| `s_prog_buf` (LFS prog cache) | `src/storage/lfs_blockdev.c` | 256 B | SRAM-mandated. `flash_range_program` reads source via QMI which is busy with the flash op; PSRAM source would deadlock on the same bus. |
+| LFS read / lookahead / state | `src/storage/lfs_blockdev.c` + `c1_storage.c` | ~528 B | All `.psram_bss` — touched only outside the flash-op critical section. Read cache 256 B + lookahead 128 B + lfs_t state ~80 B + s_stats ~64 B. |
+| `s_lfs` per-file alloc (runtime) | LFS internals via `c1_lfs_alloc` | 256 B per open file | LFS allocates the file's 256 B prog cache via `lfs_malloc` → routed to `pvPortMalloc` (FreeRTOS heap, NOT newlib heap — `pico_malloc.c::check_alloc` panics on NULL and newlib heap is only ~1.4 KB). c1_storage's single-open policy caps concurrent usage at 256 B; freed by `lfs_file_close`. |
 
 Shared-SRAM IPC buffers (SPSC rings + GPS double-buffer) live in the
 24 KB IPC window and are **not** in either heap — see §5 of
