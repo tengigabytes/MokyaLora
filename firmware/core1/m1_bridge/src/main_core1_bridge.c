@@ -284,12 +284,8 @@ static void bridge_task(void *pv)
      * c1_storage_is_mounted() returns false.  TEMPORARY: disabled while
      * debugging early-boot Core 1 hang during lfs_format on fresh chip.
      * Re-enable after root-cause fix. */
-    extern volatile uint32_t g_c1_storage_init_phase;
-    g_c1_storage_init_phase = 100;
     (void)c1_storage_init();
-    g_c1_storage_init_phase += 1000;   /* mark "init returned" */
     (void)c1_storage_self_test();
-    g_c1_storage_init_phase += 10000;  /* mark "selftest returned" */
 
     for (;;) {
         /* If Core 0 announced a reboot, stop all ring/CDC processing and
@@ -309,6 +305,25 @@ static void bridge_task(void *pv)
         }
 
         bool did_work = false;
+
+        /* ── Phase 2.5 capacity stress trigger (SWD-driven, default OFF) ── *
+         *
+         * Test scripts SWD-write a non-zero value to g_c1_storage_stress_request
+         * encoded as `(n_files << 16) | bytes_per_file_in_256B_units`.
+         * Firmware acks by mirroring the request value into _stress_done.
+         * Cheap poll — single uint32 read per loop iteration. */
+        {
+            extern volatile uint32_t g_c1_storage_stress_request;
+            extern volatile uint32_t g_c1_storage_stress_done;
+            uint32_t req = g_c1_storage_stress_request;
+            if (req != 0u && req != g_c1_storage_stress_done) {
+                uint32_t n_files = (req >> 16) & 0xFFFFu;
+                uint32_t bytes   = (req & 0xFFFFu) * 256u;
+                (void)c1_storage_stress_test(n_files, bytes);
+                g_c1_storage_stress_done = req;
+                did_work = true;
+            }
+        }
 
         /* ── c0_to_c1 DATA ring → CDC IN (high priority) ───────────── */
         IpcMsgHeader hdr;

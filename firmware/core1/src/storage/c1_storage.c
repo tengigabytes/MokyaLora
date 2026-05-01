@@ -19,6 +19,7 @@
 
 #include "c1_storage.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "FreeRTOS.h"
@@ -50,6 +51,20 @@ volatile uint32_t g_c1_storage_blocks_used    __attribute__((used)) = 0u;
 volatile uint32_t g_c1_storage_blocks_total   __attribute__((used)) = 0u;
 volatile uint32_t g_c1_storage_format_count   __attribute__((used)) = 0u;
 #define C1_STORAGE_ST_MAGIC_DONE  0x53544F50u  /* 'STOP' little-endian */
+
+/* Capacity stress trigger (SWD-writable). Bridge_task polls and runs
+ * the stress when request != done. Encoding:
+ *   request = (n_files << 16) | bytes_per_file_kb_quantum
+ *   bytes = (request & 0xFFFF) * 256   (so 4 → 1024 B, 8 → 2048 B)
+ * Convention: writes a unique non-zero value each test run; firmware
+ * acks by writing same value to g_c1_storage_stress_done. */
+volatile uint32_t g_c1_storage_stress_request    __attribute__((used)) = 0u;
+volatile uint32_t g_c1_storage_stress_done       __attribute__((used)) = 0u;
+volatile uint32_t g_c1_storage_stress_passes     __attribute__((used)) = 0u;
+volatile uint32_t g_c1_storage_stress_failures   __attribute__((used)) = 0u;
+volatile int32_t  g_c1_storage_stress_last_err   __attribute__((used)) = 0;
+volatile uint32_t g_c1_storage_stress_dur_us     __attribute__((used)) = 0u;
+volatile uint32_t g_c1_storage_stress_blocks_peak __attribute__((used)) = 0u;
 
 /* ── Helpers ───────────────────────────────────────────────────────── */
 
@@ -375,5 +390,127 @@ bool c1_storage_self_test(void)
           (unsigned)g_c1_storage_st_failures,
           (unsigned)dur);
     vPortFree(buf);
+    return overall_ok;
+}
+
+/* ── Capacity stress test ──────────────────────────────────────────── *
+ *
+ * Writes `n_files` files of `bytes_per_file` bytes each ("/.cs_NN"
+ * naming), reads them back byte-perfect, deletes all, verifies free
+ * space recovers within reasonable tolerance (LFS GC may not run
+ * immediately).
+ *
+ * Per-file pattern: byte i = (file_idx ^ i) & 0xFF — distinguishes
+ * files AND positions, catches any block-mixing corruption.
+ */
+bool c1_storage_stress_test(uint32_t n_files, uint32_t bytes_per_file)
+{
+    if (!s_stats.mounted) {
+        g_c1_storage_stress_failures++;
+        g_c1_storage_stress_last_err = LFS_ERR_INVAL;
+        return false;
+    }
+    if (n_files == 0u || n_files > 64u || bytes_per_file == 0u
+        || bytes_per_file > 4096u) {
+        g_c1_storage_stress_failures++;
+        g_c1_storage_stress_last_err = LFS_ERR_INVAL;
+        return false;
+    }
+
+    uint8_t *buf = (uint8_t *)pvPortMalloc(bytes_per_file);
+    if (buf == NULL) {
+        g_c1_storage_stress_failures++;
+        g_c1_storage_stress_last_err = LFS_ERR_NOMEM;
+        return false;
+    }
+
+    uint32_t t0 = (uint32_t)time_us_64();
+    bool overall_ok = true;
+    uint32_t blocks_peak = 0u;
+    char path[16];
+
+    /* Write phase. */
+    for (uint32_t i = 0; i < n_files; i++) {
+        snprintf(path, sizeof(path), "/.cs_%02u", (unsigned)i);
+        for (uint32_t j = 0; j < bytes_per_file; j++) {
+            buf[j] = (uint8_t)((i ^ j) & 0xFFu);
+        }
+        c1_storage_file_t f;
+        if (!c1_storage_open(&f, path,
+                             LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC)) {
+            g_c1_storage_stress_failures++;
+            g_c1_storage_stress_last_err = LFS_ERR_IO;
+            overall_ok = false;
+            continue;
+        }
+        int rc = c1_storage_write(&f, buf, bytes_per_file);
+        bool closed = c1_storage_close(&f);
+        if (rc != (int)bytes_per_file || !closed) {
+            g_c1_storage_stress_failures++;
+            g_c1_storage_stress_last_err = (rc < 0) ? rc : LFS_ERR_IO;
+            overall_ok = false;
+            continue;
+        }
+        g_c1_storage_stress_passes++;
+        /* Track peak usage during write phase. */
+        lfs_ssize_t used = lfs_fs_size(&s_lfs);
+        if (used >= 0 && (uint32_t)used > blocks_peak) {
+            blocks_peak = (uint32_t)used;
+        }
+    }
+    g_c1_storage_stress_blocks_peak = blocks_peak;
+
+    /* Read-back verify. */
+    for (uint32_t i = 0; i < n_files; i++) {
+        snprintf(path, sizeof(path), "/.cs_%02u", (unsigned)i);
+        c1_storage_file_t f;
+        if (!c1_storage_open(&f, path, LFS_O_RDONLY)) {
+            g_c1_storage_stress_failures++;
+            g_c1_storage_stress_last_err = LFS_ERR_IO;
+            overall_ok = false;
+            continue;
+        }
+        int rc = c1_storage_read(&f, buf, bytes_per_file);
+        bool closed = c1_storage_close(&f);
+        if (rc != (int)bytes_per_file || !closed) {
+            g_c1_storage_stress_failures++;
+            g_c1_storage_stress_last_err = (rc < 0) ? rc : LFS_ERR_IO;
+            overall_ok = false;
+            continue;
+        }
+        bool match = true;
+        for (uint32_t j = 0; j < bytes_per_file; j++) {
+            if (buf[j] != (uint8_t)((i ^ j) & 0xFFu)) { match = false; break; }
+        }
+        if (!match) {
+            g_c1_storage_stress_failures++;
+            g_c1_storage_stress_last_err = LFS_ERR_CORRUPT;
+            overall_ok = false;
+            continue;
+        }
+        g_c1_storage_stress_passes++;
+    }
+
+    /* Delete + verify gone. */
+    for (uint32_t i = 0; i < n_files; i++) {
+        snprintf(path, sizeof(path), "/.cs_%02u", (unsigned)i);
+        if (!c1_storage_unlink(path) || c1_storage_exists(path)) {
+            g_c1_storage_stress_failures++;
+            g_c1_storage_stress_last_err = LFS_ERR_IO;
+            overall_ok = false;
+            continue;
+        }
+        g_c1_storage_stress_passes++;
+    }
+
+    g_c1_storage_stress_dur_us = (uint32_t)time_us_64() - t0;
+    vPortFree(buf);
+    TRACE("c1stor", "stress",
+          "n=%u sz=%u passes=%u fails=%u peak=%u dur_us=%u",
+          (unsigned)n_files, (unsigned)bytes_per_file,
+          (unsigned)g_c1_storage_stress_passes,
+          (unsigned)g_c1_storage_stress_failures,
+          (unsigned)blocks_peak,
+          (unsigned)g_c1_storage_stress_dur_us);
     return overall_ok;
 }

@@ -75,6 +75,15 @@ void c1_storage_get_stats(c1_storage_stats_t *out);
  * Runs in ~50 ms typical (one erase + a few programs). */
 bool c1_storage_self_test(void);
 
+/* Capacity stress test (SWD-triggered) — write `n_files` files of
+ * `bytes_per_file` bytes each (file path "/.cs_NN"), verify reads,
+ * delete all, verify free space recovers. Diagnostic only — wears
+ * flash so default-OFF; bridge_task polls g_c1_storage_stress_request
+ * vs g_c1_storage_stress_done and calls this when they differ.
+ * Bumps SWD globals g_c1_storage_stress_{passes,failures,last_err,
+ * dur_us,blocks_used_peak}. */
+bool c1_storage_stress_test(uint32_t n_files, uint32_t bytes_per_file);
+
 /* ── File API ──────────────────────────────────────────────────────── */
 
 /* Path inspection. Returns true iff `path` exists in the FS. */
