@@ -1,30 +1,22 @@
-/* draft_store.h — Flash-backed UTF-8 draft persistence for IME text input.
+/* draft_store.h — LFS-backed UTF-8 draft persistence for IME text input.
  *
  * Used by `ime_request_text()` to recover an in-progress message after a
  * BACK / reboot / power loss. Each draft is keyed by a caller-defined
  * `draft_id` (e.g. peer node id for A-2 conversation, setting key for
  * Settings text fields). Saving an empty string is equivalent to clear.
  *
- * Flash partition: 0x10C10000 .. 0x10C20000 (64 KB). Reserved adjacent
- * to MIE LRU at 0x10C00000 (see firmware/core1/src/ime/mie_lru_partition.h).
+ * Phase 6 (Task #70): backing storage migrated from a raw 64 KB flash
+ * partition (0x10C10000) to LFS files at /.draft_XXXXXXXX (where
+ * XXXXXXXX is the draft_id in lowercase hex). Public API unchanged.
  *
- * Layout: 16 slots × 4 KB. Each slot:
- *   header  uint32_t magic       'DRFT' = 0x54465244 (little-endian)
- *           uint32_t draft_id    caller-defined non-zero id
- *           uint16_t text_len    UTF-8 byte length, 0 .. SLOT_TEXT_MAX
- *           uint16_t reserved
- *           uint32_t crc32       not yet computed (0)
- *   data    text_len bytes UTF-8 (no NUL); padding 0xFF up to slot end.
+ * The previous fixed-cap eviction policy (16 slots, FIFO) is gone —
+ * draft count is now bounded only by available LFS space. Each draft
+ * lives in its own file, so concurrent saves to different ids do not
+ * conflict (c1_storage's recursive mutex serialises file-level access).
  *
- * Erased slot has magic == 0xFFFFFFFF — treated as empty.
- *
- * Lookups are linear scan (16 slots). Save: erase + reprogram one
- * 4 KB sector. All flash writes go through the existing
- * `flash_safety_wrap.c` shim so Core 0 is parked (see P2-11).
- *
- * Concurrency: callers must serialise; draft_store assumes single
- * caller per partition (currently only the IME task). Reads tolerate
- * concurrent erased state (will simply return false).
+ * Concurrency: in practice only the IME task touches drafts, so the
+ * single-caller assumption from the raw-flash version still holds.
+ * Reads tolerate missing files (return false).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -39,11 +31,10 @@
 extern "C" {
 #endif
 
-/* Single-slot text capacity (bytes). 4096 - 16 byte header = 4080. */
+/* Single-draft text capacity (bytes). Kept at the original 4080 for
+ * call-site compatibility; LFS imposes no such cap, but ime_text_*
+ * callers size their buffers around this value. */
 #define DRAFT_STORE_TEXT_MAX  4080u
-
-/* Number of slots; partition must be SLOT_COUNT × 4 KB. */
-#define DRAFT_STORE_SLOT_COUNT 16u
 
 /* No-op call kept for API symmetry with `lru_persist_init`. */
 bool draft_store_init(void);

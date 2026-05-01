@@ -428,6 +428,25 @@ static void bridge_task(void *pv)
         metrics_history_poll_swd_triggers();
         c1_storage_poll_swd_triggers();
 
+        /* ── Phase 6 (Task #70) draft_store self-test trigger ── *
+         *
+         * Bumps a request counter; the loop runs draft_store_self_test
+         * once per request edge and writes the result (1=PASS / 0=FAIL)
+         * into g_draft_self_test_ok before mirroring the request into
+         * _done. Drives the test_l1_draft.py harness. */
+        {
+            extern volatile uint32_t g_draft_self_test_request;
+            extern volatile uint32_t g_draft_self_test_done;
+            extern volatile uint8_t  g_draft_self_test_ok;
+            extern bool draft_store_self_test(void);
+            uint32_t req = g_draft_self_test_request;
+            if (req != 0u && req != g_draft_self_test_done) {
+                g_draft_self_test_ok = draft_store_self_test() ? 1u : 0u;
+                g_draft_self_test_done = req;
+                did_work = true;
+            }
+        }
+
         /* ── I2C bus stuck-low recovery (SWD-driven) ── */
         {
             extern volatile uint32_t g_i2c_bus_recovery_request;

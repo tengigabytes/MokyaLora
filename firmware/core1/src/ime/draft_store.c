@@ -1,227 +1,203 @@
 /* draft_store.c — see draft_store.h.
  *
- * Implementation notes
+ * Phase 6 (Task #70): migrated from a raw 64 KB flash partition at
+ * 0x10C10000 to LFS-backed files under /drafts/. Public API unchanged
+ * — callers (ime_task) see the same load/save/clear/self_test surface.
  *
- *   - Flash erase granularity is 4 KB (FLASH_SECTOR_SIZE on RP2350); each
- *     slot maps 1:1 to one sector so save/clear are a single erase + program.
- *   - Reads go through the XIP-cached window. Writes require XIP cache
- *     invalidation for the affected range so the next read sees the new
- *     bytes (mirrors lru_persist.cpp).
- *   - Header serialisation is plain little-endian — the RP2350 is LE so
- *     struct copy works, but we use explicit field writes to make the
- *     wire format independent of struct packing.
+ * On-disk layout:
+ *   /.draft_XXXXXXXX           where XXXXXXXX is draft_id in lowercase
+ *                              hex (8 chars, zero-padded). File body
+ *                              is a 16 B header + UTF-8 text bytes.
+ *                              Flat top-level path mirrors dm_persist
+ *                              to dodge the lfs_mkdir-on-first-write
+ *                              race observed in Phase 2.4 selftest.
+ *   header  uint32_t magic     'DRFT' = 0x54465244 (little-endian)
+ *           uint32_t draft_id  redundant — caught path↔body mismatch
+ *           uint16_t text_len  UTF-8 byte length
+ *           uint16_t reserved
+ *           uint32_t crc32     reserved (0)
+ *
+ * The eviction policy from the raw-flash version (16-slot fixed cap)
+ * is gone — LFS lets each draft live as long as the partition has free
+ * space. Capacity is now bounded by the LFS partition (1 MB) instead
+ * of 64 KB, comfortably above any realistic draft volume (one draft
+ * per peer + one per text setting field).
+ *
+ * Concurrency: c1_storage uses a recursive FreeRTOS mutex internally,
+ * so multiple callers are safe; draft_store remains single-caller in
+ * practice (only the IME task touches it).
  *
  * SPDX-License-Identifier: MIT
  */
 
 #include "draft_store.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "FreeRTOS.h"
 #include "task.h"
 
-#include "hardware/flash.h"
-#include "hardware/xip_cache.h"
-
+#include "c1_storage.h"
+#include "../../lfs/lfs.h"
 #include "mokya_trace.h"
 
-/* ── Partition map ───────────────────────────────────────────────────── */
-
-#define PARTITION_ADDR    0x10C10000u                 /* XIP read base    */
-#define PARTITION_OFFSET  0x00C10000u                 /* flash byte off   */
-#define SLOT_SIZE         FLASH_SECTOR_SIZE           /* 4096             */
-#define SLOT_HEADER_BYTES 16u
-#define MAGIC             0x54465244u                 /* 'DRFT' LE        */
-
-_Static_assert((PARTITION_OFFSET % SLOT_SIZE) == 0,   "slot align");
-_Static_assert(DRAFT_STORE_TEXT_MAX + SLOT_HEADER_BYTES == SLOT_SIZE,
-               "slot layout");
-_Static_assert(DRAFT_STORE_SLOT_COUNT * SLOT_SIZE == 0x10000u,
-               "partition fits 64 KB");
-
-/* ── Header read helpers ─────────────────────────────────────────────── */
+#define DRAFT_PATH_PREFIX  "/.draft_"
+#define DRAFT_PATH_MAX     32u
+#define DRAFT_MAGIC        0x54465244u   /* 'DRFT' LE */
 
 typedef struct {
     uint32_t magic;
     uint32_t draft_id;
     uint16_t text_len;
     uint16_t reserved;
-    uint32_t crc32;
-} slot_header_t;
+    uint32_t crc32;             /* reserved, 0 */
+} draft_header_t;
 
-static inline const uint8_t *slot_xip(uint32_t idx)
-{
-    return (const uint8_t *)(uintptr_t)(PARTITION_ADDR + idx * SLOT_SIZE);
-}
+_Static_assert(sizeof(draft_header_t) == 16u, "header size");
 
-static inline uint32_t slot_offset(uint32_t idx)
-{
-    return PARTITION_OFFSET + idx * SLOT_SIZE;
-}
+/* SWD-readable diag. */
+volatile uint32_t g_draft_saves   __attribute__((used)) = 0u;
+volatile uint32_t g_draft_loads   __attribute__((used)) = 0u;
+volatile uint32_t g_draft_clears  __attribute__((used)) = 0u;
+volatile uint32_t g_draft_failures __attribute__((used)) = 0u;
+volatile int32_t  g_draft_last_err __attribute__((used)) = 0;
 
-static void read_header(uint32_t idx, slot_header_t *h)
-{
-    const uint8_t *p = slot_xip(idx);
-    h->magic    = ((uint32_t)p[0]) | ((uint32_t)p[1] << 8) |
-                  ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-    h->draft_id = ((uint32_t)p[4]) | ((uint32_t)p[5] << 8) |
-                  ((uint32_t)p[6] << 16) | ((uint32_t)p[7] << 24);
-    h->text_len = (uint16_t)(p[8] | (p[9] << 8));
-    h->reserved = (uint16_t)(p[10] | (p[11] << 8));
-    h->crc32    = ((uint32_t)p[12]) | ((uint32_t)p[13] << 8) |
-                  ((uint32_t)p[14] << 16) | ((uint32_t)p[15] << 24);
-}
+/* SWD-driven self-test trigger (drained by bridge_task). */
+volatile uint32_t g_draft_self_test_request __attribute__((used)) = 0u;
+volatile uint32_t g_draft_self_test_done    __attribute__((used)) = 0u;
+volatile uint8_t  g_draft_self_test_ok      __attribute__((used)) = 0u;
 
-/* Find the slot holding `draft_id`. Returns true on hit and writes the
- * slot index to `*idx_out`. Caller must own the partition mutex. */
-static bool find_slot(uint32_t draft_id, uint32_t *idx_out)
-{
-    if (draft_id == 0u) return false;
-    for (uint32_t i = 0; i < DRAFT_STORE_SLOT_COUNT; ++i) {
-        slot_header_t h;
-        read_header(i, &h);
-        if (h.magic == MAGIC && h.draft_id == draft_id) {
-            *idx_out = i;
-            return true;
-        }
-    }
-    return false;
-}
+/* ── Path helpers ─────────────────────────────────────────────────── */
 
-/* Find an erased slot suitable for a new draft. Returns true on success;
- * if the partition is full, returns the first occupied slot (Phase 2
- * MVP eviction policy: just stomp on the first existing draft). */
-static bool find_free_or_evict(uint32_t *idx_out)
+static void format_path(char *buf, size_t cap, uint32_t draft_id)
 {
-    /* First pass — erased slots. */
-    for (uint32_t i = 0; i < DRAFT_STORE_SLOT_COUNT; ++i) {
-        slot_header_t h;
-        read_header(i, &h);
-        if (h.magic == 0xFFFFFFFFu) {
-            *idx_out = i;
-            return true;
-        }
-    }
-    /* Second pass — first occupied slot. */
-    for (uint32_t i = 0; i < DRAFT_STORE_SLOT_COUNT; ++i) {
-        slot_header_t h;
-        read_header(i, &h);
-        if (h.magic == MAGIC) {
-            *idx_out = i;
-            return true;
-        }
-    }
-    return false;
+    snprintf(buf, cap, DRAFT_PATH_PREFIX "%08lx",
+             (unsigned long)draft_id);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────── */
 
 bool draft_store_init(void)
 {
-    /* Phase 2 MVP — nothing to set up. Erased state is the same as a
-     * never-touched partition because we treat magic 0xFFFFFFFF as empty. */
+    /* No-op: top-level /.draft_* path needs no mkdir. Kept for API
+     * symmetry with lru_persist_init(). */
     return true;
 }
 
 bool draft_store_load(uint32_t draft_id, char *buf, size_t cap, size_t *out_len)
 {
     if (buf == NULL || draft_id == 0u) return false;
+    if (!c1_storage_is_mounted()) return false;
 
-    uint32_t idx;
-    if (!find_slot(draft_id, &idx)) return false;
+    char path[DRAFT_PATH_MAX];
+    format_path(path, sizeof(path), draft_id);
+    if (!c1_storage_exists(path)) return false;
 
-    slot_header_t h;
-    read_header(idx, &h);
-    if (h.text_len > DRAFT_STORE_TEXT_MAX) return false;
-    if ((size_t)h.text_len > cap)          return false;
-
-    const uint8_t *src = slot_xip(idx) + SLOT_HEADER_BYTES;
-    if (h.text_len > 0) memcpy(buf, src, h.text_len);
+    c1_storage_file_t f;
+    if (!c1_storage_open(&f, path, LFS_O_RDONLY)) {
+        g_draft_failures++;
+        g_draft_last_err = LFS_ERR_IO;
+        return false;
+    }
+    draft_header_t h;
+    int rc = c1_storage_read(&f, &h, sizeof(h));
+    if (rc != (int)sizeof(h) || h.magic != DRAFT_MAGIC ||
+        h.draft_id != draft_id ||
+        h.text_len > DRAFT_STORE_TEXT_MAX) {
+        (void)c1_storage_close(&f);
+        g_draft_failures++;
+        g_draft_last_err = (rc < 0) ? rc : LFS_ERR_CORRUPT;
+        return false;
+    }
+    if ((size_t)h.text_len > cap) {
+        (void)c1_storage_close(&f);
+        return false;
+    }
+    if (h.text_len > 0) {
+        rc = c1_storage_read(&f, buf, h.text_len);
+        if (rc != (int)h.text_len) {
+            (void)c1_storage_close(&f);
+            g_draft_failures++;
+            g_draft_last_err = (rc < 0) ? rc : LFS_ERR_IO;
+            return false;
+        }
+    }
+    (void)c1_storage_close(&f);
     if (out_len) *out_len = h.text_len;
+    g_draft_loads++;
     return true;
 }
 
 bool draft_store_clear(uint32_t draft_id)
 {
     if (draft_id == 0u) return false;
+    if (!c1_storage_is_mounted()) return false;
 
-    uint32_t idx;
-    if (!find_slot(draft_id, &idx)) return true;   /* nothing to clear */
-
-    flash_range_erase(slot_offset(idx), SLOT_SIZE);
-    xip_cache_invalidate_range(slot_offset(idx), SLOT_SIZE);
-    return true;
+    char path[DRAFT_PATH_MAX];
+    format_path(path, sizeof(path), draft_id);
+    bool ok = c1_storage_unlink(path);
+    if (ok) g_draft_clears++;
+    return ok;
 }
 
 bool draft_store_save(uint32_t draft_id, const char *text, size_t text_len)
 {
     if (draft_id == 0u) return false;
     if (text_len > DRAFT_STORE_TEXT_MAX) return false;
+    if (!c1_storage_is_mounted()) return false;
 
     if (text_len == 0) {
         return draft_store_clear(draft_id);
     }
 
-    uint32_t idx;
-    bool reused = find_slot(draft_id, &idx);
-    if (!reused) {
-        if (!find_free_or_evict(&idx)) return false;
+    char path[DRAFT_PATH_MAX];
+    format_path(path, sizeof(path), draft_id);
+
+    c1_storage_file_t f;
+    if (!c1_storage_open(&f, path,
+                         LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC)) {
+        g_draft_failures++;
+        g_draft_last_err = LFS_ERR_IO;
+        return false;
     }
-
-    /* Build the full slot in a heap scratch — flash_range_program
-     * requires aligned writes and we want the unused tail to be 0xFF
-     * (post-erase state) so future searches don't trip on stale bytes. */
-    uint8_t *scratch = (uint8_t *)pvPortMalloc(SLOT_SIZE);
-    if (scratch == NULL) return false;
-    memset(scratch, 0xFF, SLOT_SIZE);
-
-    /* Header (little-endian, see read_header). */
-    scratch[0]  = (uint8_t)(MAGIC      );
-    scratch[1]  = (uint8_t)(MAGIC >> 8 );
-    scratch[2]  = (uint8_t)(MAGIC >> 16);
-    scratch[3]  = (uint8_t)(MAGIC >> 24);
-    scratch[4]  = (uint8_t)(draft_id      );
-    scratch[5]  = (uint8_t)(draft_id >> 8 );
-    scratch[6]  = (uint8_t)(draft_id >> 16);
-    scratch[7]  = (uint8_t)(draft_id >> 24);
-    scratch[8]  = (uint8_t)(text_len      );
-    scratch[9]  = (uint8_t)(text_len >> 8 );
-    scratch[10] = 0;
-    scratch[11] = 0;
-    /* crc32 left as 0 — Phase 2 MVP, room to add later */
-    scratch[12] = 0; scratch[13] = 0; scratch[14] = 0; scratch[15] = 0;
-
-    if (text != NULL && text_len > 0) {
-        memcpy(scratch + SLOT_HEADER_BYTES, text, text_len);
+    draft_header_t h = {
+        .magic    = DRAFT_MAGIC,
+        .draft_id = draft_id,
+        .text_len = (uint16_t)text_len,
+        .reserved = 0,
+        .crc32    = 0,
+    };
+    int rc = c1_storage_write(&f, &h, sizeof(h));
+    if (rc == (int)sizeof(h) && text != NULL) {
+        rc = c1_storage_write(&f, text, text_len);
     }
-
-    flash_range_erase(slot_offset(idx), SLOT_SIZE);
-    flash_range_program(slot_offset(idx), scratch, SLOT_SIZE);
-    xip_cache_invalidate_range(slot_offset(idx), SLOT_SIZE);
-
-    vPortFree(scratch);
+    bool closed = c1_storage_close(&f);
+    if (rc < 0 || !closed) {
+        g_draft_failures++;
+        g_draft_last_err = (rc < 0) ? rc : LFS_ERR_IO;
+        return false;
+    }
+    g_draft_saves++;
     return true;
 }
 
 bool draft_store_self_test(void)
 {
     static const uint32_t kTestId = 0xC0FFEEDBu;
-    static const char    kPattern[] = "draft_store_self_test_v1_2026";  /* 30 chars */
-    const size_t         pat_len    = sizeof(kPattern) - 1u;
+    static const char     kPattern[] = "draft_store_self_test_v2_lfs";
+    const size_t          pat_len    = sizeof(kPattern) - 1u;
 
     TRACE_BARE("drft", "test_begin");
-
-    /* Phase 1: clean slate. */
+    if (!c1_storage_is_mounted()) {
+        TRACE_BARE("drft", "test_unmounted");
+        return false;
+    }
     (void)draft_store_clear(kTestId);
-
-    /* Phase 2: save. */
     if (!draft_store_save(kTestId, kPattern, pat_len)) {
         TRACE_BARE("drft", "test_save_fail");
         return false;
     }
-
-    /* Phase 3: load. */
     char   buf[64];
     size_t got = 0;
     if (!draft_store_load(kTestId, buf, sizeof(buf), &got)) {
@@ -235,8 +211,6 @@ bool draft_store_self_test(void)
         (void)draft_store_clear(kTestId);
         return false;
     }
-
-    /* Cleanup so production doesn't carry the test slot. */
     (void)draft_store_clear(kTestId);
     TRACE("drft", "test_ok", "len=%u", (unsigned)pat_len);
     return true;
