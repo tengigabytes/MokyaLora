@@ -31,7 +31,7 @@
 | C-4 我的節點 | `my_node_view` | ✅ | commit `d9ebf55` |
 | D-1 主地圖 | `map_view` | ✅ | 向量 PPI 雷達盤：3 距離環 + 本機 `+` + N 標 + peer 點（短名稱 + SNR 著色）+ 航點 W: 標（綠色）；LEFT/RIGHT 7 檔尺度（100 m..100 km），SET 切 layer mask（nodes / all / me-only / waypoints），UP/DOWN 走訪 cursor（peers 或 waypoints 視 layer 而定），OK 鎖定 peer 進 D-6 / 開航點進 D-4，TAB 進 D-3（D-series Phase 5 commit `ce3db7f`） |
 | D-2 圖層切換 | `map_view` 子模式 | ✅ | D-1 內 SET 鍵 4 步循環 nodes / all / me-only / waypoints；waypoints layer 把快取 8 個航點投影到雷達盤（Phase 5）；航跡 (track) 仍 v2 |
-| D-3 航點清單 | `waypoints_view` | ✅ | 8-slot 列表，行格式 ">name lat,lon @sender_short / *me"，header "Waypts N/8 (v1 重啟後重置)"；UP/DOWN 走訪、OK→D-4、BACK→D-1、LEFT→D-5；從 D-1 TAB 進入；Phase 2 (commit `7cdf6d9`) |
+| D-3 航點清單 | `waypoints_view` | ✅ | 8-slot 列表，行格式 ">name lat,lon @sender_short / *me"，header "Waypts N/8"；UP/DOWN 走訪、OK→D-4、BACK→D-1、LEFT→D-5；從 D-1 TAB 進入。**跨 reset persist** via waypoint_persist (Phase 4)。原 v1 commit `7cdf6d9`，persistence Phase 4 |
 | D-4 航點詳情 | `waypoint_detail_view` | ✅ | 完整 8 個 Waypoint proto 欄位：lat/lon 7 位小數、expire (epoch / "never")、locked_to 解析成 @short_name、icon 顯示為 U+XXXX 編碼點（Unifont sm 16 無 emoji glyph）、source 區分 *me / @short、description；外部 API `waypoint_detail_view_set_target(id)` 支援 D-2 layer 入口；Phase 3 (commit `12528d9`) |
 | D-5 新增航點 | `waypoint_edit_view` | ✅ 部分 | v1 走 GNSS-only：Name（OK 開 IME，max 30 chars per proto cap）+ Save (use GNSS now)；無 fix 時 Save 列灰色 + toast「需 GNSS 3D fix」；活動 status block 顯示 fix quality / sat / lat / lon / HDOP；id = lower 32 bits of `time_us_64()`，is_local=true、locked_to=self；手動 lat/lon 編輯介面仍 v2；Phase 4 (commit `99a6998`) |
 | D-6 航點導航 | `map_nav_view` | ✅ 部分 | 鎖定 peer 後顯示大方位字（8 方位 + 度數）+ 距離 + ETA + 速度；C-3 OP_NAVIGATE 入口；BACK 回 D-1（dev-Sblzm） |

@@ -87,6 +87,7 @@
 #include "dm_store.h"
 #include "dm_persist.h"
 #include "c1_storage.h"
+#include "waypoint_persist.h"
 #include "settings_client.h"
 #include "watchdog_task.h"
 #include "history.h"
@@ -293,6 +294,10 @@ static void bridge_task(void *pv)
      * c1_storage failed to mount (load returns 0, timer skipped). */
     (void)dm_persist_load_all();
     dm_persist_init();
+    /* Phase 4 — waypoint persistence. Same shape, single /.waypoints
+     * file. Independent 30 s timer. */
+    (void)waypoint_persist_load_all();
+    waypoint_persist_init();
 
     for (;;) {
         /* If Core 0 announced a reboot, stop all ring/CDC processing and
@@ -348,6 +353,18 @@ static void bridge_task(void *pv)
             if (req != 0u && req != g_dm_persist_flush_done) {
                 (void)dm_persist_flush_now();
                 g_dm_persist_flush_done = req;
+                did_work = true;
+            }
+        }
+
+        /* ── Waypoint persist flush trigger (SWD-driven, test only) ── */
+        {
+            extern volatile uint32_t g_waypoint_persist_flush_request;
+            extern volatile uint32_t g_waypoint_persist_flush_done;
+            uint32_t req = g_waypoint_persist_flush_request;
+            if (req != 0u && req != g_waypoint_persist_flush_done) {
+                (void)waypoint_persist_flush_now();
+                g_waypoint_persist_flush_done = req;
                 did_work = true;
             }
         }

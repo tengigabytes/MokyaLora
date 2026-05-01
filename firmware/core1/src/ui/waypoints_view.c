@@ -8,8 +8,8 @@
  *   - source = "@<sender_short>" for received, "*me" for self-created
  *   - lat/lon shown to 4 decimals (≈ 11 m precision; full e7 is in D-4)
  *
- * Header line carries the count + "v1 重啟後重置" reminder so the user
- * knows persistence is deferred (LittleFS planned for v2).
+ * Persisted across reboots since Phase 4 (waypoint_persist on c1_storage
+ * LittleFS). Header line shows count only (no v1 caveat any more).
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -115,7 +115,7 @@ static void render(void)
     uint32_t total = phoneapi_waypoints_count();
 
     char hdr[64];
-    snprintf(hdr, sizeof(hdr), "Waypts %lu/%u  (v1 重啟後重置)",
+    snprintf(hdr, sizeof(hdr), "Waypts %lu/%u",
              (unsigned long)total, (unsigned)PHONEAPI_WAYPOINTS_CAP);
     lv_label_set_text(s.header, hdr);
 

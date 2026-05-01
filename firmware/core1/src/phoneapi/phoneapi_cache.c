@@ -385,6 +385,11 @@ void phoneapi_cache_set_last_neighbors(uint32_t node_num,
 
 // ── D-series waypoint cache (D-3/4/5) ───────────────────────────────
 
+/* Phase 4 — single dirty flag for waypoint persistence. Set by every
+ * upsert / remove that actually changes table state; drained by
+ * waypoint_persist via phoneapi_waypoints_pop_dirty. */
+static volatile bool s_waypoints_dirty;
+
 void phoneapi_waypoints_upsert(const phoneapi_waypoint_t *w)
 {
     if (w == NULL || w->id == 0u) return;
@@ -416,6 +421,7 @@ void phoneapi_waypoints_upsert(const phoneapi_waypoint_t *w)
     s_cache.waypoints[slot]        = *w;
     s_cache.waypoints[slot].in_use = true;
     s_cache.change_seq++;
+    s_waypoints_dirty = true;
     cache_unlock();
 }
 
@@ -427,10 +433,20 @@ void phoneapi_waypoints_remove(uint32_t id)
         if (s_cache.waypoints[i].in_use && s_cache.waypoints[i].id == id) {
             s_cache.waypoints[i].in_use = false;
             s_cache.change_seq++;
+            s_waypoints_dirty = true;
             break;
         }
     }
     cache_unlock();
+}
+
+bool phoneapi_waypoints_pop_dirty(void)
+{
+    cache_lock();
+    bool d = s_waypoints_dirty;
+    s_waypoints_dirty = false;
+    cache_unlock();
+    return d;
 }
 
 uint32_t phoneapi_waypoints_count(void)

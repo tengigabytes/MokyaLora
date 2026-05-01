@@ -564,6 +564,12 @@ bool     phoneapi_waypoints_take_at(uint32_t index, phoneapi_waypoint_t *out);
 // Look up by waypoint id. Returns false if not present.
 bool     phoneapi_waypoints_get_by_id(uint32_t id, phoneapi_waypoint_t *out);
 
+// Phase 4 persistence bridge. waypoint_persist polls this from its
+// flush daemon; on true it dumps the entire 8-slot table to /.waypoints.
+// Single bit (not per-slot) since the on-disk format is one file with
+// the full array — no benefit from per-slot dirty granularity.
+bool     phoneapi_waypoints_pop_dirty(void);
+
 // Inbound text-message ring (FIFO of last PHONEAPI_MSG_RING_CAP).
 // Producer = phoneapi_session decoder; consumer = messages_view.
 void     phoneapi_msgs_publish(uint32_t from_node_id,
