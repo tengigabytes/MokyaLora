@@ -146,6 +146,8 @@ set(PHONEAPI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/phoneapi)
 # Host: J-Link, OpenOCD, pyOCD and probe-rs all read the same _SEGGER_RTT
 # control block, so this stays vendor-neutral.
 set(DEBUG_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/../src/debug)
+set(STORAGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../src/storage)
+set(LFS_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/../lfs)
 set(SEGGER_DIR ${PICO_SDK_PATH}/src/rp2_common/pico_stdio_rtt/SEGGER)
 
 # ── MIE library sources (compiled directly into core1_bridge) ────────────────
@@ -273,6 +275,10 @@ add_executable(core1_bridge
     ${SETTINGS_DIR}/settings_keys.c
     ${SETTINGS_DIR}/settings_client.c
     ${PSRAM_DIR}/psram.c
+    ${STORAGE_DIR}/c1_storage.c
+    ${STORAGE_DIR}/lfs_blockdev.c
+    ${LFS_DIR}/lfs.c
+    ${LFS_DIR}/lfs_util.c
     ${IME_DIR}/mie_dict_loader.c
     ${IME_DIR}/ime_task.cpp
     ${SEGGER_DIR}/RTT/SEGGER_RTT.c
@@ -322,6 +328,11 @@ set_source_files_properties(${SEGGER_DIR}/RTT/SEGGER_RTT.c
 # memmap_core1_bridge.ld.
 target_compile_definitions(core1_bridge PRIVATE
     BUFFER_SIZE_UP=4096
+    LFS_THREADSAFE=1
+    LFS_NO_DEBUG=1
+    LFS_NO_WARN=1
+    LFS_NO_ERROR=1
+    LFS_NO_ASSERT=1
 )
 
 # Font .bin is a flashable partition, not embedded in Core 1 image.
