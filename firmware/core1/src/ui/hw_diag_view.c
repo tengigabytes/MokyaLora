@@ -106,6 +106,10 @@ static void notif_enter(lv_obj_t *root);
 static void notif_leave(void);
 static void notif_apply(const key_event_t *ev);
 static void notif_refresh(void);
+static void chg_ctrl_enter(lv_obj_t *root);
+static void chg_ctrl_leave(void);
+static void chg_ctrl_apply(const key_event_t *ev);
+static void chg_ctrl_refresh(void);
 
 /* Each page's enter() is responsible for clearing/recreating widgets
  * under content_root. The view destroys content_root on view-destroy.
@@ -140,7 +144,9 @@ static diag_page_def_t s_pages[DIAG_PAGE_COUNT] = {
                                 sensors_enter, sensors_leave, NULL, sensors_refresh },
     [DIAG_PAGE_CHARGER]     = { "充電器讀值",
                                 charger_enter, charger_leave, NULL, charger_refresh },
-    [DIAG_PAGE_CHARGE_CTRL] = { "充電控制",     NULL, NULL, NULL, NULL },
+    [DIAG_PAGE_CHARGE_CTRL] = { "充電控制",
+                                chg_ctrl_enter, chg_ctrl_leave,
+                                chg_ctrl_apply, chg_ctrl_refresh },
     [DIAG_PAGE_NOTIF]       = { "通知設定",
                                 notif_enter, notif_leave,
                                 notif_apply, notif_refresh },
@@ -423,6 +429,225 @@ static void charger_refresh(void)
              (unsigned long)b->wd_expired_count,
              (unsigned long)b->i2c_fail_count);
     lv_label_set_text(s_charger.wd_lbl, buf);
+}
+
+/* ── Page: charge control (DIAG_PAGE_CHARGE_CTRL) ─────────────────── *
+ *
+ * Four controls + live status mirror. SHIP / SHUTDOWN modes are
+ * deliberately NOT exposed — both disconnect the battery, which on a
+ * device with no VBUS attached would brick the MCU. SYSRESET is
+ * gated behind a confirm-press to avoid accidental reboots while
+ * navigating widgets.
+ *
+ * Widgets:
+ *   0  EN_CHG       toggle ON/OFF
+ *   1  HIZ          toggle ON/OFF
+ *   2  WD window    cycle OFF / 50s / 100s / 200s
+ *   3  SYSRESET     two-press confirm; first OK arms, second OK fires
+ */
+
+typedef enum {
+    CHGCTRL_W_EN_CHG = 0,
+    CHGCTRL_W_HIZ,
+    CHGCTRL_W_WD,
+    CHGCTRL_W_SYSRESET,
+    CHGCTRL_W_COUNT
+} chg_ctrl_widget_t;
+
+static struct {
+    lv_obj_t *status_lbl[3];     /* EN_CHG / HIZ / chg_stat live mirror */
+    lv_obj_t *row_lbls[CHGCTRL_W_COUNT];
+    lv_obj_t *hint_lbl;
+    chg_ctrl_widget_t cur;
+    bool      en_chg;            /* shadow — toggled by user            */
+    bool      hiz;
+    uint8_t   wd_idx;             /* 0=OFF 1=50s 2=100s 3=200s          */
+    bool      sysreset_armed;     /* 1st OK arms; 2nd OK commits         */
+    uint32_t  last_refresh_tick;
+} s_chg_ctrl __attribute__((section(".psram_bss")));
+
+static const char *wd_label(uint8_t idx)
+{
+    switch (idx) {
+        case 0: return "OFF";
+        case 1: return "50s";
+        case 2: return "100s";
+        case 3: return "200s";
+        default: return "?";
+    }
+}
+
+static bq25622_wd_window_t wd_idx_to_enum(uint8_t idx)
+{
+    switch (idx) {
+        case 0: return BQ25622_WD_OFF;
+        case 1: return BQ25622_WD_50S;
+        case 2: return BQ25622_WD_100S;
+        case 3: return BQ25622_WD_200S;
+        default: return BQ25622_WD_50S;
+    }
+}
+
+static uint8_t wd_enum_to_idx(bq25622_wd_window_t w)
+{
+    switch (w) {
+        case BQ25622_WD_OFF:  return 0;
+        case BQ25622_WD_50S:  return 1;
+        case BQ25622_WD_100S: return 2;
+        case BQ25622_WD_200S: return 3;
+        default:              return 1;
+    }
+}
+
+static void chg_ctrl_render(void)
+{
+    char buf[80];
+    /* Status mirror — 3 lines pulled from bq25622 state. */
+    const bq25622_state_t *b = bq25622_get_state();
+    if (s_chg_ctrl.status_lbl[0] != NULL) {
+        if (b == NULL || !b->online) {
+            lv_label_set_text(s_chg_ctrl.status_lbl[0], "充電器 offline");
+            lv_label_set_text(s_chg_ctrl.status_lbl[1], "");
+            lv_label_set_text(s_chg_ctrl.status_lbl[2], "");
+        } else {
+            snprintf(buf, sizeof(buf), "VBUS %u mV  VBAT %u mV",
+                     (unsigned)b->vbus_mv, (unsigned)b->vbat_mv);
+            lv_label_set_text(s_chg_ctrl.status_lbl[0], buf);
+            snprintf(buf, sizeof(buf), "CHG=%s  VBUS=%s",
+                     chg_stat_name(b->chg_stat),
+                     vbus_stat_name(b->vbus_stat));
+            lv_label_set_text(s_chg_ctrl.status_lbl[1], buf);
+            snprintf(buf, sizeof(buf),
+                     "WD %s  exp=%lu  i2c_fail=%lu",
+                     wd_label(wd_enum_to_idx(b->wd_window)),
+                     (unsigned long)b->wd_expired_count,
+                     (unsigned long)b->i2c_fail_count);
+            lv_label_set_text(s_chg_ctrl.status_lbl[2], buf);
+        }
+    }
+
+    for (int i = 0; i < CHGCTRL_W_COUNT; i++) {
+        if (s_chg_ctrl.row_lbls[i] == NULL) continue;
+        const char *focus = (i == (int)s_chg_ctrl.cur) ? "▶ " : "  ";
+        switch (i) {
+            case CHGCTRL_W_EN_CHG:
+                snprintf(buf, sizeof(buf), "%s充電開關 (EN_CHG)  : %s",
+                         focus, s_chg_ctrl.en_chg ? "ON" : "OFF");
+                break;
+            case CHGCTRL_W_HIZ:
+                snprintf(buf, sizeof(buf), "%sHIZ 模式           : %s",
+                         focus, s_chg_ctrl.hiz ? "ON" : "OFF");
+                break;
+            case CHGCTRL_W_WD:
+                snprintf(buf, sizeof(buf), "%sWD 視窗            : %s",
+                         focus, wd_label(s_chg_ctrl.wd_idx));
+                break;
+            case CHGCTRL_W_SYSRESET:
+                snprintf(buf, sizeof(buf), "%sSYSRESET (BATFET)  : %s",
+                         focus,
+                         s_chg_ctrl.sysreset_armed ? "再按 OK 確認" : "[trigger]");
+                break;
+            default: buf[0] = '\0'; break;
+        }
+        lv_label_set_text(s_chg_ctrl.row_lbls[i], buf);
+    }
+
+    if (s_chg_ctrl.hint_lbl != NULL) {
+        lv_label_set_text(s_chg_ctrl.hint_lbl,
+                          "↑/↓ 移動  OK 切換/觸發  ◀▶ 換頁");
+    }
+}
+
+static void chg_ctrl_enter(lv_obj_t *root)
+{
+    /* 3 status rows at top, 4 control rows below, hint at bottom. */
+    s_chg_ctrl.status_lbl[0] = mk_diag_label(root, 4,   0);
+    s_chg_ctrl.status_lbl[1] = mk_diag_label(root, 4,  16);
+    s_chg_ctrl.status_lbl[2] = mk_diag_label(root, 4,  32);
+    /* Gap, then 4 rows × 18 px starting at y=56. */
+    for (int i = 0; i < CHGCTRL_W_COUNT; i++) {
+        s_chg_ctrl.row_lbls[i] = mk_diag_label(root, 4, 56 + i * 18);
+    }
+    s_chg_ctrl.hint_lbl = mk_diag_label(root, 4, 56 + CHGCTRL_W_COUNT * 18 + 8);
+
+    /* Seed shadows from current charger state. */
+    const bq25622_state_t *b = bq25622_get_state();
+    s_chg_ctrl.en_chg = (b != NULL && b->chg_stat != 0u);   /* approximation */
+    s_chg_ctrl.hiz    = false;                              /* boot default  */
+    s_chg_ctrl.wd_idx = (b != NULL) ? wd_enum_to_idx(b->wd_window) : 1u;
+    s_chg_ctrl.sysreset_armed = false;
+    s_chg_ctrl.cur            = CHGCTRL_W_EN_CHG;
+    chg_ctrl_render();
+}
+
+static void chg_ctrl_leave(void)
+{
+    memset(&s_chg_ctrl, 0, sizeof(s_chg_ctrl));
+}
+
+static void chg_ctrl_apply(const key_event_t *ev)
+{
+    if (!ev->pressed) return;
+    bool changed = false;
+    switch (ev->keycode) {
+        case MOKYA_KEY_UP:
+            if (s_chg_ctrl.cur > 0) {
+                s_chg_ctrl.cur--;
+                /* Disarm SYSRESET on focus change so an OK on a
+                 * different widget can't confirm it accidentally. */
+                s_chg_ctrl.sysreset_armed = false;
+                changed = true;
+            }
+            break;
+        case MOKYA_KEY_DOWN:
+            if ((int)s_chg_ctrl.cur + 1 < CHGCTRL_W_COUNT) {
+                s_chg_ctrl.cur++;
+                s_chg_ctrl.sysreset_armed = false;
+                changed = true;
+            }
+            break;
+        case MOKYA_KEY_OK:
+            switch (s_chg_ctrl.cur) {
+                case CHGCTRL_W_EN_CHG:
+                    s_chg_ctrl.en_chg = !s_chg_ctrl.en_chg;
+                    bq25622_set_charge_enabled(s_chg_ctrl.en_chg);
+                    changed = true;
+                    break;
+                case CHGCTRL_W_HIZ:
+                    s_chg_ctrl.hiz = !s_chg_ctrl.hiz;
+                    bq25622_set_hiz(s_chg_ctrl.hiz);
+                    changed = true;
+                    break;
+                case CHGCTRL_W_WD:
+                    s_chg_ctrl.wd_idx = (uint8_t)((s_chg_ctrl.wd_idx + 1u) % 4u);
+                    bq25622_set_watchdog(wd_idx_to_enum(s_chg_ctrl.wd_idx));
+                    changed = true;
+                    break;
+                case CHGCTRL_W_SYSRESET:
+                    if (!s_chg_ctrl.sysreset_armed) {
+                        s_chg_ctrl.sysreset_armed = true;
+                    } else {
+                        bq25622_set_batfet_mode(BQ25622_BATFET_SYSRESET);
+                        s_chg_ctrl.sysreset_armed = false;
+                    }
+                    changed = true;
+                    break;
+                default: break;
+            }
+            break;
+        default: break;
+    }
+    if (changed) chg_ctrl_render();
+}
+
+static void chg_ctrl_refresh(void)
+{
+    /* Throttle the live status mirror to 2 Hz; control rows are
+     * static between OK presses so re-rendering them is cheap. */
+    uint32_t tick = lv_tick_get();
+    if ((tick - s_chg_ctrl.last_refresh_tick) < 500u) return;
+    s_chg_ctrl.last_refresh_tick = tick;
+    chg_ctrl_render();
 }
 
 /* ── Page: sensors (DIAG_PAGE_SENSORS) ────────────────────────────── *
