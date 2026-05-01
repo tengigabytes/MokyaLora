@@ -407,6 +407,14 @@ static void bridge_task(void *pv)
             }
         }
 
+        /* ── T1 validation SWD triggers (DM inject / index, history
+         * indexed read / ring-fill, file-corrupt). Each handler is a
+         * cheap volatile-uint32 compare; only does work if the request
+         * counter changed since the last loop iter. */
+        dm_persist_poll_swd_triggers();
+        metrics_history_poll_swd_triggers();
+        c1_storage_poll_swd_triggers();
+
         /* ── c0_to_c1 DATA ring → CDC IN (high priority) ───────────── */
         IpcMsgHeader hdr;
         if (ipc_ring_pop(&g_ipc_shared.c0_to_c1_ctrl,

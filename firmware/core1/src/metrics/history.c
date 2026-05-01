@@ -45,6 +45,28 @@ volatile int16_t  g_history_last_soc_pct    __attribute__((used)) = METRICS_HIST
 volatile int16_t  g_history_last_snr_x10    __attribute__((used)) = METRICS_HISTORY_NONE;
 volatile int16_t  g_history_last_air_tx_x10 __attribute__((used)) = METRICS_HISTORY_NONE;
 
+/* T1.A3 — indexed reader. Test scripts SWD-write idx_from_newest into
+ * g_history_query_idx, bump g_history_query_request. bridge_task polls
+ * and calls metrics_history_get → fills g_history_query_result, sets
+ * ok=1 on success / 0 on out-of-range. */
+volatile uint16_t g_history_query_idx      __attribute__((used)) = 0u;
+volatile uint32_t g_history_query_request  __attribute__((used)) = 0u;
+volatile uint32_t g_history_query_done     __attribute__((used)) = 0u;
+volatile uint8_t  g_history_query_ok       __attribute__((used)) = 0u;
+volatile metrics_sample_t g_history_query_result __attribute__((used));
+
+/* T1.B2 — ring-fill trigger. Test scripts SWD-bump
+ * g_history_fill_ring_request to synthesise 256 deterministic samples
+ * directly into the ring (bypassing the 30 s timer). Encoding: low 16
+ * bits = a starting integer seed, high 16 bits = optional count
+ * override (0 = full LEN). Pattern (per slot i, seed s):
+ *   soc_pct        = (s + i) % 101
+ *   last_rx_snr_x10 = ((s + i) * 7) % 800 - 400   (sentinel-safe)
+ *   air_tx_pct_x10 = (s + i) * 3 % 1000
+ * Test verifies post-reset that slot N's fields match the formula. */
+volatile uint32_t g_history_fill_ring_request __attribute__((used)) = 0u;
+volatile uint32_t g_history_fill_ring_done    __attribute__((used)) = 0u;
+
 static TimerHandle_t s_timer;
 static bool          s_init_done;
 
@@ -214,4 +236,67 @@ bool metrics_history_pop_dirty(void)
     bool d = s_dirty;
     s_dirty = false;
     return d;
+}
+
+/* ── T1 SWD-trigger handlers (called from bridge_task) ─────────────── */
+
+/* T1.B2 fill formula — kept outside the ring-fill function so test
+ * scripts can replicate it identically in Python. Static inline +
+ * inline copy in the test script keeps both sides in sync. */
+static void synth_sample(uint32_t seed_plus_i, metrics_sample_t *out)
+{
+    int v_soc = (int)(seed_plus_i % 101u);
+    int v_snr = (int)((seed_plus_i * 7u) % 800u) - 400;
+    int v_air = (int)((seed_plus_i * 3u) % 1000u);
+    out->soc_pct         = (int16_t)v_soc;
+    out->last_rx_snr_x10 = (int16_t)v_snr;
+    out->air_tx_pct_x10  = (int16_t)v_air;
+}
+
+void metrics_history_poll_swd_triggers(void)
+{
+    /* T1.A3 indexed read. */
+    {
+        uint32_t req = g_history_query_request;
+        if (req != 0u && req != g_history_query_done) {
+            metrics_sample_t s;
+            bool ok = metrics_history_get(g_history_query_idx, &s);
+            if (ok) {
+                g_history_query_result.soc_pct         = s.soc_pct;
+                g_history_query_result.last_rx_snr_x10 = s.last_rx_snr_x10;
+                g_history_query_result.air_tx_pct_x10  = s.air_tx_pct_x10;
+            }
+            g_history_query_ok   = ok ? 1u : 0u;
+            g_history_query_done = req;
+        }
+    }
+    /* T1.B2 ring-fill. Synthesise the full ring and mark dirty so the
+     * next flush_now writes it. */
+    {
+        uint32_t req = g_history_fill_ring_request;
+        if (req != 0u && req != g_history_fill_ring_done) {
+            uint32_t seed     = req & 0xFFFFu;
+            uint32_t count_in = (req >> 16) & 0xFFFFu;
+            uint32_t n = (count_in == 0u || count_in > METRICS_HISTORY_LEN)
+                            ? METRICS_HISTORY_LEN : count_in;
+            for (uint32_t i = 0; i < n; i++) {
+                metrics_sample_t s;
+                synth_sample(seed + i, &s);
+                s_ring[i] = s;
+            }
+            s_head  = (uint16_t)(n % METRICS_HISTORY_LEN);
+            s_count = (uint16_t)n;
+            s_change_seq++;
+            s_dirty = true;
+            g_history_count = s_count;
+            if (s_count > 0u) {
+                uint16_t newest = (uint16_t)((s_head + METRICS_HISTORY_LEN - 1u)
+                                             % METRICS_HISTORY_LEN);
+                g_history_last_soc_pct    = s_ring[newest].soc_pct;
+                g_history_last_snr_x10    = s_ring[newest].last_rx_snr_x10;
+                g_history_last_air_tx_x10 = s_ring[newest].air_tx_pct_x10;
+            }
+            g_history_fill_ring_done = req;
+        }
+    }
 }

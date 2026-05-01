@@ -36,12 +36,28 @@ volatile uint32_t g_waypoint_persist_flush_done    __attribute__((used)) = 0u;
 
 /* SWD-coherent snapshot of the first waypoint restored by
  * load_all (ring slot 0). Used by tests for byte-perfect verification.
- * .bss because phoneapi cache lives in PSRAM. */
+ * .bss because phoneapi cache lives in PSRAM. T1.A1 extends to all 11
+ * phoneapi_waypoint_t fields. */
 volatile uint32_t g_waypoint_persist_last_loaded_id     __attribute__((used)) = 0u;
 volatile int32_t  g_waypoint_persist_last_loaded_lat_e7 __attribute__((used)) = 0;
 volatile int32_t  g_waypoint_persist_last_loaded_lon_e7 __attribute__((used)) = 0;
 volatile uint8_t  g_waypoint_persist_last_loaded_name[PHONEAPI_WAYPOINT_NAME_MAX]
                                                         __attribute__((used));
+/* T1.A1 — remaining 7 fields. Description is trimmed to a 32 B prefix
+ * to keep the diag block under the 2 KB MSP guard; tests use short
+ * descriptions (≤ 31 chars + NUL) which fit fully. Round-tripping a
+ * full 100-char description is exercised at the file level via the
+ * c1_storage corrupt-trigger test path (file content compared
+ * post-reset), not via this diag mirror. */
+#define WAYPOINT_PERSIST_DIAG_DESC_MAX 32u
+volatile uint32_t g_waypoint_persist_last_loaded_expire    __attribute__((used)) = 0u;
+volatile uint32_t g_waypoint_persist_last_loaded_locked_to __attribute__((used)) = 0u;
+volatile uint32_t g_waypoint_persist_last_loaded_icon      __attribute__((used)) = 0u;
+volatile uint8_t  g_waypoint_persist_last_loaded_desc[WAYPOINT_PERSIST_DIAG_DESC_MAX]
+                                                            __attribute__((used));
+volatile uint32_t g_waypoint_persist_last_loaded_sender_id __attribute__((used)) = 0u;
+volatile uint32_t g_waypoint_persist_last_loaded_epoch_seen __attribute__((used)) = 0u;
+volatile uint8_t  g_waypoint_persist_last_loaded_is_local  __attribute__((used)) = 0u;
 
 /* ── Save / load ───────────────────────────────────────────────────── */
 
@@ -124,12 +140,22 @@ uint32_t waypoint_persist_load_all(void)
         if (!e->in_use || e->id == 0u) continue;
         phoneapi_waypoints_upsert(e);
         if (loaded == 0u) {
-            /* Capture first-loaded waypoint into SWD-coherent diag. */
-            g_waypoint_persist_last_loaded_id     = e->id;
-            g_waypoint_persist_last_loaded_lat_e7 = e->lat_e7;
-            g_waypoint_persist_last_loaded_lon_e7 = e->lon_e7;
+            /* Capture first-loaded waypoint into SWD-coherent diag —
+             * all 11 phoneapi_waypoint_t fields. */
+            g_waypoint_persist_last_loaded_id          = e->id;
+            g_waypoint_persist_last_loaded_lat_e7      = e->lat_e7;
+            g_waypoint_persist_last_loaded_lon_e7      = e->lon_e7;
+            g_waypoint_persist_last_loaded_expire      = e->expire;
+            g_waypoint_persist_last_loaded_locked_to   = e->locked_to;
+            g_waypoint_persist_last_loaded_icon        = e->icon;
+            g_waypoint_persist_last_loaded_sender_id   = e->sender_node_id;
+            g_waypoint_persist_last_loaded_epoch_seen  = e->epoch_seen;
+            g_waypoint_persist_last_loaded_is_local    = e->is_local ? 1u : 0u;
             for (size_t k = 0; k < PHONEAPI_WAYPOINT_NAME_MAX; k++) {
                 g_waypoint_persist_last_loaded_name[k] = (uint8_t)e->name[k];
+            }
+            for (size_t k = 0; k < WAYPOINT_PERSIST_DIAG_DESC_MAX; k++) {
+                g_waypoint_persist_last_loaded_desc[k] = (uint8_t)e->description[k];
             }
         }
         loaded++;

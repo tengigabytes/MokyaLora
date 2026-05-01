@@ -88,6 +88,27 @@ volatile uint32_t g_c1_storage_reset_request __attribute__((used)) = 0u;
 volatile uint32_t g_c1_storage_format_request __attribute__((used)) = 0u;
 volatile uint32_t g_c1_storage_format_done    __attribute__((used)) = 0u;
 
+/* T1.C1/C2 — file corruption SWD trigger. Test scripts SWD-write
+ *   g_c1_storage_corrupt_path[16]   ← null-terminated LFS path
+ *   g_c1_storage_corrupt_offset      ← byte offset within the file
+ *   g_c1_storage_corrupt_value       ← byte value to write
+ * then bump g_c1_storage_corrupt_request. Bridge_task polls and:
+ *   1. opens path RDWR
+ *   2. seeks to offset
+ *   3. writes the value byte
+ *   4. closes
+ * Used to corrupt magic/version/payload bytes for graceful-failure
+ * tests. ok=1 on success, 0 on any LFS error. */
+#define C1_STORAGE_CORRUPT_PATH_MAX 32u
+volatile uint8_t  g_c1_storage_corrupt_path[C1_STORAGE_CORRUPT_PATH_MAX]
+                                                __attribute__((used));
+volatile uint32_t g_c1_storage_corrupt_offset   __attribute__((used)) = 0u;
+volatile uint8_t  g_c1_storage_corrupt_value    __attribute__((used)) = 0u;
+volatile uint32_t g_c1_storage_corrupt_request  __attribute__((used)) = 0u;
+volatile uint32_t g_c1_storage_corrupt_done     __attribute__((used)) = 0u;
+volatile uint8_t  g_c1_storage_corrupt_ok       __attribute__((used)) = 0u;
+volatile int32_t  g_c1_storage_corrupt_last_err __attribute__((used)) = 0;
+
 /* ── Helpers ───────────────────────────────────────────────────────── */
 
 static int write_schema_version(void)
@@ -343,6 +364,53 @@ bool c1_storage_close(c1_storage_file_t *f)
         s_file_in_use = false;
     }
     return ok;
+}
+
+/* T1.C1/C2 — file corruption helper (open RDWR, seek, write 1 byte,
+ * close). Used only by the SWD-driven corrupt trigger below. */
+static int corrupt_one_byte(const char *path, uint32_t offset, uint8_t value)
+{
+    if (!s_stats.mounted) return LFS_ERR_IO;
+    if (s_file_in_use)    return LFS_ERR_IO;
+    lfs_file_t f;
+    struct lfs_file_config cfg = { .buffer = NULL, .attrs = NULL, .attr_count = 0 };
+    int rc = lfs_file_opencfg(&s_lfs, &f, path, LFS_O_RDWR, &cfg);
+    if (rc < 0) return rc;
+    s_file_in_use = true;
+    int sk = lfs_file_seek(&s_lfs, &f, (lfs_soff_t)offset, LFS_SEEK_SET);
+    int wr = -1;
+    if (sk >= 0) {
+        uint8_t v = value;
+        wr = lfs_file_write(&s_lfs, &f, &v, 1);
+    }
+    int cl = lfs_file_close(&s_lfs, &f);
+    s_file_in_use = false;
+    if (sk < 0) return sk;
+    if (wr != 1) return (wr < 0) ? wr : LFS_ERR_IO;
+    return (cl < 0) ? cl : LFS_ERR_OK;
+}
+
+void c1_storage_poll_swd_triggers(void)
+{
+    uint32_t req = g_c1_storage_corrupt_request;
+    if (req == 0u || req == g_c1_storage_corrupt_done) return;
+    /* Snapshot path into a local NUL-terminated buffer. */
+    char path[C1_STORAGE_CORRUPT_PATH_MAX];
+    size_t i;
+    for (i = 0; i < C1_STORAGE_CORRUPT_PATH_MAX - 1u; i++) {
+        char c = (char)g_c1_storage_corrupt_path[i];
+        path[i] = c;
+        if (c == '\0') break;
+    }
+    path[C1_STORAGE_CORRUPT_PATH_MAX - 1u] = '\0';
+    int rc = corrupt_one_byte(path,
+                              g_c1_storage_corrupt_offset,
+                              g_c1_storage_corrupt_value);
+    g_c1_storage_corrupt_ok       = (rc == LFS_ERR_OK) ? 1u : 0u;
+    g_c1_storage_corrupt_last_err = rc;
+    g_c1_storage_corrupt_done     = req;
+    TRACE("c1stor", "corrupt", "path=%s off=%u rc=%d",
+          path, (unsigned)g_c1_storage_corrupt_offset, rc);
 }
 
 /* ── Self-test ─────────────────────────────────────────────────────── *

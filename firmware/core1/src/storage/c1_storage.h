@@ -121,6 +121,10 @@ int  c1_storage_write(c1_storage_file_t *f, const void *buf, size_t size);
  * even on error (so the next open() can proceed). */
 bool c1_storage_close(c1_storage_file_t *f);
 
+/* T1.C1/C2 — drain SWD-driven test triggers (file-corruption injection).
+ * Cheap; bridge_task calls once per loop iter. */
+void c1_storage_poll_swd_triggers(void);
+
 #ifdef __cplusplus
 }
 #endif

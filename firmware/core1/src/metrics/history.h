@@ -69,3 +69,7 @@ void metrics_history_restore(const metrics_sample_t *buf,
  * call). Single-bit, since the file format is the whole ring — no
  * benefit from per-slot tracking. */
 bool     metrics_history_pop_dirty(void);
+
+/* T1 — drain SWD-driven test triggers (indexed read, ring-fill).
+ * Cheap; bridge_task calls once per loop iter. */
+void     metrics_history_poll_swd_triggers(void);

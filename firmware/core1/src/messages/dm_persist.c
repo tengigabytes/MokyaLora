@@ -34,19 +34,70 @@ volatile uint32_t g_dm_persist_orphans_unlinked __attribute__((used)) = 0u;
 volatile uint32_t g_dm_persist_flush_request __attribute__((used)) = 0u;
 volatile uint32_t g_dm_persist_flush_done    __attribute__((used)) = 0u;
 
+/* Shared text-buffer cap for load-time diag mirror, outbound-DM
+ * injection, and indexed-reader output (all share g_dm_persist_last_*
+ * BSS buffers — see comments on each trigger below). Matches
+ * dm_msg_t.text[200]. */
+#define DM_PERSIST_DIAG_TEXT_MAX  200u
+
+/* T1.A2 — outbound DM injection trigger.
+ * Test workflow: SWD-write text bytes INTO g_dm_persist_last_text
+ * (which is .bss-zeroed each cold boot), set the trigger fields below,
+ * then bump g_dm_inject_outbound_request. Bridge_task reads the text
+ * out of g_dm_persist_last_text and calls dm_store_ingest_outbound.
+ * Reusing the diag buffer saves 200 B of .bss; safe because outbound
+ * injection happens BEFORE the post-reset load_one_cb diag write
+ * (resets clear .bss in between). */
+volatile uint32_t g_dm_inject_outbound_peer       __attribute__((used)) = 0u;
+volatile uint32_t g_dm_inject_outbound_packet_id  __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_inject_outbound_want_ack   __attribute__((used)) = 0u;
+volatile uint16_t g_dm_inject_outbound_text_len   __attribute__((used)) = 0u;
+volatile uint32_t g_dm_inject_outbound_request    __attribute__((used)) = 0u;
+volatile uint32_t g_dm_inject_outbound_done       __attribute__((used)) = 0u;
+
+/* T1.A2 — ack-state update trigger. Drives dm_store_update_ack. */
+volatile uint32_t g_dm_inject_ack_packet_id __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_inject_ack_state     __attribute__((used)) = 0u;
+volatile uint32_t g_dm_inject_ack_request   __attribute__((used)) = 0u;
+volatile uint32_t g_dm_inject_ack_done      __attribute__((used)) = 0u;
+
+/* T1.B3 — DM indexed reader. Test scripts SWD-write
+ * g_dm_query_peer_id + g_dm_query_idx, then bump g_dm_query_request.
+ * Bridge_task polls and writes the queried dm_msg_t fields into the
+ * SAME g_dm_persist_last_* globals used by the load-time diag mirror
+ * (saves 232 B; safe because the test serializes "load → query → query
+ * → query" — only one read is "live" at a time). ok=1 on success. */
+volatile uint32_t g_dm_query_peer_id  __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_query_idx      __attribute__((used)) = 0u;
+volatile uint32_t g_dm_query_request  __attribute__((used)) = 0u;
+volatile uint32_t g_dm_query_done     __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_query_ok       __attribute__((used)) = 0u;
+
 /* Byte-coherent SWD diag of the last successfully-loaded peer's
  * OLDEST message (i.e. ring index 0).  Lives in regular .bss because
  * peer_slot_t storage is in PSRAM which isn't SWD-coherent without
  * explicit cache flush.  Captured by load_one_cb after each
  * dm_store_restore_peer succeeds — the test script reads these to
- * verify byte-perfect round-trip. */
-#define DM_PERSIST_DIAG_TEXT_MAX  200u
+ * verify byte-perfect round-trip. T1.A2 extends to all dm_msg_t fields. */
 volatile uint32_t g_dm_persist_last_peer       __attribute__((used)) = 0u;
 volatile uint8_t  g_dm_persist_last_count      __attribute__((used)) = 0u;
 volatile uint8_t  g_dm_persist_last_outbound   __attribute__((used)) = 0u;
 volatile uint16_t g_dm_persist_last_text_len   __attribute__((used)) = 0u;
 volatile uint8_t  g_dm_persist_last_text[DM_PERSIST_DIAG_TEXT_MAX]
                                                 __attribute__((used));
+/* T1.A2 — full dm_msg_t fields for the captured oldest message. */
+volatile uint32_t g_dm_persist_last_seq        __attribute__((used)) = 0u;
+volatile uint32_t g_dm_persist_last_epoch      __attribute__((used)) = 0u;
+volatile uint32_t g_dm_persist_last_packet_id  __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_persist_last_ack_state  __attribute__((used)) = 0u;
+volatile uint32_t g_dm_persist_last_ack_epoch  __attribute__((used)) = 0u;
+volatile int16_t  g_dm_persist_last_rx_snr_x4  __attribute__((used)) = 0;
+volatile int16_t  g_dm_persist_last_rx_rssi    __attribute__((used)) = 0;
+volatile uint8_t  g_dm_persist_last_hop_limit  __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_persist_last_hop_start  __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_persist_last_want_ack   __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_persist_last_unread     __attribute__((used)) = 0u;
+volatile uint32_t g_dm_persist_last_activity_ms __attribute__((used)) = 0u;
 
 /* Single shared serialisation buffer (PSRAM) — size matches the on-disk
  * record. Only one save_peer runs at a time (timer task is single
@@ -169,7 +220,20 @@ static bool load_one_cb(const char *name, uint32_t size, void *vctx)
         g_dm_persist_last_err = (rc < 0) ? rc : LFS_ERR_CORRUPT;
         return true;
     }
-    if (dm_store_restore_peer(&s_record)) {
+    if (!dm_store_restore_peer(&s_record)) {
+        /* Magic/version mismatch or peer_id==0 — record as a corruption
+         * failure so tests (and field debugging) can detect that the
+         * on-disk file was rejected. The opposite-side rejection path
+         * (s_record.magic check below) is dead code now that we surface
+         * the same condition here, but kept for paranoia. */
+        g_dm_persist_failures++;
+        g_dm_persist_last_err = LFS_ERR_CORRUPT;
+        TRACE("dm_p", "restore_reject",
+              "name=%s magic=%#lx ver=%lu peer=%lu",
+              name, (unsigned long)s_record.magic,
+              (unsigned long)s_record.version,
+              (unsigned long)s_record.peer_node_id);
+    } else {
         ctx->loaded++;
         g_dm_persist_loads++;
         /* Capture the oldest message into the SWD-coherent diag.
@@ -183,13 +247,26 @@ static bool load_one_cb(const char *name, uint32_t size, void *vctx)
             uint16_t L = m->text_len > DM_PERSIST_DIAG_TEXT_MAX
                             ? (uint16_t)DM_PERSIST_DIAG_TEXT_MAX
                             : m->text_len;
-            g_dm_persist_last_peer     = s_record.peer_node_id;
-            g_dm_persist_last_count    = s_record.count;
-            g_dm_persist_last_outbound = m->outbound ? 1u : 0u;
-            g_dm_persist_last_text_len = L;
+            g_dm_persist_last_peer        = s_record.peer_node_id;
+            g_dm_persist_last_count       = s_record.count;
+            g_dm_persist_last_outbound    = m->outbound ? 1u : 0u;
+            g_dm_persist_last_text_len    = L;
             for (uint16_t i = 0; i < L; i++) {
                 g_dm_persist_last_text[i] = (uint8_t)m->text[i];
             }
+            /* T1.A2: full field set. */
+            g_dm_persist_last_seq         = m->seq;
+            g_dm_persist_last_epoch       = m->epoch;
+            g_dm_persist_last_packet_id   = m->packet_id;
+            g_dm_persist_last_ack_state   = m->ack_state;
+            g_dm_persist_last_ack_epoch   = m->ack_epoch;
+            g_dm_persist_last_rx_snr_x4   = m->rx_snr_x4;
+            g_dm_persist_last_rx_rssi     = m->rx_rssi;
+            g_dm_persist_last_hop_limit   = m->hop_limit;
+            g_dm_persist_last_hop_start   = m->hop_start;
+            g_dm_persist_last_want_ack    = m->want_ack;
+            g_dm_persist_last_unread      = s_record.unread;
+            g_dm_persist_last_activity_ms = s_record.last_activity_ms;
         }
     }
     return true;
@@ -236,6 +313,75 @@ uint32_t dm_persist_load_all(void)
     TRACE("dm_p", "load_all", "loaded=%u orphans_unlinked=%u",
           (unsigned)ctx.loaded, (unsigned)cctx.unlinked);
     return ctx.loaded;
+}
+
+/* ── T1 SWD-trigger poll (called from bridge_task) ────────────────── */
+
+void dm_persist_poll_swd_triggers(void)
+{
+    /* Outbound DM injection — text comes from g_dm_persist_last_text. */
+    {
+        uint32_t req = g_dm_inject_outbound_request;
+        if (req != 0u && req != g_dm_inject_outbound_done) {
+            uint16_t len = g_dm_inject_outbound_text_len;
+            if (len > DM_PERSIST_DIAG_TEXT_MAX) len = DM_PERSIST_DIAG_TEXT_MAX;
+            /* Snapshot the text out of the shared diag buffer before
+             * dm_store_ingest_outbound runs (which holds the dm_store
+             * mutex; cheap to copy locally first). */
+            uint8_t scratch[DM_PERSIST_DIAG_TEXT_MAX];
+            for (uint16_t i = 0; i < len; i++) {
+                scratch[i] = g_dm_persist_last_text[i];
+            }
+            dm_store_ingest_outbound(g_dm_inject_outbound_peer,
+                                     g_dm_inject_outbound_packet_id,
+                                     g_dm_inject_outbound_want_ack ? true : false,
+                                     scratch, len);
+            g_dm_inject_outbound_done = req;
+        }
+    }
+    /* Ack-state update. */
+    {
+        uint32_t req = g_dm_inject_ack_request;
+        if (req != 0u && req != g_dm_inject_ack_done) {
+            dm_store_update_ack(g_dm_inject_ack_packet_id,
+                                (dm_ack_state_t)g_dm_inject_ack_state);
+            g_dm_inject_ack_done = req;
+        }
+    }
+    /* DM indexed reader — fills the same diag globals the load path
+     * uses, so the test reads via the existing read_diag() helper. */
+    {
+        uint32_t req = g_dm_query_request;
+        if (req != 0u && req != g_dm_query_done) {
+            dm_msg_t m;
+            bool ok = dm_store_get_msg(g_dm_query_peer_id,
+                                       g_dm_query_idx, &m);
+            if (ok) {
+                uint16_t L = m.text_len > DM_PERSIST_DIAG_TEXT_MAX
+                                 ? (uint16_t)DM_PERSIST_DIAG_TEXT_MAX
+                                 : m.text_len;
+                g_dm_persist_last_peer        = g_dm_query_peer_id;
+                g_dm_persist_last_count       = g_dm_query_idx;   /* idx echo */
+                g_dm_persist_last_outbound    = m.outbound ? 1u : 0u;
+                g_dm_persist_last_text_len    = L;
+                for (uint16_t i = 0; i < L; i++) {
+                    g_dm_persist_last_text[i] = (uint8_t)m.text[i];
+                }
+                g_dm_persist_last_seq         = m.seq;
+                g_dm_persist_last_epoch       = m.epoch;
+                g_dm_persist_last_packet_id   = m.packet_id;
+                g_dm_persist_last_ack_state   = m.ack_state;
+                g_dm_persist_last_ack_epoch   = m.ack_epoch;
+                g_dm_persist_last_rx_snr_x4   = m.rx_snr_x4;
+                g_dm_persist_last_rx_rssi     = m.rx_rssi;
+                g_dm_persist_last_hop_limit   = m.hop_limit;
+                g_dm_persist_last_hop_start   = m.hop_start;
+                g_dm_persist_last_want_ack    = m.want_ack;
+            }
+            g_dm_query_ok   = ok ? 1u : 0u;
+            g_dm_query_done = req;
+        }
+    }
 }
 
 /* ── Flush timer ───────────────────────────────────────────────────── */

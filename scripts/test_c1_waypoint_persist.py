@@ -39,16 +39,21 @@ def waypoint_flush_now(swd):
     raise RuntimeError("waypoint_flush_now ack timeout")
 
 
-def build_waypoint_frame(peer_id, wp_id, lat_e7, lon_e7, name, seq):
-    """Build a cascade frame carrying a Waypoint protobuf."""
+def build_waypoint_frame(peer_id, wp_id, lat_e7, lon_e7, name, seq,
+                          expire=0, locked_to=0, icon=0x1F4CD,
+                          description="", rx_time=None):
+    """Build a cascade frame carrying a Waypoint protobuf. Defaults
+    preserve previous-call shape; new kwargs are for T1.A1 allfields."""
     wp = mesh_pb2.Waypoint()
     wp.id = wp_id
     wp.latitude_i = lat_e7
     wp.longitude_i = lon_e7
     wp.name = name
-    wp.expire = 0
-    wp.locked_to = 0
-    wp.icon = 0x1F4CD
+    wp.expire = expire
+    wp.locked_to = locked_to
+    wp.icon = icon
+    if description:
+        wp.description = description
     wp_bytes = wp.SerializeToString()
 
     mp = mesh_pb2.MeshPacket()
@@ -56,7 +61,7 @@ def build_waypoint_frame(peer_id, wp_id, lat_e7, lon_e7, name, seq):
     setattr(mp, "from", peer_id)
     mp.to = 0xFFFFFFFF
     mp.channel = 0
-    mp.rx_time = int(time.time())
+    mp.rx_time = rx_time if rx_time is not None else int(time.time())
     mp.priority = mesh_pb2.MeshPacket.Priority.DEFAULT
     mp.decoded.portnum = portnums_pb2.PortNum.WAYPOINT_APP
     mp.decoded.payload = wp_bytes
@@ -149,8 +154,94 @@ def round_test(waypoints, label):
     return fails
 
 
+def round_allfields():
+    """T1.A1 — single waypoint with distinctive values for all 11
+    phoneapi_waypoint_t fields. Verifies byte-perfect round-trip via
+    the extended SWD diag globals."""
+    print("\n=== allfields: 1 waypoint, all 11 fields verified ===")
+    SENDER = 0x538EEBE7
+    WP = dict(
+        id=0xDEAD0001,
+        lat=251234567,
+        lon=1219876543,
+        name="alpha",                  # 5 chars
+        expire=0x12345678,
+        locked_to=0xABCDEF01,
+        icon=0x0001F525,                 # 🔥
+        description="hot spring near hike",
+        rx_time=0x60000042,              # epoch_seen sentinel
+    )
+    with MokyaSwd() as swd:
+        format_fs(swd)
+        reset_and_wait(swd)
+    print("  [format+reset] clean state")
+    frame = build_waypoint_frame(
+        peer_id=SENDER,
+        wp_id=WP["id"], lat_e7=WP["lat"], lon_e7=WP["lon"],
+        name=WP["name"], seq=0,
+        expire=WP["expire"], locked_to=WP["locked_to"],
+        icon=WP["icon"], description=WP["description"],
+        rx_time=WP["rx_time"])
+    inject_serial_bytes(0x40, frame)
+    time.sleep(2.0)
+
+    with MokyaSwd() as swd:
+        waypoint_flush_now(swd)
+        saves = swd.read_u32(swd.symbol("g_waypoint_persist_saves"))
+        wcount = swd.read_u32(swd.symbol("g_waypoint_persist_count"))
+    print(f"  [flushed] saves={saves} count={wcount}")
+    if saves == 0 or wcount != 1:
+        print(f"  [FAIL] save state wrong")
+        return 1
+
+    with MokyaSwd() as swd:
+        reset_and_wait(swd)
+    with MokyaSwd() as swd:
+        loads = swd.read_u32(swd.symbol("g_waypoint_persist_loads"))
+        # Re-read the basic fields.
+        last_id, last_lat, last_lon, last_name = read_diag(swd)
+        # Read the 7 new fields.
+        last_expire = swd.read_u32(swd.symbol("g_waypoint_persist_last_loaded_expire"))
+        last_locked = swd.read_u32(swd.symbol("g_waypoint_persist_last_loaded_locked_to"))
+        last_icon   = swd.read_u32(swd.symbol("g_waypoint_persist_last_loaded_icon"))
+        last_sender = swd.read_u32(swd.symbol("g_waypoint_persist_last_loaded_sender_id"))
+        last_epoch  = swd.read_u32(swd.symbol("g_waypoint_persist_last_loaded_epoch_seen"))
+        last_local  = struct.unpack("<B", swd.read_mem(
+            swd.symbol("g_waypoint_persist_last_loaded_is_local"), 1))[0]
+        desc_raw = bytes(swd.read_mem(
+            swd.symbol("g_waypoint_persist_last_loaded_desc"), 32))
+    nul = desc_raw.find(b"\x00")
+    last_desc = desc_raw[:nul].decode("utf-8", "replace") if nul >= 0 else desc_raw.decode("utf-8", "replace")
+
+    fails = 0
+    if loads != 1:
+        print(f"  [FAIL] loads = {loads}, expected 1")
+        return 1
+    if not expect("id",         last_id,     WP["id"]):         fails += 1
+    if not expect("lat_e7",     last_lat,    WP["lat"]):        fails += 1
+    if not expect("lon_e7",     last_lon,    WP["lon"]):        fails += 1
+    if not expect("name",       last_name,   WP["name"]):       fails += 1
+    if not expect("expire",     last_expire, WP["expire"]):     fails += 1
+    if not expect("locked_to",  last_locked, WP["locked_to"]):  fails += 1
+    if not expect("icon",       last_icon,   WP["icon"]):       fails += 1
+    if not expect("description",last_desc,   WP["description"]): fails += 1
+    if not expect("sender_id",  last_sender, SENDER):           fails += 1
+    if not expect("epoch_seen", last_epoch,  WP["rx_time"]):    fails += 1
+    if not expect("is_local",   last_local,  0):                fails += 1
+    return fails
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "single"
+    if mode == "allfields":
+        fails = round_allfields()
+        print()
+        if fails == 0:
+            print(f"==> Waypoint persist allfields PASS")
+            sys.exit(0)
+        else:
+            print(f"==> FAIL ({fails} criteria)")
+            sys.exit(1)
     if mode == "single":
         waypoints = [
             dict(id=0xCAFEBABE, lat=250521030, lon=1215740390, name="Taipei101"),

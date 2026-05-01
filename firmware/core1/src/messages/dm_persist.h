@@ -73,6 +73,11 @@ bool dm_persist_save_peer(uint32_t peer_node_id);
  * dm_store_init() on the c1_storage-mounted path. */
 uint32_t dm_persist_load_all(void);
 
+/* T1 — drain SWD-driven test triggers (outbound DM inject, ack
+ * update, indexed message read). Cheap; polls a few volatile uint32s
+ * per call. bridge_task calls this once per loop iteration. */
+void dm_persist_poll_swd_triggers(void);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
