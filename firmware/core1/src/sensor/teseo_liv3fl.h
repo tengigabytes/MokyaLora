@@ -158,6 +158,148 @@ bool                         teseo_srr(void);
  * dropout and re-init may be needed. DESTRUCTIVE — UI confirms. */
 bool                         teseo_restore_defaults(void);
 
+/* ── Constellation presets (UM2229 §12.18 CDB-200 + CDB-227) ─────── *
+ *
+ * UM2229 limits valid combinations to single-constellation modes plus
+ * three multi-coverage sets:
+ *   1. GPS only
+ *   2. GLONASS only
+ *   3. Galileo only
+ *   4. BeiDou only
+ *   5. QZSS only
+ *   6. GPS + SBAS (augmentation overlay)
+ *   7. GPS + GAL + QZSS + GLONASS  (max coverage western)
+ *   8. GPS + GAL + QZSS + BeiDou   (max coverage Asia)
+ *   9. GLONASS + BeiDou
+ *
+ * Internally: GETPAR CDB-200/227 → mask out constellation+SBAS bits
+ * (other features like Walking Mode, Stop Detection, etc. preserved)
+ * → OR in preset bits → SETPAR × 2 → SAVEPAR → SRR. ~2-3 s blocking. */
+typedef enum {
+    TESEO_CONST_GPS              = 0,
+    TESEO_CONST_GLONASS          = 1,
+    TESEO_CONST_GALILEO          = 2,
+    TESEO_CONST_BEIDOU           = 3,
+    TESEO_CONST_QZSS             = 4,
+    TESEO_CONST_GPS_SBAS         = 5,
+    TESEO_CONST_GPS_GAL_QZSS_GLN = 6,
+    TESEO_CONST_GPS_GAL_QZSS_BD  = 7,
+    TESEO_CONST_GLN_BD           = 8,
+    TESEO_CONST_PRESET_COUNT     = 9,
+} teseo_const_preset_t;
+
+bool                         teseo_set_constellation_preset(teseo_const_preset_t p);
+
+/* Read currently-configured CDB-200 + CDB-227. Useful for the UI to
+ * check "✓" mark on the active preset. Both filled on success.
+ * Blocks ~500 ms (two GETPAR round trips). */
+bool                         teseo_get_constellation_raw(uint32_t *cdb200,
+                                                          uint32_t *cdb227);
+
+/* ── Tracking / positioning thresholds (UM2229 §12.2/3/4/12) ─────── *
+ *
+ * All require either a SAVEPAR + SRR (for permanent + immediate) or
+ * just SETPAR to RAM (lost on next SRR or reboot). The driver writes
+ * to RAM only — caller pairs with teseo_savepar() + teseo_srr() to
+ * make permanent. Returns true on SETPAR ACK from device.
+ *
+ * Ranges (UM2229):
+ *   mask_angle_deg              0..30 (typical 5)
+ *   tracking_cn0_db             0..40 (typical 25)
+ *   positioning_cn0_db          0..40 (typical 30)
+ *   position_mask_angle_deg     0..30 (typical 5) — separate from mask_angle */
+bool                         teseo_set_mask_angle(uint8_t deg);                /* CDB-104 */
+bool                         teseo_set_tracking_cn0(uint8_t dB);                /* CDB-105 */
+bool                         teseo_set_positioning_cn0(uint8_t dB);             /* CDB-132 */
+bool                         teseo_set_position_mask_angle(uint8_t deg);        /* CDB-198 */
+
+/* CDB-272: position/time integrity check. bits b0=position, b1=time. */
+bool                         teseo_set_integrity_check(uint8_t bits);
+
+/* CDB-125 notch filter mode bitmap.
+ *   bit 0  = notch filter enabled (master)
+ *   bit 1  = GPS notch normal mode
+ *   bit 2  = GLN notch normal mode
+ *   bit 3  = GPS notch auto-insertion (jammer-locked)
+ *   bit 4  = GLN notch auto-insertion */
+bool                         teseo_set_notch_filter(uint8_t mode_bits);
+
+/* Generic GETPAR — read CDB-1<id> and return as uint32. Useful for
+ * UI to display current device-side values. */
+bool                         teseo_getpar_u32(uint16_t cdb_id, uint32_t *out);
+
+/* ── NMEA output customisation (UM2229 §12.7/12.30) ──────────────── *
+ *
+ * D4 — Talker ID (CDB-131): single ASCII char ('P', 'N', 'A', 'B', 'L'
+ *      etc) replacing the second char of GGA/RMC/VTG/GLL talker IDs
+ *      (e.g. "GP" → "G<char>"). Affects only the listed sentences;
+ *      GSV/GSA are governed by CDB-200 b19/b20.
+ *
+ * D5 — NMEA-on-I2C mask preset (CDB-231/232): writes the 64-bit mask
+ *      to one of 4 sensible presets:
+ *        MINIMAL  — RMC + GGA only (lowest bandwidth)
+ *        NORMAL   — RMC + GGA + GSV (current driver default)
+ *        FULL     — all standard NMEA (adds GSA/VTG/GLL/...)
+ *        DEBUG    — Full + ST proprietary (PSTMRF/NOISE/NOTCHSTATUS/CPU/GST)
+ *
+ * Each makes SAVEPAR + SRR — engine reboots ~1-2s. */
+bool                         teseo_set_talker_id(char id);
+
+typedef enum {
+    TESEO_NMEA_PRESET_MINIMAL = 0,
+    TESEO_NMEA_PRESET_NORMAL  = 1,
+    TESEO_NMEA_PRESET_FULL    = 2,
+    TESEO_NMEA_PRESET_DEBUG   = 3,
+    TESEO_NMEA_PRESET_COUNT   = 4,
+} teseo_nmea_preset_t;
+
+bool                         teseo_set_nmea_preset(teseo_nmea_preset_t p);
+
+/* ── Odometer (UM2229 §12.39 CDB-270) ────────────────────────────── *
+ *
+ * Bits 0..2: enable / NMEA enable / autostart (each 0 or 1).
+ * Bits 16..31: 16-bit alarm distance in metres (0 = no alarm).
+ * Caller bundles SAVEPAR + SRR via teseo_savepar/teseo_srr. */
+typedef struct {
+    bool     enabled_on_boot;
+    bool     nmea_enabled;
+    bool     autostart;
+    uint16_t alarm_m;
+} teseo_odometer_cfg_t;
+
+bool                         teseo_set_odometer_cfg(const teseo_odometer_cfg_t *cfg);
+bool                         teseo_get_odometer_cfg(teseo_odometer_cfg_t *cfg);
+
+/* ── Data logger (UM2229 §12.36/37 CDB-266 + CDB-267) ────────────── *
+ *
+ * CDB-266 fields control logger storage strategy / behaviour, CDB-267
+ * controls minimal distance between log records (metres).
+ * v1: only expose enabled-on-boot + minimal-distance, sufficient for
+ *     basic walk-tracking use cases. */
+typedef struct {
+    bool     enabled_on_boot;
+    uint16_t min_distance_m;
+} teseo_logger_cfg_t;
+
+bool                         teseo_set_logger_cfg(const teseo_logger_cfg_t *cfg);
+bool                         teseo_get_logger_cfg(teseo_logger_cfg_t *cfg);
+
+/* ── Geofencing (UM2229 §12.38 CDB-268 + 314..325) ───────────────── *
+ *
+ * v1 NOTE: only read access exposed for now. Editing requires a digit-
+ * input widget which the launcher doesn't currently have — defer to a
+ * future phase that adds a numeric-entry widget. */
+typedef struct {
+    bool     enabled;
+    int32_t  lat_e7;
+    int32_t  lon_e7;
+    uint32_t radius_m;
+} teseo_geofence_circle_t;
+
+bool                         teseo_get_geofence_master(uint32_t *cdb268_raw);
+bool                         teseo_get_geofence_circle(uint8_t idx,
+                                                       teseo_geofence_circle_t *out);
+
 /* Initialise driver state + send $PSTMGPSRESTART to guarantee the engine
  * is running (no-op if already running). Caller must hold no mutex. */
 bool                         teseo_init(void);

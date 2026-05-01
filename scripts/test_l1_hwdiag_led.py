@@ -88,11 +88,11 @@ def main():
         # left off. Cycle RIGHT until we reach LED (page 2). Bounded by 8.
         for _ in range(8):
             page = swd.read_mem(a_diag_p, 1)[0]
-            if page == 3: break   # LED at index 3 (after GNSS NMEA/Diag/Cfg)
+            if page == 7: break   # LED at index 7 (after 7 GNSS pages: NMEA/Diag/Cfg/Const/Track/NMEA Cfg/Adv)
             press_release(swd, a_inject, KEY_RIGHT, settle_ms=200)
         page = swd.read_mem(a_diag_p, 1)[0]
         print(f"  navigated to page {page} (expect 2 = LED)")
-        if not expect("on LED page", page, 3): fails += 1
+        if not expect("on LED page", page, 7): fails += 1
 
         # Heartbeat: capture history_count before / after a series of LED
         # operations. If the firmware crashed mid-test, count stops.
@@ -127,7 +127,7 @@ def main():
         page = swd.read_mem(a_diag_p, 1)[0]
         VIEW_HW_DIAG = 36   # observed in earlier nav test
         if not expect("still on HW_DIAG",  active, VIEW_HW_DIAG): fails += 1
-        if not expect("still on LED page", page, 3): fails += 1
+        if not expect("still on LED page", page, 7): fails += 1
 
         # Restore: turn everything off before exiting. Currently focus is
         # on bankB widget (4). Toggle the booleans back off.

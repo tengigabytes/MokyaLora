@@ -35,6 +35,10 @@ typedef enum {
     DIAG_PAGE_GNSS_NMEA = 0,
     DIAG_PAGE_GNSS_DIAG,
     DIAG_PAGE_GNSS_CFG,        /* Phase 6 — Teseo runtime control */
+    DIAG_PAGE_GNSS_CONST,      /* Phase 7.A — constellation 9-preset menu */
+    DIAG_PAGE_GNSS_TRACK,      /* Phase 7.B — tracking thresholds + notch filter */
+    DIAG_PAGE_GNSS_NMEA_CFG,   /* Phase 7.C — NMEA talker ID + output preset */
+    DIAG_PAGE_GNSS_ADV,        /* Phase 7.D — Odometer / Data logger / Geofence read-only */
     DIAG_PAGE_LED,
     DIAG_PAGE_TFT_BL,
     DIAG_PAGE_BUTTONS,
@@ -81,6 +85,22 @@ static void gnss_cfg_enter(lv_obj_t *root);
 static void gnss_cfg_leave(void);
 static void gnss_cfg_apply(const key_event_t *ev);
 static void gnss_cfg_refresh(void);
+static void gnss_const_enter(lv_obj_t *root);
+static void gnss_const_leave(void);
+static void gnss_const_apply(const key_event_t *ev);
+static void gnss_const_refresh(void);
+static void gnss_track_enter(lv_obj_t *root);
+static void gnss_track_leave(void);
+static void gnss_track_apply(const key_event_t *ev);
+static void gnss_track_refresh(void);
+static void gnss_nmea_cfg_enter(lv_obj_t *root);
+static void gnss_nmea_cfg_leave(void);
+static void gnss_nmea_cfg_apply(const key_event_t *ev);
+static void gnss_nmea_cfg_refresh(void);
+static void gnss_adv_enter(lv_obj_t *root);
+static void gnss_adv_leave(void);
+static void gnss_adv_apply(const key_event_t *ev);
+static void gnss_adv_refresh(void);
 
 /* Each page's enter() is responsible for clearing/recreating widgets
  * under content_root. The view destroys content_root on view-destroy.
@@ -93,6 +113,18 @@ static diag_page_def_t s_pages[DIAG_PAGE_COUNT] = {
                                 gnss_diag_enter, gnss_diag_leave, NULL, gnss_diag_refresh },
     [DIAG_PAGE_GNSS_CFG]    = { "GNSS Cfg",
                                 gnss_cfg_enter, gnss_cfg_leave, gnss_cfg_apply, gnss_cfg_refresh },
+    [DIAG_PAGE_GNSS_CONST]  = { "GNSS Const",
+                                gnss_const_enter, gnss_const_leave,
+                                gnss_const_apply, gnss_const_refresh },
+    [DIAG_PAGE_GNSS_TRACK]  = { "GNSS Track",
+                                gnss_track_enter, gnss_track_leave,
+                                gnss_track_apply, gnss_track_refresh },
+    [DIAG_PAGE_GNSS_NMEA_CFG] = { "GNSS NMEA Cfg",
+                                gnss_nmea_cfg_enter, gnss_nmea_cfg_leave,
+                                gnss_nmea_cfg_apply, gnss_nmea_cfg_refresh },
+    [DIAG_PAGE_GNSS_ADV]     = { "GNSS Adv",
+                                gnss_adv_enter, gnss_adv_leave,
+                                gnss_adv_apply, gnss_adv_refresh },
     [DIAG_PAGE_LED]         = { "LED 亮度",
                                 led_enter, led_leave, led_apply, led_refresh },
     [DIAG_PAGE_TFT_BL]      = { "TFT 背光",
@@ -1320,6 +1352,742 @@ static void gnss_cfg_refresh(void)
     last_tick = tick;
     gcfg_render();
 }
+
+/* ── Page: GNSS Const (DIAG_PAGE_GNSS_CONST) ─────────────────────── *
+ *
+ * 9 single-OK preset selector. ↑/↓ moves focus, OK applies the
+ * selected preset (writes CDB-200 + CDB-227 + SAVEPAR + SRR — blocks
+ * ~3 s, NMEA stream drops out for ~1-2 s during SRR). The page also
+ * tries to read the current device value at entry to mark which preset
+ * is currently active with a "✓". GETPAR can be slow; if it fails the
+ * UI shows "?" and lets the user pick anyway. */
+
+static const char *k_const_preset_names[9] = {
+    "GPS only",
+    "GLONASS only",
+    "Galileo only",
+    "BeiDou only",
+    "QZSS only",
+    "GPS + SBAS",
+    "GPS+GAL+QZSS+GLN",
+    "GPS+GAL+QZSS+BD",
+    "GLONASS+BeiDou",
+};
+
+static struct {
+    lv_obj_t *header_lbl;
+    lv_obj_t *preset_lbls[9];
+    lv_obj_t *status_lbl;
+    uint8_t   cur;             /* focus index (0..8) */
+    uint8_t   active_preset;   /* 0xFF = unknown / no match */
+    uint32_t  cdb200_seen;
+    uint32_t  cdb227_seen;
+    char      last_status[80];
+} s_gconst __attribute__((section(".psram_bss")));
+
+/* Match (cdb200, cdb227) raw bits to a preset by inspecting the masked
+ * constellation bits only (other features ignored). Returns 0xFF on
+ * no match. */
+static uint8_t match_const_preset(uint32_t cdb200, uint32_t cdb227);
+
+static void gconst_render(void)
+{
+    char buf[64];
+    if (s_gconst.header_lbl != NULL) {
+        if (s_gconst.active_preset == 0xFFu) {
+            snprintf(buf, sizeof(buf), "Active: ? (CDB200=0x%08lX 227=0x%08lX)",
+                     (unsigned long)s_gconst.cdb200_seen,
+                     (unsigned long)s_gconst.cdb227_seen);
+        } else {
+            snprintf(buf, sizeof(buf), "Active: %s",
+                     k_const_preset_names[s_gconst.active_preset]);
+        }
+        lv_label_set_text(s_gconst.header_lbl, buf);
+    }
+    for (int i = 0; i < 9; i++) {
+        if (s_gconst.preset_lbls[i] == NULL) continue;
+        const char *focus = (i == (int)s_gconst.cur) ? "▶ " : "  ";
+        const char *check = (i == (int)s_gconst.active_preset) ? " ✓" : "";
+        snprintf(buf, sizeof(buf), "%s%s%s", focus, k_const_preset_names[i], check);
+        lv_label_set_text(s_gconst.preset_lbls[i], buf);
+    }
+    if (s_gconst.status_lbl != NULL) {
+        lv_label_set_text(s_gconst.status_lbl, s_gconst.last_status);
+    }
+}
+
+static uint8_t match_const_preset(uint32_t cdb200, uint32_t cdb227)
+{
+    /* Precomputed expected bits per preset — must mirror the table in
+     * teseo_liv3fl.c k_const_presets[]. */
+    static const struct { uint32_t a; uint32_t b; } expected[9] = {
+        { 0x00410000u, 0x00000000u },
+        { 0x00220000u, 0x00000000u },
+        { 0x00000000u, 0x00000180u },
+        { 0x00000000u, 0x00000600u },
+        { 0x00840000u, 0x00000000u },
+        { 0x0041000Cu, 0x00000000u },
+        { 0x00E70000u, 0x00000180u },
+        { 0x00C50000u, 0x00000780u },
+        { 0x00220000u, 0x00000600u },
+    };
+    uint32_t a = cdb200 & 0x00E7000Cu;
+    uint32_t b = cdb227 & 0x00000780u;
+    for (uint8_t i = 0; i < 9; i++) {
+        if (a == expected[i].a && b == expected[i].b) return i;
+    }
+    return 0xFFu;
+}
+
+static void gconst_enter(lv_obj_t *root)
+{
+    /* 1 header + 9 preset rows + 1 status. 14 px each = 11 × 14 = 154
+     * px. Add 2 px gap between header and list. */
+    s_gconst.header_lbl = mk_diag_label(root, 4, 0);
+    for (int i = 0; i < 9; i++) {
+        s_gconst.preset_lbls[i] = mk_diag_label(root, 4, 18 + i * 14);
+    }
+    s_gconst.status_lbl = mk_diag_label(root, 4, 18 + 9 * 14 + 6);
+    s_gconst.cur = 0;
+    s_gconst.active_preset = 0xFFu;
+    s_gconst.cdb200_seen = 0;
+    s_gconst.cdb227_seen = 0;
+    snprintf(s_gconst.last_status, sizeof(s_gconst.last_status),
+             "ready (loading current...)");
+    gconst_render();
+    /* Lazy-load current values on next refresh so view-create doesn't
+     * block the LVGL tick. */
+}
+
+static void gconst_leave(void)
+{
+    memset(&s_gconst, 0, sizeof(s_gconst));
+}
+
+static void gnss_const_enter(lv_obj_t *root) { gconst_enter(root); }
+static void gnss_const_leave(void)            { gconst_leave(); }
+
+static void gnss_const_apply(const key_event_t *ev)
+{
+    if (!ev->pressed) return;
+    switch (ev->keycode) {
+        case MOKYA_KEY_UP:
+            if (s_gconst.cur > 0) s_gconst.cur--;
+            gconst_render();
+            return;
+        case MOKYA_KEY_DOWN:
+            if (s_gconst.cur + 1 < 9) s_gconst.cur++;
+            gconst_render();
+            return;
+        case MOKYA_KEY_OK:
+            break;
+        default:
+            return;
+    }
+
+    /* Apply the focused preset. Blocks ~3 s — UI freezes. */
+    uint8_t p = s_gconst.cur;
+    snprintf(s_gconst.last_status, sizeof(s_gconst.last_status),
+             "applying %s ...", k_const_preset_names[p]);
+    gconst_render();
+    bool ok = teseo_set_constellation_preset((teseo_const_preset_t)p);
+    if (ok) {
+        s_gconst.active_preset = p;
+        snprintf(s_gconst.last_status, sizeof(s_gconst.last_status),
+                 "%s applied (NVM+SRR, ~2s reboot)", k_const_preset_names[p]);
+    } else {
+        snprintf(s_gconst.last_status, sizeof(s_gconst.last_status),
+                 "%s FAILED", k_const_preset_names[p]);
+    }
+    gconst_render();
+}
+
+static void gnss_const_refresh(void)
+{
+    /* Lazy GETPAR — only on first refresh after entry. Subsequent
+     * refreshes are no-ops to avoid hammering the bus. */
+    static bool s_loaded;
+    if (s_gconst.header_lbl == NULL) { s_loaded = false; return; }
+    if (s_loaded) return;
+    s_loaded = true;
+
+    uint32_t a = 0, b = 0;
+    if (teseo_get_constellation_raw(&a, &b)) {
+        s_gconst.cdb200_seen = a;
+        s_gconst.cdb227_seen = b;
+        s_gconst.active_preset = match_const_preset(a, b);
+        snprintf(s_gconst.last_status, sizeof(s_gconst.last_status),
+                 "↑/↓ select  OK apply (writes NVM + reboot Teseo)");
+    } else {
+        snprintf(s_gconst.last_status, sizeof(s_gconst.last_status),
+                 "GETPAR failed — current preset unknown");
+    }
+    gconst_render();
+}
+
+/* ── Page: GNSS Track (DIAG_PAGE_GNSS_TRACK) ─────────────────────── *
+ *
+ * 7 widgets — 4 numeric thresholds + 2 cycle (integrity / notch) + 1
+ * Apply button. ↑/↓ moves widget focus, OK on numeric advances by step
+ * with wrap, OK on cycle widgets advances state, OK on Apply does
+ * SAVEPAR + SRR. Each numeric/cycle OK writes SETPAR (RAM only) — must
+ * Apply to make permanent. */
+
+typedef enum {
+    GTRK_W_MASK_ANGLE = 0,
+    GTRK_W_TRACK_CN0,
+    GTRK_W_POS_CN0,
+    GTRK_W_POS_MASK_ANGLE,
+    GTRK_W_INTEGRITY,
+    GTRK_W_NOTCH,
+    GTRK_W_APPLY,
+    GTRK_W_COUNT
+} gtrk_widget_t;
+
+#define GTRK_STEP_ANGLE  5u
+#define GTRK_MAX_ANGLE   30u
+#define GTRK_STEP_DB     5u
+#define GTRK_MAX_DB      40u
+
+static const char *k_integrity_modes[4] = {
+    "OFF", "Position", "Time", "Both",
+};
+static const char *k_notch_modes[5] = {
+    "OFF", "GPS-normal", "GLN-normal", "GPS+GLN-normal", "Auto-insertion",
+};
+static const uint8_t k_notch_bits[5] = {
+    0x00,                    /* OFF — all bits cleared */
+    0x02,                    /* GPS normal mode (b1) */
+    0x04,                    /* GLN normal mode (b2) */
+    0x06,                    /* GPS + GLN normal */
+    0x18,                    /* GPS + GLN auto-insertion (b3+b4) */
+};
+
+static struct {
+    lv_obj_t *lbls[GTRK_W_COUNT];
+    lv_obj_t *status_lbl;
+    gtrk_widget_t cur;
+    /* Shadow values — written to RAM via SETPAR on each OK. */
+    uint8_t mask_angle;       /* 0..30 */
+    uint8_t track_cn0;        /* 0..40 */
+    uint8_t pos_cn0;          /* 0..40 */
+    uint8_t pos_mask_angle;   /* 0..30 */
+    uint8_t integrity_mode;   /* 0..3 */
+    uint8_t notch_mode;       /* 0..4 (index into k_notch_modes) */
+    bool    dirty;
+    char    last_status[80];
+} s_gtrk __attribute__((section(".psram_bss")));
+
+static void gtrk_render(void)
+{
+    char buf[80];
+    const char *mark = s_gtrk.dirty ? " *" : "";
+    for (int w = 0; w < GTRK_W_COUNT; w++) {
+        if (s_gtrk.lbls[w] == NULL) continue;
+        const char *focus = (w == (int)s_gtrk.cur) ? "▶ " : "  ";
+        switch (w) {
+            case GTRK_W_MASK_ANGLE:
+                snprintf(buf, sizeof(buf), "%sB1 Mask angle      : %u°",
+                         focus, (unsigned)s_gtrk.mask_angle);
+                break;
+            case GTRK_W_TRACK_CN0:
+                snprintf(buf, sizeof(buf), "%sB2 Tracking C/N0   : %u dB",
+                         focus, (unsigned)s_gtrk.track_cn0);
+                break;
+            case GTRK_W_POS_CN0:
+                snprintf(buf, sizeof(buf), "%sB3 Positioning C/N0: %u dB",
+                         focus, (unsigned)s_gtrk.pos_cn0);
+                break;
+            case GTRK_W_POS_MASK_ANGLE:
+                snprintf(buf, sizeof(buf), "%sB4 Pos mask angle  : %u°",
+                         focus, (unsigned)s_gtrk.pos_mask_angle);
+                break;
+            case GTRK_W_INTEGRITY:
+                snprintf(buf, sizeof(buf), "%sB5 Integrity check : %s",
+                         focus, k_integrity_modes[s_gtrk.integrity_mode & 0x3u]);
+                break;
+            case GTRK_W_NOTCH:
+                snprintf(buf, sizeof(buf), "%sE1 Notch filter    : %s",
+                         focus, k_notch_modes[s_gtrk.notch_mode % 5u]);
+                break;
+            case GTRK_W_APPLY:
+                snprintf(buf, sizeof(buf), "%sSave to NVM + reboot%s",
+                         focus, mark);
+                break;
+            default: buf[0] = '\0'; break;
+        }
+        lv_label_set_text(s_gtrk.lbls[w], buf);
+    }
+    if (s_gtrk.status_lbl != NULL) {
+        lv_label_set_text(s_gtrk.status_lbl, s_gtrk.last_status);
+    }
+}
+
+static void gnss_track_enter(lv_obj_t *root)
+{
+    /* 7 widgets × 22 px = 154 px + 8 px gap + status. */
+    for (int w = 0; w < GTRK_W_COUNT; w++) {
+        s_gtrk.lbls[w] = mk_diag_label(root, 4, w * 22);
+    }
+    s_gtrk.status_lbl = mk_diag_label(root, 4, 22 * GTRK_W_COUNT + 6);
+    s_gtrk.cur = GTRK_W_MASK_ANGLE;
+    s_gtrk.dirty = false;
+    /* Best-effort load of current values. Defaults if GETPAR fails. */
+    uint32_t v;
+    s_gtrk.mask_angle      = teseo_getpar_u32(104, &v) ? (uint8_t)v : 5u;
+    s_gtrk.track_cn0       = teseo_getpar_u32(105, &v) ? (uint8_t)v : 25u;
+    s_gtrk.pos_cn0         = teseo_getpar_u32(132, &v) ? (uint8_t)v : 30u;
+    s_gtrk.pos_mask_angle  = teseo_getpar_u32(198, &v) ? (uint8_t)v : 5u;
+    s_gtrk.integrity_mode  = teseo_getpar_u32(272, &v) ? (uint8_t)(v & 0x3u) : 0u;
+    /* Notch CDB-125: map raw bitmap back to nearest preset (0..4). */
+    if (teseo_getpar_u32(125, &v)) {
+        uint8_t bits = (uint8_t)v;
+        s_gtrk.notch_mode = 0;
+        for (uint8_t i = 0; i < 5; i++) {
+            if (k_notch_bits[i] == bits) { s_gtrk.notch_mode = i; break; }
+        }
+    } else {
+        s_gtrk.notch_mode = 0;
+    }
+    snprintf(s_gtrk.last_status, sizeof(s_gtrk.last_status),
+             "OK adjusts. Apply at bottom to save NVM + SRR.");
+    gtrk_render();
+}
+
+static void gnss_track_leave(void)
+{
+    memset(&s_gtrk, 0, sizeof(s_gtrk));
+}
+
+static void gnss_track_apply(const key_event_t *ev)
+{
+    if (!ev->pressed) return;
+
+    if (ev->keycode == MOKYA_KEY_UP) {
+        if (s_gtrk.cur > 0) s_gtrk.cur--;
+        gtrk_render();
+        return;
+    }
+    if (ev->keycode == MOKYA_KEY_DOWN) {
+        if (s_gtrk.cur + 1 < GTRK_W_COUNT) s_gtrk.cur++;
+        gtrk_render();
+        return;
+    }
+    if (ev->keycode != MOKYA_KEY_OK) return;
+
+    bool ok = true;
+    switch (s_gtrk.cur) {
+        case GTRK_W_MASK_ANGLE:
+            s_gtrk.mask_angle = (uint8_t)((s_gtrk.mask_angle + GTRK_STEP_ANGLE)
+                                           % (GTRK_MAX_ANGLE + 1u));
+            ok = teseo_set_mask_angle(s_gtrk.mask_angle);
+            s_gtrk.dirty = true;
+            snprintf(s_gtrk.last_status, sizeof(s_gtrk.last_status),
+                     "B1 → %u°: %s (RAM)", s_gtrk.mask_angle,
+                     ok ? "OK" : "FAIL");
+            break;
+        case GTRK_W_TRACK_CN0:
+            s_gtrk.track_cn0 = (uint8_t)((s_gtrk.track_cn0 + GTRK_STEP_DB)
+                                          % (GTRK_MAX_DB + 1u));
+            ok = teseo_set_tracking_cn0(s_gtrk.track_cn0);
+            s_gtrk.dirty = true;
+            snprintf(s_gtrk.last_status, sizeof(s_gtrk.last_status),
+                     "B2 → %u dB: %s (RAM)", s_gtrk.track_cn0,
+                     ok ? "OK" : "FAIL");
+            break;
+        case GTRK_W_POS_CN0:
+            s_gtrk.pos_cn0 = (uint8_t)((s_gtrk.pos_cn0 + GTRK_STEP_DB)
+                                        % (GTRK_MAX_DB + 1u));
+            ok = teseo_set_positioning_cn0(s_gtrk.pos_cn0);
+            s_gtrk.dirty = true;
+            snprintf(s_gtrk.last_status, sizeof(s_gtrk.last_status),
+                     "B3 → %u dB: %s (RAM)", s_gtrk.pos_cn0,
+                     ok ? "OK" : "FAIL");
+            break;
+        case GTRK_W_POS_MASK_ANGLE:
+            s_gtrk.pos_mask_angle = (uint8_t)((s_gtrk.pos_mask_angle + GTRK_STEP_ANGLE)
+                                              % (GTRK_MAX_ANGLE + 1u));
+            ok = teseo_set_position_mask_angle(s_gtrk.pos_mask_angle);
+            s_gtrk.dirty = true;
+            snprintf(s_gtrk.last_status, sizeof(s_gtrk.last_status),
+                     "B4 → %u°: %s (RAM)", s_gtrk.pos_mask_angle,
+                     ok ? "OK" : "FAIL");
+            break;
+        case GTRK_W_INTEGRITY:
+            s_gtrk.integrity_mode = (uint8_t)((s_gtrk.integrity_mode + 1u) & 0x3u);
+            ok = teseo_set_integrity_check(s_gtrk.integrity_mode);
+            s_gtrk.dirty = true;
+            snprintf(s_gtrk.last_status, sizeof(s_gtrk.last_status),
+                     "B5 → %s: %s (RAM)",
+                     k_integrity_modes[s_gtrk.integrity_mode], ok ? "OK" : "FAIL");
+            break;
+        case GTRK_W_NOTCH:
+            s_gtrk.notch_mode = (uint8_t)((s_gtrk.notch_mode + 1u) % 5u);
+            ok = teseo_set_notch_filter(k_notch_bits[s_gtrk.notch_mode]);
+            s_gtrk.dirty = true;
+            snprintf(s_gtrk.last_status, sizeof(s_gtrk.last_status),
+                     "E1 → %s: %s (RAM)",
+                     k_notch_modes[s_gtrk.notch_mode], ok ? "OK" : "FAIL");
+            break;
+        case GTRK_W_APPLY: {
+            bool save = teseo_savepar();
+            (void)teseo_srr();
+            s_gtrk.dirty = false;
+            snprintf(s_gtrk.last_status, sizeof(s_gtrk.last_status),
+                     "Apply: save %s, SRR sent", save ? "OK" : "FAIL");
+            break;
+        }
+        default: break;
+    }
+    gtrk_render();
+}
+
+static void gnss_track_refresh(void) { /* no live refresh */ }
+
+/* ── Page: GNSS NMEA Cfg (DIAG_PAGE_GNSS_NMEA_CFG) ───────────────── *
+ *
+ * D4 — Talker ID (CDB-131): cycle through {P, N, A, B, L} which gives
+ *      GP / GN / GA / GB / GL talker prefix on GGA/RMC/VTG/GLL.
+ * D5 — NMEA preset: cycle through Minimal / Normal / Full / Debug.
+ *      Implementation note: only Debug differs functionally from the
+ *      others (toggles RF debug stream); the 4 names map to mode 2
+ *      (clear) for Min/Normal/Full and mode 1 (OR-set) for Debug.
+ *      Standard NMEA always inherits from factory NVM.
+ * Apply — SAVEPAR + SRR (each setting has already done that internally
+ *         per call, so this is a manual re-trigger if needed). */
+
+typedef enum {
+    GNMEA_W_TALKER_ID = 0,
+    GNMEA_W_PRESET,
+    GNMEA_W_APPLY,
+    GNMEA_W_COUNT
+} gnmea_widget_t;
+
+static const char k_talker_chars[5] = { 'P', 'N', 'A', 'B', 'L' };
+static const char *k_preset_names[TESEO_NMEA_PRESET_COUNT] = {
+    "Minimal", "Normal", "Full", "Debug (+RF)",
+};
+
+static struct {
+    lv_obj_t *lbls[GNMEA_W_COUNT];
+    lv_obj_t *status_lbl;
+    gnmea_widget_t cur;
+    uint8_t talker_idx;        /* index into k_talker_chars */
+    uint8_t preset;             /* TESEO_NMEA_PRESET_* */
+    char    last_status[80];
+} s_gnmea __attribute__((section(".psram_bss")));
+
+static void gnmea_render(void)
+{
+    char buf[80];
+    for (int w = 0; w < GNMEA_W_COUNT; w++) {
+        if (s_gnmea.lbls[w] == NULL) continue;
+        const char *focus = (w == (int)s_gnmea.cur) ? "▶ " : "  ";
+        switch (w) {
+            case GNMEA_W_TALKER_ID:
+                snprintf(buf, sizeof(buf), "%sD4 Talker ID    : G%c",
+                         focus, k_talker_chars[s_gnmea.talker_idx % 5]);
+                break;
+            case GNMEA_W_PRESET:
+                snprintf(buf, sizeof(buf), "%sD5 NMEA preset  : %s",
+                         focus, k_preset_names[s_gnmea.preset % TESEO_NMEA_PRESET_COUNT]);
+                break;
+            case GNMEA_W_APPLY:
+                snprintf(buf, sizeof(buf), "%sSave NVM + reboot Teseo", focus);
+                break;
+            default: buf[0] = '\0'; break;
+        }
+        lv_label_set_text(s_gnmea.lbls[w], buf);
+    }
+    if (s_gnmea.status_lbl != NULL) {
+        lv_label_set_text(s_gnmea.status_lbl, s_gnmea.last_status);
+    }
+}
+
+static void gnss_nmea_cfg_enter(lv_obj_t *root)
+{
+    for (int w = 0; w < GNMEA_W_COUNT; w++) {
+        s_gnmea.lbls[w] = mk_diag_label(root, 4, w * 22);
+    }
+    s_gnmea.status_lbl = mk_diag_label(root, 4, 22 * GNMEA_W_COUNT + 6);
+    s_gnmea.cur = GNMEA_W_TALKER_ID;
+    s_gnmea.talker_idx = 0;        /* P (default) */
+    s_gnmea.preset = TESEO_NMEA_PRESET_NORMAL;
+    /* Try to restore current talker ID from NVM. */
+    uint32_t v;
+    if (teseo_getpar_u32(131, &v)) {
+        char id = (char)(v & 0xFFu);
+        for (uint8_t i = 0; i < 5; i++) {
+            if (k_talker_chars[i] == id) { s_gnmea.talker_idx = i; break; }
+        }
+    }
+    snprintf(s_gnmea.last_status, sizeof(s_gnmea.last_status),
+             "↑/↓ select  OK adjust");
+    gnmea_render();
+}
+
+static void gnss_nmea_cfg_leave(void)
+{
+    memset(&s_gnmea, 0, sizeof(s_gnmea));
+}
+
+static void gnss_nmea_cfg_apply(const key_event_t *ev)
+{
+    if (!ev->pressed) return;
+    if (ev->keycode == MOKYA_KEY_UP) {
+        if (s_gnmea.cur > 0) s_gnmea.cur--;
+        gnmea_render();
+        return;
+    }
+    if (ev->keycode == MOKYA_KEY_DOWN) {
+        if (s_gnmea.cur + 1 < GNMEA_W_COUNT) s_gnmea.cur++;
+        gnmea_render();
+        return;
+    }
+    if (ev->keycode != MOKYA_KEY_OK) return;
+
+    switch (s_gnmea.cur) {
+        case GNMEA_W_TALKER_ID: {
+            s_gnmea.talker_idx = (uint8_t)((s_gnmea.talker_idx + 1u) % 5u);
+            char id = k_talker_chars[s_gnmea.talker_idx];
+            bool ok = teseo_set_talker_id(id);
+            snprintf(s_gnmea.last_status, sizeof(s_gnmea.last_status),
+                     "Talker → G%c: %s (RAM)", id, ok ? "OK" : "FAIL");
+            break;
+        }
+        case GNMEA_W_PRESET: {
+            s_gnmea.preset = (uint8_t)((s_gnmea.preset + 1u) % TESEO_NMEA_PRESET_COUNT);
+            bool ok = teseo_set_nmea_preset((teseo_nmea_preset_t)s_gnmea.preset);
+            snprintf(s_gnmea.last_status, sizeof(s_gnmea.last_status),
+                     "Preset → %s: %s (NVM+SRR)",
+                     k_preset_names[s_gnmea.preset], ok ? "OK" : "FAIL");
+            break;
+        }
+        case GNMEA_W_APPLY: {
+            bool save = teseo_savepar();
+            (void)teseo_srr();
+            snprintf(s_gnmea.last_status, sizeof(s_gnmea.last_status),
+                     "Save: %s, SRR sent", save ? "OK" : "FAIL");
+            break;
+        }
+        default: break;
+    }
+    gnmea_render();
+}
+
+static void gnss_nmea_cfg_refresh(void) { /* no live refresh */ }
+
+/* ── Page: GNSS Adv (DIAG_PAGE_GNSS_ADV) ─────────────────────────── *
+ *
+ * F7 Odometer  — 3 toggle bits + alarm distance (cycle 0/100/500/1000m)
+ * F8 Logger    — enabled + min distance (cycle 1/10/100m)
+ * F6 Geofence  — read-only display of current 4 circles (editing
+ *                requires digit-input widget; deferred). */
+
+typedef enum {
+    GADV_W_ODO_EN = 0,
+    GADV_W_ODO_NMEA,
+    GADV_W_ODO_AUTO,
+    GADV_W_ODO_ALARM,
+    GADV_W_LOG_EN,
+    GADV_W_LOG_MIN,
+    GADV_W_GEOFENCE_HEADER,    /* selectable but no-op (just labels read-only F6) */
+    GADV_W_APPLY,
+    GADV_W_COUNT
+} gadv_widget_t;
+
+static const uint16_t k_alarm_steps[] = { 0, 100, 500, 1000, 5000, 0xFFFF };
+#define ALARM_STEP_COUNT (sizeof(k_alarm_steps) / sizeof(k_alarm_steps[0]))
+
+static const uint16_t k_logmin_steps[] = { 1, 5, 10, 50, 100, 500, 1000 };
+#define LOGMIN_STEP_COUNT (sizeof(k_logmin_steps) / sizeof(k_logmin_steps[0]))
+
+static struct {
+    lv_obj_t *lbls[GADV_W_COUNT];
+    lv_obj_t *fence_lbls[4];
+    lv_obj_t *status_lbl;
+    gadv_widget_t cur;
+    teseo_odometer_cfg_t odo;
+    teseo_logger_cfg_t   log;
+    uint8_t alarm_step_idx;
+    uint8_t logmin_step_idx;
+    char    last_status[80];
+} s_gadv __attribute__((section(".psram_bss")));
+
+static uint8_t step_idx_for_alarm(uint16_t v)
+{
+    for (uint8_t i = 0; i < ALARM_STEP_COUNT; i++)
+        if (k_alarm_steps[i] == v) return i;
+    return 0;
+}
+static uint8_t step_idx_for_logmin(uint16_t v)
+{
+    for (uint8_t i = 0; i < LOGMIN_STEP_COUNT; i++)
+        if (k_logmin_steps[i] >= v) return i;
+    return 0;
+}
+
+static void gadv_render(void)
+{
+    char buf[80];
+    for (int w = 0; w < GADV_W_COUNT; w++) {
+        if (s_gadv.lbls[w] == NULL) continue;
+        const char *focus = (w == (int)s_gadv.cur) ? "▶ " : "  ";
+        switch (w) {
+            case GADV_W_ODO_EN:
+                snprintf(buf, sizeof(buf), "%sF7 Odo enable    : %s", focus,
+                         s_gadv.odo.enabled_on_boot ? "ON" : "OFF");
+                break;
+            case GADV_W_ODO_NMEA:
+                snprintf(buf, sizeof(buf), "%sF7 Odo NMEA out  : %s", focus,
+                         s_gadv.odo.nmea_enabled ? "ON" : "OFF");
+                break;
+            case GADV_W_ODO_AUTO:
+                snprintf(buf, sizeof(buf), "%sF7 Odo autostart : %s", focus,
+                         s_gadv.odo.autostart ? "ON" : "OFF");
+                break;
+            case GADV_W_ODO_ALARM:
+                snprintf(buf, sizeof(buf), "%sF7 Odo alarm     : %u m", focus,
+                         (unsigned)s_gadv.odo.alarm_m);
+                break;
+            case GADV_W_LOG_EN:
+                snprintf(buf, sizeof(buf), "%sF8 Logger enable : %s", focus,
+                         s_gadv.log.enabled_on_boot ? "ON" : "OFF");
+                break;
+            case GADV_W_LOG_MIN:
+                snprintf(buf, sizeof(buf), "%sF8 Log min dist  : %u m", focus,
+                         (unsigned)s_gadv.log.min_distance_m);
+                break;
+            case GADV_W_GEOFENCE_HEADER:
+                snprintf(buf, sizeof(buf), "%sF6 Geofence (read-only)", focus);
+                break;
+            case GADV_W_APPLY:
+                snprintf(buf, sizeof(buf), "%sSave NVM + reboot Teseo", focus);
+                break;
+            default: buf[0] = '\0'; break;
+        }
+        lv_label_set_text(s_gadv.lbls[w], buf);
+    }
+    if (s_gadv.status_lbl != NULL) {
+        lv_label_set_text(s_gadv.status_lbl, s_gadv.last_status);
+    }
+}
+
+static void gnss_adv_enter(lv_obj_t *root)
+{
+    /* 8 main widgets × 18 px = 144 px, 4 fence rows × 14 = 56 px,
+     * status 14 — total ~214 px (just over 204 — squeeze fences below
+     * status; LVGL will clip). For now, drop fence rows in this
+     * minimal v1 — they're shown only via the header line. */
+    for (int w = 0; w < GADV_W_COUNT; w++) {
+        s_gadv.lbls[w] = mk_diag_label(root, 4, w * 22);
+    }
+    s_gadv.status_lbl = mk_diag_label(root, 4, 22 * GADV_W_COUNT + 4);
+    s_gadv.cur = GADV_W_ODO_EN;
+    /* Best-effort load. */
+    if (!teseo_get_odometer_cfg(&s_gadv.odo)) {
+        memset(&s_gadv.odo, 0, sizeof(s_gadv.odo));
+    }
+    if (!teseo_get_logger_cfg(&s_gadv.log)) {
+        memset(&s_gadv.log, 0, sizeof(s_gadv.log));
+        s_gadv.log.min_distance_m = 10;
+    }
+    s_gadv.alarm_step_idx  = step_idx_for_alarm(s_gadv.odo.alarm_m);
+    s_gadv.logmin_step_idx = step_idx_for_logmin(s_gadv.log.min_distance_m);
+    snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+             "↑/↓ select  OK toggle/cycle  (F6 edit deferred)");
+    gadv_render();
+}
+
+static void gnss_adv_leave(void)
+{
+    memset(&s_gadv, 0, sizeof(s_gadv));
+}
+
+static void gnss_adv_apply(const key_event_t *ev)
+{
+    if (!ev->pressed) return;
+    if (ev->keycode == MOKYA_KEY_UP) {
+        if (s_gadv.cur > 0) s_gadv.cur--;
+        gadv_render();
+        return;
+    }
+    if (ev->keycode == MOKYA_KEY_DOWN) {
+        if (s_gadv.cur + 1 < GADV_W_COUNT) s_gadv.cur++;
+        gadv_render();
+        return;
+    }
+    if (ev->keycode != MOKYA_KEY_OK) return;
+
+    bool ok = true;
+    switch (s_gadv.cur) {
+        case GADV_W_ODO_EN:
+            s_gadv.odo.enabled_on_boot = !s_gadv.odo.enabled_on_boot;
+            ok = teseo_set_odometer_cfg(&s_gadv.odo);
+            snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+                     "Odo enable %s: %s",
+                     s_gadv.odo.enabled_on_boot ? "ON" : "OFF",
+                     ok ? "OK" : "FAIL");
+            break;
+        case GADV_W_ODO_NMEA:
+            s_gadv.odo.nmea_enabled = !s_gadv.odo.nmea_enabled;
+            ok = teseo_set_odometer_cfg(&s_gadv.odo);
+            snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+                     "Odo NMEA %s: %s",
+                     s_gadv.odo.nmea_enabled ? "ON" : "OFF",
+                     ok ? "OK" : "FAIL");
+            break;
+        case GADV_W_ODO_AUTO:
+            s_gadv.odo.autostart = !s_gadv.odo.autostart;
+            ok = teseo_set_odometer_cfg(&s_gadv.odo);
+            snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+                     "Odo auto %s: %s",
+                     s_gadv.odo.autostart ? "ON" : "OFF",
+                     ok ? "OK" : "FAIL");
+            break;
+        case GADV_W_ODO_ALARM:
+            s_gadv.alarm_step_idx = (uint8_t)((s_gadv.alarm_step_idx + 1u)
+                                              % ALARM_STEP_COUNT);
+            s_gadv.odo.alarm_m = k_alarm_steps[s_gadv.alarm_step_idx];
+            ok = teseo_set_odometer_cfg(&s_gadv.odo);
+            snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+                     "Odo alarm %u m: %s", (unsigned)s_gadv.odo.alarm_m,
+                     ok ? "OK" : "FAIL");
+            break;
+        case GADV_W_LOG_EN:
+            s_gadv.log.enabled_on_boot = !s_gadv.log.enabled_on_boot;
+            ok = teseo_set_logger_cfg(&s_gadv.log);
+            snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+                     "Logger %s: %s",
+                     s_gadv.log.enabled_on_boot ? "ON" : "OFF",
+                     ok ? "OK" : "FAIL");
+            break;
+        case GADV_W_LOG_MIN:
+            s_gadv.logmin_step_idx = (uint8_t)((s_gadv.logmin_step_idx + 1u)
+                                                % LOGMIN_STEP_COUNT);
+            s_gadv.log.min_distance_m = k_logmin_steps[s_gadv.logmin_step_idx];
+            ok = teseo_set_logger_cfg(&s_gadv.log);
+            snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+                     "Log min %u m: %s",
+                     (unsigned)s_gadv.log.min_distance_m,
+                     ok ? "OK" : "FAIL");
+            break;
+        case GADV_W_GEOFENCE_HEADER:
+            snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+                     "F6 edit deferred — use SWD writes for now");
+            break;
+        case GADV_W_APPLY:
+            (void)teseo_savepar();
+            (void)teseo_srr();
+            snprintf(s_gadv.last_status, sizeof(s_gadv.last_status),
+                     "saved + SRR");
+            break;
+        default: break;
+    }
+    gadv_render();
+}
+
+static void gnss_adv_refresh(void) { /* no live refresh */ }
 
 const view_descriptor_t *hw_diag_view_descriptor(void)
 {

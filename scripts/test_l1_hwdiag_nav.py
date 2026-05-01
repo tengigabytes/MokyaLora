@@ -180,22 +180,22 @@ def main():
         # ── Phase 3: cycle pages forward 8 times → wraps to start ──────
         print("\n=== Phase 3: ←/→ page cycle (starts at page", page0, ") ===")
         seq_fwd = []
-        for i in range(9):
+        for i in range(13):
             press_release(swd, a_inject, KEY_RIGHT, settle_ms=200)
             page = swd.read_mem(a_diag_p, 1)[0]
             seq_fwd.append(page)
-        expected_fwd = [(page0 + 1 + i) % 9 for i in range(9)]
+        expected_fwd = [(page0 + 1 + i) % 13 for i in range(13)]
         print(f"  forward sequence:  actual {seq_fwd}  expected {expected_fwd}")
         if not expect("forward seq full cycle", seq_fwd, expected_fwd): fails += 1
 
         # Backward 8 times — currently at page0 (wrapped). Should go
         # page0-1, page0-2, ..., back to page0.
         seq_bwd = []
-        for i in range(9):
+        for i in range(13):
             press_release(swd, a_inject, KEY_LEFT, settle_ms=200)
             page = swd.read_mem(a_diag_p, 1)[0]
             seq_bwd.append(page)
-        expected_bwd = [(page0 - 1 - i) % 9 for i in range(9)]
+        expected_bwd = [(page0 - 1 - i) % 13 for i in range(13)]
         print(f"  backward sequence: actual {seq_bwd}  expected {expected_bwd}")
         if not expect("backward seq full cycle", seq_bwd, expected_bwd): fails += 1
 
