@@ -20,6 +20,7 @@
 #include "task.h"
 
 #include "i2c_bus.h"
+#include "wall_clock.h"
 
 /* ── Constants ──────────────────────────────────────────────────────────── */
 
@@ -230,6 +231,33 @@ static void parse_rmc(const char *body)
     if (nmea_field(body, 9, f, sizeof f) && f[0])
         s_state.utc_date = (uint32_t)atoi(f);
     s_state.sentence_count++;
+
+    /* Phase 9 — feed wall_clock from RMC. RMC carries both UTC date
+     * (ddmmyy) and UTC time (hhmmss), and the fix_valid flag tells us
+     * the GNSS engine trusts its own time. Only push when both fields
+     * look sane and the user has enabled GNSS sync. Throttle to once
+     * per RMC tick — wall_clock_set_unix_from_gnss is cheap so no
+     * extra rate-limit needed; the user-facing sync flag is the gate. */
+    if (s_state.fix_valid &&
+        s_state.utc_date != 0u && s_state.utc_time != 0u &&
+        wall_clock_gnss_sync_is_enabled())
+    {
+        wall_clock_civil_t c;
+        c.day      = (uint8_t)((s_state.utc_date / 10000u) % 100u);
+        c.month    = (uint8_t)((s_state.utc_date / 100u)   % 100u);
+        c.year     = (uint16_t)(2000u + (s_state.utc_date % 100u));
+        c.hour     = (uint8_t)((s_state.utc_time / 10000u) % 100u);
+        c.minute   = (uint8_t)((s_state.utc_time / 100u)   % 100u);
+        c.second   = (uint8_t)(s_state.utc_time % 100u);
+        c.reserved = 0;
+        if (c.year >= 2024 && c.year < 2100 &&
+            c.month >= 1 && c.month <= 12 &&
+            c.day   >= 1 && c.day   <= 31 &&
+            c.hour < 24 && c.minute < 60 && c.second < 60) {
+            uint64_t u = wall_clock_civil_to_unix(&c);
+            (void)wall_clock_set_unix_from_gnss(u);
+        }
+    }
 }
 
 static gsv_accum_t *gsv_accum_for(uint16_t talker)

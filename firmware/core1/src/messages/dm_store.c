@@ -99,9 +99,22 @@ static void unlock(void)
     if (s_mutex) xSemaphoreGive(s_mutex);
 }
 
+#include "wall_clock.h"
+
 static uint32_t now_ms(void)
 {
     return (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+}
+
+/* Wall-clock UTC seconds, truncated to 32 bits (wraps in 2106). 0 if
+ * the clock has never been synced — UI treats 0 as "未知時間" and
+ * falls back to "boot+Nm". This is what gets stored in dm_msg_t.epoch
+ * and ack_epoch from Phase 9b onwards. */
+static uint32_t now_unix32(void)
+{
+    if (!wall_clock_is_synced()) return 0u;
+    uint64_t u = wall_clock_now_unix();
+    return (uint32_t)(u & 0xFFFFFFFFu);
 }
 
 /* ── Peer slot allocation ────────────────────────────────────────────── */
@@ -150,7 +163,10 @@ static void push_msg_unlocked(peer_slot_t *p, const dm_msg_t *m)
     p->ring[p->head] = *m;
     p->head = (uint8_t)((p->head + 1u) % DM_STORE_MSGS_PER);
     if (p->count < DM_STORE_MSGS_PER) p->count++;
-    p->last_activity_ms = m->epoch;
+    /* last_activity_ms is uptime ms (used only for peer-eviction
+     * ordering). Wall-clock-based m->epoch can be 0 before sync,
+     * which would break eviction; keep that orthogonal. */
+    p->last_activity_ms = now_ms();
 }
 
 /* Translate caller-facing "0 = oldest" index into ring offset. */
@@ -185,7 +201,7 @@ void dm_store_ingest_inbound(uint32_t  from_node_id,
     dm_msg_t m;
     memset(&m, 0, sizeof(m));
     m.seq       = seq;
-    m.epoch     = now_ms();
+    m.epoch     = now_unix32();
     m.outbound  = false;
     m.ack_state = DM_ACK_NONE;
     m.text_len  = text_len > DM_STORE_TEXT_MAX
@@ -222,7 +238,7 @@ void dm_store_ingest_outbound(uint32_t  to_node_id,
     dm_msg_t m;
     memset(&m, 0, sizeof(m));
     m.seq       = s_next_local_seq++;
-    m.epoch     = now_ms();
+    m.epoch     = now_unix32();
     m.packet_id = packet_id;
     m.outbound  = true;
     m.ack_state = DM_ACK_SENDING;
@@ -248,7 +264,7 @@ void dm_store_update_ack(uint32_t packet_id, dm_ack_state_t state)
     bool changed = false;
     int  matches = 0;
     uint32_t matched_peer = 0u;
-    uint32_t now = now_ms();
+    uint32_t now = now_unix32();
     for (int i = 0; i < (int)DM_STORE_PEER_CAP; ++i) {
         peer_slot_t *p = &s_peers[i];
         if (!p->in_use) continue;

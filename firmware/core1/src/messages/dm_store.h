@@ -46,7 +46,8 @@ typedef enum {
 typedef struct {
     uint32_t seq;             ///< Monotonic id, matches phoneapi_msg seq
                               ///  for inbound or 0 for purely-local outbound
-    uint32_t epoch;           ///< Boot-time tick (FreeRTOS ms) when stored
+    uint32_t epoch;           ///< Phase 9b: UTC unix seconds (truncated u32);
+                              ///  0 = wall_clock unsynced when stored
     uint32_t packet_id;       ///< MeshPacket.id (for outbound only)
     bool     outbound;
     uint8_t  ack_state;       ///< dm_ack_state_t
@@ -56,7 +57,8 @@ typedef struct {
      * struct offsets don't shift (SWD readers ignore the trailing
      * bytes). Inbound only for snr/rssi/hop_*; outbound only for
      * want_ack + ack_epoch. */
-    uint32_t ack_epoch;       ///< now_ms() when the ack landed (outbound, 0 if pending)
+    uint32_t ack_epoch;       ///< Phase 9b: UTC unix seconds when ack landed
+                              ///  (outbound only, 0 if pending or unsynced)
     int16_t  rx_snr_x4;       ///< inbound; INT16_MIN = unknown (dB × 4)
     int16_t  rx_rssi;         ///< inbound; 0 = unknown (dBm signed)
     uint8_t  hop_limit;       ///< inbound; 0xFF = unknown (hops still allowed at receive)

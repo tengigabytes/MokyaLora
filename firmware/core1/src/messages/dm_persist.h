@@ -32,7 +32,9 @@ extern "C" {
 #endif
 
 #define DM_PERSIST_MAGIC    0x31534D44u   /* 'DMS1' little-endian */
-#define DM_PERSIST_VERSION  1u
+/* v2 (Phase 9b): epoch + ack_epoch semantics changed from uptime-ms
+ * to UTC-unix-seconds. Old v1 records on disk are dropped on load. */
+#define DM_PERSIST_VERSION  2u
 #define DM_PERSIST_PATH_MAX 16             /* "/.dm_XXXXXXXX" + NUL */
 
 /* On-disk record. Mirrors peer_slot_t fields one-to-one (modulo the

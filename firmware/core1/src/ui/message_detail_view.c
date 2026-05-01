@@ -32,6 +32,7 @@
 #include "key_event.h"
 #include "mie/keycode.h"
 #include "dm_store.h"
+#include "wall_clock.h"
 
 typedef struct {
     lv_obj_t *header;
@@ -82,12 +83,27 @@ static void render(void)
         text_clip[copy] = '\0';
     }
 
-    char ack_part[40];
-    if (m.ack_epoch != 0u) {
-        uint32_t now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-        snprintf(ack_part, sizeof(ack_part), "%s (%lums ago)",
-                 ack_label(m.ack_state),
-                 (unsigned long)(now - m.ack_epoch));
+    /* Format the message epoch (UTC unix secs, Phase 9b semantics).
+     * 0 = wall_clock was unsynced when stored. Renders local time
+     * derived from the current TZ offset. */
+    char ts_part[48];
+    if (m.epoch == 0u) {
+        snprintf(ts_part, sizeof(ts_part), "未同步");
+    } else {
+        wall_clock_civil_t c;
+        int16_t tz = wall_clock_get_tz_offset_min();
+        wall_clock_unix_to_civil((uint64_t)m.epoch + (int64_t)tz * 60, &c);
+        snprintf(ts_part, sizeof(ts_part),
+                 "%04u-%02u-%02u %02u:%02u:%02u",
+                 (unsigned)c.year, (unsigned)c.month, (unsigned)c.day,
+                 (unsigned)c.hour, (unsigned)c.minute, (unsigned)c.second);
+    }
+
+    char ack_part[64];
+    if (m.ack_epoch != 0u && m.epoch != 0u) {
+        uint32_t age = (uint32_t)(m.ack_epoch - m.epoch);
+        snprintf(ack_part, sizeof(ack_part), "%s (+%us)",
+                 ack_label(m.ack_state), (unsigned)age);
     } else {
         snprintf(ack_part, sizeof(ack_part), "%s", ack_label(m.ack_state));
     }
@@ -97,13 +113,13 @@ static void render(void)
         snprintf(body, sizeof(body),
                  "Dir   : TX\n"
                  "PID   : 0x%08lx\n"
-                 "Sent  : %lums (boot)\n"
+                 "Time  : %s\n"
                  "Want  : %s\n"
                  "Ack   : %s\n"
                  "\n"
                  "Text  : %s",
                  (unsigned long)m.packet_id,
-                 (unsigned long)m.epoch,
+                 ts_part,
                  m.want_ack ? "yes" : "no",
                  ack_part,
                  text_clip);
@@ -129,13 +145,13 @@ static void render(void)
 
         snprintf(body, sizeof(body),
                  "Dir   : RX\n"
-                 "Recv  : %lums (boot)\n"
+                 "Time  : %s\n"
                  "Hops  : limit/start %s\n"
                  "SNR   : %s\n"
                  "RSSI  : %s\n"
                  "\n"
                  "Text  : %s",
-                 (unsigned long)m.epoch,
+                 ts_part,
                  hops,
                  snr, rssi,
                  text_clip);

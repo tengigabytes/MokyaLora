@@ -37,6 +37,7 @@
 
 #include "chat_list_view.h"
 #include "dm_store.h"
+#include "wall_clock.h"
 #include "ime_task.h"
 #include "messages_send.h"
 #include "message_detail_view.h"
@@ -88,6 +89,19 @@ static void format_msg(char *buf, size_t cap, const dm_msg_t *m)
         if (text[i] == '\n' || text[i] == '\r') text[i] = ' ';
     }
 
+    /* Phase 9b — local-time HH:MM prefix. m->epoch is UTC unix secs;
+     * 0 = wall_clock unsynced when stored. */
+    char ts[8];
+    if (m->epoch == 0u) {
+        snprintf(ts, sizeof(ts), "--:--");
+    } else {
+        wall_clock_civil_t c;
+        int16_t tz = wall_clock_get_tz_offset_min();
+        wall_clock_unix_to_civil((uint64_t)m->epoch + (int64_t)tz * 60, &c);
+        snprintf(ts, sizeof(ts), "%02u:%02u",
+                 (unsigned)c.hour, (unsigned)c.minute);
+    }
+
     if (m->outbound) {
         const char *st = "?";
         switch (m->ack_state) {
@@ -96,9 +110,9 @@ static void format_msg(char *buf, size_t cap, const dm_msg_t *m)
             case DM_ACK_FAILED:    st = "x  "; break;
             default:               st = "   "; break;
         }
-        snprintf(buf, cap, "                    >> %s %s", st, text);
+        snprintf(buf, cap, "              %s >> %s %s", ts, st, text);
     } else {
-        snprintf(buf, cap, "<< %s", text);
+        snprintf(buf, cap, "%s << %s", ts, text);
     }
 }
 
