@@ -129,6 +129,29 @@ uint32_t dm_store_total_unread(void);
  * paths in one cheap atomic load. */
 uint32_t dm_store_change_seq(void);
 
+/* ── Persistence bridge (Phase 3 dm_persist) ──────────────────────── *
+ *
+ * Forward-declared opaque to avoid pulling dm_persist.h into every
+ * dm_store.c caller. Defined in dm_persist.h. */
+struct dm_persist_record;
+
+/* Read-out a peer's full slot snapshot for persistence. Returns true
+ * if peer exists in cache. Output mirrors peer_slot_t fields. */
+bool dm_store_snapshot_peer(uint32_t peer_node_id,
+                            struct dm_persist_record *out);
+
+/* Bulk restore — used at boot from dm_persist_load_all. Allocates or
+ * reuses a slot for `in->peer_node_id`, copies ring + counters in.
+ * If table is full, evicts the oldest peer (same policy as live
+ * inserts). */
+bool dm_store_restore_peer(const struct dm_persist_record *in);
+
+/* Pop all currently-dirty peer ids into `out_ids` (caller-provided
+ * buffer, size `cap`). Clears the dirty bits for the popped peers.
+ * Returns count actually written (≤ cap). dm_persist's flush daemon
+ * uses this to drain the dirty queue under the dm_store mutex. */
+uint8_t dm_store_pop_dirty(uint32_t *out_ids, uint8_t cap);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

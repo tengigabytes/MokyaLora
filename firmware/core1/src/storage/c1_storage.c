@@ -271,6 +271,23 @@ bool c1_storage_unlink(const char *path)
     return rc == LFS_ERR_OK || rc == LFS_ERR_NOENT;
 }
 
+bool c1_storage_walk(const char *dir_path,
+                     c1_storage_dir_cb cb,
+                     void *ctx)
+{
+    if (!s_stats.mounted || dir_path == NULL || cb == NULL) return false;
+    lfs_dir_t dir;
+    if (lfs_dir_open(&s_lfs, &dir, dir_path) < 0) return false;
+    struct lfs_info info;
+    bool keep_going = true;
+    while (keep_going && lfs_dir_read(&s_lfs, &dir, &info) > 0) {
+        if (info.type != LFS_TYPE_REG) continue;
+        keep_going = cb(info.name, info.size, ctx);
+    }
+    (void)lfs_dir_close(&s_lfs, &dir);
+    return true;
+}
+
 bool c1_storage_open(c1_storage_file_t *f, const char *path, int lfs_flags)
 {
     if (!s_stats.mounted || f == NULL || path == NULL) return false;

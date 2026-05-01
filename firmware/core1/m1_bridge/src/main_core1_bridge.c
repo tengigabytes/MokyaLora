@@ -85,6 +85,7 @@
 #include "key_inject_rtt.h"
 #include "messages_tx_status.h"
 #include "dm_store.h"
+#include "dm_persist.h"
 #include "c1_storage.h"
 #include "settings_client.h"
 #include "watchdog_task.h"
@@ -287,6 +288,11 @@ static void bridge_task(void *pv)
      * Re-enable after root-cause fix. */
     (void)c1_storage_init();
     (void)c1_storage_self_test();
+    /* Phase 3 — DM persistence. Loads any previously-saved peer files
+     * into dm_store and starts the 30 s flush timer. Safe even if
+     * c1_storage failed to mount (load returns 0, timer skipped). */
+    (void)dm_persist_load_all();
+    dm_persist_init();
 
     for (;;) {
         /* If Core 0 announced a reboot, stop all ring/CDC processing and

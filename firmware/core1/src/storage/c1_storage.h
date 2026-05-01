@@ -92,6 +92,16 @@ bool c1_storage_exists(const char *path);
 /* Delete `path`. Returns true on success (or if path doesn't exist). */
 bool c1_storage_unlink(const char *path);
 
+/* Walk a directory, invoking `cb` for every regular file (skips
+ * subdirs). Stops early if `cb` returns false. `ctx` is passed
+ * through. Used by dm_persist to enumerate /.dm_* on boot. */
+typedef bool (*c1_storage_dir_cb)(const char *name,
+                                  uint32_t size,
+                                  void *ctx);
+bool c1_storage_walk(const char *dir_path,
+                     c1_storage_dir_cb cb,
+                     void *ctx);
+
 /* Open `path` with LFS flags (LFS_O_RDONLY, LFS_O_WRONLY|LFS_O_CREAT,
  * etc — see lfs.h). Single concurrent open is enforced; second open
  * returns false. */

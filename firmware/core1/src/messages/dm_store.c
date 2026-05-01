@@ -62,6 +62,18 @@ static SemaphoreHandle_t s_mutex;
 static uint32_t          s_next_local_seq;
 static volatile uint32_t s_change_seq;
 
+/* Phase 3 — per-peer dirty bit. Bit i set ⇒ peer slot i has unsynced
+ * mutations since the last dm_persist_save_peer. Drained by
+ * dm_store_pop_dirty under the mutex. */
+static volatile uint32_t s_dirty_mask;
+
+static inline void mark_dirty_unlocked(int slot_idx)
+{
+    if (slot_idx >= 0 && slot_idx < (int)DM_STORE_PEER_CAP) {
+        s_dirty_mask |= (1u << slot_idx);
+    }
+}
+
 static inline void bump_change_seq(void)
 {
     __atomic_add_fetch(&s_change_seq, 1u, __ATOMIC_RELEASE);
@@ -192,6 +204,7 @@ void dm_store_ingest_inbound(uint32_t  from_node_id,
     }
     push_msg_unlocked(p, &m);
     if (p->unread < 0xFFu) p->unread++;
+    mark_dirty_unlocked(idx);
     unlock();
     bump_change_seq();
 }
@@ -221,6 +234,7 @@ void dm_store_ingest_outbound(uint32_t  to_node_id,
                   ? (uint16_t)DM_STORE_TEXT_MAX : text_len;
     memcpy(m.text, text, m.text_len);
     push_msg_unlocked(p, &m);
+    mark_dirty_unlocked(idx);
     unlock();
     bump_change_seq();
 }
@@ -240,7 +254,10 @@ void dm_store_update_ack(uint32_t packet_id, dm_ack_state_t state)
         if (!p->in_use) continue;
         for (int j = 0; j < (int)DM_STORE_MSGS_PER; ++j) {
             if (p->ring[j].outbound && p->ring[j].packet_id == packet_id) {
-                if (p->ring[j].ack_state != (uint8_t)state) changed = true;
+                if (p->ring[j].ack_state != (uint8_t)state) {
+                    changed = true;
+                    mark_dirty_unlocked(i);
+                }
                 p->ring[j].ack_state = (uint8_t)state;
                 /* Stamp ack_epoch only on the first transition into a
                  * terminal state so we keep the original arrival time
@@ -348,6 +365,7 @@ void dm_store_mark_read(uint32_t peer_node_id)
     int idx = find_peer_unlocked(peer_node_id);
     if (idx >= 0 && s_peers[idx].unread != 0) {
         s_peers[idx].unread = 0;
+        mark_dirty_unlocked(idx);
         changed = true;
     }
     unlock();
@@ -368,4 +386,69 @@ uint32_t dm_store_total_unread(void)
 uint32_t dm_store_change_seq(void)
 {
     return __atomic_load_n(&s_change_seq, __ATOMIC_ACQUIRE);
+}
+
+/* ── Persistence bridge (Phase 3 dm_persist) ─────────────────────── */
+
+#include "dm_persist.h"   /* defines dm_persist_record_t */
+
+bool dm_store_snapshot_peer(uint32_t peer_node_id,
+                            struct dm_persist_record *out)
+{
+    if (out == NULL || peer_node_id == 0u) return false;
+    if (!lock()) return false;
+    int idx = find_peer_unlocked(peer_node_id);
+    if (idx < 0) { unlock(); return false; }
+    peer_slot_t *p = &s_peers[idx];
+    out->magic            = DM_PERSIST_MAGIC;
+    out->version          = DM_PERSIST_VERSION;
+    out->peer_node_id     = p->peer_node_id;
+    out->last_activity_ms = p->last_activity_ms;
+    out->unread           = p->unread;
+    out->count            = p->count;
+    out->head             = p->head;
+    out->pad              = 0u;
+    memcpy(out->ring, p->ring, sizeof(out->ring));
+    unlock();
+    return true;
+}
+
+bool dm_store_restore_peer(const struct dm_persist_record *in)
+{
+    if (in == NULL || in->magic != DM_PERSIST_MAGIC
+        || in->version != DM_PERSIST_VERSION
+        || in->peer_node_id == 0u) {
+        return false;
+    }
+    if (!lock()) return false;
+    int idx = alloc_peer_unlocked(in->peer_node_id);
+    peer_slot_t *p = &s_peers[idx];
+    p->peer_node_id     = in->peer_node_id;
+    p->last_activity_ms = in->last_activity_ms;
+    p->unread           = in->unread;
+    p->count            = (in->count > DM_STORE_MSGS_PER)
+                              ? DM_STORE_MSGS_PER : in->count;
+    p->head             = (uint8_t)(in->head % DM_STORE_MSGS_PER);
+    memcpy(p->ring, in->ring, sizeof(p->ring));
+    /* Loaded peers are NOT dirty — file already matches state. */
+    unlock();
+    bump_change_seq();
+    return true;
+}
+
+uint8_t dm_store_pop_dirty(uint32_t *out_ids, uint8_t cap)
+{
+    if (out_ids == NULL || cap == 0) return 0;
+    if (!lock()) return 0;
+    uint32_t mask = s_dirty_mask;
+    uint8_t  n    = 0;
+    for (int i = 0; i < (int)DM_STORE_PEER_CAP && n < cap; ++i) {
+        if ((mask & (1u << i)) && s_peers[i].in_use) {
+            out_ids[n++] = s_peers[i].peer_node_id;
+            mask &= ~(1u << i);
+        }
+    }
+    s_dirty_mask = mask;
+    unlock();
+    return n;
 }
