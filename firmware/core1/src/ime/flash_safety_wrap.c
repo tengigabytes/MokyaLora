@@ -43,6 +43,28 @@ extern void __real_flash_range_erase(uint32_t flash_offs, size_t count);
 extern void __real_flash_range_program(uint32_t flash_offs,
                                        const uint8_t *data, size_t count);
 
+/* ── SIO hardware spinlock — Phase 1.X two-core mutex (must be RAM) ────── *
+ *
+ * Acquire MUST happen before transitioning flash_lock_c0 IDLE→REQUEST.
+ * Without this, both cores can transition into REQUEST at overlapping
+ * us-scale windows, then their respective doorbell ISRs park each
+ * other, both enter WFE — deadlock until HW watchdog breaks it.
+ * Spinlock makes the IDLE→REQUEST transition mutually exclusive across
+ * both cores. See ipc_shared_layout.h IPC_FLASH_SPINLOCK_NUM. */
+static void __no_inline_not_in_flash_func(mokya_flash_spinlock_acquire)(void)
+{
+    /* Unbounded — bounded by actual peer wrap duration (~100 ms worst).
+     * If the peer crashes mid-write, HW watchdog (3 s) resets the chip
+     * and is the correct recovery; spinning forever doesn't make it
+     * worse. Read returns non-zero on successful acquire, 0 if locked. */
+    while (*IPC_FLASH_SPINLOCK_ADDR == 0u) { /* spin */ }
+}
+
+static void __no_inline_not_in_flash_func(mokya_flash_spinlock_release)(void)
+{
+    *IPC_FLASH_SPINLOCK_ADDR = 0u;
+}
+
 /* ── Park / unpark helpers (MUST reside in RAM) ────────────────────────── */
 
 static void __no_inline_not_in_flash_func(mokya_flash_park_core0)(
@@ -88,12 +110,17 @@ void __no_inline_not_in_flash_func(__wrap_flash_range_erase)(
      * (~50 ms per 4 KB sector). Pause the watchdog liveness check —
      * c0_heartbeat will stall and would otherwise trip the silent-tick
      * counter. The HW watchdog kicks themselves continue, so a real
-     * Core 1 hang would still reset the chip. */
+     * Core 1 hang would still reset the chip.
+     *
+     * Spinlock acquire MUST happen before park request — see
+     * mokya_flash_spinlock_acquire() block comment. */
     mokya_watchdog_pause();
+    mokya_flash_spinlock_acquire();
     mokya_flash_park_core0(&saved);
     __real_flash_range_erase(flash_offs, count);
     MOKYA_XIP_CTRL_SET = MOKYA_XIP_CACHE_EN;  /* re-enable cache */
     mokya_flash_unpark_core0(saved);
+    mokya_flash_spinlock_release();
     mokya_watchdog_resume();
 }
 
@@ -102,9 +129,11 @@ void __no_inline_not_in_flash_func(__wrap_flash_range_program)(
 {
     uint32_t saved;
     mokya_watchdog_pause();
+    mokya_flash_spinlock_acquire();
     mokya_flash_park_core0(&saved);
     __real_flash_range_program(flash_offs, data, count);
     MOKYA_XIP_CTRL_SET = MOKYA_XIP_CACHE_EN;  /* re-enable cache */
     mokya_flash_unpark_core0(saved);
+    mokya_flash_spinlock_release();
     mokya_watchdog_resume();
 }

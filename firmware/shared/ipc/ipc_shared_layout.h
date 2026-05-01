@@ -78,6 +78,24 @@ extern "C" {
 #define IPC_FLASH_LOCK_REQUEST  1u
 #define IPC_FLASH_LOCK_PARKED   2u
 
+/* Phase 1.X — SIO hardware spinlock that gates IDLE→REQUEST entry on
+ * BOTH wraps so simultaneous-write attempts can't both signal doorbells
+ * to each other (which would deadlock when each ISR parks the other,
+ * the outer wrap never resumes, and HW watchdog has to break it).
+ *
+ * RP2350 SIO has 32 hardware spinlocks at SIO base + 0x100 + N*4.
+ * Read-when-locked returns 0; read-when-unlocked atomically locks and
+ * returns the spinlock value (non-zero). Write any value to release.
+ *
+ * ID 29 picked from the general-purpose pool (14..29) — Pico SDK's OS
+ * spinlocks live at 30..31, FreeRTOS RP2350 port uses configSMP_SPINLOCK_*
+ * only in SMP builds (we're single-core), and our codebase doesn't claim
+ * any others outside this range. Hardcoded constant + raw MMIO access
+ * because both sides' wraps run RAM-only (`__no_inline_not_in_flash_func`)
+ * and Pico SDK's spin_lock_claim helpers live in flash. */
+#define IPC_FLASH_SPINLOCK_NUM   29u
+#define IPC_FLASH_SPINLOCK_ADDR  ((volatile uint32_t *)(0xD0000100u + IPC_FLASH_SPINLOCK_NUM * 4u))
+
 /* ── Per-slot layout ───────────────────────────────────────────────────────
  *
  * Each slot holds one IpcMsgHeader (4 B) + up to IPC_MSG_PAYLOAD_MAX bytes
