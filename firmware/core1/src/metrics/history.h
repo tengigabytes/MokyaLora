@@ -48,3 +48,24 @@ void metrics_history_note_rx_snr_x4(int16_t snr_x4);
 /* Bump the change-seq monotonically when a new sample is appended. UI
  * polls this to gate chart redraws (matches phoneapi_cache_change_seq()). */
 uint32_t metrics_history_change_seq(void);
+
+/* ── Phase 5 persistence bridge (history_persist.c) ──────────────── */
+
+/* Snapshot the entire ring + counters into caller-provided buffers.
+ * Caller must size buf for at least METRICS_HISTORY_LEN samples.
+ * Used by history_persist for its on-disk save path. */
+void metrics_history_snapshot(metrics_sample_t *buf,
+                              uint16_t *out_head,
+                              uint16_t *out_count);
+
+/* Bulk restore — used at boot after history_persist loads /.history.
+ * Replaces the in-memory ring with the supplied data. count is clamped
+ * to METRICS_HISTORY_LEN; head is taken modulo. Resets change_seq. */
+void metrics_history_restore(const metrics_sample_t *buf,
+                             uint16_t head,
+                             uint16_t count);
+
+/* Pop the dirty bit (true if any new sample arrived since the last
+ * call). Single-bit, since the file format is the whole ring — no
+ * benefit from per-slot tracking. */
+bool     metrics_history_pop_dirty(void);

@@ -32,6 +32,10 @@ static uint16_t         s_head;          /* next write slot */
 static uint16_t         s_count;         /* 0..LEN          */
 static volatile int16_t s_last_snr_x4 = METRICS_HISTORY_NONE;
 static volatile uint32_t s_change_seq;
+/* Phase 5 — single dirty bit. Set on every take_sample, drained by
+ * history_persist's 5-min timer. Bool because the on-disk format is
+ * the whole ring; per-slot tracking adds no value. */
+static volatile bool    s_dirty;
 
 /* SWD-readable diag — last sample's per-field value. Updated on every
  * timer tick for host tests that want to verify the ring is accumulating
@@ -92,6 +96,7 @@ static void take_sample(void)
     s_head = (uint16_t)((s_head + 1u) % METRICS_HISTORY_LEN);
     if (s_count < METRICS_HISTORY_LEN) s_count++;
     s_change_seq++;
+    s_dirty = true;
 
     g_history_count           = s_count;
     g_history_last_soc_pct    = s.soc_pct;
@@ -167,4 +172,46 @@ void metrics_history_note_rx_snr_x4(int16_t snr_x4)
 uint32_t metrics_history_change_seq(void)
 {
     return s_change_seq;
+}
+
+/* ── Persistence bridge (Phase 5) ────────────────────────────────── */
+
+void metrics_history_snapshot(metrics_sample_t *buf,
+                              uint16_t *out_head,
+                              uint16_t *out_count)
+{
+    if (buf != NULL) {
+        memcpy(buf, s_ring, sizeof(s_ring));
+    }
+    if (out_head)  *out_head  = s_head;
+    if (out_count) *out_count = s_count;
+}
+
+void metrics_history_restore(const metrics_sample_t *buf,
+                             uint16_t head,
+                             uint16_t count)
+{
+    if (buf == NULL) return;
+    memcpy(s_ring, buf, sizeof(s_ring));
+    s_head  = (uint16_t)(head % METRICS_HISTORY_LEN);
+    s_count = (count > METRICS_HISTORY_LEN) ? METRICS_HISTORY_LEN : count;
+    s_change_seq++;
+    /* Restore is NOT dirty — file already matches. */
+    s_dirty = false;
+    /* Update SWD diag mirrors so post-load tests see consistent values. */
+    g_history_count = s_count;
+    if (s_count > 0u) {
+        uint16_t newest = (uint16_t)((s_head + METRICS_HISTORY_LEN - 1u)
+                                     % METRICS_HISTORY_LEN);
+        g_history_last_soc_pct    = s_ring[newest].soc_pct;
+        g_history_last_snr_x10    = s_ring[newest].last_rx_snr_x10;
+        g_history_last_air_tx_x10 = s_ring[newest].air_tx_pct_x10;
+    }
+}
+
+bool metrics_history_pop_dirty(void)
+{
+    bool d = s_dirty;
+    s_dirty = false;
+    return d;
 }

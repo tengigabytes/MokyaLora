@@ -242,6 +242,7 @@ add_executable(core1_bridge
     ${UI_DIR}/map_view.c
     ${UI_DIR}/map_nav_view.c
     ${METRICS_DIR}/history.c
+    ${METRICS_DIR}/history_persist.c
     ${UI_DIR}/channels_view.c
     ${UI_DIR}/channel_edit_view.c
     ${UI_DIR}/channel_add_view.c
