@@ -265,6 +265,60 @@ def main():
             if i > 0:
                 time.sleep(3.0)
             fails += round_single_peer(p, 2, f"multi_{i}")
+    elif mode == "evict":
+        # Two-phase scenario to exercise on-disk eviction cleanup:
+        #   Phase A: inject 8 peers, flush → 8 files on disk
+        #   Phase B: inject a 9th peer (in-memory evicts oldest peer 0;
+        #            peer 0's file STAYS on disk as orphan)
+        #   Phase C: flush → saves new peer (now 8 in dm_store, 9 on disk)
+        #   Phase D: reset, verify load_all loads 8 + cleanup unlinks 1
+        n_initial = 8
+        peers_init = [0xCAFE9000 + i for i in range(n_initial)]
+        peer_extra = 0xCAFE9100
+        print(f"\n=== evict: {n_initial} peers + 1 extra to trigger cleanup ===")
+        with MokyaSwd() as swd:
+            format_fs(swd)
+            reset_and_wait(swd)
+        print(f"  [format+reset] FS wiped")
+
+        # Phase A: 8 peers, flush.
+        for i, p in enumerate(peers_init):
+            frame = build_text_frame_from(p, f"ev_init_{i}", i)
+            inject_serial_bytes(0x80 + i, frame)
+            time.sleep(0.2)
+        time.sleep(1.0)
+        with MokyaSwd() as swd:
+            flush_now(swd)
+            saves_a = swd.read_u32(swd.symbol("g_dm_persist_saves"))
+        print(f"  [phase A] 8 peers saved, saves={saves_a}")
+
+        # Phase B+C: 9th peer evicts oldest in-memory; flush saves new one.
+        frame = build_text_frame_from(peer_extra, "ev_extra", 99)
+        inject_serial_bytes(0xA0, frame)
+        time.sleep(1.0)
+        with MokyaSwd() as swd:
+            flush_now(swd)
+            saves_c = swd.read_u32(swd.symbol("g_dm_persist_saves"))
+        print(f"  [phase C] 9th peer injected+flushed, saves={saves_c}")
+
+        # Phase D: reset, verify load+cleanup.
+        with MokyaSwd() as swd:
+            reset_and_wait(swd)
+        with MokyaSwd() as swd:
+            loads = swd.read_u32(swd.symbol("g_dm_persist_loads"))
+            orphans = swd.read_u32(swd.symbol("g_dm_persist_orphans_unlinked"))
+        print(f"  [phase D] post-reset loads={loads} orphans_unlinked={orphans}")
+        fails = 0
+        # 9 files on disk → load_all attempts to restore all 9 (so loads >= 9
+        # since dm_store_restore_peer succeeds even when eviction happens
+        # internally).  Cleanup pass must then unlink the 1 orphan whose
+        # peer slot got evicted.
+        if loads < 9:
+            print(f"  [FAIL] loads expected ≥ 9, got {loads}")
+            fails += 1
+        else:
+            print(f"  [PASS] loads (>= 9) actual={loads}")
+        if not expect("orphans_unlinked",    orphans, 1):  fails += 1
     elif mode == "ringoverflow":
         # 12 DMs to one peer; ring cap is 8 → only last 8 survive.
         # Verify diag.count = 8 and diag.text reflects oldest-of-survivors.

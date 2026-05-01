@@ -26,6 +26,7 @@ volatile uint32_t g_dm_persist_loads    __attribute__((used)) = 0u;
 volatile uint32_t g_dm_persist_failures __attribute__((used)) = 0u;
 volatile int32_t  g_dm_persist_last_err __attribute__((used)) = 0;
 volatile uint32_t g_dm_persist_flushes  __attribute__((used)) = 0u;
+volatile uint32_t g_dm_persist_orphans_unlinked __attribute__((used)) = 0u;
 
 /* Test-only SWD-trigger for synchronous flush. Bridge_task polls and
  * calls dm_persist_flush_now when request != done. Avoids 30 s timer
@@ -194,12 +195,46 @@ static bool load_one_cb(const char *name, uint32_t size, void *vctx)
     return true;
 }
 
+/* Cleanup pass: walk /.dm_* files, unlink any whose peer_id is no
+ * longer in dm_store (evicted during load_all because >8 files
+ * existed and the last_activity_ms ordering chose 8 newer ones). */
+typedef struct {
+    uint32_t unlinked;
+} cleanup_ctx_t;
+
+static bool cleanup_one_cb(const char *name, uint32_t size, void *vctx)
+{
+    cleanup_ctx_t *ctx = (cleanup_ctx_t *)vctx;
+    (void)size;
+    uint32_t peer_id = 0u;
+    if (parse_path(name, &peer_id) < 0) return true;
+    /* If dm_store doesn't have this peer (it was evicted during load),
+     * the on-disk file is an orphan. Unlink it. */
+    dm_peer_summary_t s;
+    if (dm_store_get_peer(peer_id, &s)) return true;   /* still resident */
+    char path[DM_PERSIST_PATH_MAX];
+    format_path(path, sizeof(path), peer_id);
+    if (c1_storage_unlink(path)) {
+        ctx->unlinked++;
+        TRACE("dm_p", "evict_unlink", "peer=%lu",
+              (unsigned long)peer_id);
+    }
+    return true;
+}
+
 uint32_t dm_persist_load_all(void)
 {
     if (!c1_storage_is_mounted()) return 0;
     load_ctx_t ctx = { .loaded = 0 };
     (void)c1_storage_walk("/", load_one_cb, &ctx);
-    TRACE("dm_p", "load_all", "loaded=%u", (unsigned)ctx.loaded);
+    /* Cleanup orphans (peers whose files exist but didn't end up in
+     * dm_store after eviction).  This keeps the on-disk file count
+     * bounded by DM_STORE_PEER_CAP across reboots. */
+    cleanup_ctx_t cctx = { .unlinked = 0 };
+    (void)c1_storage_walk("/", cleanup_one_cb, &cctx);
+    g_dm_persist_orphans_unlinked = cctx.unlinked;
+    TRACE("dm_p", "load_all", "loaded=%u orphans_unlinked=%u",
+          (unsigned)ctx.loaded, (unsigned)cctx.unlinked);
     return ctx.loaded;
 }
 
