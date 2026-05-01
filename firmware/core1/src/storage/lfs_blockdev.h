@@ -50,9 +50,12 @@ extern "C" {
  * lfs_mount / lfs_format. */
 extern const struct lfs_config g_c1_lfs_cfg;
 
-/* Single shared file-handle cache (max 1 open file at a time — see
- * c1_storage.c policy). SRAM-resident because writes flow through it. */
-extern uint8_t g_c1_lfs_file_buffer[C1_LFS_CACHE_SIZE];
+/* File handles use NULL buffer in lfs_file_config — LFS allocates a
+ * 256 B prog cache from malloc per open file (routed via Pico SDK
+ * malloc → pvPortMalloc to the FreeRTOS heap). Saves 256 B static
+ * BSS at the cost of one heap alloc per concurrent file open. With
+ * c1_storage's single-open policy that's at most 256 B heap any
+ * given moment. */
 
 #ifdef __cplusplus
 }

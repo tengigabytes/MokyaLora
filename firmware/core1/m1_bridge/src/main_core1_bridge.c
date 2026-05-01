@@ -84,6 +84,7 @@
 #include "key_inject_rtt.h"
 #include "messages_tx_status.h"
 #include "dm_store.h"
+#include "c1_storage.h"
 #include "settings_client.h"
 #include "watchdog_task.h"
 #include "history.h"
@@ -275,6 +276,20 @@ static void bridge_task(void *pv)
      * PendSV/SVC handlers are installed.  Any pending doorbells from
      * Core 0 during the pre-scheduler busy-wait will fire immediately. */
     irq_set_enabled(SIO_IRQ_BELL, true);
+
+    /* Phase 2 — c1_storage init + selftest run here (post-scheduler) so
+     * the LFS lock callback can take the FreeRTOS recursive mutex. The
+     * selftest writes diag globals readable via SWD; failure is non-
+     * fatal — DM persist consumers in Phase 3 fall back to RAM-only if
+     * c1_storage_is_mounted() returns false.  TEMPORARY: disabled while
+     * debugging early-boot Core 1 hang during lfs_format on fresh chip.
+     * Re-enable after root-cause fix. */
+    extern volatile uint32_t g_c1_storage_init_phase;
+    g_c1_storage_init_phase = 100;
+    (void)c1_storage_init();
+    g_c1_storage_init_phase += 1000;   /* mark "init returned" */
+    (void)c1_storage_self_test();
+    g_c1_storage_init_phase += 10000;  /* mark "selftest returned" */
 
     for (;;) {
         /* If Core 0 announced a reboot, stop all ring/CDC processing and
@@ -668,6 +683,10 @@ int main(void)
     /* Per-peer DM store (Phase 3). Pure BSS reset; mutex created lazily
      * by the first writer call after the scheduler is up. */
     dm_store_init();
+    /* c1_storage_init() + selftest deferred to bridge_task setup —
+     * LFS lock callback uses xSemaphoreCreateRecursiveMutex which
+     * requires the FreeRTOS scheduler to be running.  Calling here
+     * (pre-scheduler) traps in vTaskSuspendAll. */
 
     /* Settings reply queue — created before bridge_task starts dispatching
      * IPC_MSG_CONFIG_VALUE / IPC_MSG_CONFIG_RESULT into it. */

@@ -369,6 +369,8 @@ target_include_directories(core1_bridge PRIVATE
     ${SETTINGS_DIR}
     ${PHONEAPI_DIR}
     ${DEBUG_DIR}
+    ${STORAGE_DIR}
+    ${LFS_DIR}
     ${SEGGER_DIR}/RTT
     ${SEGGER_DIR}/Config
     ${CMAKE_CURRENT_SOURCE_DIR}/../../mie/include

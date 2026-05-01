@@ -54,7 +54,12 @@
 /* ── Memory — Heap4 ─────────────────────────────────────────────────────── */
 #define configSUPPORT_DYNAMIC_ALLOCATION        1
 #define configSUPPORT_STATIC_ALLOCATION         0
-#define configTOTAL_HEAP_SIZE                   ( 53 * 1024 )
+/* Phase 2 c1_storage adds ~280 B of static state (LFS prog cache 256 B
+ * SRAM-mandated + diag globals 32 B) plus runtime malloc bursts during
+ * file ops. 53 → 52 KB heap re-balances the BSS pressure caused by
+ * pulling in the LFS code path; LFS itself uses heap dynamically for
+ * file buffers (NULL passed to lfs_file_config so it lfs_malloc's). */
+#define configTOTAL_HEAP_SIZE                   ( 52 * 1024 )
 
 /* ── Interrupt priorities ────────────────────────────────────────────────── */
 /* Per the RP2350_ARM_NTZ port README, configMAX_SYSCALL_INTERRUPT_PRIORITY

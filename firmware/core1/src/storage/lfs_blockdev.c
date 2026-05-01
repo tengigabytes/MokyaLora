@@ -28,12 +28,6 @@
 static uint8_t s_prog_buf[C1_LFS_CACHE_SIZE]
     __attribute__((aligned(4)));
 
-/* Shared file-handle cache (publicly accessed by c1_storage when opening
- * files). SRAM for the same reason as prog_buf — file caches feed the
- * write path. Single shared instance enforces max 1 open file at a time. */
-uint8_t g_c1_lfs_file_buffer[C1_LFS_CACHE_SIZE]
-    __attribute__((aligned(4)));
-
 /* read_buffer + lookahead_buffer: PSRAM-resident. Touched only outside
  * the flash-op critical section. Saves ~384 B of tight SRAM budget. */
 static uint8_t s_read_buf[C1_LFS_CACHE_SIZE]

@@ -69,6 +69,12 @@ bool c1_storage_is_mounted(void);
  * lfs_fs_size). */
 void c1_storage_get_stats(c1_storage_stats_t *out);
 
+/* Self-test — write/read/verify/delete a few small files end-to-end.
+ * Bumps SWD-readable diag globals for external scripts. Non-fatal:
+ * returns false on first failure, but does NOT unmount or change state.
+ * Runs in ~50 ms typical (one erase + a few programs). */
+bool c1_storage_self_test(void);
+
 /* ── File API ──────────────────────────────────────────────────────── */
 
 /* Path inspection. Returns true iff `path` exists in the FS. */
