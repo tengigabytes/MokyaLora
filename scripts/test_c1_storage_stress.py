@@ -28,8 +28,8 @@ def encode_request(n_files: int, bytes_per_file: int) -> int:
     if bytes_per_file % 256:
         raise ValueError("bytes_per_file must be multiple of 256")
     units = bytes_per_file // 256
-    if not (1 <= n_files <= 64):
-        raise ValueError("n_files must be 1..64")
+    if not (1 <= n_files <= 700):
+        raise ValueError("n_files must be 1..700")
     if not (1 <= units <= 16):
         raise ValueError("bytes_per_file must be 256..4096")
     return (n_files << 16) | units
@@ -72,8 +72,9 @@ def main():
         swd.write_u32(a_request, request)
         print("[wait] firmware ack...")
 
-        # Wait for firmware ack (done == request). Worst case ~3 s + buffer.
-        deadline = time.time() + 30.0
+        # Wait for firmware ack. Each file ~30-60 ms × 3 ops = ~150 ms;
+        # 600 files → ~90 s worst case. Generous timeout.
+        deadline = time.time() + 180.0
         while time.time() < deadline:
             done = swd.read_u32(a_done)
             if done == request: break

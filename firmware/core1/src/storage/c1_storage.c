@@ -479,7 +479,10 @@ bool c1_storage_stress_test(uint32_t n_files, uint32_t bytes_per_file)
         g_c1_storage_stress_last_err = LFS_ERR_INVAL;
         return false;
     }
-    if (n_files == 0u || n_files > 64u || bytes_per_file == 0u
+    /* Caps lifted for Phase 2 capacity-at-scale validation: plan
+     * targets 600 blocks (~2.4 MB) saturation. With 600 × 4 KB single-
+     * sector files we hit the realistic provisioned pool. */
+    if (n_files == 0u || n_files > 700u || bytes_per_file == 0u
         || bytes_per_file > 4096u) {
         g_c1_storage_stress_failures++;
         g_c1_storage_stress_last_err = LFS_ERR_INVAL;
@@ -496,11 +499,11 @@ bool c1_storage_stress_test(uint32_t n_files, uint32_t bytes_per_file)
     uint32_t t0 = (uint32_t)time_us_64();
     bool overall_ok = true;
     uint32_t blocks_peak = 0u;
-    char path[16];
+    char path[20];   /* "/.cs_NNN" up to 700 files */
 
     /* Write phase. */
     for (uint32_t i = 0; i < n_files; i++) {
-        snprintf(path, sizeof(path), "/.cs_%02u", (unsigned)i);
+        snprintf(path, sizeof(path), "/.cs_%03u", (unsigned)i);
         for (uint32_t j = 0; j < bytes_per_file; j++) {
             buf[j] = (uint8_t)((i ^ j) & 0xFFu);
         }
@@ -531,7 +534,7 @@ bool c1_storage_stress_test(uint32_t n_files, uint32_t bytes_per_file)
 
     /* Read-back verify. */
     for (uint32_t i = 0; i < n_files; i++) {
-        snprintf(path, sizeof(path), "/.cs_%02u", (unsigned)i);
+        snprintf(path, sizeof(path), "/.cs_%03u", (unsigned)i);
         c1_storage_file_t f;
         if (!c1_storage_open(&f, path, LFS_O_RDONLY)) {
             g_c1_storage_stress_failures++;
@@ -562,7 +565,7 @@ bool c1_storage_stress_test(uint32_t n_files, uint32_t bytes_per_file)
 
     /* Delete + verify gone. */
     for (uint32_t i = 0; i < n_files; i++) {
-        snprintf(path, sizeof(path), "/.cs_%02u", (unsigned)i);
+        snprintf(path, sizeof(path), "/.cs_%03u", (unsigned)i);
         if (!c1_storage_unlink(path) || c1_storage_exists(path)) {
             g_c1_storage_stress_failures++;
             g_c1_storage_stress_last_err = LFS_ERR_IO;
