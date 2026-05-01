@@ -256,6 +256,8 @@ add_executable(core1_bridge
     ${UI_DIR}/waypoints_view.c
     ${UI_DIR}/waypoint_detail_view.c
     ${UI_DIR}/waypoint_edit_view.c
+    ${UI_DIR}/hw_diag_view.c
+    ${UI_DIR}/sys_diag_view.c
     ${MESSAGES_DIR}/packet_log.c
     ${MESSAGES_DIR}/lora_test_log.c
     ${UTIL_DIR}/base64_url.c
@@ -286,6 +288,7 @@ add_executable(core1_bridge
     ${DEBUG_DIR}/mokya_trace.c
     ${DEBUG_DIR}/postmortem.c
     ${DEBUG_DIR}/msp_canary.c
+    ${DEBUG_DIR}/cpu_load.c
     ${MIE_SRC_DIR}/utf8.c
     ${MIE_SRC_DIR}/mie_init.cpp
     ${MIE_SRC_DIR}/trie_searcher.cpp

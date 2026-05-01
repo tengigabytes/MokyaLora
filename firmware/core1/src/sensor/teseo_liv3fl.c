@@ -66,6 +66,29 @@ static teseo_rf_sat_t  s_rf_tmp[32];
 static char     s_line[LINE_BUF_SIZE];
 static uint16_t s_line_len;
 
+/* Raw NMEA line ring — published from dispatch_line() for the HW Diag
+ * "GNSS NMEA" page. SPSC: writer is gps_task, reader is lvgl_task; the
+ * monotonic seq lets the reader detect new content without locking.
+ * Stored in PSRAM .bss to avoid eating SRAM .bss budget (single
+ * consumer, no SWD inspection needed — UI reads via the public API
+ * teseo_get_raw_lines which copies under a mild fence). */
+#define TESEO_RAW_RING_DEPTH  16u
+#define TESEO_RAW_LINE_MAX    80u
+static char            s_raw_ring[TESEO_RAW_RING_DEPTH][TESEO_RAW_LINE_MAX]
+                                  __attribute__((section(".psram_bss")));
+static volatile uint8_t  s_raw_head;          /* next write slot */
+static volatile uint32_t s_raw_seq;           /* monotonic; bumps per line */
+
+/* Diagnostic breadcrumbs (SWD-readable) — bumped to verify the NMEA
+ * pipeline is alive end-to-end. Cheap u32s in .bss. */
+volatile uint32_t g_teseo_drain_calls    __attribute__((used)) = 0;
+volatile uint32_t g_teseo_drain_bus_null __attribute__((used)) = 0;
+volatile uint32_t g_teseo_drain_neg_r    __attribute__((used)) = 0;
+volatile uint32_t g_teseo_drain_zero_r   __attribute__((used)) = 0;
+volatile uint32_t g_teseo_drain_bytes    __attribute__((used)) = 0;
+volatile uint32_t g_teseo_dispatch_calls __attribute__((used)) = 0;
+volatile uint32_t g_teseo_dispatch_pass  __attribute__((used)) = 0;   /* passed checksum */
+
 /* Per-talker GSV accumulator — 4 slots cover GP / GL / GA / BD. */
 typedef struct {
     uint16_t talker;              /* packed 2-char (0 = slot unused)     */
@@ -439,11 +462,45 @@ static void dispatch_pstm(const char *body)
      * dropped — no consumers yet. */
 }
 
+/* Mirror a checksum-valid NMEA line into the raw ring. Truncated to
+ * TESEO_RAW_LINE_MAX-1 chars + NUL. */
+static void raw_ring_publish(const char *line, uint16_t len)
+{
+    uint16_t n = len;
+    if (n >= TESEO_RAW_LINE_MAX) n = TESEO_RAW_LINE_MAX - 1u;
+    uint8_t slot = s_raw_head;
+    /* memcpy to PSRAM is fine — gps_task is the only writer. */
+    memcpy(s_raw_ring[slot], line, n);
+    s_raw_ring[slot][n] = '\0';
+    s_raw_head = (uint8_t)((slot + 1u) % TESEO_RAW_RING_DEPTH);
+    s_raw_seq++;
+}
+
+uint8_t teseo_get_raw_lines(char (*out)[TESEO_RAW_LINE_MAX], uint8_t max)
+{
+    /* Snapshot most-recent-first into the caller's buffer. */
+    uint8_t head = s_raw_head;
+    uint8_t take = max < TESEO_RAW_RING_DEPTH ? max : TESEO_RAW_RING_DEPTH;
+    for (uint8_t i = 0; i < take; i++) {
+        uint8_t slot = (uint8_t)((head + TESEO_RAW_RING_DEPTH - 1u - i) % TESEO_RAW_RING_DEPTH);
+        memcpy(out[i], s_raw_ring[slot], TESEO_RAW_LINE_MAX);
+    }
+    return take;
+}
+
+uint32_t teseo_get_raw_seq(void)
+{
+    return s_raw_seq;
+}
+
 static void dispatch_line(void)
 {
+    g_teseo_dispatch_calls++;
     if (s_line_len < 8) return;
     if (s_line[0] != '$') return;
     if (!nmea_verify(s_line, s_line_len)) return;
+    g_teseo_dispatch_pass++;
+    raw_ring_publish(s_line, s_line_len);
 
     const char *body = s_line + 1;   /* skip leading '$' */
 
@@ -526,18 +583,25 @@ bool teseo_init(void)
 
 bool teseo_poll(void)
 {
+    g_teseo_drain_calls++;
     i2c_inst_t *bus = i2c_bus_acquire(MOKYA_I2C_SENSOR, portMAX_DELAY);
-    if (bus == NULL) return false;
+    if (bus == NULL) {
+        g_teseo_drain_bus_null++;
+        return false;
+    }
     int r = i2c_read_timeout_us(bus, TESEO_ADDR, s_drain_buf,
                                 sizeof s_drain_buf, false, I2C_TIMEOUT_US);
     i2c_bus_release(MOKYA_I2C_SENSOR);
 
     if (r < 0) {
+        g_teseo_drain_neg_r++;
         if (s_state.i2c_fail_count < UINT32_MAX) s_state.i2c_fail_count++;
         if (s_state.i2c_fail_count >= FAIL_DISCONNECT_COUNT)
             s_state.online = false;
         return false;
     }
+    if (r == 0) g_teseo_drain_zero_r++;
+    g_teseo_drain_bytes += (uint32_t)r;
     for (int i = 0; i < r; ++i) {
         uint8_t c = s_drain_buf[i];
         if (c == NMEA_FILL_BYTE) continue;
@@ -655,6 +719,34 @@ const teseo_rf_state_t  *teseo_get_rf_state(void)  { return &s_rf_state; }
  *   bit 30 (0x40000000) $PSTMNOTCHSTATUS
  * UM2229 §12.14 defines the mask positions. */
 #define RF_DEBUG_MSG_MASK_LOW  0x408000A8u
+
+/* ── Restart commands (no reply, fire-and-forget) ────────────────── */
+
+bool teseo_cold_start(void)  { return send_nmea("PSTMCOLDSTART"); }
+bool teseo_warm_start(void)  { return send_nmea("PSTMWARMSTART"); }
+bool teseo_hot_start(void)   { return send_nmea("PSTMHOTSTART");  }
+
+/* ── NVM ops ──────────────────────────────────────────────────────── */
+
+bool teseo_savepar(void)
+{
+    return send_await("PSTMSAVEPAR",
+                      TESEO_RESP_SAVEPAR_OK,
+                      TESEO_RESP_SAVEPAR_ERR,
+                      1500);
+}
+
+bool teseo_srr(void)
+{
+    return send_nmea("PSTMSRR");
+}
+
+bool teseo_restore_defaults(void)
+{
+    /* $PSTMRESTOREPAR has no documented OK/ERROR reply pair in UM2229,
+     * so fire-and-forget. Caller schedules a follow-up SRR. */
+    return send_nmea("PSTMRESTOREPAR");
+}
 
 bool teseo_enable_rf_debug_messages(bool on)
 {

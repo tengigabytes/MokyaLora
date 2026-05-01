@@ -49,4 +49,10 @@ i2c_inst_t *i2c_bus_acquire(mokya_i2c_id_t id, TickType_t timeout);
  * acquire will re-mux as needed. */
 void        i2c_bus_release(mokya_i2c_id_t id);
 
+/* Bus stuck-low recovery — bit-bang 9 SCL pulses + STOP on the requested
+ * pin pair. Use when a slave hung mid-byte holds SDA low; this clocks
+ * out any in-flight bit so the slave releases. Takes the bus mutex
+ * internally; safe to call from any task. Restores I2C pinmux on exit. */
+void        i2c_bus_recovery(mokya_i2c_id_t id);
+
 #endif /* MOKYA_CORE1_I2C_BUS_H */

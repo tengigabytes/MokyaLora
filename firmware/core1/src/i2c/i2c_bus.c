@@ -7,6 +7,7 @@
 
 #include "hardware/gpio.h"
 #include "hardware/regs/i2c.h"
+#include "pico/time.h"   /* busy_wait_us */
 
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -123,6 +124,77 @@ i2c_inst_t *i2c_bus_acquire(mokya_i2c_id_t id, TickType_t timeout)
         return NULL;
     switch_pinmux(id);
     return i2c1;
+}
+
+/* ── Bus stuck-low recovery (SWD-triggered) ──────────────────────── *
+ *
+ * If a slave dies mid-byte holding SDA low, no I2C controller can
+ * recover — the master needs to bit-bang 9 SCL pulses to clock out
+ * any in-flight bit, then issue a STOP. We expose this as a manual
+ * SWD trigger because automatic detection at boot is fragile (the
+ * SCL line could legitimately be low when this MCU is mid-bus
+ * transaction with another core … not a concern on Rev A but worth
+ * keeping the option explicit).
+ *
+ * Call sequence (test scripts):
+ *   write any non-zero value to g_i2c_bus_recovery_request
+ *   bridge_task polls and runs i2c_bus_recovery on the SENSOR pair,
+ *   then mirrors the request value into g_i2c_bus_recovery_done. */
+
+volatile uint32_t g_i2c_bus_recovery_request __attribute__((used)) = 0u;
+volatile uint32_t g_i2c_bus_recovery_done    __attribute__((used)) = 0u;
+volatile uint8_t  g_i2c_bus_recovery_sda_after __attribute__((used)) = 0u;
+volatile uint8_t  g_i2c_bus_recovery_scl_after __attribute__((used)) = 0u;
+
+void i2c_bus_recovery(mokya_i2c_id_t id)
+{
+    uint sda_pin = (id == MOKYA_I2C_POWER) ? PIN_POWER_SDA : PIN_SENSOR_SDA;
+    uint scl_pin = (id == MOKYA_I2C_POWER) ? PIN_POWER_SCL : PIN_SENSOR_SCL;
+
+    /* Take the bus mutex so no other task fights us. */
+    if (xSemaphoreTake(s_bus_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) return;
+
+    /* Switch both pins to plain SIO output, internal pull-ups on. */
+    gpio_set_function(scl_pin, GPIO_FUNC_SIO);
+    gpio_set_function(sda_pin, GPIO_FUNC_SIO);
+    gpio_pull_up(scl_pin);
+    gpio_pull_up(sda_pin);
+    gpio_set_dir(scl_pin, GPIO_OUT);
+    gpio_set_dir(sda_pin, GPIO_IN);   /* let SDA float — we sense it */
+    gpio_put(scl_pin, 1);
+    busy_wait_us(20);
+
+    /* 9 SCL pulses at ~50 kHz (10 µs high / 10 µs low). */
+    for (int i = 0; i < 9; i++) {
+        gpio_put(scl_pin, 0);
+        busy_wait_us(10);
+        gpio_put(scl_pin, 1);
+        busy_wait_us(10);
+        if (gpio_get(sda_pin)) break;   /* slave released SDA */
+    }
+
+    /* STOP condition: drive SDA low while SCL high, then release SDA. */
+    gpio_set_dir(sda_pin, GPIO_OUT);
+    gpio_put(sda_pin, 0);
+    busy_wait_us(10);
+    gpio_put(scl_pin, 1);
+    busy_wait_us(10);
+    gpio_put(sda_pin, 1);
+    busy_wait_us(10);
+
+    g_i2c_bus_recovery_sda_after = (uint8_t)gpio_get(sda_pin);
+    g_i2c_bus_recovery_scl_after = (uint8_t)gpio_get(scl_pin);
+
+    /* Restore I2C pinmux + reinit peripheral so it's clean. */
+    gpio_set_dir(sda_pin, GPIO_IN);
+    gpio_set_dir(scl_pin, GPIO_IN);
+    gpio_set_function(sda_pin, GPIO_FUNC_I2C);
+    gpio_set_function(scl_pin, GPIO_FUNC_I2C);
+    i2c_init(i2c1, I2C_DEFAULT_BAUD);
+    i2c_set_baudrate_core1(i2c1, I2C_DEFAULT_BAUD);
+    s_active = id;
+
+    xSemaphoreGive(s_bus_mutex);
 }
 
 void i2c_bus_release(mokya_i2c_id_t id)

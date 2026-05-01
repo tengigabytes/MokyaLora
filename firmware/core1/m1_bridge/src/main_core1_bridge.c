@@ -97,6 +97,7 @@
 #endif
 #include "postmortem.h"
 #include "msp_canary.h"
+#include "cpu_load.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -414,6 +415,21 @@ static void bridge_task(void *pv)
         dm_persist_poll_swd_triggers();
         metrics_history_poll_swd_triggers();
         c1_storage_poll_swd_triggers();
+
+        /* ── I2C bus stuck-low recovery (SWD-driven) ── */
+        {
+            extern volatile uint32_t g_i2c_bus_recovery_request;
+            extern volatile uint32_t g_i2c_bus_recovery_done;
+            uint32_t req = g_i2c_bus_recovery_request;
+            if (req != 0u && req != g_i2c_bus_recovery_done) {
+                /* Low byte of req picks the bus: 0 = POWER, 1 = SENSOR. */
+                mokya_i2c_id_t bus = (req & 0xFFu) ? MOKYA_I2C_SENSOR
+                                                   : MOKYA_I2C_POWER;
+                i2c_bus_recovery(bus);
+                g_i2c_bus_recovery_done = req;
+                did_work = true;
+            }
+        }
 
         /* ── c0_to_c1 DATA ring → CDC IN (high priority) ───────────── */
         IpcMsgHeader hdr;
@@ -862,6 +878,14 @@ int main(void)
      * task itself enables the HW watchdog on its first iteration; until
      * then no kicks are due. See watchdog_task.h for the hang model. */
     TASK_START_OR_PANIC(watchdog_task_start(tskIDLE_PRIORITY + 3), "wd");
+
+    /* CPU load estimator — 1 Hz sample task. Must run at the same
+     * priority as the always-ready usb_device_task / bridge_task
+     * (tskIDLE_PRIORITY + 2); a lower priority is starved by their
+     * tight taskYIELD loops. The 1 s vTaskDelayUntil between samples
+     * is what gives idle a chance to run anyway (modulo the design
+     * caveat that idle currently still starves — see CPU page UI). */
+    TASK_START_OR_PANIC(cpu_load_start(tskIDLE_PRIORITY + 2), "cpu_load");
 
     #undef TASK_START_OR_PANIC
 

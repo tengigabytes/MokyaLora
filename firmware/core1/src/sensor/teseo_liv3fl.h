@@ -135,6 +135,29 @@ const teseo_rf_state_t      *teseo_get_rf_state(void);
  * Must be called from a FreeRTOS task context (uses vTaskDelay). */
 bool                         teseo_enable_rf_debug_messages(bool on);
 
+/* Engine restart commands (UM2229 §10.2 — fire-and-forget, no reply).
+ * - cold:  clears almanac + ephemeris + UTC, full re-acquire (~30-60 s)
+ * - warm:  keeps almanac, re-acquires ephemeris (~10-20 s)
+ * - hot:   keeps everything, just refixes (~few s)
+ * Each issues PSTMCOLDSTART / PSTMWARMSTART / PSTMHOTSTART.
+ * Engine drops out of NMEA stream for ~1-2 s during the restart. */
+bool                         teseo_cold_start(void);
+bool                         teseo_warm_start(void);
+bool                         teseo_hot_start(void);
+
+/* Persist the current Teseo configuration block to NVM. Acks via
+ * $PSTMSAVEPAROK / $PSTMSAVEPARERROR. Blocks up to 1.5 s. */
+bool                         teseo_savepar(void);
+
+/* Reboot the engine without changing config. Reloads NVM into the
+ * current block and re-applies. No reply. ~1-2 s NMEA dropout. */
+bool                         teseo_srr(void);
+
+/* Restore Teseo NVM to factory defaults via $PSTMRESTOREPAR. Replies
+ * are not parsed by the driver; caller should expect a 1-2 s NMEA
+ * dropout and re-init may be needed. DESTRUCTIVE — UI confirms. */
+bool                         teseo_restore_defaults(void);
+
 /* Initialise driver state + send $PSTMGPSRESTART to guarantee the engine
  * is running (no-op if already running). Caller must hold no mutex. */
 bool                         teseo_init(void);
@@ -164,5 +187,29 @@ bool                         teseo_get_fix_rate_from_device(char *out,
 
 const teseo_state_t         *teseo_get_state(void);
 const teseo_sat_view_t      *teseo_get_sat_view(void);
+
+/* Raw NMEA line ring (HW Diag "GNSS NMEA" page).
+ *
+ * Each entry is a checksum-validated NMEA sentence ($... up to and
+ * including the *XX suffix), null-terminated. Writer is gps_task in
+ * dispatch_line(); reader is the UI lvgl_task.  No mutex — readers
+ * use teseo_get_raw_seq() to detect new lines and receive a stable
+ * snapshot via teseo_get_raw_lines() (memcpy under no-lock; field
+ * tearing impossible because we only ever write whole lines + bump
+ * a 32-bit seq AFTER the bytes are in place).
+ *
+ * Capacity: 16 lines × 80 chars = 1280 bytes in PSRAM .bss. */
+#define TESEO_RAW_LINE_MAX    80u
+
+/* Snapshot up to `max` most-recent lines (newest first) into the
+ * caller-supplied 2D buffer. Returns the count actually written
+ * (≤ min(max, ring depth)). The buffer dimension MUST be
+ * `TESEO_RAW_LINE_MAX`. */
+uint8_t                      teseo_get_raw_lines(char (*out)[TESEO_RAW_LINE_MAX],
+                                                  uint8_t max);
+
+/* Monotonic counter — bumps once per published NMEA line. UI compares
+ * against last-seen value to gate redraws. */
+uint32_t                     teseo_get_raw_seq(void);
 
 #endif /* MOKYA_CORE1_TESEO_LIV3FL_H */

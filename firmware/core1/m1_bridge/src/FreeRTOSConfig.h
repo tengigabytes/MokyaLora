@@ -32,14 +32,15 @@
 
 /* ── Scheduler ──────────────────────────────────────────────────────────── */
 #define configUSE_PREEMPTION                    1
-#define configUSE_IDLE_HOOK                     0
+/* Idle hook used by debug/cpu_load.c for CPU% estimation. */
+#define configUSE_IDLE_HOOK                     1
 #define configUSE_PASSIVE_IDLE_HOOK             0
 #define configUSE_TICK_HOOK                     0
 #define configCPU_CLOCK_HZ                      150000000UL
 #define configTICK_RATE_HZ                      1000
 #define configMAX_PRIORITIES                    5
 #define configMINIMAL_STACK_SIZE                512
-#define configMAX_TASK_NAME_LEN                 16
+#define configMAX_TASK_NAME_LEN                 12
 #define configTICK_TYPE_WIDTH_IN_BITS           TICK_TYPE_WIDTH_32_BITS
 #define configIDLE_SHOULD_YIELD                 1
 #define configUSE_TIME_SLICING                  1
@@ -59,7 +60,10 @@
  * file ops. 53 → 52 KB heap re-balances the BSS pressure caused by
  * pulling in the LFS code path; LFS itself uses heap dynamically for
  * file buffers (NULL passed to lfs_file_config so it lfs_malloc's). */
-#define configTOTAL_HEAP_SIZE                   ( 52 * 1024 )
+/* Phase 5 — trace facility + CPU load task added ~64 B BSS; trim heap
+ * by 256 B to reclaim MSP guard headroom. ucHeap is in .bss so this
+ * directly grows the available margin between .bss end and StackTop. */
+#define configTOTAL_HEAP_SIZE                   ( 52 * 1024 - 256 )
 
 /* ── Interrupt priorities ────────────────────────────────────────────────── */
 /* Per the RP2350_ARM_NTZ port README, configMAX_SYSCALL_INTERRUPT_PRIORITY
@@ -87,7 +91,12 @@
 #define configTIMER_TASK_STACK_DEPTH            512
 
 /* ── Tracing / stats ────────────────────────────────────────────────────── */
-#define configUSE_TRACE_FACILITY                0
+/* Trace facility enables uxTaskGetSystemState() — needed by SysDiag CPU
+ * page to enumerate tasks + read stack high-water marks. Adds ~50 B per
+ * TCB; ~10 tasks ≈ 500 B BSS. configRECORD_STACK_HIGH_ADDRESS deliberately
+ * left at 0 — uxTaskGetStackHighWaterMark works without it (computed
+ * from current SP), so we save 4 B × 10 TCBs of BSS. */
+#define configUSE_TRACE_FACILITY                1
 #define configUSE_STATS_FORMATTING_FUNCTIONS    0
 #define configGENERATE_RUN_TIME_STATS           0
 
@@ -109,7 +118,7 @@
 #define INCLUDE_uxTaskPriorityGet               0
 #define INCLUDE_eTaskGetState                   0
 #define INCLUDE_xTaskAbortDelay                 0
-#define INCLUDE_uxTaskGetStackHighWaterMark     0
+#define INCLUDE_uxTaskGetStackHighWaterMark     1
 #define INCLUDE_xSemaphoreGetMutexHolder        1
 
 #endif /* FREERTOS_CONFIG_H */

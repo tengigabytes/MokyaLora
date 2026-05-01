@@ -84,6 +84,8 @@ typedef enum {
     VIEW_ID_WAYPOINTS,        /* D-3 waypoint list                        */
     VIEW_ID_WAYPOINT_DETAIL,  /* D-4 waypoint detail                      */
     VIEW_ID_WAYPOINT_EDIT,    /* D-5 add/edit waypoint                    */
+    VIEW_ID_HW_DIAG,          /* L-1 row 4 — hardware diagnostics 8 pages */
+    VIEW_ID_SYS_DIAG,         /* L-1 row 4 — system diagnostics (resources/CPU/screen) */
 #if MOKYA_DEBUG_VIEWS
     VIEW_ID_RF_DEBUG,
     VIEW_ID_FONT_TEST,
