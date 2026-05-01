@@ -80,6 +80,14 @@ volatile int32_t  g_c1_storage_pl_last_err __attribute__((used)) = 0;
  * `MOKYA_C1_STORAGE_RESET_TRIGGER` so production can disable. */
 volatile uint32_t g_c1_storage_reset_request __attribute__((used)) = 0u;
 
+/* Test-only: SWD writes any non-zero value to wipe + reformat the FS
+ * (destroys all data, including dm_persist /.dm_* files and the
+ * /.pl_marker counter). Bridge_task polls; firmware acks by writing
+ * the same value to g_c1_storage_format_done. Used by test scripts
+ * that need a clean FS baseline. */
+volatile uint32_t g_c1_storage_format_request __attribute__((used)) = 0u;
+volatile uint32_t g_c1_storage_format_done    __attribute__((used)) = 0u;
+
 /* ── Helpers ───────────────────────────────────────────────────────── */
 
 static int write_schema_version(void)

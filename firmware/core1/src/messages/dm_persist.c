@@ -27,6 +27,26 @@ volatile uint32_t g_dm_persist_failures __attribute__((used)) = 0u;
 volatile int32_t  g_dm_persist_last_err __attribute__((used)) = 0;
 volatile uint32_t g_dm_persist_flushes  __attribute__((used)) = 0u;
 
+/* Test-only SWD-trigger for synchronous flush. Bridge_task polls and
+ * calls dm_persist_flush_now when request != done. Avoids 30 s timer
+ * latency in scripted tests. */
+volatile uint32_t g_dm_persist_flush_request __attribute__((used)) = 0u;
+volatile uint32_t g_dm_persist_flush_done    __attribute__((used)) = 0u;
+
+/* Byte-coherent SWD diag of the last successfully-loaded peer's
+ * OLDEST message (i.e. ring index 0).  Lives in regular .bss because
+ * peer_slot_t storage is in PSRAM which isn't SWD-coherent without
+ * explicit cache flush.  Captured by load_one_cb after each
+ * dm_store_restore_peer succeeds — the test script reads these to
+ * verify byte-perfect round-trip. */
+#define DM_PERSIST_DIAG_TEXT_MAX  200u
+volatile uint32_t g_dm_persist_last_peer       __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_persist_last_count      __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_persist_last_outbound   __attribute__((used)) = 0u;
+volatile uint16_t g_dm_persist_last_text_len   __attribute__((used)) = 0u;
+volatile uint8_t  g_dm_persist_last_text[DM_PERSIST_DIAG_TEXT_MAX]
+                                                __attribute__((used));
+
 /* Single shared serialisation buffer (PSRAM) — size matches the on-disk
  * record. Only one save_peer runs at a time (timer task is single
  * thread), so a static buffer is safe and avoids 1.8 KB of malloc churn
@@ -151,6 +171,25 @@ static bool load_one_cb(const char *name, uint32_t size, void *vctx)
     if (dm_store_restore_peer(&s_record)) {
         ctx->loaded++;
         g_dm_persist_loads++;
+        /* Capture the oldest message into the SWD-coherent diag.
+         * Ring layout: head = next-write, count = entries, oldest is at
+         * (head - count) mod 8. */
+        int oldest = (int)s_record.head - (int)s_record.count;
+        if (oldest < 0) oldest += (int)DM_STORE_MSGS_PER;
+        if (s_record.count > 0u && oldest >= 0
+            && oldest < (int)DM_STORE_MSGS_PER) {
+            const dm_msg_t *m = &s_record.ring[oldest];
+            uint16_t L = m->text_len > DM_PERSIST_DIAG_TEXT_MAX
+                            ? (uint16_t)DM_PERSIST_DIAG_TEXT_MAX
+                            : m->text_len;
+            g_dm_persist_last_peer     = s_record.peer_node_id;
+            g_dm_persist_last_count    = s_record.count;
+            g_dm_persist_last_outbound = m->outbound ? 1u : 0u;
+            g_dm_persist_last_text_len = L;
+            for (uint16_t i = 0; i < L; i++) {
+                g_dm_persist_last_text[i] = (uint8_t)m->text[i];
+            }
+        }
     }
     return true;
 }

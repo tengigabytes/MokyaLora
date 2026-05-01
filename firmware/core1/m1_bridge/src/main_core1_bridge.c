@@ -328,6 +328,30 @@ static void bridge_task(void *pv)
             }
         }
 
+        /* ── Format-FS trigger (SWD-driven, test only) ── */
+        {
+            extern volatile uint32_t g_c1_storage_format_request;
+            extern volatile uint32_t g_c1_storage_format_done;
+            uint32_t req = g_c1_storage_format_request;
+            if (req != 0u && req != g_c1_storage_format_done) {
+                (void)c1_storage_format_now();
+                g_c1_storage_format_done = req;
+                did_work = true;
+            }
+        }
+
+        /* ── DM persist flush trigger (SWD-driven, test only) ── */
+        {
+            extern volatile uint32_t g_dm_persist_flush_request;
+            extern volatile uint32_t g_dm_persist_flush_done;
+            uint32_t req = g_dm_persist_flush_request;
+            if (req != 0u && req != g_dm_persist_flush_done) {
+                (void)dm_persist_flush_now();
+                g_dm_persist_flush_done = req;
+                did_work = true;
+            }
+        }
+
         /* ── Phase 2.5 capacity stress trigger (SWD-driven, default OFF) ── *
          *
          * Test scripts SWD-write a non-zero value to g_c1_storage_stress_request
