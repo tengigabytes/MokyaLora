@@ -1,104 +1,176 @@
-/* lru_persist.cpp -- See lru_persist.h for contract.
+/* lru_persist.cpp — see lru_persist.h.
+ *
+ * Phase 7 (Task #71): migrated from a 64 KB raw flash partition at
+ * 0x10C00000 to a single LFS file /.mie_lru.bin. Public API is
+ * unchanged — ime_task.cpp keeps calling lru_persist_init / _load /
+ * _save with the same signatures.
+ *
+ * Save still allocates a transient scratch on the FreeRTOS heap to
+ * hold the serialised blob (up to 6152 B for kCap=128). The blob is
+ * pushed straight to LFS — no flash padding, no Core 0 park dance
+ * (LFS writes go through the storage layer's own flash_range_program
+ * wrapping). The 64 KB partition at 0x10C00000 becomes unused; the
+ * address comment in mie_lru_partition.h documents the historical
+ * footprint and is kept until a future flash-map cleanup.
  *
  * SPDX-License-Identifier: MIT
  */
 #include "lru_persist.h"
-#include "mie_lru_partition.h"
 
 #include <string.h>
 
 #include "FreeRTOS.h"
-#include "task.h"          /* pvPortMalloc / vPortFree */
-
-#include "hardware/flash.h"
-#include "hardware/xip_cache.h"
+#include "task.h"
 
 #include <mie/ime_logic.h>
 
-namespace {
+extern "C" {
+#include "c1_storage.h"
+#include "../../lfs/lfs.h"
+#include "mokya_trace.h"
+}
 
-/* Header + max entries. 128 × 48 B + 8 B header = 6152 B. 4-byte aligned
- * for flash_range_program. Rounded up to the flash page size (256 B) so
- * the entire program call hits whole pages — 25 pages = 6400 B.
- *
- * Phase 1.6.1 (2026-04-26): kCap bumped 64 → 128. To make BSS room for
- * the +3 KB LruCache growth in g_ime_storage, the scratch buffer was
- * moved off BSS and is now allocated on the FreeRTOS heap inside
- * lru_persist_save() and freed on return. Cost analysis:
- *   - Save fires only on commit-50 / mode-cycle / 30 s-idle tripwire,
- *     so 6.4 KB heap pressure is rare and short-lived.
- *   - Boot heap free ~9.3 KB; one 6.4 KB malloc takes free to ~2.9 KB
- *     transiently, then snaps back. Below the 15 % boot panic threshold
- *     but above runtime starvation.
- *   - pvPortMalloc returning NULL = save skipped (returns false); the
- *     next tripwire retries. No data loss; entries persist in RAM.
- */
-constexpr size_t kBlobMaxBytes = 8u + (size_t)mie::LruCache::kCap * 48u;
-constexpr size_t kPageSize     = FLASH_PAGE_SIZE;    /* 256 B */
-constexpr size_t kPaddedSize   = ((kBlobMaxBytes + kPageSize - 1u)
-                                  / kPageSize) * kPageSize;
-static_assert(kPaddedSize <= MIE_LRU_SLOT_SIZE,
-              "LRU blob must fit in one slot");
+#define LRU_PERSIST_PATH    "/.mie_lru.bin"
+#define LRU_BLOB_MAX_BYTES  (8u + (size_t)mie::LruCache::kCap * 48u)
 
-} // namespace
+extern "C" {
+volatile uint32_t g_lru_persist_saves    __attribute__((used)) = 0u;
+volatile uint32_t g_lru_persist_loads    __attribute__((used)) = 0u;
+volatile uint32_t g_lru_persist_failures __attribute__((used)) = 0u;
+volatile int32_t  g_lru_persist_last_err __attribute__((used)) = 0;
+volatile uint32_t g_lru_persist_bytes    __attribute__((used)) = 0u;
+
+/* SWD-driven save trigger drained inside the IME task tripwire. */
+volatile uint32_t g_lru_save_force_request __attribute__((used)) = 0u;
+volatile uint32_t g_lru_save_force_done    __attribute__((used)) = 0u;
+
+/* Bridge-side request/done mirror — bridge_task forwards a SWD save
+ * request into g_lru_save_force_request, then waits for the IME task
+ * tripwire to fire and increment saves before mirroring back. */
+volatile uint32_t g_lru_persist_save_request __attribute__((used)) = 0u;
+volatile uint32_t g_lru_persist_save_done    __attribute__((used)) = 0u;
+volatile uint8_t  g_lru_persist_save_ok      __attribute__((used)) = 0u;
+}
 
 extern "C" bool lru_persist_init(void)
 {
-    /* Heap-allocated scratch is acquired lazily inside lru_persist_save.
-     * Kept as an explicit entry point so callers document intent and
-     * tests can stub out the init point in future iterations. */
+    /* Nothing to set up — c1_storage is mounted by bridge_task before
+     * the IME task starts, and the path is top-level (no mkdir). The
+     * symbol stays exported for ime_task.cpp call-site symmetry. */
     return true;
 }
 
 extern "C" bool lru_persist_load(mie::ImeLogic *ime)
 {
     if (!ime) return false;
+    if (!c1_storage_is_mounted()) return false;
+    if (!c1_storage_exists(LRU_PERSIST_PATH)) return false;
 
-    const uint8_t *xip = reinterpret_cast<const uint8_t *>(MIE_LRU_PARTITION_ADDR);
+    /* Two-step read: first pull the 8-byte header to discover the
+     * actual entry count, then allocate exactly the bytes needed.
+     * Avoids a 6152 B malloc on the boot-time load path where heap
+     * is most fragmented. Empty-cache files round-trip with just an
+     * 8 B alloc. */
+    c1_storage_file_t f;
+    if (!c1_storage_open(&f, LRU_PERSIST_PATH, LFS_O_RDONLY)) {
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = LFS_ERR_IO;
+        return false;
+    }
+    uint8_t header[8];
+    int hrc = c1_storage_read(&f, header, sizeof(header));
+    if (hrc != (int)sizeof(header)) {
+        (void)c1_storage_close(&f);
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = (hrc < 0) ? hrc : LFS_ERR_CORRUPT;
+        return false;
+    }
+    /* Parse `count_` from header bytes 6..7 (LruCache layout). */
+    uint16_t count = (uint16_t)(header[6] | ((uint16_t)header[7] << 8));
+    if ((size_t)count > (size_t)mie::LruCache::kCap) {
+        (void)c1_storage_close(&f);
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = LFS_ERR_CORRUPT;
+        return false;
+    }
+    size_t need = sizeof(header) + (size_t)count * 48u;
 
-    /* First 8 bytes are the LRU1 header. If magic doesn't match, the
-     * partition is almost certainly 0xFF (erased flash) — skip the load
-     * and leave ImeLogic with an empty cache. deserialize() does the same
-     * on any malformed buffer, so we can unconditionally pass the full
-     * blob window; it will reject a bad header without touching entries. */
-    return ime->load_lru(xip, (int)kBlobMaxBytes);
+    uint8_t *buf = (uint8_t *)pvPortMalloc(need);
+    if (!buf) {
+        (void)c1_storage_close(&f);
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = LFS_ERR_NOMEM;
+        return false;
+    }
+    /* Replay the header into the front of buf so deserialize() sees a
+     * complete blob; read the entry tail directly into buf+8. */
+    memcpy(buf, header, sizeof(header));
+    int rc = (int)sizeof(header);
+    if (count > 0) {
+        int tail = c1_storage_read(&f, buf + sizeof(header), need - sizeof(header));
+        (void)c1_storage_close(&f);
+        if (tail != (int)(need - sizeof(header))) {
+            vPortFree(buf);
+            g_lru_persist_failures++;
+            g_lru_persist_last_err = (tail < 0) ? tail : LFS_ERR_CORRUPT;
+            return false;
+        }
+        rc = (int)need;
+    } else {
+        (void)c1_storage_close(&f);
+    }
+
+    bool ok = ime->load_lru(buf, rc);
+    vPortFree(buf);
+    if (ok) {
+        g_lru_persist_loads++;
+        g_lru_persist_bytes = (uint32_t)rc;
+    } else {
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = LFS_ERR_CORRUPT;
+    }
+    return ok;
 }
 
 extern "C" bool lru_persist_save(mie::ImeLogic *ime)
 {
     if (!ime) return false;
+    if (!c1_storage_is_mounted()) return false;
 
     const int need = ime->lru_serialized_size();
-    if (need <= 0 || (size_t)need > kBlobMaxBytes) return false;
+    if (need <= 0 || (size_t)need > LRU_BLOB_MAX_BYTES) return false;
 
-    /* Allocate the scratch buffer from the FreeRTOS heap. Freed before
-     * any non-error return path. NULL return means we couldn't get the
-     * 6.4 KB right now — the next tripwire (commit-50 / mode / idle)
-     * will retry and the in-RAM LRU is unchanged. */
-    uint8_t *scratch = (uint8_t *)pvPortMalloc(kPaddedSize);
-    if (!scratch) return false;
-
-    /* Serialise the live cache into the scratch buffer. Pad the tail up
-     * to kPaddedSize with 0xFF (post-erase flash state) so the program
-     * op writes whole pages without dragging in adjacent sector data. */
-    memset(scratch, 0xFFu, kPaddedSize);
-    const int wrote = ime->serialize_lru(scratch, (int)kBlobMaxBytes);
+    uint8_t *scratch = (uint8_t *)pvPortMalloc((size_t)need);
+    if (!scratch) {
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = LFS_ERR_NOMEM;
+        return false;
+    }
+    const int wrote = ime->serialize_lru(scratch, need);
     if (wrote != need) {
         vPortFree(scratch);
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = LFS_ERR_INVAL;
         return false;
     }
 
-    /* Erase the active slot (2 × 4 KB sectors) then program the scratch.
-     * Both calls go through flash_safety_wrap.c's --wrap so Core 0 is
-     * parked and interrupts off on Core 1 for the duration. */
-    flash_range_erase(MIE_LRU_SLOT_OFFSET, MIE_LRU_SLOT_SIZE);
-    flash_range_program(MIE_LRU_SLOT_OFFSET, scratch, kPaddedSize);
-
+    c1_storage_file_t f;
+    if (!c1_storage_open(&f, LRU_PERSIST_PATH,
+                         LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC)) {
+        vPortFree(scratch);
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = LFS_ERR_IO;
+        return false;
+    }
+    int rc = c1_storage_write(&f, scratch, (size_t)need);
+    bool closed = c1_storage_close(&f);
     vPortFree(scratch);
-
-    /* Invalidate the XIP cache lines that alias the partition so the
-     * next read through the cached XIP window sees the new bytes rather
-     * than stale pre-erase content. Range is measured from XIP_BASE.   */
-    xip_cache_invalidate_range(MIE_LRU_PARTITION_OFFSET, kPaddedSize);
+    if (rc != need || !closed) {
+        g_lru_persist_failures++;
+        g_lru_persist_last_err = (rc < 0) ? rc : LFS_ERR_IO;
+        return false;
+    }
+    g_lru_persist_saves++;
+    g_lru_persist_bytes = (uint32_t)need;
     return true;
 }

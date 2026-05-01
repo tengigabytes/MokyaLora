@@ -447,6 +447,46 @@ static void bridge_task(void *pv)
             }
         }
 
+        /* ── Phase 7 (Task #71) MIE LRU save trigger ── *
+         *
+         * Forwards a SWD save request to the IME task via
+         * g_lru_save_force_request (the IME task's tripwire path is the
+         * only context that holds the snapshot mutex while calling
+         * lru_persist_save). Bridge tracks completion by watching
+         * g_lru_save_force_done, then publishes ok/done so the host
+         * test harness can poll. */
+        {
+            extern volatile uint32_t g_lru_persist_save_request;
+            extern volatile uint32_t g_lru_persist_save_done;
+            extern volatile uint8_t  g_lru_persist_save_ok;
+            extern volatile uint32_t g_lru_persist_saves;
+            extern volatile uint32_t g_lru_persist_failures;
+            extern volatile uint32_t g_lru_save_force_request;
+            extern volatile uint32_t g_lru_save_force_done;
+            uint32_t req = g_lru_persist_save_request;
+            if (req != 0u && req != g_lru_persist_save_done) {
+                static uint32_t s_pre_saves = 0;
+                static uint32_t s_pre_fails = 0;
+                static bool     s_armed     = false;
+                if (!s_armed) {
+                    s_pre_saves = g_lru_persist_saves;
+                    s_pre_fails = g_lru_persist_failures;
+                    g_lru_save_force_request = g_lru_save_force_done + 1u;
+                    s_armed = true;
+                } else if (g_lru_persist_saves > s_pre_saves) {
+                    g_lru_persist_save_ok = 1u;
+                    g_lru_persist_save_done = req;
+                    s_armed = false;
+                    did_work = true;
+                } else if (g_lru_persist_failures > s_pre_fails) {
+                    g_lru_persist_save_ok = 0u;
+                    g_lru_persist_save_done = req;
+                    s_armed = false;
+                    did_work = true;
+                }
+            }
+        }
+
         /* ── I2C bus stuck-low recovery (SWD-driven) ── */
         {
             extern volatile uint32_t g_i2c_bus_recovery_request;

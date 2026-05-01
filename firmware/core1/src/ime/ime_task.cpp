@@ -35,6 +35,16 @@
 
 #include "key_event.h"
 
+/* Phase 7 — extern symbols touched inside the anonymous namespace
+ * below. Declared at file scope so the namespace doesn't mangle them.
+ * SWD-driven LRU save tripwire lives in lru_persist.cpp; the LFS
+ * mount probe is in c1_storage.c. */
+extern "C" {
+extern volatile uint32_t g_lru_save_force_request;
+extern volatile uint32_t g_lru_save_force_done;
+bool c1_storage_is_mounted(void);
+}
+
 namespace {
 
 /* ── Static state ─────────────────────────────────────────────────── */
@@ -210,8 +220,23 @@ void ime_task_fn(void *) {
     uint32_t last_committed_count  = 0;
     uint32_t last_commit_ms        = now_ms();
     uint8_t  last_mode_byte        = ime_view_mode_byte();
+    bool     lru_load_attempted    = false;
 
     for (;;) {
+        /* Phase 7 — Best-effort LRU restore once c1_storage is mounted.
+         * Bridge_task initialises LFS; this loop polls until the mount
+         * succeeds, then takes the snapshot mutex and pulls the saved
+         * blob into ImeLogic. Failure (file missing / corrupt) leaves
+         * the cache empty — same as first-boot behaviour. */
+        if (!lru_load_attempted) {
+            if (c1_storage_is_mounted()) {
+                xSemaphoreTake(g_snapshot_mutex, portMAX_DELAY);
+                (void)lru_persist_load(g_ime);
+                xSemaphoreGive(g_snapshot_mutex);
+                lru_load_attempted = true;
+            }
+        }
+
         key_event_t ev{};
         bool got_ev = key_event_pop(&ev, pdMS_TO_TICKS(kTickMs));
 
@@ -271,7 +296,14 @@ void ime_task_fn(void *) {
         bool idle_tripwire     = g_lru_save_dirty &&
                                  (now - last_commit_ms) >= kLruSaveIdleMs;
 
-        if (commit_tripwire || mode_tripwire || idle_tripwire) {
+        /* Phase 7 — SWD-forced save. The bridge_task SWD trigger sets
+         * g_lru_save_force_request; the ime task fires once and clears
+         * the request by mirroring it into _force_done. Used by the
+         * test_l1_lru_lfs harness to trigger a save without waiting
+         * 30 s for the idle tripwire. */
+        bool force_tripwire    = (g_lru_save_force_request != g_lru_save_force_done);
+
+        if (commit_tripwire || mode_tripwire || idle_tripwire || force_tripwire) {
             TRACE("ime", "lru_save", "reason=%u,commits=%u",
                   (unsigned)(commit_tripwire ? 0 : (mode_tripwire ? 1 : 2)),
                   (unsigned)commits_now);
@@ -284,6 +316,9 @@ void ime_task_fn(void *) {
             last_committed_count = commits_now;
             last_mode_byte       = mode_now;
             g_lru_save_dirty     = false;
+            if (force_tripwire) {
+                g_lru_save_force_done = g_lru_save_force_request;
+            }
         }
     }
 }
@@ -356,10 +391,11 @@ bool ime_task_start(const mie_dict_pointers_t *dict, UBaseType_t priority) {
      * this still leaves headroom well above the 20 % panic threshold. */
     if (!lru_persist_init()) return false;
 
-    /* Best-effort restore of the personalised LRU cache from flash.
-     * An unprogrammed (all 0xFF) partition returns false here and the
-     * engine runs with an empty cache — same as first-boot behaviour. */
-    lru_persist_load(g_ime);
+    /* LRU restore deferred to the first ime_task_fn iteration —
+     * c1_storage isn't mounted yet at this point in cold boot, and
+     * lru_persist_load needs a usable LFS. Phase 7 (Task #71) move:
+     * pre-LFS the load could happen here because flash XIP was
+     * available unconditionally. */
 
     /* Phase 2 draft store init. The accompanying `draft_store_self_test`
      * is intentionally NOT called here — it erases two flash sectors on
