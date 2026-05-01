@@ -45,6 +45,7 @@ typedef enum {
     DIAG_PAGE_SENSORS,
     DIAG_PAGE_CHARGER,
     DIAG_PAGE_CHARGE_CTRL,
+    DIAG_PAGE_NOTIF,           /* Phase 8 — notification settings */
     DIAG_PAGE_COUNT
 } diag_page_t;
 
@@ -101,6 +102,10 @@ static void gnss_adv_enter(lv_obj_t *root);
 static void gnss_adv_leave(void);
 static void gnss_adv_apply(const key_event_t *ev);
 static void gnss_adv_refresh(void);
+static void notif_enter(lv_obj_t *root);
+static void notif_leave(void);
+static void notif_apply(const key_event_t *ev);
+static void notif_refresh(void);
 
 /* Each page's enter() is responsible for clearing/recreating widgets
  * under content_root. The view destroys content_root on view-destroy.
@@ -136,6 +141,9 @@ static diag_page_def_t s_pages[DIAG_PAGE_COUNT] = {
     [DIAG_PAGE_CHARGER]     = { "充電器讀值",
                                 charger_enter, charger_leave, NULL, charger_refresh },
     [DIAG_PAGE_CHARGE_CTRL] = { "充電控制",     NULL, NULL, NULL, NULL },
+    [DIAG_PAGE_NOTIF]       = { "通知設定",
+                                notif_enter, notif_leave,
+                                notif_apply, notif_refresh },
 };
 
 /* ── View state ───────────────────────────────────────────────────── */
@@ -2088,6 +2096,300 @@ static void gnss_adv_apply(const key_event_t *ev)
 }
 
 static void gnss_adv_refresh(void) { /* no live refresh */ }
+
+/* ── Page: Notification settings (DIAG_PAGE_NOTIF) ─────────────────── *
+ *
+ * Three sub-pages walked via FUNC (HW Diag's only spare key under the
+ * router):
+ *   sub 0 — global event defaults (Master / DnD / Vib intensity / 8 events)
+ *   sub 1 — channel overrides (8 channels)
+ *   sub 2 — per-conversation overrides (8 slots)
+ *
+ * UP/DOWN moves widget focus, OK cycles modes (NONE → SILENT → VIBRATE
+ * → DEFAULT-fallback for layers 2+3, just NONE → SILENT → VIBRATE for
+ * layer 1) or toggles bools / bumps numeric. Each mutation flips the
+ * notification dirty flag so notif_persist's debounce timer flushes
+ * within 5 s. */
+
+#include "notification.h"
+
+typedef enum {
+    NOTIF_SUB_GLOBAL = 0,
+    NOTIF_SUB_CHANNELS,
+    NOTIF_SUB_PER_CONV,
+    NOTIF_SUB_COUNT
+} notif_sub_t;
+
+/* master / dnd / quiet-hours / vib-int + 8 events = 12 */
+#define NOTIF_GLOBAL_ROWS  (4 + NOTIF_EVENT_COUNT)
+
+typedef struct {
+    lv_obj_t   *header_lbl;
+    lv_obj_t   *row_lbls[NOTIF_GLOBAL_ROWS];   /* reused across sub-pages */
+    lv_obj_t   *hint_lbl;
+    notif_sub_t sub;
+    uint8_t     cur_row;                       /* 0..N-1 within sub-page */
+} notif_page_t;
+
+static notif_page_t s_notif __attribute__((section(".psram_bss")));
+
+static const char *notif_event_name(notif_event_t ev)
+{
+    switch (ev) {
+        case NOTIF_EVENT_DM:        return "DM";
+        case NOTIF_EVENT_BROADCAST: return "Broadcast";
+        case NOTIF_EVENT_ACK:       return "ACK";
+        case NOTIF_EVENT_NEW_NODE:  return "NewNode";
+        case NOTIF_EVENT_CHARGE:    return "Charge";
+        case NOTIF_EVENT_LOW_BATT:  return "LowBatt";
+        case NOTIF_EVENT_KEYPRESS:  return "KeyPress";
+        case NOTIF_EVENT_SOS:       return "SOS";
+        default:                    return "?";
+    }
+}
+
+static const char *notif_mode_name(notif_mode_t m)
+{
+    switch (m) {
+        case NOTIF_MODE_NONE:    return "OFF";
+        case NOTIF_MODE_SILENT:  return "SIL";
+        case NOTIF_MODE_VIBRATE: return "VIB";
+        case NOTIF_MODE_DEFAULT: return "DEF";
+        default:                 return "?";
+    }
+}
+
+static notif_mode_t notif_mode_cycle3(notif_mode_t m)
+{
+    /* OFF → SIL → VIB → OFF (3-state, no DEFAULT). */
+    switch (m) {
+        case NOTIF_MODE_NONE:    return NOTIF_MODE_SILENT;
+        case NOTIF_MODE_SILENT:  return NOTIF_MODE_VIBRATE;
+        case NOTIF_MODE_VIBRATE: return NOTIF_MODE_NONE;
+        default:                 return NOTIF_MODE_NONE;
+    }
+}
+
+static notif_mode_t notif_mode_cycle4(notif_mode_t m)
+{
+    /* OFF → SIL → VIB → DEF → OFF (4-state, includes DEFAULT/clear). */
+    switch (m) {
+        case NOTIF_MODE_NONE:    return NOTIF_MODE_SILENT;
+        case NOTIF_MODE_SILENT:  return NOTIF_MODE_VIBRATE;
+        case NOTIF_MODE_VIBRATE: return NOTIF_MODE_DEFAULT;
+        case NOTIF_MODE_DEFAULT: return NOTIF_MODE_NONE;
+        default:                 return NOTIF_MODE_DEFAULT;
+    }
+}
+
+static uint8_t notif_rows_for_sub(notif_sub_t s)
+{
+    switch (s) {
+        case NOTIF_SUB_GLOBAL:   return NOTIF_GLOBAL_ROWS;
+        case NOTIF_SUB_CHANNELS: return NOTIF_CHANNEL_COUNT;
+        case NOTIF_SUB_PER_CONV: return NOTIF_PER_CONV_MAX;
+        default:                 return 0;
+    }
+}
+
+static void notif_render_global(notif_settings_t *cfg, char *buf, size_t cap,
+                                uint8_t row)
+{
+    const char *focus = (row == s_notif.cur_row) ? "▶ " : "  ";
+    if (row == 0) {
+        snprintf(buf, cap, "%sMaster      : %s",
+                 focus, cfg->master_enable ? "ON" : "OFF");
+        return;
+    }
+    if (row == 1) {
+        /* DnD = manual mute toggle, no time window. */
+        snprintf(buf, cap, "%sDnD         : %s",
+                 focus, cfg->dnd_enable ? "ON" : "OFF");
+        return;
+    }
+    if (row == 2) {
+        /* Quiet Hours = scheduled time window, needs synced clock. */
+        if (cfg->quiet_hours_enable) {
+            snprintf(buf, cap, "%sQuiet %02u:%02u-%02u:%02u",
+                     focus,
+                     (unsigned)(cfg->quiet_start_min / 60u),
+                     (unsigned)(cfg->quiet_start_min % 60u),
+                     (unsigned)(cfg->quiet_end_min / 60u),
+                     (unsigned)(cfg->quiet_end_min % 60u));
+        } else {
+            snprintf(buf, cap, "%sQuiet Hours : OFF", focus);
+        }
+        return;
+    }
+    if (row == 3) {
+        snprintf(buf, cap, "%sVibInt      : %u%%",
+                 focus, (unsigned)cfg->vib_intensity);
+        return;
+    }
+    notif_event_t ev = (notif_event_t)(row - 4);
+    notif_mode_t m = notif_event_mode_get(cfg, ev);
+    snprintf(buf, cap, "%s%-11s : %s",
+             focus, notif_event_name(ev), notif_mode_name(m));
+}
+
+static void notif_render_channels(notif_settings_t *cfg, char *buf, size_t cap,
+                                  uint8_t row)
+{
+    const char *focus = (row == s_notif.cur_row) ? "▶ " : "  ";
+    notif_mode_t m = notif_channel_mode_get(cfg, row);
+    snprintf(buf, cap, "%sCh %u (DM/BC) : %s",
+             focus, (unsigned)row, notif_mode_name(m));
+}
+
+static void notif_render_per_conv(notif_settings_t *cfg, char *buf, size_t cap,
+                                  uint8_t row)
+{
+    const char *focus = (row == s_notif.cur_row) ? "▶ " : "  ";
+    notif_per_conv_t *p = &cfg->per_conv[row];
+    if (p->node_num == 0u) {
+        snprintf(buf, cap, "%s[empty %u]", focus, (unsigned)row);
+    } else {
+        snprintf(buf, cap, "%s!%08lx : %s",
+                 focus, (unsigned long)p->node_num,
+                 notif_mode_name((notif_mode_t)p->mode));
+    }
+}
+
+static void notif_render(void)
+{
+    notif_settings_t *cfg = notification_get_settings();
+    if (s_notif.header_lbl != NULL) {
+        const char *sub_name =
+            (s_notif.sub == NOTIF_SUB_GLOBAL)   ? "Global Defaults" :
+            (s_notif.sub == NOTIF_SUB_CHANNELS) ? "Channel Override" :
+                                                   "Conversation Override";
+        char hdr[80];
+        snprintf(hdr, sizeof(hdr), "[NOTIF %u/3] %s",
+                 (unsigned)(s_notif.sub + 1u), sub_name);
+        lv_label_set_text(s_notif.header_lbl, hdr);
+    }
+    uint8_t total = notif_rows_for_sub(s_notif.sub);
+    char buf[80];
+    for (int i = 0; i < NOTIF_GLOBAL_ROWS; i++) {
+        if (s_notif.row_lbls[i] == NULL) continue;
+        if (i >= total) {
+            lv_label_set_text(s_notif.row_lbls[i], "");
+            continue;
+        }
+        switch (s_notif.sub) {
+            case NOTIF_SUB_GLOBAL:
+                notif_render_global(cfg, buf, sizeof(buf), (uint8_t)i);
+                break;
+            case NOTIF_SUB_CHANNELS:
+                notif_render_channels(cfg, buf, sizeof(buf), (uint8_t)i);
+                break;
+            case NOTIF_SUB_PER_CONV:
+                notif_render_per_conv(cfg, buf, sizeof(buf), (uint8_t)i);
+                break;
+            default: buf[0] = '\0'; break;
+        }
+        lv_label_set_text(s_notif.row_lbls[i], buf);
+    }
+    if (s_notif.hint_lbl != NULL) {
+        lv_label_set_text(s_notif.hint_lbl,
+                          "↑/↓ 移動  OK 切換  FUNC 換頁  ◀▶ 換 HW 頁");
+    }
+}
+
+static void notif_enter(lv_obj_t *root)
+{
+    s_notif.header_lbl = mk_diag_label(root, 4, 0);
+    /* 11 rows × 16 px starting at y=20. */
+    for (int i = 0; i < NOTIF_GLOBAL_ROWS; i++) {
+        s_notif.row_lbls[i] = mk_diag_label(root, 4, 20 + i * 16);
+    }
+    s_notif.hint_lbl = mk_diag_label(root, 4, 20 + NOTIF_GLOBAL_ROWS * 16 + 4);
+    s_notif.sub      = NOTIF_SUB_GLOBAL;
+    s_notif.cur_row  = 0;
+    notif_render();
+}
+
+static void notif_leave(void)
+{
+    memset(&s_notif, 0, sizeof(s_notif));
+}
+
+static void notif_apply(const key_event_t *ev)
+{
+    if (!ev->pressed) return;
+    notif_settings_t *cfg = notification_get_settings();
+    uint8_t total = notif_rows_for_sub(s_notif.sub);
+    bool changed = false;
+    bool dirty   = false;
+    switch (ev->keycode) {
+        case MOKYA_KEY_UP:
+            if (s_notif.cur_row > 0) { s_notif.cur_row--; changed = true; }
+            break;
+        case MOKYA_KEY_DOWN:
+            if (s_notif.cur_row + 1 < total) { s_notif.cur_row++; changed = true; }
+            break;
+        case MOKYA_KEY_FUNC:
+            s_notif.sub = (notif_sub_t)((s_notif.sub + 1u) % NOTIF_SUB_COUNT);
+            s_notif.cur_row = 0;
+            changed = true;
+            break;
+        case MOKYA_KEY_OK:
+            switch (s_notif.sub) {
+                case NOTIF_SUB_GLOBAL:
+                    if (s_notif.cur_row == 0) {
+                        cfg->master_enable = !cfg->master_enable;
+                        dirty = true;
+                    } else if (s_notif.cur_row == 1) {
+                        cfg->dnd_enable = !cfg->dnd_enable;
+                        dirty = true;
+                    } else if (s_notif.cur_row == 2) {
+                        cfg->quiet_hours_enable = !cfg->quiet_hours_enable;
+                        dirty = true;
+                    } else if (s_notif.cur_row == 3) {
+                        /* +10 % wraps 0..100. */
+                        uint16_t v = (uint16_t)cfg->vib_intensity + 10u;
+                        if (v > 100u) v = 0u;
+                        cfg->vib_intensity = (uint8_t)v;
+                        dirty = true;
+                    } else {
+                        notif_event_t e =
+                            (notif_event_t)(s_notif.cur_row - 4);
+                        notif_mode_t m = notif_event_mode_get(cfg, e);
+                        notif_event_mode_set(cfg, e, notif_mode_cycle3(m));
+                        dirty = true;
+                    }
+                    break;
+                case NOTIF_SUB_CHANNELS: {
+                    notif_mode_t m = notif_channel_mode_get(cfg, s_notif.cur_row);
+                    notif_channel_mode_set(cfg, s_notif.cur_row,
+                                            notif_mode_cycle4(m));
+                    dirty = true;
+                    break;
+                }
+                case NOTIF_SUB_PER_CONV: {
+                    notif_per_conv_t *p = &cfg->per_conv[s_notif.cur_row];
+                    if (p->node_num == 0u) {
+                        /* Empty slot: nothing to cycle yet — adding a
+                         * peer requires a node-picker (deferred to
+                         * next iteration). */
+                    } else {
+                        notif_mode_t m = (notif_mode_t)p->mode;
+                        notif_mode_t next = notif_mode_cycle4(m);
+                        notif_per_conv_upsert(cfg, p->node_num, next);
+                        dirty = true;
+                    }
+                    break;
+                }
+                default: break;
+            }
+            break;
+        default: break;
+    }
+    if (dirty) notification_settings_dirty();
+    if (changed || dirty) notif_render();
+}
+
+static void notif_refresh(void) { /* no live data */ }
 
 const view_descriptor_t *hw_diag_view_descriptor(void)
 {

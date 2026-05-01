@@ -214,11 +214,11 @@ def main():
         print("\n=== Phase 5: ←/→ page cycle (full wrap) ===")
         page0 = swd.read_u32(a_status) & 0xFF
         seq_fwd = []
-        for _ in range(3):
+        for _ in range(4):
             press_release(swd, a_inject, KEY_RIGHT, settle_ms=200)
             seq_fwd.append(swd.read_u32(a_status) & 0xFF)
-        expected_fwd = [(page0 + 1 + i) % 3 for i in range(3)]
-        if not expect("forward 3 cycles", seq_fwd, expected_fwd): fails += 1
+        expected_fwd = [(page0 + 1 + i) % 4 for i in range(4)]
+        if not expect("forward 4 cycles", seq_fwd, expected_fwd): fails += 1
 
         # ── Phase 6: still on SysDiag, no crash ────────────────────
         active = swd.read_u32(a_active)

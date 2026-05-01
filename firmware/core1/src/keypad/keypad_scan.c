@@ -31,6 +31,7 @@
 #include "keypad_scan.pio.h"
 #include "keymap_matrix.h"
 #include "key_event.h"
+#include "notification.h"
 
 #include "hardware/pio.h"
 #include "hardware/dma.h"
@@ -280,6 +281,11 @@ void keypad_scan_task(void *pv)
                         (void)key_event_push_hw(kc, bit != 0u);
                         TRACE("kpad", "commit", "kc=0x%02x,p=%u",
                               (unsigned)kc, (unsigned)bit);
+                        if (bit != 0u) {
+                            /* Press edge only — keypad haptic feedback. */
+                            notification_event(NOTIF_EVENT_KEYPRESS,
+                                               0xFFu, 0u);
+                        }
                         continue;
                     }
 
@@ -297,6 +303,8 @@ void keypad_scan_task(void *pv)
                             /* Short tap — emit press(flags=0) then release. */
                             (void)key_event_push_hw_flags(kc, true,  0u);
                             (void)key_event_push_hw_flags(kc, false, 0u);
+                            notification_event(NOTIF_EVENT_KEYPRESS,
+                                               0xFFu, 0u);
                             TRACE("kpad", "lp_short", "kc=0x%02x", (unsigned)kc);
                             break;
                         case LP_LONG_EMITTED:

@@ -17,6 +17,7 @@
 #include "task.h"
 
 #include "i2c_bus.h"
+#include "notification.h"
 
 /* ── I2C address ─────────────────────────────────────────────────────────── */
 #define BQ25622_ADDR          0x6Bu
@@ -292,6 +293,33 @@ static void poll_once(bq25622_state_t *s)
 
     s->i2c_fail_count = 0;
     s->online = true;
+
+    /* Phase 8 — edge-triggered notifications. Compare against the
+     * previous tick's snapshot kept in static state. The notification
+     * core's master/DnD/per-event mode resolves the actuator. */
+    {
+        static bool s_prev_vbus_present = false;
+        static bool s_prev_low_batt     = false;
+        bool vbus_present = (s->vbus_stat != 0u);
+        if (vbus_present != s_prev_vbus_present) {
+            notification_event(NOTIF_EVENT_CHARGE, 0xFFu, 0u);
+            s_prev_vbus_present = vbus_present;
+        }
+        /* 3.4 V is the user-experience low-batt threshold (well above
+         * the 3.0 V hardware cut-off). Sticky once tripped until vbat
+         * recovers above 3.55 V to avoid flapping. The vbat>100 mV
+         * lower bound suppresses the no-battery / unmeasured branch
+         * (G-4 false-latch reference saved in memory). */
+        bool low = vbus_present ? false
+                                : (s->vbat_mv > 100u && s->vbat_mv < 3400u);
+        bool clear = (s->vbat_mv > 3550u);
+        if (low && !s_prev_low_batt) {
+            notification_event(NOTIF_EVENT_LOW_BATT, 0xFFu, 0u);
+            s_prev_low_batt = true;
+        } else if (clear) {
+            s_prev_low_batt = false;
+        }
+    }
     i2c_bus_release(MOKYA_I2C_POWER);
     return;
 

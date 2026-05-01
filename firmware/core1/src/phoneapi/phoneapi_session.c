@@ -17,6 +17,7 @@
 #include "phoneapi_framing.h"
 #include "phoneapi_tx.h"
 #include "dm_store.h"
+#include "notification.h"
 #include "messages_tx_status.h"
 #include "range_test_log.h"
 #include "packet_log.h"
@@ -661,6 +662,20 @@ static void on_frame(const uint8_t *payload, uint16_t len, void *user)
             TRACE("phapi", "rx_text",
                   "from=%u,len=%u",
                   (unsigned)m.from_node_id, (unsigned)m.text_len);
+            /* Phase 8 — notification dispatch. DM if directed at us;
+             * broadcast otherwise. The broadcast / DM split also
+             * decides which preset / LED colour the notification core
+             * uses. Per-channel and per-conversation overrides are
+             * resolved internally. */
+            if (m.to_node_id == 0xFFFFFFFFu) {
+                notification_event(NOTIF_EVENT_BROADCAST,
+                                   (uint8_t)m.channel_index,
+                                   m.from_node_id);
+            } else {
+                notification_event(NOTIF_EVENT_DM,
+                                   (uint8_t)m.channel_index,
+                                   m.from_node_id);
+            }
             /* G-1 status bar: pulse RX activity (250 ms). Cosmetic. */
             status_bar_pulse_rx();
         }

@@ -202,6 +202,9 @@ add_executable(core1_bridge
     ${POWER_DIR}/lm27965.c
     ${POWER_DIR}/vib_motor.c
     ${POWER_DIR}/watchdog_task.c
+    ${MESSAGES_DIR}/notification.c
+    ${MESSAGES_DIR}/notif_persist.c
+    ${MESSAGES_DIR}/wall_clock.c
     ${SENSOR_DIR}/sensor_task.c
     ${SENSOR_DIR}/lps22hh.c
     ${SENSOR_DIR}/lis2mdl.c

@@ -99,6 +99,9 @@
 #include "msp_canary.h"
 #include "cpu_load.h"
 #include "vib_motor.h"
+#include "notification.h"
+#include "notif_persist.h"
+#include "wall_clock.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -307,6 +310,14 @@ static void bridge_task(void *pv)
      * dropped by metrics_history_init pre-scheduler. */
     (void)history_persist_load();
     history_persist_init();
+    /* Phase 8 — notification settings persistence. Loads saved
+     * settings (or keeps defaults) and starts a 5 s debounce timer
+     * that flushes any settings_dirty flag. */
+    notif_persist_init();
+    /* Phase 9 — software wall clock. Loads last-saved time (best-
+     * effort; will drift across power cycles) and starts a 5-min
+     * persistence timer. GNSS time-sync hook re-anchors when ready. */
+    wall_clock_init();
 
     for (;;) {
         /* If Core 0 announced a reboot, stop all ring/CDC processing and
@@ -893,6 +904,10 @@ int main(void)
      * on the queue or vTaskDelay between pulses, so starvation isn't a
      * concern. PWM slice configured inside vib_motor_init. */
     TASK_START_OR_PANIC(vib_motor_init(tskIDLE_PRIORITY + 2), "vib");
+
+    /* Notification system — boot defaults until notif_persist loads
+     * the persisted settings later in bridge_task setup. */
+    notification_init();
 
     #undef TASK_START_OR_PANIC
 

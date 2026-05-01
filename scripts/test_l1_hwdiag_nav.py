@@ -174,28 +174,28 @@ def main():
         # Page is whatever the LRU cache preserved from last visit
         # (0..7 valid). If the view was evicted it'll be 0; if cached
         # it'll be wherever the user left off.
-        if not expect("page in [0, 7]", page0 <= 7, True): fails += 1
+        if not expect("page in [0, 13]", page0 <= 13, True): fails += 1
         VIEW_HW_DIAG = active
 
         # ── Phase 3: cycle pages forward 8 times → wraps to start ──────
         print("\n=== Phase 3: ←/→ page cycle (starts at page", page0, ") ===")
         seq_fwd = []
-        for i in range(13):
+        for i in range(14):
             press_release(swd, a_inject, KEY_RIGHT, settle_ms=200)
             page = swd.read_mem(a_diag_p, 1)[0]
             seq_fwd.append(page)
-        expected_fwd = [(page0 + 1 + i) % 13 for i in range(13)]
+        expected_fwd = [(page0 + 1 + i) % 14 for i in range(14)]
         print(f"  forward sequence:  actual {seq_fwd}  expected {expected_fwd}")
         if not expect("forward seq full cycle", seq_fwd, expected_fwd): fails += 1
 
         # Backward 8 times — currently at page0 (wrapped). Should go
         # page0-1, page0-2, ..., back to page0.
         seq_bwd = []
-        for i in range(13):
+        for i in range(14):
             press_release(swd, a_inject, KEY_LEFT, settle_ms=200)
             page = swd.read_mem(a_diag_p, 1)[0]
             seq_bwd.append(page)
-        expected_bwd = [(page0 - 1 - i) % 13 for i in range(13)]
+        expected_bwd = [(page0 - 1 - i) % 14 for i in range(14)]
         print(f"  backward sequence: actual {seq_bwd}  expected {expected_bwd}")
         if not expect("backward seq full cycle", seq_bwd, expected_bwd): fails += 1
 

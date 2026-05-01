@@ -29,6 +29,7 @@ typedef enum {
     SYS_PAGE_RESOURCES = 0,
     SYS_PAGE_CPU,
     SYS_PAGE_SCREEN,
+    SYS_PAGE_TIME,
     SYS_PAGE_COUNT
 } sys_page_t;
 
@@ -50,6 +51,10 @@ static void screen_enter(lv_obj_t *root);
 static void screen_leave(void);
 static void screen_apply(const key_event_t *ev);
 static void screen_refresh(void);
+static void time_enter(lv_obj_t *root);
+static void time_leave(void);
+static void time_apply(const key_event_t *ev);
+static void time_refresh(void);
 
 static sys_page_def_t s_pages[SYS_PAGE_COUNT] = {
     [SYS_PAGE_RESOURCES] = { "資源",     resources_enter, resources_leave,
@@ -58,6 +63,8 @@ static sys_page_def_t s_pages[SYS_PAGE_COUNT] = {
                              NULL, cpu_refresh },
     [SYS_PAGE_SCREEN]    = { "螢幕",     screen_enter,    screen_leave,
                              screen_apply, screen_refresh },
+    [SYS_PAGE_TIME]      = { "時間",     time_enter,      time_leave,
+                             time_apply,   time_refresh },
 };
 
 /* ── View state ───────────────────────────────────────────────────── */
@@ -608,6 +615,266 @@ static void screen_apply(const key_event_t *ev)
                         | ((uint32_t)(s_scr.pixtest_idx & 0x07u) << 2);
     g_sys_diag_status = (g_sys_diag_status & 0xFFFF00FFu)
                       | (state_byte << 8);
+}
+
+/* ── Page: Time setter (SYS_PAGE_TIME) ─────────────────────────────── *
+ *
+ * Edits the wall clock in UTC. Layout:
+ *   現在(UTC):   2026-05-02 09:14:32
+ *   現在(local): 17:14:32  (UTC+8:00)
+ *   ▶ Year  : 2026
+ *     Month : 05
+ *     Day   : 02
+ *     Hour  : 09        ← UTC
+ *     Min   : 14
+ *     Sec   : 32
+ *     TZ    : +08:00
+ *     GNSS  : ON
+ *     [Apply]
+ *
+ * UP/DOWN moves focus, OK on a numeric field bumps with wrap, OK on
+ * GNSS toggles the auto-sync flag, OK on Apply commits + flushes.
+ */
+
+#include "wall_clock.h"
+
+typedef enum {
+    TIME_ROW_YEAR = 0,
+    TIME_ROW_MONTH,
+    TIME_ROW_DAY,
+    TIME_ROW_HOUR,
+    TIME_ROW_MIN,
+    TIME_ROW_SEC,
+    TIME_ROW_TZ,
+    TIME_ROW_GNSS,
+    TIME_ROW_APPLY,
+    TIME_ROW_COUNT
+} time_row_t;
+
+static struct {
+    lv_obj_t *now_utc_lbl;
+    lv_obj_t *now_local_lbl;
+    lv_obj_t *row_lbls[TIME_ROW_COUNT];
+    lv_obj_t *hint_lbl;
+    uint8_t   cur_row;
+    /* UTC editor shadow. */
+    uint16_t  year;
+    uint8_t   month;
+    uint8_t   day;
+    uint8_t   hour;
+    uint8_t   minute;
+    uint8_t   second;
+    int16_t   tz_offset_min;
+    uint8_t   gnss_sync;
+    uint32_t  status_tick;
+} s_time __attribute__((section(".psram_bss")));
+
+static uint8_t days_in_month(uint16_t y, uint8_t m)
+{
+    static const uint8_t k[] = { 31,28,31,30,31,30,31,31,30,31,30,31 };
+    if (m < 1 || m > 12) return 31;
+    if (m == 2) {
+        bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        return leap ? 29 : 28;
+    }
+    return k[m - 1];
+}
+
+static void time_render(void)
+{
+    if (s_time.now_utc_lbl == NULL) return;
+    char buf[80];
+
+    if (wall_clock_is_synced()) {
+        wall_clock_civil_t cu, cl;
+        wall_clock_unix_to_civil(wall_clock_now_unix(),  &cu);
+        wall_clock_unix_to_civil(wall_clock_now_local(), &cl);
+        snprintf(buf, sizeof(buf), "UTC : %04u-%02u-%02u %02u:%02u:%02u",
+                 (unsigned)cu.year, (unsigned)cu.month, (unsigned)cu.day,
+                 (unsigned)cu.hour, (unsigned)cu.minute, (unsigned)cu.second);
+        lv_label_set_text(s_time.now_utc_lbl, buf);
+        int16_t tz = wall_clock_get_tz_offset_min();
+        char sgn = (tz >= 0) ? '+' : '-';
+        int abz = (tz >= 0) ? tz : -tz;
+        snprintf(buf, sizeof(buf), "本地: %02u:%02u:%02u  (UTC%c%02u:%02u)",
+                 (unsigned)cl.hour, (unsigned)cl.minute, (unsigned)cl.second,
+                 sgn, (unsigned)(abz / 60), (unsigned)(abz % 60));
+        lv_label_set_text(s_time.now_local_lbl, buf);
+    } else {
+        lv_label_set_text(s_time.now_utc_lbl,   "UTC : ----  (未設定)");
+        lv_label_set_text(s_time.now_local_lbl, "本地: ----");
+    }
+
+    for (int i = 0; i < TIME_ROW_COUNT; i++) {
+        if (s_time.row_lbls[i] == NULL) continue;
+        const char *focus = (i == s_time.cur_row) ? "▶ " : "  ";
+        switch (i) {
+            case TIME_ROW_YEAR:
+                snprintf(buf, sizeof(buf), "%sYear  : %u",  focus, (unsigned)s_time.year);
+                break;
+            case TIME_ROW_MONTH:
+                snprintf(buf, sizeof(buf), "%sMonth : %02u", focus, (unsigned)s_time.month);
+                break;
+            case TIME_ROW_DAY:
+                snprintf(buf, sizeof(buf), "%sDay   : %02u", focus, (unsigned)s_time.day);
+                break;
+            case TIME_ROW_HOUR:
+                snprintf(buf, sizeof(buf), "%sHour  : %02u  (UTC)", focus, (unsigned)s_time.hour);
+                break;
+            case TIME_ROW_MIN:
+                snprintf(buf, sizeof(buf), "%sMin   : %02u", focus, (unsigned)s_time.minute);
+                break;
+            case TIME_ROW_SEC:
+                snprintf(buf, sizeof(buf), "%sSec   : %02u", focus, (unsigned)s_time.second);
+                break;
+            case TIME_ROW_TZ: {
+                int t = s_time.tz_offset_min;
+                char sgn = (t >= 0) ? '+' : '-';
+                int abz = (t >= 0) ? t : -t;
+                snprintf(buf, sizeof(buf), "%sTZ    : %c%02u:%02u",
+                         focus, sgn, (unsigned)(abz / 60), (unsigned)(abz % 60));
+                break;
+            }
+            case TIME_ROW_GNSS:
+                snprintf(buf, sizeof(buf), "%sGNSS sync : %s",
+                         focus, s_time.gnss_sync ? "ON" : "OFF");
+                break;
+            case TIME_ROW_APPLY:
+                snprintf(buf, sizeof(buf), "%s[Apply 套用 + 存檔]", focus);
+                break;
+            default: buf[0] = '\0'; break;
+        }
+        lv_label_set_text(s_time.row_lbls[i], buf);
+    }
+    if (s_time.hint_lbl != NULL) {
+        lv_label_set_text(s_time.hint_lbl,
+                          "↑/↓ 移動  OK +1/切換/套用");
+    }
+}
+
+static void time_enter(lv_obj_t *root)
+{
+    s_time.now_utc_lbl   = mk_label(root, 4, 0);
+    s_time.now_local_lbl = mk_label(root, 4, 16);
+    /* 9 rows × 14 px starting at y=36. */
+    for (int i = 0; i < TIME_ROW_COUNT; i++) {
+        s_time.row_lbls[i] = mk_label(root, 4, 36 + i * 14);
+    }
+    s_time.hint_lbl = mk_label(root, 4, 36 + TIME_ROW_COUNT * 14 + 4);
+
+    /* Seed editor from current state. If unsynced, use 2026-01-01
+     * 00:00:00 UTC. */
+    if (wall_clock_is_synced()) {
+        wall_clock_civil_t c;
+        wall_clock_unix_to_civil(wall_clock_now_unix(), &c);
+        s_time.year   = c.year;
+        s_time.month  = c.month;
+        s_time.day    = c.day;
+        s_time.hour   = c.hour;
+        s_time.minute = c.minute;
+        s_time.second = c.second;
+    } else {
+        s_time.year = 2026; s_time.month = 1; s_time.day = 1;
+        s_time.hour = 0;    s_time.minute = 0; s_time.second = 0;
+    }
+    s_time.tz_offset_min = wall_clock_get_tz_offset_min();
+    s_time.gnss_sync     = wall_clock_gnss_sync_is_enabled() ? 1u : 0u;
+    s_time.cur_row       = TIME_ROW_YEAR;
+    time_render();
+}
+
+static void time_leave(void)
+{
+    memset(&s_time, 0, sizeof(s_time));
+}
+
+static void time_apply(const key_event_t *ev)
+{
+    if (!ev->pressed) return;
+    bool changed = false;
+    switch (ev->keycode) {
+        case MOKYA_KEY_UP:
+            if (s_time.cur_row > 0) { s_time.cur_row--; changed = true; }
+            break;
+        case MOKYA_KEY_DOWN:
+            if (s_time.cur_row + 1 < TIME_ROW_COUNT) {
+                s_time.cur_row++; changed = true;
+            }
+            break;
+        case MOKYA_KEY_OK:
+            switch (s_time.cur_row) {
+                case TIME_ROW_YEAR:
+                    /* 2024..2099 wrap. */
+                    s_time.year++;
+                    if (s_time.year < 2024 || s_time.year > 2099) s_time.year = 2024;
+                    if (s_time.day > days_in_month(s_time.year, s_time.month))
+                        s_time.day = days_in_month(s_time.year, s_time.month);
+                    changed = true;
+                    break;
+                case TIME_ROW_MONTH:
+                    s_time.month = (uint8_t)((s_time.month % 12u) + 1u);
+                    if (s_time.day > days_in_month(s_time.year, s_time.month))
+                        s_time.day = days_in_month(s_time.year, s_time.month);
+                    changed = true;
+                    break;
+                case TIME_ROW_DAY: {
+                    uint8_t mx = days_in_month(s_time.year, s_time.month);
+                    s_time.day = (uint8_t)((s_time.day % mx) + 1u);
+                    changed = true;
+                    break;
+                }
+                case TIME_ROW_HOUR:
+                    s_time.hour = (uint8_t)((s_time.hour + 1u) % 24u);
+                    changed = true;
+                    break;
+                case TIME_ROW_MIN:
+                    s_time.minute = (uint8_t)((s_time.minute + 1u) % 60u);
+                    changed = true;
+                    break;
+                case TIME_ROW_SEC:
+                    s_time.second = (uint8_t)((s_time.second + 1u) % 60u);
+                    changed = true;
+                    break;
+                case TIME_ROW_TZ:
+                    /* 30-min step, -12:00 .. +14:00 wrap. */
+                    s_time.tz_offset_min += 30;
+                    if (s_time.tz_offset_min > 840) s_time.tz_offset_min = -720;
+                    changed = true;
+                    break;
+                case TIME_ROW_GNSS:
+                    s_time.gnss_sync = s_time.gnss_sync ? 0u : 1u;
+                    changed = true;
+                    break;
+                case TIME_ROW_APPLY: {
+                    wall_clock_civil_t c = {
+                        .year = s_time.year,  .month = s_time.month,
+                        .day  = s_time.day,   .hour  = s_time.hour,
+                        .minute = s_time.minute, .second = s_time.second
+                    };
+                    wall_clock_set_unix(wall_clock_civil_to_unix(&c));
+                    wall_clock_set_tz_offset_min(s_time.tz_offset_min);
+                    wall_clock_gnss_sync_set_enabled(s_time.gnss_sync != 0u);
+                    (void)wall_clock_flush_now();
+                    changed = true;
+                    break;
+                }
+                default: break;
+            }
+            break;
+        default: break;
+    }
+    if (changed) time_render();
+}
+
+static void time_refresh(void)
+{
+    /* Live "now" rows refresh every 1 s. */
+    if (s_time.now_utc_lbl == NULL) return;
+    uint32_t tick = xTaskGetTickCount();
+    if (tick - s_time.status_tick >= pdMS_TO_TICKS(1000)) {
+        s_time.status_tick = tick;
+        time_render();
+    }
 }
 
 static void screen_refresh(void)

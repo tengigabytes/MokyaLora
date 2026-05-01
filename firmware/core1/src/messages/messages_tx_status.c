@@ -5,6 +5,7 @@
 
 #include "messages_tx_status.h"
 #include "dm_store.h"
+#include "notification.h"
 
 static messages_tx_status_t s_status;
 
@@ -29,6 +30,12 @@ void messages_tx_status_publish(uint8_t  result,
     }
     if (ack_state != DM_ACK_NONE) {
         dm_store_update_ack(packet_id, ack_state);
+    }
+    /* Phase 8 — notify on terminal ACK transitions only (not the
+     * SENDING phase, which is just our local "queued" trace). */
+    if (result == MESSAGES_TX_RESULT_DELIVERED ||
+        result == MESSAGES_TX_RESULT_FAILED) {
+        notification_event(NOTIF_EVENT_ACK, 0xFFu, 0u);
     }
 }
 
