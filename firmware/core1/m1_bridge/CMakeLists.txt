@@ -333,6 +333,12 @@ target_compile_definitions(core1_bridge PRIVATE
     LFS_NO_WARN=1
     LFS_NO_ERROR=1
     LFS_NO_ASSERT=1
+    # Route LFS's lfs_malloc / lfs_free to FreeRTOS heap (52 KB) instead
+    # of newlib's tiny ~1.4 KB sbrk heap (Pico SDK's pico_malloc panics
+    # on NULL when newlib heap exhausts — first 256 B file-cache alloc
+    # blows it). Wrappers c1_lfs_alloc/dealloc live in lfs_blockdev.c.
+    LFS_MALLOC=c1_lfs_alloc
+    LFS_FREE=c1_lfs_dealloc
 )
 
 # Font .bin is a flashable partition, not embedded in Core 1 image.

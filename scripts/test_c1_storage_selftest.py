@@ -23,8 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from mokya_swd import MokyaSwd  # type: ignore
 
-EXPECTED_PASSES = 1   # MVP: just verify mount + lfs_fs_size; full file-IO
-                      # battery disabled pending lfs_file_opencfg crash fix
+EXPECTED_PASSES = 9   # 3 writes + 3 read-verify + 3 unlinks (full battery)
 EXPECTED_MAGIC  = 0x53544F50  # 'STOP'
 
 
@@ -76,11 +75,13 @@ def main():
         fails += 1
     else:
         print(f"  [PASS] blocks_used in range (1..{total})")
-    if dur_us == 0 or dur_us > 500_000:
+    # Full battery (9 ops × ~50 ms erase per file write) takes ~1.3 s on
+    # Rev A; budget set to 3 s with 2× headroom for GC variance.
+    if dur_us == 0 or dur_us > 3_000_000:
         print(f"  [FAIL] dur_us out of expected range (got {dur_us})")
         fails += 1
     else:
-        print(f"  [PASS] dur_us within budget (< 500 ms)")
+        print(f"  [PASS] dur_us within budget (< 3 s)")
 
     print()
     if fails == 0:

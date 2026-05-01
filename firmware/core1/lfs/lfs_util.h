@@ -238,6 +238,18 @@ static inline uint32_t lfs_crc(uint32_t crc, const void *buffer, size_t size) {
 uint32_t lfs_crc(uint32_t crc, const void *buffer, size_t size);
 #endif
 
+/* MokyaLora local edit (Phase 2): forward-declare the FreeRTOS-heap-
+ * backed wrappers that LFS_MALLOC / LFS_FREE point at in our build —
+ * see firmware/core1/src/storage/lfs_blockdev.c c1_lfs_alloc/dealloc.
+ * Without this the inline lfs_malloc/free below get implicit-decl
+ * warnings (errors with -Werror) since they call symbols this header
+ * doesn't otherwise know about. Documented in
+ * firmware/core1/lfs/README.md "Local edits" section. */
+#if defined(LFS_MALLOC) || defined(LFS_FREE)
+extern void *c1_lfs_alloc(size_t size);
+extern void  c1_lfs_dealloc(void *p);
+#endif
+
 // Allocate memory, only used if buffers are not provided to littlefs
 //
 // littlefs current has no alignment requirements, as it only allocates

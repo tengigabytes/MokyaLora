@@ -19,6 +19,15 @@
 
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "portable.h"
+
+/* Thin wrappers exposed to vendored LFS via LFS_MALLOC / LFS_FREE
+ * compile defs. Routes LFS's internal allocations to the 52 KB FreeRTOS
+ * heap instead of newlib's tiny ~1.4 KB sbrk heap (Pico SDK's pico_malloc
+ * panics when newlib heap is exhausted, which happens immediately on
+ * the first lfs_file_opencfg's 256 B file-cache alloc). */
+void *c1_lfs_alloc(size_t size)  { return pvPortMalloc(size); }
+void  c1_lfs_dealloc(void *p)    { vPortFree(p); }
 
 /* ── Buffer allocation (placement matters — see header) ────────────── */
 

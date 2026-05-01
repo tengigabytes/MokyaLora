@@ -41,8 +41,6 @@ static volatile bool s_file_in_use __attribute__((section(".psram_bss")));
  * without explicit cache flush, see project_psram_swd_cache_coherence
  * memory note).  Trimmed to the minimum that proves the test sequence
  * actually ran: magic, pass count, fail count, last error code. */
-volatile uint32_t g_c1_storage_init_phase     __attribute__((used)) = 0u;  /* boot breadcrumb */
-volatile uint32_t g_c1_storage_st_phase       __attribute__((used)) = 0u;  /* selftest breadcrumb */
 volatile uint32_t g_c1_storage_st_magic       __attribute__((used)) = 0u;
 volatile uint32_t g_c1_storage_st_passes      __attribute__((used)) = 0u;
 volatile uint32_t g_c1_storage_st_failures    __attribute__((used)) = 0u;
@@ -95,10 +93,8 @@ static int read_schema_version(uint32_t *out)
 
 static bool format_and_mount(void)
 {
-    g_c1_storage_init_phase = 10;
     s_stats.format_count++;
     int rc = lfs_format(&s_lfs, &g_c1_lfs_cfg);
-    g_c1_storage_init_phase = 11;
     if (rc < 0) {
         TRACE("c1stor", "format_fail", "rc=%d", rc);
         return false;
@@ -126,18 +122,13 @@ static bool format_and_mount(void)
 
 bool c1_storage_init(void)
 {
-    g_c1_storage_init_phase = 1;   /* entered */
-    if (s_stats.mounted) { g_c1_storage_init_phase = 99; return true; }
 
     s_stats.mount_attempts++;
-    g_c1_storage_init_phase = 2;   /* about to call lfs_mount */
     int rc = lfs_mount(&s_lfs, &g_c1_lfs_cfg);
-    g_c1_storage_init_phase = 3;   /* lfs_mount returned */
     g_c1_storage_st_last_err = rc;  /* re-use diag global */
     if (rc == LFS_ERR_OK) {
         s_stats.schema_version = C1_STORAGE_SCHEMA_VERSION;
         s_stats.mounted = true;
-        g_c1_storage_init_phase = 90;
         return true;
     }
 
@@ -145,11 +136,9 @@ bool c1_storage_init(void)
      * Phase 2 policy: silent format on first boot.  Schema version
      * sentinel + verification deferred until format/mount path is
      * proven stable on hardware (Phase 2 follow-up). */
-    g_c1_storage_init_phase = 4;
     TRACE("c1stor", "mount_fail", "rc=%d — formatting", rc);
     s_stats.mount_failures++;
     bool ok = format_and_mount();
-    g_c1_storage_init_phase = ok ? 91 : 92;
     return ok;
 }
 
@@ -278,19 +267,14 @@ static const struct {
  * once for the whole selftest, reuse for every file, free at end. */
 static int st_write_one(int idx, uint8_t *buf)
 {
-    g_c1_storage_st_phase = 11;
     c1_storage_file_t f;
     if (!c1_storage_open(&f, kSelfTestFiles[idx].path,
                          LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC)) {
         return -1;
     }
-    g_c1_storage_st_phase = 12;
     memset(buf, kSelfTestFiles[idx].pattern, kSelfTestFiles[idx].size);
-    g_c1_storage_st_phase = 13;
     int rc = c1_storage_write(&f, buf, kSelfTestFiles[idx].size);
-    g_c1_storage_st_phase = 14;
     bool closed = c1_storage_close(&f);
-    g_c1_storage_st_phase = 15;
     if (rc != (int)kSelfTestFiles[idx].size) return (rc < 0) ? rc : -2;
     if (!closed) return -3;
     return 0;
@@ -312,75 +296,28 @@ static int st_read_verify(int idx, uint8_t *buf)
     return 0;
 }
 
-/* MVP selftest — mount + fs_size only.  File-IO selftest disabled
- * pending root-cause of c1_storage_open HardFault on lfs_file_opencfg
- * (Phase 2 follow-up). Touching writes via consumer-specific code
- * (Phase 3 dm_persist) is the alternative validation route. */
 bool c1_storage_self_test(void)
 {
-    g_c1_storage_st_phase = 1;
     if (!s_stats.mounted) {
         g_c1_storage_st_failures++;
         g_c1_storage_st_last_err = LFS_ERR_INVAL;
         g_c1_storage_st_magic = C1_STORAGE_ST_MAGIC_DONE;
-        g_c1_storage_st_phase = 99;
         return false;
     }
 
-    g_c1_storage_st_phase = 2;
-    uint32_t t0 = (uint32_t)time_us_64();
-
-    /* Snapshot capacity (proves lfs_t is in a valid mounted state). */
-    lfs_ssize_t used = lfs_fs_size(&s_lfs);
-    g_c1_storage_st_phase = 3;
-    if (used < 0) {
-        g_c1_storage_st_failures++;
-        g_c1_storage_st_last_err = (int)used;
-        g_c1_storage_st_magic = C1_STORAGE_ST_MAGIC_DONE;
-        g_c1_storage_st_phase = 97;
-        return false;
-    }
-    g_c1_storage_blocks_used = (uint32_t)used;
-    g_c1_storage_blocks_total = C1_LFS_BLOCK_COUNT;
-    g_c1_storage_format_count = s_stats.format_count;
-    g_c1_storage_st_passes++;
-
-    g_c1_storage_st_dur_us = (uint32_t)time_us_64() - t0;
-    g_c1_storage_st_magic = C1_STORAGE_ST_MAGIC_DONE;
-    g_c1_storage_st_phase = 100;
-    return true;
-}
-
-#if 0  /* Full selftest — disabled until lfs_file_opencfg crash debugged. */
-bool c1_storage_self_test_full_disabled(void)
-{
-    g_c1_storage_st_phase = 1;
-    if (!s_stats.mounted) {
-        g_c1_storage_st_failures++;
-        g_c1_storage_st_last_err = LFS_ERR_INVAL;
-        g_c1_storage_st_magic = C1_STORAGE_ST_MAGIC_DONE;
-        g_c1_storage_st_phase = 99;
-        return false;
-    }
-
-    g_c1_storage_st_phase = 2;
     uint8_t *buf = pvPortMalloc(SELFTEST_BUF_MAX);
     if (buf == NULL) {
         g_c1_storage_st_failures++;
         g_c1_storage_st_last_err = LFS_ERR_NOMEM;
         g_c1_storage_st_magic = C1_STORAGE_ST_MAGIC_DONE;
-        g_c1_storage_st_phase = 98;
         return false;
     }
-    g_c1_storage_st_phase = 3;
 
     uint32_t t0 = (uint32_t)time_us_64();
     bool overall_ok = true;
 
     /* Write phase. */
-    g_c1_storage_st_phase = 10;
     for (size_t i = 0; i < SELFTEST_FILE_COUNT; i++) {
-        g_c1_storage_st_phase = 10 + (uint32_t)i;
         int rc = st_write_one((int)i, buf);
         if (rc < 0) {
             g_c1_storage_st_failures++;
@@ -393,9 +330,7 @@ bool c1_storage_self_test_full_disabled(void)
     }
 
     /* Read-back verify. */
-    g_c1_storage_st_phase = 20;
     for (size_t i = 0; i < SELFTEST_FILE_COUNT; i++) {
-        g_c1_storage_st_phase = 20 + (uint32_t)i;
         int rc = st_read_verify((int)i, buf);
         if (rc < 0) {
             g_c1_storage_st_failures++;
@@ -408,9 +343,7 @@ bool c1_storage_self_test_full_disabled(void)
     }
 
     /* Delete + verify gone. */
-    g_c1_storage_st_phase = 30;
     for (size_t i = 0; i < SELFTEST_FILE_COUNT; i++) {
-        g_c1_storage_st_phase = 30 + (uint32_t)i;
         if (!c1_storage_unlink(kSelfTestFiles[i].path)) {
             g_c1_storage_st_failures++;
             g_c1_storage_st_last_err = LFS_ERR_IO;
@@ -435,7 +368,6 @@ bool c1_storage_self_test_full_disabled(void)
     g_c1_storage_blocks_total = C1_LFS_BLOCK_COUNT;
     g_c1_storage_format_count = s_stats.format_count;
 
-    g_c1_storage_st_phase = 40;
     g_c1_storage_st_magic = C1_STORAGE_ST_MAGIC_DONE;
     TRACE("c1stor", "selftest",
           "passes=%u fails=%u dur_us=%u",
@@ -443,7 +375,5 @@ bool c1_storage_self_test_full_disabled(void)
           (unsigned)g_c1_storage_st_failures,
           (unsigned)dur);
     vPortFree(buf);
-    g_c1_storage_st_phase = 100;   /* completed cleanly */
     return overall_ok;
 }
-#endif  /* end disabled full selftest */

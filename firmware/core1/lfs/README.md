@@ -25,6 +25,15 @@ Apache-2.0 image license.
 | `lfs_util.c` / `lfs_util.h` | Util macros (logging, asserts, memcpy stubs) |
 | `LICENSE.md` | BSD-3-Clause text |
 
+## Local edits
+
+- `lfs_util.h`: a 5-line forward declaration of `c1_lfs_alloc` /
+  `c1_lfs_dealloc` (gated on `LFS_MALLOC || LFS_FREE`) was inserted
+  immediately above the `lfs_malloc` inline. Required because we
+  redirect LFS allocations to the FreeRTOS heap (52 KB) — Pico SDK's
+  newlib heap is only ~1.4 KB and `pico_malloc` panics on NULL.
+  Re-apply on every LittleFS re-vendor.
+
 ## Update procedure
 
 1. Pull latest stable release from upstream (or whichever Arduino-Pico
