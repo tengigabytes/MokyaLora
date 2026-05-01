@@ -98,6 +98,7 @@
 #include "postmortem.h"
 #include "msp_canary.h"
 #include "cpu_load.h"
+#include "vib_motor.h"
 
 volatile uint32_t g_core1_boot_heap_free = 0;
 #include "psram.h"
@@ -886,6 +887,12 @@ int main(void)
      * is what gives idle a chance to run anyway (modulo the design
      * caveat that idle currently still starves — see CPU page UI). */
     TASK_START_OR_PANIC(cpu_load_start(tskIDLE_PRIORITY + 2), "cpu_load");
+
+    /* Vibration motor — pattern queue task. Priority +2 (round-robin
+     * with usb/bridge/lvgl); the task spends >99 % of its time blocked
+     * on the queue or vTaskDelay between pulses, so starvation isn't a
+     * concern. PWM slice configured inside vib_motor_init. */
+    TASK_START_OR_PANIC(vib_motor_init(tskIDLE_PRIORITY + 2), "vib");
 
     #undef TASK_START_OR_PANIC
 
