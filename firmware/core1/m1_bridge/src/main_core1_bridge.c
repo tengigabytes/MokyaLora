@@ -62,6 +62,7 @@
 #include "hardware/regs/resets.h"
 #include "hardware/sync.h"
 #include "hardware/structs/sio.h"
+#include "hardware/watchdog.h"
 #include "tusb.h"
 #include "pico/platform/panic.h"
 
@@ -305,6 +306,21 @@ static void bridge_task(void *pv)
         }
 
         bool did_work = false;
+
+        /* ── Phase 2.6 watchdog reset trigger (SWD-driven, test only) ── *
+         *
+         * Test scripts SWD-write a non-zero value to request a chip-
+         * wide watchdog reboot. Used by power-loss survival test —
+         * RP2350 SYSRESETREQ via JLink halts only one core; only
+         * watchdog forces full bootrom-driven cold-start of both cores. */
+        {
+            extern volatile uint32_t g_c1_storage_reset_request;
+            if (g_c1_storage_reset_request != 0u) {
+                /* Pause watchdog kicks; chip resets in 100 ms. */
+                watchdog_enable(100, 1);
+                while (1) { tight_loop_contents(); }
+            }
+        }
 
         /* ── Phase 2.5 capacity stress trigger (SWD-driven, default OFF) ── *
          *

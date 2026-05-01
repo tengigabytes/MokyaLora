@@ -66,6 +66,20 @@ volatile int32_t  g_c1_storage_stress_last_err   __attribute__((used)) = 0;
 volatile uint32_t g_c1_storage_stress_dur_us     __attribute__((used)) = 0u;
 volatile uint32_t g_c1_storage_stress_blocks_peak __attribute__((used)) = 0u;
 
+/* Power-loss survival probe — Phase 2.6.  Read at every successful
+ * boot from /.pl_marker, then increment+write back.  Test scripts
+ * verify g_c1_storage_pl_count grows monotonically across SYSRESETREQ
+ * cycles, proving file persistence + mount-after-write durability. */
+volatile uint32_t g_c1_storage_pl_count    __attribute__((used)) = 0u;
+volatile uint32_t g_c1_storage_pl_existed  __attribute__((used)) = 0u;
+volatile int32_t  g_c1_storage_pl_last_err __attribute__((used)) = 0;
+
+/* Test-only: SWD writes any non-zero value to request a watchdog
+ * reboot from Core 1 (clean chip-wide reset, both cores cold-boot).
+ * Bridge_task polls and triggers when set.  Kept under
+ * `MOKYA_C1_STORAGE_RESET_TRIGGER` so production can disable. */
+volatile uint32_t g_c1_storage_reset_request __attribute__((used)) = 0u;
+
 /* ── Helpers ───────────────────────────────────────────────────────── */
 
 static int write_schema_version(void)
@@ -133,6 +147,59 @@ static bool format_and_mount(void)
     return true;
 }
 
+/* ── Power-loss marker ─────────────────────────────────────────────── *
+ *
+ * /.pl_marker holds a 4-byte little-endian counter.  Read at boot,
+ * increment, write back.  Persistent across SYSRESETREQ proves both
+ * mount-of-existing-FS and write-then-reboot-then-read durability.
+ * Failure here is non-fatal (logged via diag global); init proceeds
+ * regardless. */
+#define C1_STORAGE_PL_PATH "/.pl_marker"
+
+static void update_pl_marker(void)
+{
+    g_c1_storage_pl_existed = 0u;
+    g_c1_storage_pl_last_err = 0;
+
+    uint32_t count = 0u;
+    /* Read existing marker if present. */
+    if (c1_storage_exists(C1_STORAGE_PL_PATH)) {
+        c1_storage_file_t f;
+        if (c1_storage_open(&f, C1_STORAGE_PL_PATH, LFS_O_RDONLY)) {
+            int rc = c1_storage_read(&f, &count, sizeof(count));
+            (void)c1_storage_close(&f);
+            if (rc == (int)sizeof(count)) {
+                g_c1_storage_pl_existed = 1u;
+            } else {
+                count = 0u;
+                g_c1_storage_pl_last_err = (rc < 0) ? rc : LFS_ERR_CORRUPT;
+            }
+        } else {
+            g_c1_storage_pl_last_err = LFS_ERR_IO;
+        }
+    }
+
+    /* Increment + write back. */
+    count++;
+    c1_storage_file_t fw;
+    if (!c1_storage_open(&fw, C1_STORAGE_PL_PATH,
+                         LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC)) {
+        if (g_c1_storage_pl_last_err == 0) g_c1_storage_pl_last_err = LFS_ERR_IO;
+        return;
+    }
+    int rc = c1_storage_write(&fw, &count, sizeof(count));
+    bool closed = c1_storage_close(&fw);
+    if (rc != (int)sizeof(count) || !closed) {
+        if (g_c1_storage_pl_last_err == 0) {
+            g_c1_storage_pl_last_err = (rc < 0) ? rc : LFS_ERR_IO;
+        }
+        return;
+    }
+    g_c1_storage_pl_count = count;
+    TRACE("c1stor", "pl_marker", "count=%u existed=%u",
+          (unsigned)count, (unsigned)g_c1_storage_pl_existed);
+}
+
 /* ── Lifecycle ─────────────────────────────────────────────────────── */
 
 bool c1_storage_init(void)
@@ -144,6 +211,7 @@ bool c1_storage_init(void)
     if (rc == LFS_ERR_OK) {
         s_stats.schema_version = C1_STORAGE_SCHEMA_VERSION;
         s_stats.mounted = true;
+        update_pl_marker();
         return true;
     }
 
@@ -154,6 +222,7 @@ bool c1_storage_init(void)
     TRACE("c1stor", "mount_fail", "rc=%d — formatting", rc);
     s_stats.mount_failures++;
     bool ok = format_and_mount();
+    if (ok) update_pl_marker();
     return ok;
 }
 
