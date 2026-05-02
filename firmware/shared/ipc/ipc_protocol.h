@@ -148,20 +148,40 @@ typedef struct {
 /* ── GPS bridge (shared SRAM, not FIFO) ──────────────────────────────────── */
 
 /**
- * IpcGpsBuf — double-buffer for NMEA sentences written by Core 1, read by Core 0.
+ * IpcGpsFixSlot — one parsed GPS fix snapshot (24 bytes).
  *
- * Core 1 owns the Teseo-LIV3FL on the sensor bus (i2c1, GPIO 34/35). It writes
- * complete NMEA sentences into buf[write_idx ^ 1] while Core 0 reads buf[write_idx ^ 1]
- * after the flip. No doorbell is sent — the atomic flip of write_idx is itself the
- * signal; Core 0 polls the index on its 1 Hz cadence.
- *
- * Each slot holds one NMEA sentence (max 82 bytes per NMEA spec, padded to 128).
+ * Populated by Core 1 from the Teseo-LIV3FL parsed state after each new fix.
+ * Core 0 reads the most-recently-published slot via IpcGpsBuf.write_idx ^ 1.
  */
 typedef struct {
-    uint8_t  buf[2][128];           ///< Double buffer: [0] and [1] slots
-    uint8_t  write_idx;             ///< Index Core 1 is currently writing into (0 or 1)
-    uint8_t  len[2];                ///< Valid byte count in each slot
-    uint8_t  _pad[1];               ///< Pads to 260 B to match shared-SRAM reservation
+    uint32_t unix_epoch;    ///< UTC Unix seconds since 1970; 0 = no valid fix
+    int32_t  lat_e7;        ///< Latitude × 1e7 degrees (positive = North)
+    int32_t  lon_e7;        ///< Longitude × 1e7 degrees (positive = East)
+    int32_t  altitude_mm;   ///< Altitude above MSL in millimetres
+    uint16_t hdop_x100;     ///< HDOP × 100 (e.g. 120 = HDOP 1.20)
+    uint8_t  sat_count;     ///< Number of satellites used
+    uint8_t  fix_quality;   ///< 0=none 1=GPS 2=DGPS (from GGA)
+    uint8_t  fix_valid;     ///< 1 = RMC status 'A' (data valid)
+    uint8_t  _pad[3];       ///< Alignment padding, reserved zero
+} IpcGpsFixSlot;
+_Static_assert(sizeof(IpcGpsFixSlot) == 24, "IpcGpsFixSlot must be 24 B");
+
+/**
+ * IpcGpsBuf — double-buffer of structured fix snapshots (260 bytes total).
+ *
+ * Core 1 writes a fully-parsed IpcGpsFixSlot into slot[write_idx], then
+ * atomically flips write_idx — that makes the freshly-written slot visible
+ * to Core 0 as slot[write_idx ^ 1].  No doorbell is sent; Core 0 polls
+ * write_idx at ~1 Hz and checks for a new value.
+ *
+ * Replaces the earlier raw-NMEA double-buffer (M3.5) with structured data
+ * so Core 0 can call perhapsSetRTC() and nodeDB->setLocalPosition() without
+ * running a NMEA parser on the modem core (M5).
+ */
+typedef struct {
+    IpcGpsFixSlot slot[2];          ///< Double buffer: [0] and [1] fix slots (48 B)
+    volatile uint8_t write_idx;     ///< Slot Core 1 last wrote into (0 or 1)
+    uint8_t  _pad[211];             ///< Reserved, zero-initialised → total 260 B
 } IpcGpsBuf;
 _Static_assert(sizeof(IpcGpsBuf) == 260, "IpcGpsBuf must be exactly 260 bytes");
 
